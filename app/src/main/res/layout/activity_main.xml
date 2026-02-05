@@ -1,0 +1,80 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.constraintlayout.widget.ConstraintLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent">
+
+    <!-- Background image -->
+    <ImageView
+        android:id="@+id/ivBackground"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:src="@drawable/bird_image"
+        android:scaleType="centerCrop"
+        android:contentDescription="@string/bird_image"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"/>
+
+    <!-- Optional dark overlay so white text is readable -->
+    <View
+        android:id="@+id/overlay"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:background="#22000000"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"/>
+
+    <!-- Title -->
+    <TextView
+        android:id="@+id/tvTitle"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="42dp"
+        android:gravity="center"
+        android:text="Welcome to\nBirdDex"
+        android:textColor="@android:color/white"
+        android:textSize="34sp"
+        android:textStyle="bold"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"/>
+
+    <!-- Sign up button -->
+    <androidx.appcompat.widget.AppCompatButton
+        android:id="@+id/btnSignup"
+        android:layout_width="0dp"
+        android:layout_height="48dp"
+        android:layout_marginStart="32dp"
+        android:layout_marginEnd="32dp"
+        android:layout_marginBottom="18dp"
+        android:background="@drawable/bg_white_button"
+        android:text="SIGN UP"
+        android:textAllCaps="true"
+        android:textStyle="bold"
+        android:textColor="@android:color/black"
+        app:layout_constraintBottom_toTopOf="@+id/tvAlready"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"/>
+
+    <!-- Already have an account -->
+    <TextView
+        android:id="@+id/tvAlready"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="28dp"
+        android:text="ALREADY HAVE AN ACCOUNT?"
+        android:textAllCaps="true"
+        android:textColor="@android:color/white"
+        android:textSize="12sp"
+        android:textStyle="bold"
+        android:alpha="0.95"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"/>
+
+</androidx.constraintlayout.widget.ConstraintLayout>

@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.constraintlayout.widget.ConstraintLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent">
+
+    <!-- Background image (reuse signup_bg or make a new one like complete_bg) -->
+    <ImageView
+        android:id="@+id/ivCompleteBg"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:src="@drawable/signup_bg"
+        android:scaleType="centerCrop"
+        android:contentDescription="@null"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent" />
+
+    <!-- White card -->
+    <androidx.cardview.widget.CardView
+        android:id="@+id/cardComplete"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="32dp"
+        android:layout_marginEnd="32dp"
+        app:cardCornerRadius="16dp"
+        app:cardElevation="10dp"
+        app:cardUseCompatPadding="true"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:padding="22dp">
+
+            <TextView
+                android:id="@+id/tvCompleteTitle"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center"
+                android:text="Account Created!"
+                android:textStyle="bold"
+                android:textSize="20sp"
+                android:textColor="#B58A2A"
+                android:layout_marginBottom="10dp"/>
+
+            <TextView
+                android:id="@+id/tvCompleteMsg"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center"
+                android:text="Your BirdDex account is ready.\nLog in to continue."
+                android:textSize="13sp"
+                android:textColor="#333333"
+                android:layout_marginBottom="18dp"/>
+
+            <androidx.appcompat.widget.AppCompatButton
+                android:id="@+id/btnGoLogin"
+                android:layout_width="match_parent"
+                android:layout_height="44dp"
+                android:background="@drawable/bg_black_button"
+                android:text="GO TO LOGIN"
+                android:textAllCaps="true"
+                android:textStyle="bold"
+                android:textColor="@android:color/white"/>
+
+        </LinearLayout>
+
+    </androidx.cardview.widget.CardView>
+
+</androidx.constraintlayout.widget.ConstraintLayout>

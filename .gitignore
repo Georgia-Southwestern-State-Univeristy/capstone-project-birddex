@@ -1,16 +1,69 @@
+==============================
+Android Studio / IntelliJ
+==============================
+.idea/
 *.iml
-.gradle
-/local.properties
-/.idea/caches
-/.idea/libraries
-/.idea/modules.xml
-/.idea/workspace.xml
-/.idea/navEditor.xml
-/.idea/assetWizardSettings.xml
-.idea
-.DS_Store
-/build
-/captures
-.externalNativeBuild
-.cxx
+*.ipr
+*.iws
+
+==============================
+Gradle
+==============================
+.gradle/
+build/
+*/build/
+
+==============================
+Local config
+==============================
 local.properties
+
+==============================
+Android build artifacts
+==============================
+*.apk
+*.aab
+*.ap_
+*.dex
+*.class
+
+==============================
+Generated files
+==============================
+bin/
+gen/
+out/
+
+==============================
+Logs
+==============================
+*.log
+
+==============================
+Keystore files (IMPORTANT)
+==============================
+*.jks
+*.keystore
+
+==============================
+OS-specific
+==============================
+.DS_Store
+Thumbs.db
+
+==============================
+NDK / CMake
+==============================
+.externalNativeBuild/
+.cxx/
+
+==============================
+Firebase / Google Services
+(ignore if it contains secrets)
+==============================
+Uncomment if needed:
+app/google-services.json
+==============================
+Secrets / Env
+==============================
+*.env

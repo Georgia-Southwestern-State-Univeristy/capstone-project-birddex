@@ -1,9 +1,9 @@
 package com.example.birddex;
 
-import android.os.Bundle;
-import android.widget.TextView;
-import android.widget.Button;
 import android.content.Intent;
+import android.os.Bundle;
+import android.widget.Button;
+import android.widget.TextView;
 
 import androidx.appcompat.app.AppCompatActivity;
 
@@ -19,7 +19,7 @@ public class LoginActivity extends AppCompatActivity {
         TextView tvSignUp = findViewById(R.id.tvSignUp);
 
         btnLogin.setOnClickListener(v -> {
-            startActivity(new android.content.Intent(LoginActivity.this, HomeActivity.class));
+            startActivity(new Intent(LoginActivity.this, HomeActivity.class));
             finish();
         });
 
@@ -28,7 +28,7 @@ public class LoginActivity extends AppCompatActivity {
         });
 
         tvSignUp.setOnClickListener(v -> {
-            startActivity(new android.content.Intent(LoginActivity.this, SignUpActivity.class));
+            startActivity(new Intent(LoginActivity.this, SignUpActivity.class));
         });
     }
 }

@@ -1,3 +1,4 @@
 <resources>
     <string name="app_name">BirdDex</string>
+    <string name="bird_image">Bird image</string>
 </resources>

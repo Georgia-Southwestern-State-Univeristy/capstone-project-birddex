@@ -34,29 +34,39 @@
             android:padding="16dp">
 
             <TextView
+                android:id="@+id/tvAccountLabel"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="(Placeholder Settings)"
+                android:text="Account"
                 android:textStyle="bold"
-                android:paddingBottom="10dp"/>
+                android:paddingBottom="8dp" />
+
+            <TextView
+                android:id="@+id/tvUserEmail"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="(email)"
+                android:paddingBottom="16dp" />
 
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="• Edit Profile (later)"
-                android:paddingBottom="8dp"/>
+                android:text="Notifications"
+                android:textStyle="bold"
+                android:paddingBottom="8dp" />
 
-            <TextView
+            <androidx.appcompat.widget.SwitchCompat
+                android:id="@+id/switchNotifications"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="• Notifications (later)"
-                android:paddingBottom="8dp"/>
+                android:text="Enable notifications"
+                android:paddingBottom="16dp" />
 
-            <TextView
+            <Button
+                android:id="@+id/btnLogout"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="• Log Out (later)"
-                android:paddingBottom="8dp"/>
+                android:text="Log Out" />
 
         </LinearLayout>
     </androidx.cardview.widget.CardView>

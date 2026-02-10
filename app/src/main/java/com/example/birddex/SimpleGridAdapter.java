@@ -56,9 +56,11 @@ public class SimpleGridAdapter extends RecyclerView.Adapter<SimpleGridAdapter.VH
         } else {
             // Clear the image if no URL is provided (for empty slots).
             holder.ivCollectionImage.setImageDrawable(null);
-            holder.ivCollectionImage.setBackgroundColor(0xFFEEEEEE); // Light grey for empty
+            holder.ivCollectionImage.setBackgroundColor(
+                    holder.itemView.getContext().getColor(R.color.placeholder_cell)
+            ); // Theme-aware placeholder
         }
-    }
+        }
 
     @Override
     public int getItemCount() {

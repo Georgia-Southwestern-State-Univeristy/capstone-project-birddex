@@ -1,7 +1,34 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
 
-    <style name="ShapeAppearanceOverlay" />
-    <style name="ShapeAppearanceOverlay.BirdDex" />
+    <!-- Primary filled button (good on both themes) -->
+    <style name="BirdDex.Button.Primary" parent="Widget.Material3.Button">
+        <item name="android:backgroundTint">?attr/colorPrimary</item>
+        <item name="android:textColor">?attr/colorOnPrimary</item>
+        <item name="cornerRadius">14dp</item>
+    </style>
+
+    <!-- Secondary/outlined button -->
+    <style name="BirdDex.Button.Outlined" parent="Widget.Material3.Button.OutlinedButton">
+        <item name="android:textColor">?attr/colorPrimary</item>
+        <item name="strokeColor">?attr/colorOutline</item>
+        <item name="cornerRadius">14dp</item>
+    </style>
+
+    <!-- Standard readable body text -->
+    <style name="BirdDex.Text.Body" parent="TextAppearance.Material3.BodyMedium">
+        <item name="android:textColor">?attr/colorOnSurface</item>
+    </style>
+
+    <!-- Softer readable helper text -->
+    <style name="BirdDex.Text.Helper" parent="TextAppearance.Material3.BodySmall">
+        <item name="android:textColor">?attr/colorOnSurfaceVariant</item>
+    </style>
+
+    <!-- Titles -->
+    <style name="BirdDex.Text.Title" parent="TextAppearance.Material3.TitleLarge">
+        <item name="android:textColor">?attr/colorOnSurface</item>
+        <item name="android:textStyle">bold</item>
+    </style>
 
 </resources>

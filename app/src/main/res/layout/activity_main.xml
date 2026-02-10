@@ -45,6 +45,7 @@
         app:layout_constraintEnd_toEndOf="parent"/>
 
     <!-- Sign up button -->
+    <!-- Sign up button -->
     <androidx.appcompat.widget.AppCompatButton
         android:id="@+id/btnSignup"
         android:layout_width="0dp"
@@ -56,10 +57,11 @@
         android:text="SIGN UP"
         android:textAllCaps="true"
         android:textStyle="bold"
-        android:textColor="@android:color/black"
+        android:textColor="?attr/colorOnSurface"
         app:layout_constraintBottom_toTopOf="@+id/tvAlready"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent"/>
+
 
     <!-- Already have an account -->
     <TextView

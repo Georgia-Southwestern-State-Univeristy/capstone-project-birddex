@@ -3,26 +3,34 @@ package com.example.birddex;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
-import android.widget.TextView;
+
+import android.widget.ImageView;
 
 import androidx.annotation.NonNull;
 import androidx.recyclerview.widget.RecyclerView;
 
+import com.bumptech.glide.Glide;
+
 import java.util.List;
 
+/**
+ * SimpleGridAdapter displays bird images in the user's collection grid.
+ * It uses Glide to load images from the stored Firebase URLs.
+ */
 public class SimpleGridAdapter extends RecyclerView.Adapter<SimpleGridAdapter.VH> {
 
-    private final List<String> items;
+    private final List<String> imageUrls;
 
-    public SimpleGridAdapter(List<String> items) {
-        this.items = items;
+    public SimpleGridAdapter(List<String> imageUrls) {
+        this.imageUrls = imageUrls;
     }
 
     static class VH extends RecyclerView.ViewHolder {
-        TextView tv;
+        ImageView ivCollectionImage;
+
         VH(@NonNull View itemView) {
             super(itemView);
-            tv = itemView.findViewById(R.id.tvCell);
+            ivCollectionImage = itemView.findViewById(R.id.ivCollectionImage);
         }
     }
 
@@ -36,11 +44,24 @@ public class SimpleGridAdapter extends RecyclerView.Adapter<SimpleGridAdapter.VH
 
     @Override
     public void onBindViewHolder(@NonNull VH holder, int position) {
-        holder.tv.setText(items.get(position));
+        String url = imageUrls.get(position);
+
+        if (url != null && !url.isEmpty()) {
+            // Load the bird image using Glide.
+            Glide.with(holder.itemView.getContext())
+                    .load(url)
+                    .placeholder(R.drawable.ic_launcher_background) // Optional: add a placeholder
+                    .centerCrop()
+                    .into(holder.ivCollectionImage);
+        } else {
+            // Clear the image if no URL is provided (for empty slots).
+            holder.ivCollectionImage.setImageDrawable(null);
+            holder.ivCollectionImage.setBackgroundColor(0xFFEEEEEE); // Light grey for empty
+        }
     }
 
     @Override
     public int getItemCount() {
-        return items.size();
+        return imageUrls.size();
     }
 }

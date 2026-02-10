@@ -34,6 +34,11 @@ import java.util.Date;
 import java.util.Locale;
 import java.util.concurrent.ExecutionException;
 
+/**
+ * CameraFragment handles the camera functionality using the CameraX library.
+ * It allows users to preview the camera feed, flip between front and back cameras,
+ * toggle flash modes, and capture photos.
+ */
 public class CameraFragment extends Fragment {
 
     private PreviewView previewView;
@@ -58,6 +63,7 @@ public class CameraFragment extends Fragment {
 
         View v = inflater.inflate(R.layout.fragment_camera, container, false);
 
+        // Initialize UI components for the camera interface.
         previewView = v.findViewById(R.id.previewView);
         btnFlip = v.findViewById(R.id.btnFlip);
         btnCapture = v.findViewById(R.id.btnCapture);
@@ -65,6 +71,7 @@ public class CameraFragment extends Fragment {
 
         Log.d("BirdDexCam", "CameraFragment onCreateView()");
 
+        // Register a launcher for requesting camera permission.
         cameraPermissionLauncher =
                 registerForActivityResult(new ActivityResultContracts.RequestPermission(), granted -> {
                     if (granted) {
@@ -75,7 +82,7 @@ public class CameraFragment extends Fragment {
                     }
                 });
 
-// Request permission if needed
+        // Request camera permission if not already granted, otherwise start the camera.
         if (ActivityCompat.checkSelfPermission(requireContext(), Manifest.permission.CAMERA)
                 == PackageManager.PERMISSION_GRANTED) {
             Log.d("BirdDexCam", "Camera permission already granted");
@@ -85,16 +92,16 @@ public class CameraFragment extends Fragment {
             cameraPermissionLauncher.launch(Manifest.permission.CAMERA);
         }
 
-
+        // Handle camera flip (front/back) action.
         btnFlip.setOnClickListener(view -> {
             Log.d("BirdDexCam", "Flip clicked");
             lensFacing = (lensFacing == CameraSelector.LENS_FACING_BACK)
                     ? CameraSelector.LENS_FACING_FRONT
                     : CameraSelector.LENS_FACING_BACK;
-            bindCameraUseCases();
+            bindCameraUseCases(); // Re-bind use cases with the new lens facing.
         });
 
-
+        // Handle flash mode cycling.
         btnFlash.setOnClickListener(view -> {
             Log.d("BirdDexCam", "Flash clicked");
 
@@ -105,23 +112,23 @@ public class CameraFragment extends Fragment {
             applyFlashState();
         });
 
-
+        // Handle photo capture action.
         btnCapture.setOnClickListener(view -> {
             Log.d("BirdDexCam", "Capture clicked");
 
-            // Visual proof the click happened:
+            // Brief visual feedback for the capture click.
             btnCapture.setAlpha(0.4f);
             btnCapture.postDelayed(() -> btnCapture.setAlpha(1f), 150);
 
             takePhoto();
         });
 
-
-        Log.d("BirdDexCam", "CameraFragment onCreateView()");
-
         return v;
     }
 
+    /**
+     * Initializes the CameraX ProcessCameraProvider.
+     */
     private void startCamera() {
         ListenableFuture<ProcessCameraProvider> future =
                 ProcessCameraProvider.getInstance(requireContext());
@@ -131,38 +138,49 @@ public class CameraFragment extends Fragment {
                 cameraProvider = future.get();
                 bindCameraUseCases();
             } catch (ExecutionException | InterruptedException e) {
+                Log.e("BirdDexCam", "Error starting camera", e);
             }
         }, ContextCompat.getMainExecutor(requireContext()));
     }
 
+    /**
+     * Binds camera use cases (Preview and ImageCapture) to the lifecycle.
+     */
     private void bindCameraUseCases() {
         if (cameraProvider == null) return;
 
+        // Unbind previous use cases before binding new ones.
         cameraProvider.unbindAll();
 
         CameraSelector selector = new CameraSelector.Builder()
                 .requireLensFacing(lensFacing)
                 .build();
 
+        // Set up the preview use case.
         Preview preview = new Preview.Builder().build();
         preview.setSurfaceProvider(previewView.getSurfaceProvider());
 
+        // Set up the image capture use case with latency optimization.
         imageCapture = new ImageCapture.Builder()
                 .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
                 .build();
 
+        // Bind use cases to the fragment's lifecycle.
         camera = cameraProvider.bindToLifecycle(this, selector, preview, imageCapture);
+        
+        // Enable/disable flash button based on hardware capability.
         btnFlash.setEnabled(camera.getCameraInfo().hasFlashUnit());
 
-
-        // apply current flash state to camera + capture settings
+        // Apply current flash state to the camera.
         applyFlashState();
     }
 
+    /**
+     * Applies the current FlashState (OFF, ON, AUTO) to the camera control and image capture use case.
+     */
     private void applyFlashState() {
         if (camera == null || imageCapture == null) return;
 
-        // This is the key line
         boolean hasFlash = camera.getCameraInfo().hasFlashUnit();
 
         if (!hasFlash) {
@@ -190,13 +208,18 @@ public class CameraFragment extends Fragment {
         }
     }
 
-
+    /**
+     * Captures a photo and saves it to the MediaStore.
+     * On success, it navigates to the CropActivity with the saved image URI.
+     */
     private void takePhoto() {
         if (imageCapture == null) return;
 
+        // Generate a unique file name based on the current timestamp.
         String timeStamp = new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(new Date());
         String name = "BIRDDEX_" + timeStamp;
 
+        // Set up metadata for saving the image in MediaStore.
         ContentValues values = new ContentValues();
         values.put(MediaStore.MediaColumns.DISPLAY_NAME, name);
         values.put(MediaStore.MediaColumns.MIME_TYPE, "image/jpeg");
@@ -209,16 +232,15 @@ public class CameraFragment extends Fragment {
                         values
                 ).build();
 
+        // Execute the image capture.
         imageCapture.takePicture(
                 options,
                 ContextCompat.getMainExecutor(requireContext()),
                 new ImageCapture.OnImageSavedCallback() {
                     @Override
                     public void onImageSaved(@NonNull ImageCapture.OutputFileResults output) {
-
                         Uri savedUri = output.getSavedUri();
 
-                        // Some devices/emulators can return null here
                         if (savedUri == null) {
                             Log.e("BirdDexCam", "Saved URI is null (cannot open crop page).");
                             return;
@@ -226,11 +248,11 @@ public class CameraFragment extends Fragment {
 
                         Log.d("BirdDexCam", "onImageSaved(): " + savedUri);
 
+                        // Navigate to CropActivity to allow the user to crop the captured image.
                         android.content.Intent i = new android.content.Intent(requireContext(), CropActivity.class);
                         i.putExtra(CropActivity.EXTRA_IMAGE_URI, savedUri.toString());
                         startActivity(i);
                     }
-
 
                     @Override
                     public void onError(@NonNull ImageCaptureException exc) {
@@ -239,6 +261,10 @@ public class CameraFragment extends Fragment {
                 }
         );
     }
+
+    /**
+     * Utility method to check if the app is running on an emulator.
+     */
     private boolean isEmulator() {
         String fp = android.os.Build.FINGERPRINT;
         String model = android.os.Build.MODEL;
@@ -252,5 +278,4 @@ public class CameraFragment extends Fragment {
                 || device != null && device.startsWith("generic")
                 || product != null && product.contains("sdk");
     }
-
 }

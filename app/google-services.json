@@ -1,0 +1,39 @@
+{
+  "project_info": {
+    "project_number": "650774648072",
+    "project_id": "birddex-ac54b",
+    "storage_bucket": "birddex-ac54b.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:650774648072:android:70f00e9141176c0b68c8bd",
+        "android_client_info": {
+          "package_name": "com.birddex.app"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "650774648072-vc14d8fg1ut6op08ur45g1iq5b98a1j6.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAJwhkW-78raixMuy_j44GxQENxjgJMvi4"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "650774648072-vc14d8fg1ut6op08ur45g1iq5b98a1j6.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

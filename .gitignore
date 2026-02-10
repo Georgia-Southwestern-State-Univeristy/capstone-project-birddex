@@ -58,12 +58,6 @@ NDK / CMake
 .cxx/
 
 ==============================
-Firebase / Google Services
-(ignore if it contains secrets)
-==============================
-Uncomment if needed:
-app/google-services.json
-==============================
 Secrets / Env
 ==============================
 *.env

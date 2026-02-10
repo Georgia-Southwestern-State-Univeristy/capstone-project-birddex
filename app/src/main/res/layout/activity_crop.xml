@@ -35,11 +35,11 @@
             android:text="Cancel"/>
 
         <Button
-            android:id="@+id/btnSave"
+            android:id="@+id/btnIdentify"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginStart="16dp"
-            android:text="Save"/>
+            android:text="Identify"/>
     </LinearLayout>
 
 </androidx.constraintlayout.widget.ConstraintLayout>

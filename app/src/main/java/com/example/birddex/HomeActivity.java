@@ -1,5 +1,6 @@
 package com.example.birddex;
 
+import android.content.Intent;
 import android.os.Bundle;
 
 import androidx.appcompat.app.AppCompatActivity;
@@ -35,7 +36,7 @@ public class HomeActivity extends AppCompatActivity {
 
             // Check which item was selected and switch to the corresponding fragment.
             if (id == R.id.nav_camera) {
-                switchFragment(new CameraFragment());
+                startActivity(new Intent(HomeActivity.this, ImageUploadActivity.class));
                 return true;
             } else if (id == R.id.nav_search_collection) {
                 switchFragment(new SearchCollectionFragment());

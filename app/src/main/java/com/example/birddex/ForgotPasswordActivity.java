@@ -2,6 +2,7 @@ package com.example.birddex;
 
 import android.content.Intent;
 import android.os.Bundle;
+import android.util.Log;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.TextView;
@@ -15,6 +16,7 @@ import androidx.appcompat.app.AppCompatActivity;
  */
 public class ForgotPasswordActivity extends AppCompatActivity {
 
+    private static final String TAG = "ForgotPasswordActivity";
     private FirebaseManager firebaseManager;
     private sign_IN_upValidator signINupValidator;
 
@@ -36,24 +38,30 @@ public class ForgotPasswordActivity extends AppCompatActivity {
 
         // Handle the 'Send Reset' button click.
         btnSendReset.setOnClickListener(v -> {
+            Log.d(TAG, "Send Reset button clicked.");
             // Validate that the email field is not empty and is in the correct format.
             if (signINupValidator.validateForgotPasswordForm(forgotPasswordEmailEditText)) {
                 String email = forgotPasswordEmailEditText.getText().toString();
-                
+                Log.d(TAG, "Validation successful. Sending reset email to: " + email);
+
                 // Trigger the Firebase password reset email.
                 firebaseManager.sendPasswordResetEmail(email, new FirebaseManager.PasswordResetListener() {
                     @Override
                     public void onSuccess() {
+                        Log.d(TAG, "onSuccess: Password reset email sent successfully.");
                         // Notify the user that the email was sent successfully.
-                        Toast.makeText(ForgotPasswordActivity.this, "Password reset email sent.", Toast.LENGTH_SHORT).show();
+                        Toast.makeText(ForgotPasswordActivity.this, "Password reset email sent. Please check your inbox (and spam folder).", Toast.LENGTH_LONG).show();
                     }
 
                     @Override
                     public void onFailure(String errorMessage) {
+                        Log.e(TAG, "onFailure: " + errorMessage);
                         // Display error message if the operation fails.
-                        Toast.makeText(ForgotPasswordActivity.this, errorMessage, Toast.LENGTH_SHORT).show();
+                        Toast.makeText(ForgotPasswordActivity.this, errorMessage, Toast.LENGTH_LONG).show();
                     }
                 });
+            } else {
+                Log.w(TAG, "Validation failed. Email field likely empty or invalid.");
             }
         });
 

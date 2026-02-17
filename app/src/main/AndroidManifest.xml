@@ -18,6 +18,9 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.BirdDex">
         <activity
+            android:name=".ImageUploadActivity"
+            android:exported="false" />
+        <activity
             android:name=".IdentifyingActivity"
             android:exported="false" />
         <activity

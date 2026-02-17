@@ -2,7 +2,7 @@ import java.util.Properties
 
 plugins {
     alias(libs.plugins.android.application)
-    alias(libs.plugins.google.gms.google.services) //added
+    alias(libs.plugins.google.gms.google.services) 
 }
 
 android {
@@ -17,28 +17,6 @@ android {
         versionName = "1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-
-        val properties = Properties()
-        val localPropertiesFile = project.rootProject.file("local.properties")
-        if (localPropertiesFile.exists()) {
-            properties.load(localPropertiesFile.inputStream())
-        }
-
-        // Logic: Try local.properties first, then System Environment Variables (GitHub Secrets), then default to empty
-        val nuthatchApiKey = properties.getProperty("NUTHATCH_API_KEY") 
-            ?: System.getenv("NUTHATCH_API_KEY") 
-            ?: ""
-        buildConfigField("String", "NUTHATCH_API_KEY", "\"$nuthatchApiKey\"")
-
-        val ebirdApiKey = properties.getProperty("EBIRD_API_KEY") 
-            ?: System.getenv("EBIRD_API_KEY") 
-            ?: ""
-        buildConfigField("String", "EBIRD_API_KEY", "\"$ebirdApiKey\"")
-
-        val openaiApiKey = properties.getProperty("OPENAI_API_KEY") 
-            ?: System.getenv("OPENAI_API_KEY") 
-            ?: ""
-        buildConfigField("String", "OPENAI_API_KEY", "\"$openaiApiKey\"")
     }
 
     buildTypes {
@@ -79,6 +57,7 @@ dependencies {
     implementation("com.google.firebase:firebase-auth")
     implementation("com.google.firebase:firebase-firestore")
     implementation("com.google.firebase:firebase-storage")
+    implementation("com.google.firebase:firebase-functions")
 
     // Networking and Image Libraries
     implementation("com.android.volley:volley:1.2.1")

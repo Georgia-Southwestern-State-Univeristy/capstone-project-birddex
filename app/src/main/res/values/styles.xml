@@ -30,5 +30,10 @@
         <item name="android:textColor">?attr/colorOnSurface</item>
         <item name="android:textStyle">bold</item>
     </style>
+    <style name="Theme.BirdDex.Cropper" parent="Theme.Material3.DayNight">
+        <!-- Force an ActionBar so the Done button appears -->
+        <item name="windowActionBar">true</item>
+        <item name="windowNoTitle">false</item>
+    </style>
 
 </resources>

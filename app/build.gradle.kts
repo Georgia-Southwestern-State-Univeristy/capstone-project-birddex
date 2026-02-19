@@ -6,7 +6,7 @@ plugins {
 }
 
 android {
-    namespace = "com.example.birddex"
+    namespace = "com.birddex.app"
     compileSdk = 36
 
     defaultConfig {
@@ -27,6 +27,9 @@ android {
                 "proguard-rules.pro"
             )
         }
+        debug {
+            signingConfig = signingConfigs.getByName("debug")
+        }
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_11
@@ -46,26 +49,30 @@ dependencies {
     implementation("androidx.camera:camera-lifecycle:$cameraxVersion")
     implementation("androidx.camera:camera-view:$cameraxVersion")
 
-    implementation("com.vanniktech:android-image-cropper:4.3.3")
+    implementation("com.vanniktech:android-image-cropper:4.7.0")
+    
+    implementation(platform("com.google.firebase:firebase-bom:34.9.0"))
+    // Google Play Services dependencies
     implementation("com.google.android.gms:play-services-location:21.3.0")
+    implementation("com.google.android.gms:play-services-auth:21.5.1")
+
 
     implementation(libs.appcompat)
     implementation(libs.material)
     implementation(libs.activity)
     implementation(libs.constraintlayout)
-    implementation(platform("com.google.firebase:firebase-bom:34.8.0"))
     implementation("com.google.firebase:firebase-auth")
     implementation("com.google.firebase:firebase-firestore")
     implementation("com.google.firebase:firebase-storage")
     implementation("com.google.firebase:firebase-functions")
+    implementation("com.google.firebase:firebase-appcheck-playintegrity") // Added for App Check Play Integrity
+    implementation("com.google.firebase:firebase-appcheck-debug")
+
 
     // Networking and Image Libraries
     implementation("com.android.volley:volley:1.2.1")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
-    implementation("com.github.bumptech.glide:glide:4.16.0")
-
-    implementation("com.google.android.gms:play-services-auth:21.2.0")
-    implementation("com.google.android.gms:play-services-basement:18.4.0")
+    implementation("com.github.bumptech.glide:glide:5.0.5")
     implementation(libs.guava)
 
     testImplementation(libs.junit)

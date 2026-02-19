@@ -16,7 +16,7 @@
         app:layout_constraintEnd_toEndOf="parent"/>
 
     <!-- Overlay (target box + label) -->
-    <com.example.birddex.CameraOverlayView
+    <com.birddex.app.CameraOverlayView
         android:id="@+id/cameraOverlay"
         android:layout_width="0dp"
         android:layout_height="0dp"

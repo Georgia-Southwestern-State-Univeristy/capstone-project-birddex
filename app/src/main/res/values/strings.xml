@@ -1,4 +1,10 @@
 <resources>
     <string name="app_name">BirdDex</string>
     <string name="bird_image">Bird image</string>
+    <!--
+      TODO: Add your Google Maps API key here.
+      You can get one from the Google Cloud Console.
+      See: https://developers.google.com/maps/documentation/android-sdk/get-api-key
+    -->
+    <string name="google_maps_key" translatable="false">YOUR_API_KEY</string>
 </resources>

@@ -27,6 +27,9 @@ import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 import androidx.fragment.app.Fragment;
 
+import android.view.ScaleGestureDetector;
+import androidx.camera.core.ZoomState;
+
 import com.google.common.util.concurrent.ListenableFuture;
 
 import java.text.SimpleDateFormat;
@@ -47,6 +50,7 @@ public class CameraFragment extends Fragment {
     private ProcessCameraProvider cameraProvider;
     private Camera camera;
     private ImageCapture imageCapture;
+    private ScaleGestureDetector scaleGestureDetector;
 
     private int lensFacing = CameraSelector.LENS_FACING_BACK;
     private ActivityResultLauncher<String> cameraPermissionLauncher;
@@ -68,6 +72,36 @@ public class CameraFragment extends Fragment {
         btnFlip = v.findViewById(R.id.btnFlip);
         btnCapture = v.findViewById(R.id.btnCapture);
         btnFlash = v.findViewById(R.id.btnFlash);
+
+        // Pinch-to-zoom on the live camera preview
+        scaleGestureDetector = new ScaleGestureDetector(requireContext(),
+                new ScaleGestureDetector.SimpleOnScaleGestureListener() {
+                    @Override
+                    public boolean onScale(ScaleGestureDetector detector) {
+                        if (camera == null) return false;
+
+                        ZoomState zoomState = camera.getCameraInfo().getZoomState().getValue();
+                        if (zoomState == null) return false;
+
+                        float current = zoomState.getZoomRatio();
+                        float delta = detector.getScaleFactor();
+
+                        float min = zoomState.getMinZoomRatio();
+                        float max = zoomState.getMaxZoomRatio();
+
+                        float newZoom = current * delta;
+                        newZoom = Math.max(min, Math.min(newZoom, max));
+
+                        camera.getCameraControl().setZoomRatio(newZoom);
+                        return true;
+                    }
+                });
+
+        previewView.setOnTouchListener((view, event) -> {
+            scaleGestureDetector.onTouchEvent(event);
+            return true; // consume touch so pinch works reliably
+        });
+
 
         Log.d("BirdDexCam", "CameraFragment onCreateView()");
 

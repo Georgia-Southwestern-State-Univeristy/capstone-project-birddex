@@ -135,7 +135,7 @@
                 android:textAllCaps="true"
                 android:textStyle="bold"
                 android:textSize="11sp"
-                android:textColor="#111111"/>
+                android:textColor="@color/auth_label"/>
 
         </LinearLayout>
 

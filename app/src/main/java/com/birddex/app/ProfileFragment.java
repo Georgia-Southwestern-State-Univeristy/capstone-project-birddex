@@ -1,4 +1,4 @@
-package com.example.birddex;
+package com.birddex.app;
 
 import android.content.Intent;
 import android.os.Bundle;

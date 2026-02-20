@@ -16,6 +16,9 @@ public class HomeActivity extends AppCompatActivity {
 
     private BottomNavigationView bottomNav;
 
+    // Tracks the last "real" tab (anything except camera)
+    private int lastNonCameraTabId = R.id.nav_forum;
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -26,6 +29,7 @@ public class HomeActivity extends AppCompatActivity {
 
         // Default start fragment is the Forum (middle item).
         if (savedInstanceState == null) {
+            lastNonCameraTabId = R.id.nav_forum;
             bottomNav.setSelectedItemId(R.id.nav_forum);
             switchFragment(new ForumFragment());
         }
@@ -37,23 +41,42 @@ public class HomeActivity extends AppCompatActivity {
             // Check which item was selected and switch to the corresponding fragment.
             if (id == R.id.nav_camera) {
                 startActivity(new Intent(HomeActivity.this, ImageUploadActivity.class));
-                return true;
+
+                // Restore highlight to the last non-camera tab (so camera doesn't stay selected)
+                bottomNav.post(() -> bottomNav.setSelectedItemId(lastNonCameraTabId));
+
+                // returning false prevents nav_camera from being "checked"
+                return false;
             } else if (id == R.id.nav_search_collection) {
+                lastNonCameraTabId = id;
                 switchFragment(new SearchCollectionFragment());
                 return true;
             } else if (id == R.id.nav_forum) {
+                lastNonCameraTabId = id;
                 switchFragment(new ForumFragment());
                 return true;
             } else if (id == R.id.nav_nearby) {
+                lastNonCameraTabId = id;
                 switchFragment(new NearbyFragment());
                 return true;
             } else if (id == R.id.nav_profile) {
+                lastNonCameraTabId = id;
                 switchFragment(new ProfileFragment());
                 return true;
             }
 
             return false;
         });
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+
+        // Ensure the selected tab matches the fragment the user was last actually on
+        if (bottomNav != null && bottomNav.getSelectedItemId() != lastNonCameraTabId) {
+            bottomNav.setSelectedItemId(lastNonCameraTabId);
+        }
     }
 
     /**

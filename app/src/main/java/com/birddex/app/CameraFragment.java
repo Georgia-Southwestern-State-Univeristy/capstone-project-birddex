@@ -8,6 +8,7 @@ import android.os.Bundle;
 import android.provider.MediaStore;
 import android.util.Log;
 import android.view.LayoutInflater;
+import android.view.ScaleGestureDetector;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.ImageButton;
@@ -21,13 +22,13 @@ import androidx.camera.core.CameraSelector;
 import androidx.camera.core.ImageCapture;
 import androidx.camera.core.ImageCaptureException;
 import androidx.camera.core.Preview;
+import androidx.camera.core.ZoomState;
 import androidx.camera.lifecycle.ProcessCameraProvider;
 import androidx.camera.view.PreviewView;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 import androidx.fragment.app.Fragment;
 
-import com.birddex.app.CropActivity; // Added import for CropActivity
 import com.google.common.util.concurrent.ListenableFuture;
 
 import java.text.SimpleDateFormat;
@@ -48,6 +49,7 @@ public class CameraFragment extends Fragment {
     private ProcessCameraProvider cameraProvider;
     private Camera camera;
     private ImageCapture imageCapture;
+    private ScaleGestureDetector scaleGestureDetector;
 
     private int lensFacing = CameraSelector.LENS_FACING_BACK;
     private ActivityResultLauncher<String> cameraPermissionLauncher;
@@ -70,6 +72,36 @@ public class CameraFragment extends Fragment {
         btnCapture = v.findViewById(R.id.btnCapture);
         btnFlash = v.findViewById(R.id.btnFlash);
 
+        // Pinch-to-zoom on the live camera preview
+        scaleGestureDetector = new ScaleGestureDetector(requireContext(),
+                new ScaleGestureDetector.SimpleOnScaleGestureListener() {
+                    @Override
+                    public boolean onScale(ScaleGestureDetector detector) {
+                        if (camera == null) return false;
+
+                        ZoomState zoomState = camera.getCameraInfo().getZoomState().getValue();
+                        if (zoomState == null) return false;
+
+                        float current = zoomState.getZoomRatio();
+                        float delta = detector.getScaleFactor();
+
+                        float min = zoomState.getMinZoomRatio();
+                        float max = zoomState.getMaxZoomRatio();
+
+                        float newZoom = current * delta;
+                        newZoom = Math.max(min, Math.min(newZoom, max));
+
+                        camera.getCameraControl().setZoomRatio(newZoom);
+                        return true;
+                    }
+                });
+
+        previewView.setOnTouchListener((view, event) -> {
+            scaleGestureDetector.onTouchEvent(event);
+            return true; // consume touch so pinch works reliably
+        });
+
+
         Log.d("BirdDexCam", "CameraFragment onCreateView()");
 
         // Register a launcher for requesting camera permission.
@@ -78,8 +110,7 @@ public class CameraFragment extends Fragment {
                     if (granted) {
                         Log.d("BirdDexCam", "Camera permission granted");
                         startCamera();
-                    }
-                     else {
+                    } else {
                         Log.d("BirdDexCam", "Camera permission denied");
                     }
                 });

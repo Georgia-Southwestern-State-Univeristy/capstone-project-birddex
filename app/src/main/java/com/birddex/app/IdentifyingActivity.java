@@ -23,11 +23,15 @@ import androidx.core.content.ContextCompat;
 
 import com.google.firebase.auth.FirebaseAuth;
 import com.google.firebase.auth.FirebaseUser;
+import com.google.firebase.firestore.DocumentSnapshot;
 import com.google.firebase.storage.FirebaseStorage;
 import com.google.firebase.storage.StorageReference;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.util.Date; // Import Date for timestamp
+import java.util.HashMap; // Import HashMap for maps
+import java.util.Map;   // Import Map for maps
 import java.util.UUID;
 
 /**
@@ -38,13 +42,17 @@ import java.util.UUID;
 public class IdentifyingActivity extends AppCompatActivity implements LocationHelper.LocationListener {
 
     private static final String TAG = "IdentifyingActivity";
+    public static final String EXTRA_VERIFIED_BIRD_ID = "verifiedBirdId"; // New extra for verified bird ID
     private Uri localImageUri;
     private OpenAiApi openAiApi;
     private LocationHelper locationHelper;
     private ActivityResultLauncher<String[]> locationPermissionLauncher;
+    private FirebaseManager firebaseManager; // Add FirebaseManager instance
 
     private Location currentLocation;
     private String currentLocalityName;
+    private String currentState; // New field for state
+    private String currentCountry; // New field for country
 
     @Override
     protected void onCreate(@Nullable Bundle savedInstanceState) {
@@ -62,6 +70,7 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
         identifyingImageView.setImageURI(localImageUri);
 
         openAiApi = new OpenAiApi();
+        firebaseManager = new FirebaseManager(); // Initialize FirebaseManager
 
         // Initialize LocationHelper
         locationHelper = new LocationHelper(this, this); // 'this' activity implements LocationListener
@@ -80,7 +89,7 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
                         Log.e(TAG, "Location permissions denied. Cannot log identification location.");
                         Toast.makeText(this, "Location permissions denied. Cannot log identification location.", Toast.LENGTH_LONG).show();
                         // Proceed with identification without location
-                        startIdentification(localImageUri, null, null, null);
+                        startIdentification(localImageUri, null, null, null, null, null);
                     }
                 });
 
@@ -106,12 +115,14 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
 
     // Implementation of LocationHelper.LocationListener
     @Override
-    public void onLocationReceived(Location location, String localityName) {
+    public void onLocationReceived(Location location, @Nullable String localityName, @Nullable String state, @Nullable String country) {
         this.currentLocation = location;
         this.currentLocalityName = localityName;
-        Log.d(TAG, "Location received: " + localityName + " (" + location.getLatitude() + ", " + location.getLongitude() + ")");
+        this.currentState = state; // Store state
+        this.currentCountry = country; // Store country
+        Log.d(TAG, "Location received: " + localityName + ", " + state + ", " + country + " (" + location.getLatitude() + ", " + location.getLongitude() + ")");
         // Once location is received, start the identification process
-        startIdentification(localImageUri, location.getLatitude(), location.getLongitude(), localityName);
+        startIdentification(localImageUri, location.getLatitude(), location.getLongitude(), localityName, state, country);
         locationHelper.stopLocationUpdates(); // Stop updates after getting one valid location
     }
 
@@ -120,11 +131,11 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
         Log.e(TAG, "Location error: " + errorMessage);
         Toast.makeText(this, "Location error: " + errorMessage + ". Cannot log identification location.", Toast.LENGTH_LONG).show();
         // Proceed with identification without location
-        startIdentification(localImageUri, null, null, null);
+        startIdentification(localImageUri, null, null, null, null, null);
         locationHelper.stopLocationUpdates(); // Ensure updates are stopped
     }
 
-    private void startIdentification(Uri imageUri, @Nullable Double latitude, @Nullable Double longitude, @Nullable String localityName) {
+    private void startIdentification(Uri imageUri, @Nullable Double latitude, @Nullable Double longitude, @Nullable String localityName, @Nullable String state, @Nullable String country) {
         String base64Image = encodeImage(imageUri);
         if (base64Image == null) {
             Toast.makeText(this, "Failed to process image.", Toast.LENGTH_SHORT).show();
@@ -142,7 +153,7 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
                 }
 
                 // 2. ONLY if verified, upload the image to Firebase Storage
-                uploadVerifiedImage(response);
+                uploadVerifiedImage(response, latitude, longitude, localityName, state, country);
             }
 
             @Override
@@ -154,9 +165,13 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
         });
     }
 
-    private void uploadVerifiedImage(String identificationResult) {
+    private void uploadVerifiedImage(String identificationResult, @Nullable Double latitude, @Nullable Double longitude, @Nullable String localityName, @Nullable String state, @Nullable String country) {
         FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
-        if (user == null) return;
+        if (user == null) {
+            Toast.makeText(this, "User not logged in.", Toast.LENGTH_SHORT).show();
+            finish();
+            return;
+        }
 
         String userId = user.getUid();
         String fileName = "images/" + userId + "/" + UUID.randomUUID().toString() + ".jpg";
@@ -165,44 +180,41 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
         storageRef.putFile(localImageUri)
                 .addOnSuccessListener(taskSnapshot -> {
                     storageRef.getDownloadUrl().addOnSuccessListener(downloadUri -> {
-                        // 3. Move to result screen with the cloud URL
-                        proceedToInfoActivity(identificationResult, downloadUri.toString());
+                        // Parse identification result here to get bird details
+                        String[] lines = identificationResult.split("\\r?\\n");
+                        String birdId = "Unknown";
+                        String commonName = "Unknown";
+                        String scientificName = "Unknown";
+                        String species = "Unknown";
+                        String family = "Unknown";
+
+                        for (String line : lines) {
+                            String trimmedLine = line.trim();
+                            if (trimmedLine.startsWith("ID: ")) {
+                                birdId = trimmedLine.substring("ID: ".length()).trim();
+                            } else if (trimmedLine.startsWith("Common Name: ")) {
+                                commonName = trimmedLine.substring("Common Name: ".length()).trim();
+                            } else if (trimmedLine.startsWith("Scientific Name: ")) {
+                                scientificName = trimmedLine.substring("Scientific Name: ".length()).trim();
+                            } else if (trimmedLine.startsWith("Species: ")) {
+                                species = trimmedLine.substring("Species: ".length()).trim();
+                            } else if (trimmedLine.startsWith("Family: ")) {
+                                family = trimmedLine.substring("Family: ".length()).trim();
+                            }
+                        }
+
+                        // All data is now ready to be passed to BirdInfoActivity
+                        proceedToInfoActivity(birdId, commonName, scientificName, species, family, downloadUri.toString(), latitude, longitude, localityName, state, country);
                     });
                 })
                 .addOnFailureListener(e -> {
                     Log.e(TAG, "Storage upload failed", e);
-                    // Even if upload fails, we show result but without cloud URL
-                    proceedToInfoActivity(identificationResult, null);
+                    Toast.makeText(IdentifyingActivity.this, "Image upload failed.", Toast.LENGTH_SHORT).show();
+                    finish();
                 });
     }
 
-    private void proceedToInfoActivity(String contentStr, String downloadUrl) {
-        Log.d(TAG, "Content String received: " + contentStr); // Added for debugging
-        String[] lines = contentStr.split("\\r?\\n");
-        String birdId = "Unknown";
-        String commonName = "Unknown";
-        String scientificName = "Unknown";
-        String species = "Unknown";
-        String family = "Unknown";
-
-        for (String line : lines) {
-            String trimmedLine = line.trim();
-            Log.d(TAG, "Parsing line: " + trimmedLine); // Added for debugging
-            if (trimmedLine.startsWith("ID: ")) {
-                birdId = trimmedLine.substring( "ID: ".length() ).trim();
-            } else if (trimmedLine.startsWith("Common Name: ")) {
-                commonName = trimmedLine.substring( "Common Name: ".length() ).trim();
-            } else if (trimmedLine.startsWith("Scientific Name: ")) {
-                scientificName = trimmedLine.substring( "Scientific Name: ".length() ).trim();
-            } else if (trimmedLine.startsWith("Species: ")) {
-                species = trimmedLine.substring( "Species: ".length() ).trim();
-            } else if (trimmedLine.startsWith("Family: ")) {
-                family = trimmedLine.substring( "Family: ".length() ).trim();
-            }
-        }
-        Log.d(TAG, "Extracted Bird ID: " + birdId); // Added for debugging
-
-
+    private void proceedToInfoActivity(String birdId, String commonName, String scientificName, String species, String family, String downloadUrl, @Nullable Double latitude, @Nullable Double longitude, @Nullable String localityName, @Nullable String state, @Nullable String country) {
         Intent intent = new Intent(IdentifyingActivity.this, BirdInfoActivity.class);
         intent.putExtra("imageUri", localImageUri.toString());
         intent.putExtra("birdId", birdId);
@@ -211,11 +223,13 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
         intent.putExtra("species", species);
         intent.putExtra("family", family);
         intent.putExtra("imageUrl", downloadUrl);
-        // Pass location data to the next activity if needed
-        if (currentLocation != null) {
-            intent.putExtra("latitude", currentLocation.getLatitude());
-            intent.putExtra("longitude", currentLocation.getLongitude());
-            intent.putExtra("localityName", currentLocalityName);
+        // Pass location data to the next activity
+        if (latitude != null && longitude != null) {
+            intent.putExtra("latitude", latitude);
+            intent.putExtra("longitude", longitude);
+            intent.putExtra("localityName", localityName);
+            intent.putExtra("state", state);
+            intent.putExtra("country", country);
         }
         startActivity(intent);
         finish();

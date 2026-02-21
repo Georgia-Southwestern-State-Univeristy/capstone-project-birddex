@@ -57,7 +57,9 @@ public class CropActivity extends AppCompatActivity {
 
         // Handle the identify button click: get the cropped bitmap, save it, and move to identification.
         btnIdentify.setOnClickListener(v -> {
-            Bitmap cropped = cropImageView.getCroppedImage();
+
+            // HIGH-RES crop so the card doesn't look pixelated
+            Bitmap cropped = cropImageView.getCroppedImage(1600, 1600);
             if (cropped == null) return;
 
             // Save the cropped bitmap to a temporary file to pass its URI to the next activity.

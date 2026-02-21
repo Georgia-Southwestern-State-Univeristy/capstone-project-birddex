@@ -34,12 +34,13 @@ public class BirdInfoActivity extends AppCompatActivity {
     private String currentScientificName;
     private String currentSpecies;
     private String currentFamily;
-    private String currentImageUrl; // Firebase Storage URL
-    private Double currentLatitude;
-    private Double currentLongitude;
+
+    private String currentImageUrl; // Firebase Storage URL (nullable)
+    private Double currentLatitude; // nullable
+    private Double currentLongitude; // nullable
     private String currentLocalityName;
-    private String currentState; // New field for state
-    private String currentCountry; // New field for country
+    private String currentState;
+    private String currentCountry;
 
     @Override
     protected void onCreate(@Nullable Bundle savedInstanceState) {
@@ -49,7 +50,7 @@ public class BirdInfoActivity extends AppCompatActivity {
         ImageView birdImageView = findViewById(R.id.birdImageView);
         TextView commonNameTextView = findViewById(R.id.commonNameTextView);
         TextView scientificNameTextView = findViewById(R.id.scientificNameTextView);
-        TextView speciesTextView = findViewById(R.id.speciesTextView); // Corrected ID lookup
+        TextView speciesTextView = findViewById(R.id.speciesTextView);
         TextView familyTextView = findViewById(R.id.familyTextView);
         Button btnStore = findViewById(R.id.btnStore);
         Button btnDiscard = findViewById(R.id.btnDiscard);
@@ -62,9 +63,9 @@ public class BirdInfoActivity extends AppCompatActivity {
         currentScientificName = getIntent().getStringExtra("scientificName");
         currentSpecies = getIntent().getStringExtra("species");
         currentFamily = getIntent().getStringExtra("family");
-        currentImageUrl = getIntent().getStringExtra("imageUrl");
 
-        // Get location data from intent (all are nullable)
+        // From the more advanced version (may be null depending on caller)
+        currentImageUrl = getIntent().getStringExtra("imageUrl");
         currentLatitude = getIntent().hasExtra("latitude") ? getIntent().getDoubleExtra("latitude", 0.0) : null;
         currentLongitude = getIntent().hasExtra("longitude") ? getIntent().getDoubleExtra("longitude", 0.0) : null;
         currentLocalityName = getIntent().getStringExtra("localityName");
@@ -75,14 +76,38 @@ public class BirdInfoActivity extends AppCompatActivity {
             birdImageView.setImageURI(Uri.parse(currentImageUriStr));
         }
 
-        commonNameTextView.setText("Common Name: " + currentCommonName);
-        scientificNameTextView.setText("Scientific Name: " + currentScientificName);
-        speciesTextView.setText("Species: " + currentSpecies);
-        familyTextView.setText("Family: " + currentFamily);
+        // Keep the safer null-handling text from the simpler version
+        commonNameTextView.setText("Common Name: " + (currentCommonName != null ? currentCommonName : "N/A"));
+        scientificNameTextView.setText("Scientific Name: " + (currentScientificName != null ? currentScientificName : "N/A"));
+        speciesTextView.setText("Species: " + (currentSpecies != null ? currentSpecies : "N/A"));
+        familyTextView.setText("Family: " + (currentFamily != null ? currentFamily : "N/A"));
 
-        btnStore.setOnClickListener(v -> storeBirdDiscovery());
+        // Store: do BOTH behaviors
+        // 1) Save to Firebase collection (advanced version)
+        // 2) Open CardMakerActivity (simple version)
+        btnStore.setOnClickListener(v -> {
+            // If you don't have imageUrl yet, you can still go to CardMakerActivity.
+            // Firebase save will still attempt (and may store null imageUrl depending on your models).
+            storeBirdDiscovery();
+
+            Intent i = new Intent(BirdInfoActivity.this, CardMakerActivity.class);
+            i.putExtra(CardMakerActivity.EXTRA_IMAGE_URI, currentImageUriStr);
+            i.putExtra(CardMakerActivity.EXTRA_BIRD_NAME, currentCommonName);
+            i.putExtra(CardMakerActivity.EXTRA_SCI_NAME, currentScientificName);
+            i.putExtra(CardMakerActivity.EXTRA_CONFIDENCE, "--"); // Not provided here, default
+            i.putExtra(CardMakerActivity.EXTRA_RARITY, "Unknown"); // Not provided here, default
+            i.putExtra(CardMakerActivity.EXTRA_BIRD_ID, currentBirdId);
+            i.putExtra(CardMakerActivity.EXTRA_SPECIES, currentSpecies);
+            i.putExtra(CardMakerActivity.EXTRA_FAMILY, currentFamily);
+            startActivity(i);
+        });
+
+        // Discard: keep the "clear task stack" behavior (more robust),
+        // but also works like the advanced version (go home + finish)
         btnDiscard.setOnClickListener(v -> {
-            startActivity(new Intent(BirdInfoActivity.this, HomeActivity.class));
+            Intent home = new Intent(BirdInfoActivity.this, HomeActivity.class);
+            home.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
+            startActivity(home);
             finish();
         });
     }
@@ -120,16 +145,23 @@ public class BirdInfoActivity extends AppCompatActivity {
                     Log.e(TAG, "FAILURE: Could not save Location entry.", locationTask.getException());
                 }
                 // Proceed, passing the new locationId and the 'now' timestamp
-                getAndSetSlotIndexAndCreateUserBirdAndCollectionSlot(userId, userBirdId, collectionSlotId, now, newLocationId);
+                getAndSetSlotIndexAndCreateUserBirdAndCollectionSlot(
+                        userId, userBirdId, collectionSlotId, now, newLocationId
+                );
             });
         } else {
             Log.w(TAG, "No valid location data. UserBird will be saved without a linked location.");
-            // Proceed without a locationId, but still pass 'now'
-            getAndSetSlotIndexAndCreateUserBirdAndCollectionSlot(userId, userBirdId, collectionSlotId, now, null);
+            getAndSetSlotIndexAndCreateUserBirdAndCollectionSlot(
+                    userId, userBirdId, collectionSlotId, now, null
+            );
         }
     }
 
-    private void getAndSetSlotIndexAndCreateUserBirdAndCollectionSlot(String userId, String userBirdId, String collectionSlotId, Date now, @Nullable String locationId) {
+    private void getAndSetSlotIndexAndCreateUserBirdAndCollectionSlot(String userId,
+                                                                      String userBirdId,
+                                                                      String collectionSlotId,
+                                                                      Date now,
+                                                                      @Nullable String locationId) {
         FirebaseFirestore.getInstance()
                 .collection("users").document(userId).collection("collectionSlot")
                 .orderBy("slotIndex", Query.Direction.DESCENDING)
@@ -154,22 +186,30 @@ public class BirdInfoActivity extends AppCompatActivity {
                         createUserBirdAndCollectionSlot(userId, userBirdId, collectionSlotId, now, locationId, nextSlotIndex);
                     } else {
                         Log.e(TAG, "Error getting max slotIndex: " + task.getException().getMessage());
-                        Toast.makeText(BirdInfoActivity.this, "Error assigning collection slot. Please try again.", Toast.LENGTH_LONG).show();
-                        finish();
+                        Toast.makeText(BirdInfoActivity.this,
+                                "Error assigning collection slot. Please try again.",
+                                Toast.LENGTH_LONG).show();
+                        // Do NOT finish() here because the user may still want CardMakerActivity to work
                     }
                 });
     }
 
-    private void createUserBirdAndCollectionSlot(String userId, String userBirdId, String collectionSlotId, Date now, @Nullable String locationId, int slotIndex) {
+    private void createUserBirdAndCollectionSlot(String userId,
+                                                 String userBirdId,
+                                                 String collectionSlotId,
+                                                 Date now,
+                                                 @Nullable String locationId,
+                                                 int slotIndex) {
+
         UserBird userBird = new UserBird(
                 userBirdId,
                 userId,
                 currentBirdId,
                 currentImageUrl,
                 locationId,
-                now, // timeSpotted
-                null, // birdFactsId
-                null  // hunterFactsId
+                now,   // timeSpotted
+                null,  // birdFactsId
+                null   // hunterFactsId
         );
 
         firebaseManager.addUserBird(userBird, task -> {
@@ -182,22 +222,26 @@ public class BirdInfoActivity extends AppCompatActivity {
                 collectionSlot.setTimestamp(now);
                 collectionSlot.setImageUrl(currentImageUrl);
                 collectionSlot.setRarity("R1"); // Set initial rarity to R1
-                collectionSlot.setSlotIndex(slotIndex); // Set the calculated slot index
+                collectionSlot.setSlotIndex(slotIndex);
 
                 firebaseManager.addCollectionSlot(userId, collectionSlotId, collectionSlot, slotTask -> {
                     if (slotTask.isSuccessful()) {
-                        Log.d(TAG, "SUCCESS: Saved CollectionSlot: " + collectionSlotId + " with rarity R1 and slotIndex " + slotIndex);
+                        Log.d(TAG, "SUCCESS: Saved CollectionSlot: " + collectionSlotId
+                                + " with rarity R1 and slotIndex " + slotIndex);
                         saveUserBirdSighting(userId, userBirdId, now);
                     } else {
                         Log.e(TAG, "FAILURE: Could not save CollectionSlot.", slotTask.getException());
-                        Toast.makeText(BirdInfoActivity.this, "Error saving to collection slot.", Toast.LENGTH_LONG).show();
-                        finish();
+                        Toast.makeText(BirdInfoActivity.this,
+                                "Error saving to collection slot.",
+                                Toast.LENGTH_LONG).show();
                     }
                 });
+
             } else {
                 Log.e(TAG, "FAILURE: Could not save UserBird entry.", task.getException());
-                Toast.makeText(BirdInfoActivity.this, "Failed to save bird data: " + task.getException().getMessage(), Toast.LENGTH_LONG).show();
-                finish();
+                Toast.makeText(BirdInfoActivity.this,
+                        "Failed to save bird data: " + (task.getException() != null ? task.getException().getMessage() : "Unknown error"),
+                        Toast.LENGTH_LONG).show();
             }
         });
     }
@@ -211,7 +255,15 @@ public class BirdInfoActivity extends AppCompatActivity {
         // --- Create Location object for denormalization ---
         Location sightingLocation = null;
         if (currentLatitude != null && currentLongitude != null) {
-            sightingLocation = new Location(null, new HashMap<>(), currentLatitude, currentLongitude, currentCountry, currentState, currentLocalityName);
+            sightingLocation = new Location(
+                    null,
+                    new HashMap<>(),
+                    currentLatitude,
+                    currentLongitude,
+                    currentCountry,
+                    currentState,
+                    currentLocalityName
+            );
         }
 
         // --- Create and save UserBirdSighting document ---
@@ -233,8 +285,7 @@ public class BirdInfoActivity extends AppCompatActivity {
                 Log.e(TAG, "FAILURE: Could not save UserBirdSighting document", userBirdSightingTask.getException());
             }
             Toast.makeText(BirdInfoActivity.this, "Saved to your collection!", Toast.LENGTH_SHORT).show();
-            startActivity(new Intent(BirdInfoActivity.this, HomeActivity.class));
-            finish();
+            // Don't force navigation here because CardMakerActivity may already be open.
         });
     }
 }

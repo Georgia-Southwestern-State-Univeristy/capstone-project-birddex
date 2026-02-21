@@ -4,20 +4,24 @@ import com.google.firebase.firestore.Exclude;
 import java.util.Date;
 
 public class CollectionSlot {
-    private String id; // This will store the collectionSlotId
+    private String id; // This will store the collectionSlotId / cardId
     private String userBirdId; // Reference to the UserBird entry
     private Date timestamp;
     private String imageUrl;
+    private String rarity; // New field for card rarity (e.g., R1, R2, ...)
+    private int slotIndex; // New field for explicit slot positioning
 
     public CollectionSlot() {
         // Default constructor
     }
 
-    public CollectionSlot(String id, String userBirdId, Date timestamp, String imageUrl) {
+    public CollectionSlot(String id, String userBirdId, Date timestamp, String imageUrl, String rarity, int slotIndex) {
         this.id = id;
         this.userBirdId = userBirdId;
         this.timestamp = timestamp;
         this.imageUrl = imageUrl;
+        this.rarity = rarity;
+        this.slotIndex = slotIndex;
     }
 
     @Exclude
@@ -51,5 +55,21 @@ public class CollectionSlot {
 
     public void setImageUrl(String imageUrl) {
         this.imageUrl = imageUrl;
+    }
+
+    public String getRarity() {
+        return rarity;
+    }
+
+    public void setRarity(String rarity) {
+        this.rarity = rarity;
+    }
+
+    public int getSlotIndex() {
+        return slotIndex;
+    }
+
+    public void setSlotIndex(int slotIndex) {
+        this.slotIndex = slotIndex;
     }
 }

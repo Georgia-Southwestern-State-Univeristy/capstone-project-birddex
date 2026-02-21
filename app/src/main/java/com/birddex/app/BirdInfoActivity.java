@@ -14,6 +14,8 @@ import androidx.appcompat.app.AppCompatActivity;
 
 import com.google.firebase.auth.FirebaseAuth;
 import com.google.firebase.auth.FirebaseUser;
+import com.google.firebase.firestore.FirebaseFirestore;
+import com.google.firebase.firestore.Query;
 import com.google.firebase.firestore.DocumentSnapshot;
 
 import java.util.Date;
@@ -118,16 +120,47 @@ public class BirdInfoActivity extends AppCompatActivity {
                     Log.e(TAG, "FAILURE: Could not save Location entry.", locationTask.getException());
                 }
                 // Proceed, passing the new locationId and the 'now' timestamp
-                createUserBirdAndCollectionSlot(userId, userBirdId, collectionSlotId, now, newLocationId);
+                getAndSetSlotIndexAndCreateUserBirdAndCollectionSlot(userId, userBirdId, collectionSlotId, now, newLocationId);
             });
         } else {
             Log.w(TAG, "No valid location data. UserBird will be saved without a linked location.");
             // Proceed without a locationId, but still pass 'now'
-            createUserBirdAndCollectionSlot(userId, userBirdId, collectionSlotId, now, null);
+            getAndSetSlotIndexAndCreateUserBirdAndCollectionSlot(userId, userBirdId, collectionSlotId, now, null);
         }
     }
 
-    private void createUserBirdAndCollectionSlot(String userId, String userBirdId, String collectionSlotId, Date now, @Nullable String locationId) {
+    private void getAndSetSlotIndexAndCreateUserBirdAndCollectionSlot(String userId, String userBirdId, String collectionSlotId, Date now, @Nullable String locationId) {
+        FirebaseFirestore.getInstance()
+                .collection("users").document(userId).collection("collectionSlot")
+                .orderBy("slotIndex", Query.Direction.DESCENDING)
+                .limit(1)
+                .get()
+                .addOnCompleteListener(task -> {
+                    if (task.isSuccessful()) {
+                        int nextSlotIndex = 0;
+                        if (!task.getResult().isEmpty()) {
+                            DocumentSnapshot document = task.getResult().getDocuments().get(0);
+                            if (document.contains("slotIndex")) {
+                                Long maxSlotIndex = document.getLong("slotIndex");
+                                if (maxSlotIndex != null) {
+                                    nextSlotIndex = maxSlotIndex.intValue() + 1;
+                                } else {
+                                    Log.e(TAG, "slotIndex in document is null, defaulting to 0");
+                                }
+                            } else {
+                                Log.e(TAG, "Document does not contain slotIndex field, defaulting to 0");
+                            }
+                        }
+                        createUserBirdAndCollectionSlot(userId, userBirdId, collectionSlotId, now, locationId, nextSlotIndex);
+                    } else {
+                        Log.e(TAG, "Error getting max slotIndex: " + task.getException().getMessage());
+                        Toast.makeText(BirdInfoActivity.this, "Error assigning collection slot. Please try again.", Toast.LENGTH_LONG).show();
+                        finish();
+                    }
+                });
+    }
+
+    private void createUserBirdAndCollectionSlot(String userId, String userBirdId, String collectionSlotId, Date now, @Nullable String locationId, int slotIndex) {
         UserBird userBird = new UserBird(
                 userBirdId,
                 userId,
@@ -148,10 +181,12 @@ public class BirdInfoActivity extends AppCompatActivity {
                 collectionSlot.setUserBirdId(userBirdId);
                 collectionSlot.setTimestamp(now);
                 collectionSlot.setImageUrl(currentImageUrl);
+                collectionSlot.setRarity("R1"); // Set initial rarity to R1
+                collectionSlot.setSlotIndex(slotIndex); // Set the calculated slot index
 
                 firebaseManager.addCollectionSlot(userId, collectionSlotId, collectionSlot, slotTask -> {
                     if (slotTask.isSuccessful()) {
-                        Log.d(TAG, "SUCCESS: Saved CollectionSlot: " + collectionSlotId);
+                        Log.d(TAG, "SUCCESS: Saved CollectionSlot: " + collectionSlotId + " with rarity R1 and slotIndex " + slotIndex);
                         saveUserBirdSighting(userId, userBirdId, now);
                     } else {
                         Log.e(TAG, "FAILURE: Could not save CollectionSlot.", slotTask.getException());

@@ -12,11 +12,14 @@ public class UserBird {
     private Date timeSpotted;
     private String birdFactsId; // Added for linking to bird facts
     private String hunterFactsId; // Added for linking to hunter facts
+    private boolean isDuplicate; // New field
+    private int pointsEarned; // New field
 
     public UserBird() {
         // Required for Firestore deserialization
     }
 
+    // Existing constructor updated to initialize new fields
     public UserBird(String id, String userId, String birdSpeciesId, String imageUrl, String locationId, Date timeSpotted, String birdFactsId, String hunterFactsId) {
         this.id = id;
         this.userId = userId;
@@ -26,6 +29,22 @@ public class UserBird {
         this.timeSpotted = timeSpotted;
         this.birdFactsId = birdFactsId;
         this.hunterFactsId = hunterFactsId;
+        this.isDuplicate = false; // Initialize
+        this.pointsEarned = 0;    // Initialize
+    }
+
+    // Full constructor including all fields
+    public UserBird(String id, String userId, String birdSpeciesId, String imageUrl, String locationId, Date timeSpotted, String birdFactsId, String hunterFactsId, boolean isDuplicate, int pointsEarned) {
+        this.id = id;
+        this.userId = userId;
+        this.birdSpeciesId = birdSpeciesId;
+        this.imageUrl = imageUrl;
+        this.locationId = locationId;
+        this.timeSpotted = timeSpotted;
+        this.birdFactsId = birdFactsId;
+        this.hunterFactsId = hunterFactsId;
+        this.isDuplicate = isDuplicate;
+        this.pointsEarned = pointsEarned;
     }
 
     // Getters and setters (required for Firestore)
@@ -52,4 +71,11 @@ public class UserBird {
 
     public String getHunterFactsId() { return hunterFactsId; }
     public void setHunterFactsId(String hunterFactsId) { this.hunterFactsId = hunterFactsId; }
+
+    // New Getters and Setters for duplicate and points
+    public boolean getIsDuplicate() { return isDuplicate; }
+    public void setIsDuplicate(boolean isDuplicate) { this.isDuplicate = isDuplicate; }
+
+    public int getPointsEarned() { return pointsEarned; }
+    public void setPointsEarned(int pointsEarned) { this.pointsEarned = pointsEarned; }
 }

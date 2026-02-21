@@ -39,15 +39,15 @@
             android:padding="18dp">
 
             <!-- Profile picture preview -->
-            <ImageView
+            <com.google.android.material.imageview.ShapeableImageView
                 android:id="@+id/ivPfpPreview"
                 android:layout_width="96dp"
                 android:layout_height="96dp"
                 android:src="@drawable/ic_profile"
                 android:scaleType="centerCrop"
-                android:background="@drawable/bg_circle"
-                android:padding="10dp"
-                app:tint="?attr/colorOnSurface"
+                app:shapeAppearanceOverlay="@style/ShapeAppearanceOverlay.App.CornerSize50Percent"
+                app:strokeWidth="2dp"
+                app:strokeColor="?attr/colorPrimary"
                 app:layout_constraintTop_toTopOf="parent"
                 app:layout_constraintStart_toStartOf="parent"
                 app:layout_constraintEnd_toEndOf="parent"/>

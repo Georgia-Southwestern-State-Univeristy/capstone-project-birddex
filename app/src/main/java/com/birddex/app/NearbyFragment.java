@@ -310,6 +310,9 @@ public class NearbyFragment extends Fragment {
     }
 
     private void showBirds(List<Bird> birds) {
+        if (!isAdded()) {
+            return;
+        }
         birdsContainer.removeAllViews();
 
         if (birds.isEmpty()) {

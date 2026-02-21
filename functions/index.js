@@ -4,7 +4,7 @@ const auth = require("firebase-functions/v1/auth");
 // 2. Use the standard v2 imports for your other functions
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
 const { onSchedule } = require("firebase-functions/v2/scheduler");
-const { onDocumentDeleted } = require("firebase-functions/v2/firestore");
+const { onDocumentCreated, onDocumentDeleted, onDocumentUpdated } = require("firebase-functions/v2/firestore");
 const { defineSecret } = require("firebase-functions/params");
 const admin = require("firebase-admin");
 const axios = require("axios");
@@ -50,7 +50,53 @@ function delay(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-// Helper function to generate and save GENERAL bird facts using OpenAI with retry logic
+/**
+ * Helper to make an OpenAI API call with retry logic for rate limits.
+ * @param {object} params - Parameters for the OpenAI API call.
+ * @param {string} params.prompt - The text prompt for the AI.
+ * @param {string} params.model - The OpenAI model to use.
+ * @param {object} params.response_format - The desired response format.
+ * @param {number} params.temperature - Controls creativity vs. factual accuracy.
+ * @param {number} params.max_tokens - Maximum tokens for the AI response.
+ * @param {string} params.logPrefix - Prefix for logging messages.
+ * @returns {Promise<object>} The parsed JSON response from OpenAI.
+ * @throws {Error} If the OpenAI call fails after retries or with a non-rate-limit error.
+ */
+async function callOpenAIWithRetry({ prompt, model, response_format, temperature, max_tokens, logPrefix }) {
+    let retries = 0;
+    const maxRetries = 5;
+    const initialDelayMs = 1000; // 1 second
+
+    while (retries < maxRetries) {
+        try {
+            const aiResponse = await axios.post(
+                "https://api.openai.com/v1/chat/completions",
+                {
+                    model: model,
+                    messages: [{ role: "user", content: prompt }],
+                    response_format: response_format,
+                    temperature: temperature,
+                    max_tokens: max_tokens
+                },
+                { headers: { "Authorization": `Bearer ${OPENAI_API_KEY.value()}` } }
+            );
+            return JSON.parse(aiResponse.data.choices[0].message.content);
+        } catch (error) {
+            if (error.response && error.response.status === 429) {
+                retries++;
+                const delayTime = initialDelayMs * Math.pow(2, retries - 1); // Exponential backoff
+                console.warn(`⚠️ Rate limit hit for ${logPrefix}. Retrying in ${delayTime}ms... (Attempt ${retries}/${maxRetries})`);
+                await delay(delayTime);
+            } else {
+                console.error(`❌ Error calling OpenAI for ${logPrefix}:`, error);
+                throw error; // Re-throw other errors immediately
+            }
+        }
+    }
+    throw new Error(`Failed to call OpenAI for ${logPrefix} after ${maxRetries} retries due to rate limits.`);
+}
+
+// Helper function to generate and save GENERAL bird facts using OpenAI
 async function generateAndSaveBirdFacts(birdId) {
     const birdDoc = await db.collection("birds").doc(birdId).get();
     if (!birdDoc.exists) {
@@ -59,16 +105,12 @@ async function generateAndSaveBirdFacts(birdId) {
     }
     const birdData = birdDoc.data();
     const commonName = birdData.commonName;
-    const scientificName = birdData.scientificName;
+    const scientificName = birdData.scientificName; // Corrected from birdData.data().scientificName
 
     console.log(`Generating general facts for ${commonName} (${birdId})...`);
-    let retries = 0;
-    const maxRetries = 5;
-    const initialDelayMs = 1000; // 1 second
 
-    while (retries < maxRetries) {
-        try {
-            const prompt = `Generate comprehensive, engaging, and paraphrased general bird facts for the ${commonName} (${scientificName}) bird, drawing information from general knowledge sources like "All About Birds" (do NOT copy directly). Format the response as a JSON object with the following keys. If a category is not applicable or information is scarce, use "N/A" or "Not readily available."
+    try {
+        const prompt = `Generate comprehensive, engaging, and paraphrased general bird facts for the ${commonName} (${scientificName}) bird, drawing information from general knowledge sources like "All About Birds" (do NOT copy directly). Format the response as a JSON object with the following keys. If a category is not applicable or information is scarce, use "N/A" or "Not readily available."
 
 The JSON object should have these keys and corresponding facts:
 {
@@ -93,47 +135,33 @@ The JSON object should have these keys and corresponding facts:
 }
 `;
 
-            const aiResponse = await axios.post(
-                "https://api.openai.com/v1/chat/completions",
-                {
-                    model: "gpt-4o", // or gpt-4-turbo, gpt-3.5-turbo, etc.
-                    messages: [{ role: "user", content: prompt }],
-                    response_format: { type: "json_object" },
-                    temperature: 0.7, // Adjust for creativity vs. factual accuracy
-                    max_tokens: 1500 // Max tokens for the response
-                },
-                { headers: { "Authorization": `Bearer ${OPENAI_API_KEY.value()}` } }
-            );
+        const factsJson = await callOpenAIWithRetry({
+            prompt: prompt,
+            model: "gpt-4o",
+            response_format: { type: "json_object" },
+            temperature: 0.7,
+            max_tokens: 1500,
+            logPrefix: `GENERAL facts for ${commonName} (${birdId})`
+        });
 
-            const factsJson = JSON.parse(aiResponse.data.choices[0].message.content);
-            console.log(`Raw GENERAL factsJson from OpenAI for ${commonName} (${birdId}):`, JSON.stringify(factsJson)); // Debug log
+        console.log(`Raw GENERAL factsJson from OpenAI for ${commonName} (${birdId}):`, JSON.stringify(factsJson)); // Debug log
 
-            const birdFactsRef = db.collection("birdFacts").doc(birdId);
-            await birdFactsRef.set({
-                birdId: birdId,
-                lastGenerated: admin.firestore.FieldValue.serverTimestamp(),
-                ...factsJson
-            }, { merge: true }); // Merge to update existing facts or add new ones
+        const birdFactsRef = db.collection("birdFacts").doc(birdId);
+        await birdFactsRef.set({
+            birdId: birdId,
+            lastGenerated: admin.firestore.FieldValue.serverTimestamp(),
+            ...factsJson
+        }, { merge: true }); // Merge to update existing facts or add new ones
 
-            console.log(`✅ Successfully generated and saved general facts for ${commonName} (${birdId})`);
-            return factsJson; // Return the generated facts
-        } catch (error) {
-            if (error.response && error.response.status === 429) {
-                retries++;
-                const delayTime = initialDelayMs * Math.pow(2, retries - 1); // Exponential backoff
-                console.warn(`⚠️ Rate limit hit for GENERAL facts of ${commonName} (${birdId}). Retrying in ${delayTime}ms... (Attempt ${retries}/${maxRetries})`);
-                await delay(delayTime);
-            } else {
-                console.error(`❌ Error generating or saving GENERAL facts for ${commonName} (${birdId}):`, error);
-                return { birdId: birdId, lastGenerated: admin.firestore.FieldValue.serverTimestamp(), error: error.message };
-            }
-        }
+        console.log(`✅ Successfully generated and saved general facts for ${commonName} (${birdId})`);
+        return factsJson; // Return the generated facts
+    } catch (error) {
+        console.error(`❌ Error generating or saving GENERAL facts for ${commonName} (${birdId}):`, error);
+        return { birdId: birdId, lastGenerated: admin.firestore.FieldValue.serverTimestamp(), error: error.message };
     }
-    console.error(`❌ Failed to generate GENERAL facts for ${commonName} (${birdId}) after ${maxRetries} retries due to rate limits.`);
-    return { birdId: birdId, lastGenerated: admin.firestore.FieldValue.serverTimestamp(), error: `Failed after ${maxRetries} retries due to rate limits.` };
 }
 
-// Helper function to generate and save HUNTER bird facts using OpenAI with retry logic
+// Helper function to generate and save HUNTER bird facts using OpenAI
 async function generateAndSaveHunterFacts(birdId) {
     const birdDoc = await db.collection("birds").doc(birdId).get();
     if (!birdDoc.exists) {
@@ -145,13 +173,9 @@ async function generateAndSaveHunterFacts(birdId) {
     const scientificName = birdData.scientificName;
 
     console.log(`Generating hunter facts for ${commonName} (${birdId})...`);
-    let retries = 0;
-    const maxRetries = 5;
-    const initialDelayMs = 1000; // 1 second
 
-    while (retries < maxRetries) {
-        try {
-            const prompt = `Generate specific "Hunter Facts" for the ${commonName} (${scientificName}) bird, based on general knowledge of Georgia hunting regulations, referencing official sources like Georgia Department of Natural Resources (DNR) and U.S. Fish and Wildlife Service (USFWS) where applicable. Format the response as a JSON object with the following keys. If a category is not applicable or information is scarce, use "N/A" or "Not readily available." If no specific hunter facts are found, default the legalStatusGeorgia to "N/A - Information not readily available." and the notHuntableStatement to "N/A".
+    try {
+        const prompt = `Generate specific "Hunter Facts" for the ${commonName} (${scientificName}) bird, based on general knowledge of Georgia hunting regulations, referencing official sources like Georgia Department of Natural Resources (DNR) and U.S. Fish and Wildlife Service (USFWS) where applicable. Format the response as a JSON object with the following keys. If a category is not applicable or information is scarce, use "N/A" or "Not readily available." If no specific hunter facts are found, default the legalStatusGeorgia to "N/A - Information not readily available." and the notHuntableStatement to "N/A".
 
 The JSON object should have these keys and corresponding facts:
 {
@@ -165,71 +189,90 @@ The JSON object should have these keys and corresponding facts:
 }
 `;
 
-            const aiResponse = await axios.post(
-                "https://api.openai.com/v1/chat/completions",
-                {
-                    model: "gpt-4o",
-                    messages: [{ role: "user", content: prompt }],
-                    response_format: { type: "json_object" },
-                    temperature: 0.7,
-                    max_tokens: 1000 // Max tokens for hunter facts
-                },
-                { headers: { "Authorization": `Bearer ${OPENAI_API_KEY.value()}` } }
-            );
+        const hunterFactsJson = await callOpenAIWithRetry({
+            prompt: prompt,
+            model: "gpt-4o",
+            response_format: { type: "json_object" },
+            temperature: 0.7,
+            max_tokens: 1000,
+            logPrefix: `HUNTER facts for ${commonName} (${birdId})`
+        });
 
-            const hunterFactsJson = JSON.parse(aiResponse.data.choices[0].message.content);
-            console.log(`Raw HUNTER factsJson from OpenAI for ${commonName} (${birdId}):`, JSON.stringify(hunterFactsJson)); // Debug log
+        console.log(`Raw HUNTER factsJson from OpenAI for ${commonName} (${birdId}):`, JSON.stringify(hunterFactsJson)); // Debug log
 
-            const hunterFactsRef = db.collection("birdFacts").doc(birdId).collection("hunterFacts").doc(birdId); // Subcollection
-            await hunterFactsRef.set({
-                birdId: birdId,
-                lastGenerated: admin.firestore.FieldValue.serverTimestamp(),
-                georgiaDNRHuntingLink: GEORGIA_DNR_HUNTING_LINK, // Add the hardcoded link here
-                ...hunterFactsJson
-            }, { merge: true });
+        const hunterFactsRef = db.collection("birdFacts").doc(birdId).collection("hunterFacts").doc(birdId); // Subcollection
+        await hunterFactsRef.set({
+            birdId: birdId,
+            lastGenerated: admin.firestore.FieldValue.serverTimestamp(),
+            georgiaDNRHuntingLink: GEORGIA_DNR_HUNTING_LINK, // Add the hardcoded link here
+            ...hunterFactsJson
+        }, { merge: true });
 
-            console.log(`✅ Successfully generated and saved hunter facts for ${commonName} (${birdId})`);
-            return { ...hunterFactsJson, georgiaDNRHuntingLink: GEORGIA_DNR_HUNTING_LINK };
-        } catch (error) {
-            if (error.response && error.response.status === 429) {
-                retries++;
-                const delayTime = initialDelayMs * Math.pow(2, retries - 1); // Exponential backoff
-                console.warn(`⚠️ Rate limit hit for HUNTER facts of ${commonName} (${birdId}). Retrying in ${delayTime}ms... (Attempt ${retries}/${maxRetries})`);
-                await delay(delayTime);
-            } else {
-                console.error(`❌ Error generating or saving HUNTER facts for ${commonName} (${birdId}):`, error);
-                return { birdId: birdId, lastGenerated: admin.firestore.FieldValue.serverTimestamp(), error: error.message };
-            }
-        }
+        console.log(`✅ Successfully generated and saved hunter facts for ${commonName} (${birdId})`);
+        return { ...hunterFactsJson, georgiaDNRHuntingLink: GEORGIA_DNR_HUNTING_LINK };
+    } catch (error) {
+        console.error(`❌ Error generating or saving HUNTER facts for ${commonName} (${birdId}):`, error);
+        return { birdId: birdId, lastGenerated: admin.firestore.FieldValue.serverTimestamp(), error: error.message };
     }
-    console.error(`❌ Failed to generate HUNTER facts for ${commonName} (${birdId}) after ${maxRetries} retries due to rate limits.`);
-    return { birdId: birdId, lastGenerated: admin.firestore.FieldValue.serverTimestamp(), error: `Failed after ${maxRetries} retries due to rate limits.` };
+}
+
+/**
+ * Helper to get or generate general and hunter facts for a bird.
+ * @param {string} birdId - The ID of the bird.
+ * @param {string} commonName - The common name of the bird.
+ * @returns {Promise<{currentBirdFacts: object, currentHunterFacts: object}>} The general and hunter facts.
+ */
+async function getOrCreateAndSaveBirdFacts(birdId, commonName) {
+    const birdFactsRef = db.collection("birdFacts").doc(birdId);
+    const birdFactsDoc = await birdFactsRef.get();
+    const hunterFactsRef = db.collection("birdFacts").doc(birdId).collection("hunterFacts").doc(birdId);
+    const hunterFactsDoc = await hunterFactsRef.get();
+
+    let currentBirdFacts = {};
+    if (birdFactsDoc.exists) { // Corrected from generalFactsDoc.exists
+        console.log(`General facts for ${commonName} (${birdId}) are present in Firestore. Fetching existing.`);
+        currentBirdFacts = birdFactsDoc.data(); // Corrected from generalFactsDoc.data()
+    } else {
+        console.log(`General facts do not exist for ${commonName} (${birdId}). Generating...`);
+        currentBirdFacts = await generateAndSaveBirdFacts(birdId);
+    }
+
+    let currentHunterFacts = {};
+    const hunterFactsExistAndComplete = hunterFactsDoc.exists && hunterFactsDoc.data().legalStatusGeorgia && !hunterFactsDoc.data().legalStatusGeorgia.includes("N/A");
+    if (hunterFactsExistAndComplete) {
+        console.log(`Hunter facts for ${commonName} (${birdId}) are present and complete in Firestore. Fetching existing.`);
+        currentHunterFacts = hunterFactsDoc.data();
+    } else {
+        console.log(`Hunter facts do not exist or are incomplete for ${commonName} (${birdId}). Generating...`);
+        currentHunterFacts = await generateAndSaveHunterFacts(birdId);
+    }
+    return { currentBirdFacts, currentHunterFacts };
 }
 
 // ======================================================
-// New: checkDisplayName Cloud Function
+// New: checkUsername Cloud Function
 // ======================================================
-exports.checkDisplayName = onCall(async (request) => {
-    const { displayName } = request.data;
+exports.checkUsername = onCall(async (request) => {
+    const { username } = request.data;
 
-    if (!displayName || typeof displayName !== 'string' || displayName.trim().length === 0) {
-        throw new HttpsError('invalid-argument', 'The displayName field is required and must be a non-empty string.');
+    if (!username || typeof username !== 'string' || username.trim().length === 0) {
+        throw new HttpsError('invalid-argument', 'The username field is required and must be a non-empty string.');
     }
 
     try {
         const usersSnapshot = await db.collection('users')
-                                       .where('displayName', '==', displayName)
+                                       .where('username', '==', username)
                                        .limit(1)
                                        .get();
 
         const isAvailable = usersSnapshot.empty;
 
-        console.log(`DisplayName check for "${displayName}": isAvailable = ${isAvailable}`);
+        console.log(`Username check for "${username}": isAvailable = ${isAvailable}`);
         return { isAvailable: isAvailable };
 
     } catch (error) {
-        console.error("Error checking displayName in Cloud Function:", error);
-        throw new HttpsError('internal', 'Unable to check display name availability.');
+        console.error("Error checking username in Cloud Function:", error);
+        throw new HttpsError('internal', 'Unable to check username availability.');
     }
 });
 
@@ -453,34 +496,9 @@ exports.getGeorgiaBirds = onCall({ secrets: [EBIRD_API_KEY, OPENAI_API_KEY] }, a
 
             // --- PHASE 3: Process Location IDs and Generate/Fetch Facts ---
             const factAndLocationPromises = newBirdsFromEbird.map(async (bird) => {
-                let currentBirdFacts = {};
-                let currentHunterFacts = {};
                 let updatedLocationId = bird.lastSeenLocationIdGeorgia; // Start with current or null
 
-                const birdFactsRef = db.collection("birdFacts").doc(bird.id);
-                const birdFactsDoc = await birdFactsRef.get();
-                const hunterFactsRef = db.collection("birdFacts").doc(bird.id).collection("hunterFacts").doc(bird.id); // Reference to the subcollection document
-                const hunterFactsDoc = await hunterFactsRef.get();
-
-                // Check/Generate GENERAL facts
-                if (!birdFactsDoc.exists) {
-                    console.log(`General facts do not exist for ${bird.commonName} (${bird.id}). Generating...`);
-                    currentBirdFacts = await generateAndSaveBirdFacts(bird.id);
-                } else {
-                    console.log(`General facts already exist for ${bird.commonName} (${bird.id}). Fetching existing general facts.`); // Specific log
-                    currentBirdFacts = birdFactsDoc.data();
-                }
-
-                // Check/Generate HUNTER facts
-                // A more robust check for completeness: ensure doc exists and has a meaningful legalStatusGeorgia
-                const hunterFactsExistAndComplete = hunterFactsDoc.exists && hunterFactsDoc.data().legalStatusGeorgia && !hunterFactsDoc.data().legalStatusGeorgia.includes("N/A");
-                if (!hunterFactsExistAndComplete) {
-                    console.log(`Hunter facts do not exist or are incomplete for ${bird.commonName} (${bird.id}). Generating...`); // Specific log
-                    currentHunterFacts = await generateAndSaveHunterFacts(bird.id);
-                } else {
-                    console.log(`Hunter facts already exist and are complete for ${bird.commonName} (${bird.id}). Fetching existing hunter facts.`); // Specific log
-                    currentHunterFacts = hunterFactsDoc.data();
-                }
+                const { currentBirdFacts, currentHunterFacts } = await getOrCreateAndSaveBirdFacts(bird.id, bird.commonName);
 
                 // Resolve and update lastSeenLocationIdGeorgia
                 if (bird.lastSeenLatitudeGeorgia !== null && bird.lastSeenLongitudeGeorgia !== null) {
@@ -517,27 +535,8 @@ exports.getGeorgiaBirds = onCall({ secrets: [EBIRD_API_KEY, OPENAI_API_KEY] }, a
                 db.collection("birds").doc(birdId).get().then(async birdDoc => {
                     if (birdDoc.exists) {
                         let birdData = birdDoc.data();
-                        const generalFactsDoc = await db.collection("birdFacts").doc(birdId).get();
-                        const hunterFactsDoc = await db.collection("birdFacts").doc(birdId).collection("hunterFacts").doc(birdId).get(); // Reference to subcollection
 
-                        let currentBirdFacts = {};
-                        if (generalFactsDoc.exists) {
-                            console.log(`General facts for ${birdId} are present in Firestore. Fetching existing.`);
-                            currentBirdFacts = generalFactsDoc.data();
-                        } else {
-                            console.warn(`General facts for ${birdId} are missing from Firestore. Generating now.`);
-                            currentBirdFacts = await generateAndSaveBirdFacts(birdId);
-                        }
-
-                        let currentHunterFacts = {};
-                        const hunterFactsExistAndComplete = hunterFactsDoc.exists && hunterFactsDoc.data().legalStatusGeorgia && !hunterFactsDoc.data().legalStatusGeorgia.includes("N/A");
-                        if (!hunterFactsExistAndComplete) {
-                            console.warn(`Hunter facts for ${birdId} are missing or incomplete from Firestore. Generating now.`);
-                            currentHunterFacts = await generateAndSaveHunterFacts(birdId);
-                        } else {
-                            console.log(`Hunter facts for ${birdId} are present and complete in Firestore. Fetching existing.`);
-                            currentHunterFacts = hunterFactsDoc.data();
-                        }
+                        const { currentBirdFacts, currentHunterFacts } = await getOrCreateAndSaveBirdFacts(birdId, birdData.commonName);
 
                         return {
                             ...birdData,
@@ -594,17 +593,41 @@ exports.cleanupUserData = auth.user().onDelete(async (user) => {
         slotSnap.forEach(doc => batch.delete(doc.ref));
 
         // 3. Delete from related global collections
-        const collections = ["userBirds", "media", "birdCards"];
+        const collections = ["userBirds", "media", "birdCards", "userBirdSightings"]; // Added userBirdSightings
         for (const col of collections) {
             const snap = await db.collection(col).where("userId", "==", uid).get();
             snap.forEach(doc => batch.delete(doc.ref));
         }
 
+        // Additional cleanup for specific relationships (if not handled by generic collections array)
+        // Delete Identification documents related to the user
+        const identificationsSnap = await db.collection("identifications").where("userId", "==", uid).get();
+        identificationsSnap.forEach(doc => batch.delete(doc.ref));
+
+        // Delete Threads and their Posts (assuming userId in Thread and Post)
+        const threadsSnap = await db.collection("threads").where("userId", "==", uid).get();
+        const threadIdsToDelete = [];
+        threadsSnap.forEach(doc => {
+            threadIdsToDelete.push(doc.id);
+            batch.delete(doc.ref);
+        });
+
+        for (const threadId of threadIdsToDelete) {
+            const postsSnap = await db.collection("threads").doc(threadId).collection("posts").get();
+            postsSnap.forEach(doc => batch.delete(doc.ref));
+        }
+
+        // Delete Reports (if they have a userId field and are owned by the user) -
+        const reportsSnap = await db.collection("reports").where("userId", "==", uid).get();
+        reportsSnap.forEach(doc => batch.delete(doc.ref));
+
+        // Locations are shared, so we don't delete them here unless completely unreferenced (more complex logic).
+
         await batch.commit();
         console.log(`✅ Successfully deleted all data for user account ${uid}`);
         return null;
     } catch (err) {
-        console.error("❌ Cleanup failed for user account:", err);
+        console.error(`❌ Cleanup failed for user account ${uid}:`, err);
         return null;
     }
 });
@@ -612,50 +635,123 @@ exports.cleanupUserData = auth.user().onDelete(async (user) => {
 
 // ======================================================
 // 5. AUTOMATIC SIGHTING CLEANUP (SINGLE ITEM) - v2 Syntax
+//    Triggered when imageUrl is deleted from a collectionSlot document
 // ======================================================
 /**
- * Triggers when a user's collectionSlot is deleted and cleans up
- * all related data (userBirds, birdSightings).
+ * Triggers when the 'imageUrl' field is deleted (removed) from a user's collectionSlot document.
+ * It then cleans up all related data (userBirds).
  */
-exports.oncollectionslotdeleted = onDocumentDeleted("users/{userId}/collectionSlot/{slotId}", async (event) => {
-    const deletedData = event.data.data();
-    const userBirdId = deletedData.userBirdId;
+exports.onCollectionSlotUpdatedForImageDeletion = onDocumentUpdated("users/{userId}/collectionSlot/{slotId}", async (event) => {
+    const beforeData = event.data.before.data();
+    const afterData = event.data.after.data();
 
-    if (!userBirdId) {
-        console.log("No userBirdId in deleted collectionSlot. Nothing to clean up.");
+    const userBirdId = beforeData.userBirdId; // Get userBirdId from the state BEFORE deletion
+    const imageUrlBefore = beforeData.imageUrl;
+    const imageUrlAfter = afterData.imageUrl;
+
+    // Check if imageUrl existed before and is now deleted (or null/undefined/empty string)
+    if (userBirdId && imageUrlBefore && !imageUrlAfter) {
+        console.log(`🧹 Starting cleanup for userBirdId: ${userBirdId} due to imageUrl deletion.`);
+        const batch = db.batch();
+
+        try {
+            // 1. Delete the UserBird document
+            const userBirdRef = db.collection("userBirds").doc(userBirdId);
+            batch.delete(userBirdRef);
+
+            // Removed: Deletion of userBirdSightings as per user's request.
+            // userBirdSightings will remain to consolidate location data.
+
+            // Commit all deletions
+            await batch.commit();
+            console.log(`✅ Successfully cleaned up data for userBirdId: ${userBirdId} after imageUrl deletion.`);
+            return null;
+
+        } catch (err) {
+            console.error(`❌ Failed to cleanup data for userBirdId: ${userBirdId} after imageUrl deletion.`, err);
+            return null;
+        }
+    } else {
+        console.log(`No imageUrl deletion detected for collectionSlot ${event.params.slotId} or no userBirdId present.`);
         return null;
     }
+});
 
-    console.log(`🧹 Starting cleanup for userBirdId: ${userBirdId}`);
-    const batch = db.batch();
+/**
+ * Helper function to update user totals in a Firestore transaction.
+ * @param {string} userId - The ID of the user.
+ * @param {number} totalBirdsChange - Change in totalBirds (e.g., 1 for creation, -1 for deletion).
+ * @param {number} duplicateBirdsChange - Change in duplicateBirds (e.g., 1 for duplicate creation, -1 for duplicate deletion).
+ * @param {number} totalPointsChange - Change in totalPoints.
+ */
+async function _updateUserTotals(userId, totalBirdsChange, duplicateBirdsChange, totalPointsChange) {
+    const userRef = db.collection("users").doc(userId);
 
     try {
-        // 1. Delete the UserBird document
-        const userBirdRef = db.collection("userBirds").doc(userBirdId);
-        batch.delete(userBirdRef);
+        await db.runTransaction(async (transaction) => {
+            const userDoc = await transaction.get(userRef);
+            if (!userDoc.exists) {
+                console.error(`❌ _updateUserTotals: User document ${userId} not found.`);
+                return;
+            }
 
-        // 2. Query for and delete the associated BirdSighting document
-        const sightingsQuery = db.collection("birdSightings").where("user_sighting.userBirdId", "==", userBirdId);
-        const sightingsSnapshot = await sightingsQuery.get();
+            const userData = userDoc.data();
+            const currentTotalBirds = userData.totalBirds || 0;
+            const currentDuplicateBirds = userData.duplicateBirds || 0;
+            const currentTotalPoints = userData.totalPoints || 0;
 
-        if (sightingsSnapshot.empty) {
-            console.log(`No birdSightings found for userBirdId: ${userBirdId}.`);
-        } else {
-            sightingsSnapshot.forEach(doc => {
-                console.log(`Deleting birdSighting: ${doc.id}`);
-                batch.delete(doc.ref);
+            transaction.update(userRef, {
+                totalBirds: Math.max(0, currentTotalBirds + totalBirdsChange),
+                duplicateBirds: Math.max(0, currentDuplicateBirds + duplicateBirdsChange),
+                totalPoints: Math.max(0, currentTotalPoints + totalPointsChange),
             });
-        }
+        });
+        console.log(`✅ Successfully updated totals for user ${userId}.`);
+    } catch (error) {
+        console.error(`❌ Failed to update totals for user ${userId}:`, error);
+    }
+}
 
-        // Commit all deletions
-        await batch.commit();
-        console.log(`✅ Successfully cleaned up data for userBirdId: ${userBirdId}`);
-        return null;
+// ======================================================
+// NEW: ON CREATE UserBird -> Update User Totals
+// ======================================================
+exports.onUserBirdCreated = onDocumentCreated("userBirds/{uploadId}", async (event) => {
+    const userBirdData = event.data.data();
+    const userId = userBirdData.userId;
 
-    } catch (err) {
-        console.error(`❌ Failed to cleanup data for userBirdId: ${userBirdId}`, err);
+    if (!userId) {
+        console.error("❌ onUserBirdCreated: No userId found in created userBird document.");
         return null;
     }
+
+    const pointsEarned = userBirdData.pointsEarned || 0;
+    const isDuplicate = userBirdData.isDuplicate || false;
+
+    console.log(`⬆️ onUserBirdCreated: Processing new userBird for user ${userId}. Points: ${pointsEarned}, Duplicate: ${isDuplicate}`);
+
+    await _updateUserTotals(userId, 1, isDuplicate ? 1 : 0, pointsEarned);
+    return null;
+});
+
+// ======================================================
+// NEW: ON DELETE UserBird -> Reverse User Totals
+// ======================================================
+exports.onUserBirdDeleted = onDocumentDeleted("userBirds/{uploadId}", async (event) => {
+    const userBirdData = event.data.data(); // This is the data *before* deletion
+    const userId = userBirdData.userId;
+
+    if (!userId) {
+        console.error("❌ onUserBirdDeleted: No userId found in deleted userBird document.");
+        return null;
+    }
+
+    const pointsEarned = userBirdData.pointsEarned || 0;
+    const isDuplicate = userBirdData.isDuplicate || false;
+
+    console.log(`⬇️ onUserBirdDeleted: Processing deleted userBird for user ${userId}. Points: ${pointsEarned}, Duplicate: ${isDuplicate}`);
+
+    await _updateUserTotals(userId, -1, isDuplicate ? -1 : 0, -pointsEarned);
+    return null;
 });
 
 

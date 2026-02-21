@@ -10,6 +10,7 @@ material = "1.13.0"
 activity = "1.12.3"
 constraintlayout = "2.2.1"
 guava = "33.2.1-android"
+ksp = "1.9.23-1.0.20"
 
 [libraries]
 firebase-bom = { group = "com.google.firebase", name = "firebase-bom", version.ref = "firebase-bom" }
@@ -26,4 +27,4 @@ guava = { group = "com.google.guava", name = "guava", version.ref = "guava" }
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
 google-gms-google-services = { id = "com.google.gms.google-services", version.ref = "google-services" }
-
+ksp = { id = "com.google.devtools.ksp", version.ref = "ksp" }

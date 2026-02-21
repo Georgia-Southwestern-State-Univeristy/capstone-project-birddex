@@ -2,6 +2,7 @@ package com.birddex.app;
 
 import android.content.Context;
 import android.util.Log;
+import android.widget.Toast; // Added import
 
 import com.google.android.gms.tasks.OnCompleteListener;
 import com.google.android.gms.tasks.Task;
@@ -25,7 +26,7 @@ public class FirebaseManager {
     private final FirebaseAuth mAuth;
     private final FirebaseFirestore db;
     private final FirebaseFunctions mFunctions;
-    private Context context; // Add context field
+    private Context context; 
 
     public interface AuthListener {
         void onSuccess(FirebaseUser user);
@@ -33,18 +34,19 @@ public class FirebaseManager {
         void onUsernameTaken();
     }
 
-    public interface PasswordResetListener {
-        void onSuccess();
-        void onFailure(String errorMessage);
-    }
+    // Removed PasswordResetListener interface as it's replaced by OnCompleteListener<Void>
+    // public interface PasswordResetListener {
+    //     void onSuccess();
+    //     void onFailure(String errorMessage);
+    // }
 
     public interface UsernameCheckListener {
         void onCheckComplete(boolean isAvailable);
         void onFailure(String errorMessage);
     }
 
-    public FirebaseManager(Context context) { // Modify constructor to accept Context
-        this.context = context.getApplicationContext(); // Use application context to avoid memory leaks
+    public FirebaseManager(Context context) { 
+        this.context = context.getApplicationContext(); 
         mAuth = FirebaseAuth.getInstance();
         db = FirebaseFirestore.getInstance();
         mFunctions = FirebaseFunctions.getInstance();
@@ -225,19 +227,53 @@ public class FirebaseManager {
                 });
     }
 
-    public void sendPasswordResetEmail(String email, PasswordResetListener listener) {
+    /**
+     * Sends a password reset email to the specified email address.
+     * @param email The email address to send the reset link to.
+     * @param listener A listener to handle the completion of the reset email task.
+     */
+    public void sendPasswordResetEmail(String email, OnCompleteListener<Void> listener) {
         mAuth.sendPasswordResetEmail(email)
+            .addOnCompleteListener(task -> {
+                if (task.isSuccessful()) {
+                    Toast.makeText(context, "Password reset email sent to " + email, Toast.LENGTH_LONG).show();
+                } else {
+                    Toast.makeText(context, "Failed to send password reset email: " + task.getException().getMessage(), Toast.LENGTH_LONG).show();
+                }
+                if (listener != null) {
+                    listener.onComplete(task);
+                }
+            });
+    }
+
+    /**
+     * Updates the email address for the currently logged-in user.
+     * Note: For security reasons, the user must have recently re-authenticated before calling this.
+     * @param newEmail The new email address.
+     * @param listener A listener to handle the completion of the email update task.
+     */
+    public void updateUserEmail(String newEmail, OnCompleteListener<Void> listener) {
+        FirebaseUser user = mAuth.getCurrentUser();
+        if (user != null) {
+            user.updateEmail(newEmail)
                 .addOnCompleteListener(task -> {
                     if (task.isSuccessful()) {
-                        listener.onSuccess();
+                        Toast.makeText(context, "User email updated to " + newEmail, Toast.LENGTH_LONG).show();
                     } else {
-                        String message = "Failed to send reset email.";
-                        if (task.getException() != null) {
-                            message += " " + task.getException().getMessage();
-                        }
-                        listener.onFailure(message);
+                        // Firebase often requires recent re-authentication for email changes.
+                        // The error message will typically indicate this.
+                        Toast.makeText(context, "Failed to update email: " + task.getException().getMessage(), Toast.LENGTH_LONG).show();
+                    }
+                    if (listener != null) {
+                        listener.onComplete(task);
                     }
                 });
+        } else {
+            Toast.makeText(context, "No user is currently logged in.", Toast.LENGTH_SHORT).show();
+            if (listener != null) {
+                listener.onComplete(Tasks.forException(new IllegalStateException("No user is currently logged in.")));
+            }
+        }
     }
 
     // Bird Collection
@@ -277,7 +313,7 @@ public class FirebaseManager {
                 .addOnCompleteListener(task -> {
                     if (task.isSuccessful()) {
                         boolean isDuplicate = !task.getResult().isEmpty();
-                        int pointsEarned = isDuplicate ? 0 : 1; // Corrected to 1 point for new birds
+                        int pointsEarned = isDuplicate ? 0 : 1; 
 
                         userBird.setIsDuplicate(isDuplicate);
                         userBird.setPointsEarned(pointsEarned);
@@ -293,13 +329,13 @@ public class FirebaseManager {
                                         Log.e(TAG, "Failed to save UserBird: " + userBird.getId(), saveTask.getException());
                                     }
                                     // Pass on the original listener's result
-                                    if (listener != null) { // Check if listener is not null before using
+                                    if (listener != null) { 
                                         listener.onComplete(saveTask);
                                     }
                                 });
                     } else {
                         Log.e(TAG, "Failed to check for duplicate userBirds: ", task.getException());
-                        if (listener != null) { // Check if listener is not null before using
+                        if (listener != null) { 
                             listener.onComplete(Tasks.forException(task.getException()));
                         }
                     }

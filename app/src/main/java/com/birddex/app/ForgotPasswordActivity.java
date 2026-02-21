@@ -10,6 +10,9 @@ import android.widget.Toast;
 
 import androidx.appcompat.app.AppCompatActivity;
 
+import com.google.android.gms.tasks.OnCompleteListener;
+import com.google.android.gms.tasks.Task;
+
 /**
  * ForgotPasswordActivity allows users to request a password reset email.
  * It uses Firebase Authentication to handle the reset process.
@@ -45,19 +48,19 @@ public class ForgotPasswordActivity extends AppCompatActivity {
                 Log.d(TAG, "Validation successful. Sending reset email to: " + email);
 
                 // Trigger the Firebase password reset email.
-                firebaseManager.sendPasswordResetEmail(email, new FirebaseManager.PasswordResetListener() {
+                firebaseManager.sendPasswordResetEmail(email, new OnCompleteListener<Void>() {
                     @Override
-                    public void onSuccess() {
-                        Log.d(TAG, "onSuccess: Password reset email sent successfully.");
-                        // Notify the user that the email was sent successfully.
-                        Toast.makeText(ForgotPasswordActivity.this, "Password reset email sent. Please check your inbox (and spam folder).", Toast.LENGTH_LONG).show();
-                    }
-
-                    @Override
-                    public void onFailure(String errorMessage) {
-                        Log.e(TAG, "onFailure: " + errorMessage);
-                        // Display error message if the operation fails.
-                        Toast.makeText(ForgotPasswordActivity.this, errorMessage, Toast.LENGTH_LONG).show();
+                    public void onComplete(@androidx.annotation.NonNull Task<Void> task) {
+                        if (task.isSuccessful()) {
+                            Log.d(TAG, "onSuccess: Password reset email sent successfully.");
+                            // Notify the user that the email was sent successfully.
+                            Toast.makeText(ForgotPasswordActivity.this, "Password reset email sent. Please check your inbox (and spam folder).", Toast.LENGTH_LONG).show();
+                        } else {
+                            String errorMessage = task.getException() != null ? task.getException().getMessage() : "Unknown error";
+                            Log.e(TAG, "onFailure: " + errorMessage);
+                            // Display error message if the operation fails.
+                            Toast.makeText(ForgotPasswordActivity.this, errorMessage, Toast.LENGTH_LONG).show();
+                        }
                     }
                 });
             } else {

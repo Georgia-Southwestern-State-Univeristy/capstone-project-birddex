@@ -65,7 +65,7 @@ public class LoginActivity extends AppCompatActivity {
                     }
 
                     @Override
-                    public void onDisplayNameTaken() {
+                    public void onUsernameTaken() {
                         // This callback is not used during sign-in.
                     }
                 });

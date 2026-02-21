@@ -57,7 +57,7 @@ public class SearchCollectionFragment extends Fragment {
 
     /**
      * Fetches up to 15 bird discoveries from the user's "collection" in Firestore.
-     * Orders them by timestamp so the newest ones appear first.
+     * Orders them by slotIndex so the user-defined order appears first.
      */
     private void fetchUserCollection() {
         FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
@@ -67,7 +67,7 @@ public class SearchCollectionFragment extends Fragment {
                 .collection("users")
                 .document(user.getUid())
                 .collection("collectionSlot")
-                .orderBy("timestamp", Query.Direction.DESCENDING)
+                .orderBy("slotIndex", Query.Direction.ASCENDING) // Order by slotIndex ascending
                 .limit(15) // Limit to 15 slots as requested.
                 .get()
                 .addOnSuccessListener(queryDocumentSnapshots -> {

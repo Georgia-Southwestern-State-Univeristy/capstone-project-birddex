@@ -13,14 +13,14 @@ import com.google.firebase.auth.FirebaseUser;
 
 /**
  * SignUpActivity handles the user registration process.
- * Users can create a new account by providing a full name, email, and password.
+ * Users can create a new account by providing a username, email, and password.
  */
 public class SignUpActivity extends AppCompatActivity {
 
     private FirebaseManager firebaseManager;
     private sign_IN_upValidator signINupValidator;
 
-    private EditText fullNameEditText;
+    private EditText usernameEditText;
     private EditText emailEditText;
     private EditText passwordEditText;
 
@@ -34,7 +34,7 @@ public class SignUpActivity extends AppCompatActivity {
         signINupValidator = new sign_IN_upValidator();
 
         // Bind UI components to variables.
-        fullNameEditText = findViewById(R.id.etFullName);
+        usernameEditText = findViewById(R.id.etUsername);
         emailEditText = findViewById(R.id.etEmail);
         passwordEditText = findViewById(R.id.etPassword);
 
@@ -44,16 +44,16 @@ public class SignUpActivity extends AppCompatActivity {
         // Handle the sign-up button click.
         btnSignUp.setOnClickListener(v -> {
             // Validate the user input using the signINupValidator helper.
-            if (signINupValidator.validateSignUpForm(fullNameEditText, emailEditText, passwordEditText)) {
-                String fullName = fullNameEditText.getText().toString();
+            if (signINupValidator.validateSignUpForm(usernameEditText, emailEditText, passwordEditText)) {
+                String username = usernameEditText.getText().toString();
                 String email = emailEditText.getText().toString();
                 String password = passwordEditText.getText().toString();
                 
                 // Attempt to create a new account with Firebase.
-                firebaseManager.createAccount(fullName, email, password, new FirebaseManager.AuthListener() {
+                firebaseManager.createAccount(username, email, password, new FirebaseManager.AuthListener() {
                     @Override
                     public void onSuccess(FirebaseUser user) {
-                        // On successful account creation, navigate to the HomeActivity.
+                        // On successful account creation, navigate to the HomeActivity and save the user's username in Firestore.
                         Toast.makeText(SignUpActivity.this, "Sign up successful.", Toast.LENGTH_SHORT).show();
                         startActivity(new Intent(SignUpActivity.this, HomeActivity.class));
                         finish(); // Finish current activity to prevent returning on back press.
@@ -66,9 +66,9 @@ public class SignUpActivity extends AppCompatActivity {
                     }
 
                     @Override
-                    public void onDisplayNameTaken() { // Changed from onFullNameTaken()
-                        // Inform the user if the display name is already in use.
-                        fullNameEditText.setError("Display name already taken."); // Updated error message
+                    public void onUsernameTaken() { // Changed from onFullNameTaken()
+                        // Inform the user if the username is already in use.
+                        usernameEditText.setError("Username already taken."); // Updated error message
                     }
                 });
             }

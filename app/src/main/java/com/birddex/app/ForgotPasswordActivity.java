@@ -28,7 +28,7 @@ public class ForgotPasswordActivity extends AppCompatActivity {
         setContentView(R.layout.activity_forgot_password);
 
         // Initialize helpers for Firebase operations and input validation.
-        firebaseManager = new FirebaseManager();
+        firebaseManager = new FirebaseManager(this);
         signINupValidator = new sign_IN_upValidator();
 
         // Bind UI components.

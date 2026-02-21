@@ -9,6 +9,7 @@ import android.widget.Toast;
 
 import androidx.appcompat.app.AppCompatActivity;
 
+import com.google.firebase.auth.FirebaseAuth;
 import com.google.firebase.auth.FirebaseUser;
 
 /**
@@ -30,7 +31,7 @@ public class LoginActivity extends AppCompatActivity {
         setContentView(R.layout.activity_login);
 
         // Initialize helper classes for Firebase operations and input validation.
-        firebaseManager = new FirebaseManager();
+        firebaseManager = new FirebaseManager(this); // Pass 'this' (Context) to FirebaseManager
         signINupValidator = new sign_IN_upValidator();
 
         // Bind UI components to variables.
@@ -52,10 +53,29 @@ public class LoginActivity extends AppCompatActivity {
                 firebaseManager.signIn(email, password, new FirebaseManager.AuthListener() {
                     @Override
                     public void onSuccess(FirebaseUser user) {
-                        // On successful login, navigate to the HomeActivity.
-                        Toast.makeText(LoginActivity.this, "Login successful.", Toast.LENGTH_SHORT).show();
-                        startActivity(new Intent(LoginActivity.this, HomeActivity.class));
-                        finish(); // Finish current activity to prevent returning on back press.
+                        if (user != null && user.isEmailVerified()) {
+                            // On successful login and email verified, navigate to the HomeActivity.
+                            Toast.makeText(LoginActivity.this, "Login successful.", Toast.LENGTH_SHORT).show();
+                            startActivity(new Intent(LoginActivity.this, HomeActivity.class));
+                            finish(); // Finish current activity to prevent returning on back press.
+                        } else if (user != null && !user.isEmailVerified()) {
+                            // User logged in, but email is not verified.
+                            // Log out the user and prompt them to verify their email.
+                            FirebaseAuth.getInstance().signOut();
+                            Toast.makeText(LoginActivity.this, "Please verify your email address to log in. A new verification email has been sent. " + getString(R.string.email_verification_expiration_message), Toast.LENGTH_LONG).show();
+                            // Resend the verification email
+                            user.sendEmailVerification()
+                                    .addOnCompleteListener(emailTask -> {
+                                        if (emailTask.isSuccessful()) {
+                                            // Log.d("LoginActivity", "Verification email resent.");
+                                        } else {
+                                            // Log.e("LoginActivity", "Failed to resend verification email.", emailTask.getException());
+                                        }
+                                    });
+                        } else {
+                            // Should not happen if onSuccess is called with a null user, but as a safeguard.
+                            Toast.makeText(LoginActivity.this, "Login failed: user not found.", Toast.LENGTH_SHORT).show();
+                        }
                     }
 
                     @Override

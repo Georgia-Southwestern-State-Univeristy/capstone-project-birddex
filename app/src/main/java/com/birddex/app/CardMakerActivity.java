@@ -61,7 +61,7 @@ public class CardMakerActivity extends AppCompatActivity {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_card_maker);
 
-        firebaseManager = new FirebaseManager();
+        firebaseManager = new FirebaseManager(this);
 
         FrameLayout cardHost = findViewById(R.id.cardHost);
         Button btnSave = findViewById(R.id.btnSaveCard);

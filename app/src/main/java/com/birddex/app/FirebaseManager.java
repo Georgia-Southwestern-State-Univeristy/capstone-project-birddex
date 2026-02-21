@@ -1,5 +1,6 @@
 package com.birddex.app;
 
+import android.content.Context;
 import android.util.Log;
 
 import com.google.android.gms.tasks.OnCompleteListener;
@@ -24,6 +25,7 @@ public class FirebaseManager {
     private final FirebaseAuth mAuth;
     private final FirebaseFirestore db;
     private final FirebaseFunctions mFunctions;
+    private Context context; // Add context field
 
     public interface AuthListener {
         void onSuccess(FirebaseUser user);
@@ -41,7 +43,8 @@ public class FirebaseManager {
         void onFailure(String errorMessage);
     }
 
-    public FirebaseManager() {
+    public FirebaseManager(Context context) { // Modify constructor to accept Context
+        this.context = context.getApplicationContext(); // Use application context to avoid memory leaks
         mAuth = FirebaseAuth.getInstance();
         db = FirebaseFirestore.getInstance();
         mFunctions = FirebaseFunctions.getInstance();
@@ -62,6 +65,17 @@ public class FirebaseManager {
                                         User user = new User(firebaseUser.getUid(), email, username, new Date(), null);
                                         addUser(user, task1 -> {
                                             if (task1.isSuccessful()) {
+                                                // Send email verification
+                                                firebaseUser.sendEmailVerification()
+                                                        .addOnCompleteListener(emailTask -> {
+                                                            if (emailTask.isSuccessful()) {
+                                                                // Use context to get string resource
+                                                                String message = context.getString(R.string.email_verification_expiration_message);
+                                                                Log.d(TAG, "Email verification sent. " + message);
+                                                            } else {
+                                                                Log.e(TAG, "Failed to send email verification.", emailTask.getException());
+                                                            }
+                                                        });
                                                 listener.onSuccess(firebaseUser);
                                             } else {
                                                 listener.onFailure("Failed to save user profile.");

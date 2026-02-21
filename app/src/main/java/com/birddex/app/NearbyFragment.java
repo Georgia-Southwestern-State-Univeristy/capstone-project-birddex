@@ -71,7 +71,7 @@ public class NearbyFragment extends Fragment {
         txtLocation = v.findViewById(R.id.txtLocation);
         birdsContainer = v.findViewById(R.id.birdsContainer);
 
-        firebaseManager = new FirebaseManager();
+        firebaseManager = new FirebaseManager(requireContext());
 
         fusedLocationClient = LocationServices.getFusedLocationProviderClient(requireActivity());
         locationRequest = new LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 3000L)

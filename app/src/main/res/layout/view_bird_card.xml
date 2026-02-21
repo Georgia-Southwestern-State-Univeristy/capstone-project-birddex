@@ -52,7 +52,7 @@
                 app:layout_constraintEnd_toEndOf="parent"
                 app:layout_constraintDimensionRatio="1:1" />
 
-            <!-- Stats row (your code expects this exact id) -->
+            <!-- Stats row (code expects this exact id) -->
             <LinearLayout
                 android:id="@+id/statsRow"
                 android:layout_width="0dp"

@@ -103,9 +103,7 @@ public class BirdCardGenerator {
         return bitmap;
     }
 
-    /**
-     * Convenience overload if you already laid out the view in a container and just want a bitmap.
-     */
+    
     public static Bitmap renderViewToBitmap(@NonNull View view) {
         if (view.getWidth() == 0 || view.getHeight() == 0) {
             // Fallback: give it a reasonable measure if it hasn't been laid out

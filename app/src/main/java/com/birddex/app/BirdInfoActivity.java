@@ -55,7 +55,7 @@ public class BirdInfoActivity extends AppCompatActivity {
         Button btnStore = findViewById(R.id.btnStore);
         Button btnDiscard = findViewById(R.id.btnDiscard);
 
-        firebaseManager = new FirebaseManager();
+        firebaseManager = new FirebaseManager(this);
 
         currentImageUriStr = getIntent().getStringExtra("imageUri");
         currentBirdId = getIntent().getStringExtra("birdId");

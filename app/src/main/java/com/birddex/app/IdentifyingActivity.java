@@ -73,7 +73,7 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
         identifyingImageView.setImageURI(localImageUri);
 
         openAiApi = new OpenAiApi();
-        firebaseManager = new FirebaseManager();
+        firebaseManager = new FirebaseManager(this);
 
         // Initialize LocationHelper
         locationHelper = new LocationHelper(this, this);

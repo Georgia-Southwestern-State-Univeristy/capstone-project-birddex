@@ -713,7 +713,7 @@ async function _updateUserTotals(userId, totalBirdsChange, duplicateBirdsChange,
 }
 
 // ======================================================
-// NEW: ON CREATE UserBird -> Update User Totals
+// ON CREATE UserBird -> Update User Totals
 // ======================================================
 exports.onUserBirdCreated = onDocumentCreated("userBirds/{uploadId}", async (event) => {
     const userBirdData = event.data.data();
@@ -755,7 +755,7 @@ exports.onUserBirdDeleted = onDocumentDeleted("userBirds/{uploadId}", async (eve
 });
 
 
-// --- NEW CORE EBIRD FETCH/STORE LOGIC (for both scheduled & callable functions) ---
+// --- CORE EBIRD FETCH/STORE LOGIC (for both scheduled & callable functions) ---
 async function _fetchAndStoreEBirdDataCore() {
     console.log("Executing _fetchAndStoreEBirdDataCore...");
 
@@ -848,7 +848,7 @@ exports.fetchAndStoreEBirdData = onSchedule({
 
 
 // ======================================================
-// NEW: CALLABLE EBIRD SIGHTING FETCH (for app warmup)
+// CALLABLE EBIRD SIGHTING FETCH (for app warmup)
 // ======================================================
 /**
  * A callable Cloud Function that the Android app can invoke on warmup
@@ -869,5 +869,51 @@ exports.triggerEbirdDataFetch = onCall({ secrets: [EBIRD_API_KEY] }, async (requ
     } catch (error) {
         console.error("Callable function: Error during eBird data fetch:", error);
         throw error; // Re-throw HttpsError or create a new one for app client
+    }
+});
+
+// ======================================================
+// NEW: SCHEDULED UNVERIFIED USER CLEANUP (AFTER 72 HOURS)
+// ======================================================
+/**
+ * A scheduled Cloud Function to delete Firebase Auth users who have not
+ * verified their email address within 72 hours of account creation.
+ * Runs once every 24 hours.
+ */
+exports.cleanupUnverifiedUsers = onSchedule({
+    schedule: "every 24 hours", // Run daily
+    timeZone: "America/New_York", // IMPORTANT: Set to your project's primary timezone or user's expected timezone
+}, async (event) => {
+    console.log("Starting scheduled cleanup of unverified users...");
+
+    // Calculate the timestamp 72 hours ago
+    const seventyTwoHoursAgo = Date.now() - (72 * 60 * 60 * 1000); // 72 hours in milliseconds
+
+    try {
+        let nextPageToken;
+        let unverifiedUsersDeletedCount = 0;
+
+        do {
+            // List users in batches (Firebase Authentication does not have direct query for emailVerified status)
+            const listUsersResult = await admin.auth().listUsers(1000, nextPageToken); // Fetch up to 1000 users at a time
+            nextPageToken = listUsersResult.pageToken;
+
+            for (const userRecord of listUsersResult.users) {
+                // Check if email is not verified AND account was created more than 72 hours ago
+                if (!userRecord.emailVerified && userRecord.metadata.creationTime < seventyTwoHoursAgo) {
+                    console.log(`Deleting unverified user: ${userRecord.uid}, email: ${userRecord.email}, created: ${new Date(userRecord.metadata.creationTime).toISOString()}`);
+                    await admin.auth().deleteUser(userRecord.uid);
+                    unverifiedUsersDeletedCount++;
+                }
+            }
+        } while (nextPageToken); // Continue fetching if there are more users
+
+        console.log(`✅ Completed scheduled cleanup. Total unverified users deleted: ${unverifiedUsersDeletedCount}`);
+        return null;
+    } catch (error) {
+        console.error("❌ Error during unverified user cleanup:", error);
+        // Returning null allows the function to complete successfully even if some errors occur,
+        // preventing infinite retries if the error is non-fatal for future runs.
+        return null;
     }
 });

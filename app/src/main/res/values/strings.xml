@@ -7,4 +7,8 @@
       See: https://developers.google.com/maps/documentation/android-sdk/get-api-key
     -->
     <string name="google_maps_key" translatable="false">YOUR_API_KEY</string>
+    <string name="verification_email_sent_message">A verification email has been sent to your registered email address.
+        Please check your inbox (and spam folder) to verify your account before logging in. The email verification link will expire in 72 hours.</string>
+    <string name="go_to_login">Go to Login</string>
+    <string name="email_verification_expiration_message">The link will expire in 72 hours.</string>
 </resources>

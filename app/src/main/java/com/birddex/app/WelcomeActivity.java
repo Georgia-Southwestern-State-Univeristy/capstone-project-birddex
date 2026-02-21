@@ -28,7 +28,7 @@ public class WelcomeActivity extends AppCompatActivity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
-        firebaseManager = new FirebaseManager(); // Initialize FirebaseManager
+        firebaseManager = new FirebaseManager(this); // Initialize FirebaseManager
 
         // Pre-fetch/Verify Georgia bird list cache in the background.
         // This ensures data is ready and fresh (within 72h) when needed.

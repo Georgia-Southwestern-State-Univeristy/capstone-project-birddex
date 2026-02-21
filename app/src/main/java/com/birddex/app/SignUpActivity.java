@@ -30,7 +30,7 @@ public class SignUpActivity extends AppCompatActivity {
         setContentView(R.layout.activity_sign_up);
 
         // Initialize helper classes for Firebase operations and input validation.
-        firebaseManager = new FirebaseManager();
+        firebaseManager = new FirebaseManager(this); // Pass 'this' (Context) to FirebaseManager
         signINupValidator = new sign_IN_upValidator();
 
         // Bind UI components to variables.
@@ -53,9 +53,10 @@ public class SignUpActivity extends AppCompatActivity {
                 firebaseManager.createAccount(username, email, password, new FirebaseManager.AuthListener() {
                     @Override
                     public void onSuccess(FirebaseUser user) {
-                        // On successful account creation, navigate to the HomeActivity and save the user's username in Firestore.
-                        Toast.makeText(SignUpActivity.this, "Sign up successful.", Toast.LENGTH_SHORT).show();
-                        startActivity(new Intent(SignUpActivity.this, HomeActivity.class));
+                        // On successful account creation and email verification sent,
+                        // redirect to a screen instructing the user to verify their email.
+                        Toast.makeText(SignUpActivity.this, "Sign up successful. Please verify your email. " + getString(R.string.email_verification_expiration_message), Toast.LENGTH_LONG).show();
+                        startActivity(new Intent(SignUpActivity.this, SignUpCompleteActivity.class));
                         finish(); // Finish current activity to prevent returning on back press.
                     }
 
@@ -66,9 +67,9 @@ public class SignUpActivity extends AppCompatActivity {
                     }
 
                     @Override
-                    public void onUsernameTaken() { // Changed from onFullNameTaken()
+                    public void onUsernameTaken() { 
                         // Inform the user if the username is already in use.
-                        usernameEditText.setError("Username already taken."); // Updated error message
+                        usernameEditText.setError("Username already taken.");
                     }
                 });
             }

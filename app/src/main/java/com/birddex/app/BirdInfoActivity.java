@@ -82,7 +82,7 @@ public class BirdInfoActivity extends AppCompatActivity {
         speciesTextView.setText("Species: " + (currentSpecies != null ? currentSpecies : "N/A"));
         familyTextView.setText("Family: " + (currentFamily != null ? currentFamily : "N/A"));
 
-        // Store: do BOTH behaviors (only added code; none removed):
+        // Store: do BOTH behaviors
         // 1) Save to Firebase collection (advanced version)
         // 2) Open CardMakerActivity (simple version)
         btnStore.setOnClickListener(v -> {

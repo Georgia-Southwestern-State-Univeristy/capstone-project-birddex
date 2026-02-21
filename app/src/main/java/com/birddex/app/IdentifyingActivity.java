@@ -1,6 +1,7 @@
 package com.birddex.app;
 
 import android.Manifest;
+import android.content.ContentValues;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
@@ -29,9 +30,9 @@ import com.google.firebase.storage.StorageReference;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
-import java.util.Date; // Import Date for timestamp
-import java.util.HashMap; // Import HashMap for maps
-import java.util.Map;   // Import Map for maps
+import java.util.Date;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.UUID;
 
 /**
@@ -42,17 +43,19 @@ import java.util.UUID;
 public class IdentifyingActivity extends AppCompatActivity implements LocationHelper.LocationListener {
 
     private static final String TAG = "IdentifyingActivity";
-    public static final String EXTRA_VERIFIED_BIRD_ID = "verifiedBirdId"; // New extra for verified bird ID
+    public static final String EXTRA_VERIFIED_BIRD_ID = "verifiedBirdId"; // kept
+
     private Uri localImageUri;
     private OpenAiApi openAiApi;
     private LocationHelper locationHelper;
     private ActivityResultLauncher<String[]> locationPermissionLauncher;
-    private FirebaseManager firebaseManager; // Add FirebaseManager instance
+
+    private FirebaseManager firebaseManager;
 
     private Location currentLocation;
     private String currentLocalityName;
-    private String currentState; // New field for state
-    private String currentCountry; // New field for country
+    private String currentState;
+    private String currentCountry;
 
     @Override
     protected void onCreate(@Nullable Bundle savedInstanceState) {
@@ -70,10 +73,10 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
         identifyingImageView.setImageURI(localImageUri);
 
         openAiApi = new OpenAiApi();
-        firebaseManager = new FirebaseManager(); // Initialize FirebaseManager
+        firebaseManager = new FirebaseManager();
 
         // Initialize LocationHelper
-        locationHelper = new LocationHelper(this, this); // 'this' activity implements LocationListener
+        locationHelper = new LocationHelper(this, this);
 
         // Initialize permission launcher
         locationPermissionLauncher = registerForActivityResult(
@@ -87,7 +90,10 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
                         locationHelper.getLastKnownLocation();
                     } else {
                         Log.e(TAG, "Location permissions denied. Cannot log identification location.");
-                        Toast.makeText(this, "Location permissions denied. Cannot log identification location.", Toast.LENGTH_LONG).show();
+                        Toast.makeText(this,
+                                "Location permissions denied. Cannot log identification location.",
+                                Toast.LENGTH_LONG).show();
+
                         // Proceed with identification without location
                         startIdentification(localImageUri, null, null, null, null, null);
                     }
@@ -98,12 +104,14 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
     }
 
     private void requestLocationPermissions() {
-        boolean fineLocationGranted = ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED;
-        boolean coarseLocationGranted = ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED;
+        boolean fineLocationGranted =
+                ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED;
+        boolean coarseLocationGranted =
+                ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED;
 
         if (fineLocationGranted || coarseLocationGranted) {
             Log.d(TAG, "Location permissions already granted, getting last known location.");
-            locationHelper.getLastKnownLocation(); // Permissions are already granted, get location
+            locationHelper.getLastKnownLocation();
         } else {
             Log.d(TAG, "Requesting location permissions.");
             locationPermissionLauncher.launch(new String[]{
@@ -113,29 +121,77 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
         }
     }
 
-    // Implementation of LocationHelper.LocationListener
+    // --- Location callbacks (combined) ---
+
+    /**
+     * Newer signature (version 1): includes locality, state, country.
+     * If your LocationHelper calls this one, everything works and we keep more info.
+     */
     @Override
-    public void onLocationReceived(Location location, @Nullable String localityName, @Nullable String state, @Nullable String country) {
+    public void onLocationReceived(Location location,
+                                   @Nullable String localityName,
+                                   @Nullable String state,
+                                   @Nullable String country) {
         this.currentLocation = location;
         this.currentLocalityName = localityName;
-        this.currentState = state; // Store state
-        this.currentCountry = country; // Store country
-        Log.d(TAG, "Location received: " + localityName + ", " + state + ", " + country + " (" + location.getLatitude() + ", " + location.getLongitude() + ")");
-        // Once location is received, start the identification process
-        startIdentification(localImageUri, location.getLatitude(), location.getLongitude(), localityName, state, country);
-        locationHelper.stopLocationUpdates(); // Stop updates after getting one valid location
+        this.currentState = state;
+        this.currentCountry = country;
+
+        Log.d(TAG, "Location received: " + localityName + ", " + state + ", " + country
+                + " (" + location.getLatitude() + ", " + location.getLongitude() + ")");
+
+        startIdentification(localImageUri,
+                location.getLatitude(),
+                location.getLongitude(),
+                localityName,
+                state,
+                country);
+
+        locationHelper.stopLocationUpdates();
+    }
+
+
+    public void onLocationReceived(Location location, @Nullable String localityName) {
+        this.currentLocation = location;
+        this.currentLocalityName = localityName;
+        this.currentState = null;
+        this.currentCountry = null;
+
+        Log.d(TAG, "Location received: " + localityName
+                + " (" + location.getLatitude() + ", " + location.getLongitude() + ")");
+
+        startIdentification(localImageUri,
+                location.getLatitude(),
+                location.getLongitude(),
+                localityName,
+                null,
+                null);
+
+        locationHelper.stopLocationUpdates();
     }
 
     @Override
     public void onLocationError(String errorMessage) {
         Log.e(TAG, "Location error: " + errorMessage);
-        Toast.makeText(this, "Location error: " + errorMessage + ". Cannot log identification location.", Toast.LENGTH_LONG).show();
+        Toast.makeText(this,
+                "Location error: " + errorMessage + ". Cannot log identification location.",
+                Toast.LENGTH_LONG).show();
+
         // Proceed with identification without location
         startIdentification(localImageUri, null, null, null, null, null);
-        locationHelper.stopLocationUpdates(); // Ensure updates are stopped
+
+        locationHelper.stopLocationUpdates();
     }
 
-    private void startIdentification(Uri imageUri, @Nullable Double latitude, @Nullable Double longitude, @Nullable String localityName, @Nullable String state, @Nullable String country) {
+    // --- Identification flow (superset) ---
+
+    private void startIdentification(Uri imageUri,
+                                     @Nullable Double latitude,
+                                     @Nullable Double longitude,
+                                     @Nullable String localityName,
+                                     @Nullable String state,
+                                     @Nullable String country) {
+
         String base64Image = encodeImage(imageUri);
         if (base64Image == null) {
             Toast.makeText(this, "Failed to process image.", Toast.LENGTH_SHORT).show();
@@ -143,29 +199,40 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
             return;
         }
 
-        openAiApi.identifyBirdFromImage(base64Image, latitude, longitude, localityName, new OpenAiApi.OpenAiCallback() {
-            @Override
-            public void onSuccess(String response, boolean isVerified) {
-                if (!isVerified) {
-                    Toast.makeText(IdentifyingActivity.this, "Bird not recognized in Georgia regional data. Image not saved.", Toast.LENGTH_LONG).show();
-                    finish();
-                    return;
-                }
+        openAiApi.identifyBirdFromImage(base64Image, latitude, longitude, localityName,
+                new OpenAiApi.OpenAiCallback() {
+                    @Override
+                    public void onSuccess(String response, boolean isVerified) {
+                        if (!isVerified) {
+                            Toast.makeText(IdentifyingActivity.this,
+                                    "Bird not recognized in Georgia regional data. Image not saved.",
+                                    Toast.LENGTH_LONG).show();
+                            finish();
+                            return;
+                        }
 
-                // 2. ONLY if verified, upload the image to Firebase Storage
-                uploadVerifiedImage(response, latitude, longitude, localityName, state, country);
-            }
+                        // ONLY if verified, upload image to Firebase Storage
+                        uploadVerifiedImage(response, latitude, longitude, localityName, state, country);
+                    }
 
-            @Override
-            public void onFailure(Exception e, String message) {
-                Log.e(TAG, "Identification failed: " + message, e);
-                Toast.makeText(IdentifyingActivity.this, "Identification failed. Check internet.", Toast.LENGTH_SHORT).show();
-                finish();
-            }
-        });
+                    @Override
+                    public void onFailure(Exception e, String message) {
+                        Log.e(TAG, "Identification failed: " + message, e);
+                        Toast.makeText(IdentifyingActivity.this,
+                                "Identification failed. Check internet.",
+                                Toast.LENGTH_SHORT).show();
+                        finish();
+                    }
+                });
     }
 
-    private void uploadVerifiedImage(String identificationResult, @Nullable Double latitude, @Nullable Double longitude, @Nullable String localityName, @Nullable String state, @Nullable String country) {
+    private void uploadVerifiedImage(String identificationResult,
+                                     @Nullable Double latitude,
+                                     @Nullable Double longitude,
+                                     @Nullable String localityName,
+                                     @Nullable String state,
+                                     @Nullable String country) {
+
         FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
         if (user == null) {
             Toast.makeText(this, "User not logged in.", Toast.LENGTH_SHORT).show();
@@ -178,35 +245,18 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
         StorageReference storageRef = FirebaseStorage.getInstance().getReference().child(fileName);
 
         storageRef.putFile(localImageUri)
-                .addOnSuccessListener(taskSnapshot -> {
-                    storageRef.getDownloadUrl().addOnSuccessListener(downloadUri -> {
-                        // Parse identification result here to get bird details
-                        String[] lines = identificationResult.split("\\r?\\n");
-                        String birdId = "Unknown";
-                        String commonName = "Unknown";
-                        String scientificName = "Unknown";
-                        String species = "Unknown";
-                        String family = "Unknown";
-
-                        for (String line : lines) {
-                            String trimmedLine = line.trim();
-                            if (trimmedLine.startsWith("ID: ")) {
-                                birdId = trimmedLine.substring("ID: ".length()).trim();
-                            } else if (trimmedLine.startsWith("Common Name: ")) {
-                                commonName = trimmedLine.substring("Common Name: ".length()).trim();
-                            } else if (trimmedLine.startsWith("Scientific Name: ")) {
-                                scientificName = trimmedLine.substring("Scientific Name: ".length()).trim();
-                            } else if (trimmedLine.startsWith("Species: ")) {
-                                species = trimmedLine.substring("Species: ".length()).trim();
-                            } else if (trimmedLine.startsWith("Family: ")) {
-                                family = trimmedLine.substring("Family: ".length()).trim();
+                .addOnSuccessListener(taskSnapshot -> storageRef.getDownloadUrl()
+                        .addOnSuccessListener(downloadUri -> {
+                            if (downloadUri == null) {
+                                Log.e(TAG, "Download URI is null.");
+                                Toast.makeText(this, "Upload succeeded but URL missing.", Toast.LENGTH_SHORT).show();
+                                proceedToInfoActivity(identificationResult, null,
+                                        latitude, longitude, localityName, state, country);
+                                return;
                             }
-                        }
-
-                        // All data is now ready to be passed to BirdInfoActivity
-                        proceedToInfoActivity(birdId, commonName, scientificName, species, family, downloadUri.toString(), latitude, longitude, localityName, state, country);
-                    });
-                })
+                            proceedToInfoActivity(identificationResult, downloadUri.toString(),
+                                    latitude, longitude, localityName, state, country);
+                        }))
                 .addOnFailureListener(e -> {
                     Log.e(TAG, "Storage upload failed", e);
                     Toast.makeText(IdentifyingActivity.this, "Image upload failed.", Toast.LENGTH_SHORT).show();
@@ -214,7 +264,45 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
                 });
     }
 
-    private void proceedToInfoActivity(String birdId, String commonName, String scientificName, String species, String family, String downloadUrl, @Nullable Double latitude, @Nullable Double longitude, @Nullable String localityName, @Nullable String state, @Nullable String country) {
+    /**
+     * Combined result parsing + intent extras.
+     */
+    private void proceedToInfoActivity(String contentStr,
+                                       @Nullable String downloadUrl,
+                                       @Nullable Double latitude,
+                                       @Nullable Double longitude,
+                                       @Nullable String localityName,
+                                       @Nullable String state,
+                                       @Nullable String country) {
+
+        Log.d(TAG, "Content String received: " + contentStr);
+
+        String[] lines = contentStr.split("\\r?\\n");
+        String birdId = "Unknown";
+        String commonName = "Unknown";
+        String scientificName = "Unknown";
+        String species = "Unknown";
+        String family = "Unknown";
+
+        for (String line : lines) {
+            String trimmedLine = line.trim();
+            Log.d(TAG, "Parsing line: " + trimmedLine);
+
+            if (trimmedLine.startsWith("ID: ")) {
+                birdId = trimmedLine.substring("ID: ".length()).trim();
+            } else if (trimmedLine.startsWith("Common Name: ")) {
+                commonName = trimmedLine.substring("Common Name: ".length()).trim();
+            } else if (trimmedLine.startsWith("Scientific Name: ")) {
+                scientificName = trimmedLine.substring("Scientific Name: ".length()).trim();
+            } else if (trimmedLine.startsWith("Species: ")) {
+                species = trimmedLine.substring("Species: ".length()).trim();
+            } else if (trimmedLine.startsWith("Family: ")) {
+                family = trimmedLine.substring("Family: ".length()).trim();
+            }
+        }
+
+        Log.d(TAG, "Extracted Bird ID: " + birdId);
+
         Intent intent = new Intent(IdentifyingActivity.this, BirdInfoActivity.class);
         intent.putExtra("imageUri", localImageUri.toString());
         intent.putExtra("birdId", birdId);
@@ -223,14 +311,22 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
         intent.putExtra("species", species);
         intent.putExtra("family", family);
         intent.putExtra("imageUrl", downloadUrl);
-        // Pass location data to the next activity
+
+        // Pass location data forward (superset)
         if (latitude != null && longitude != null) {
             intent.putExtra("latitude", latitude);
             intent.putExtra("longitude", longitude);
             intent.putExtra("localityName", localityName);
             intent.putExtra("state", state);
             intent.putExtra("country", country);
+        } else if (currentLocation != null) {
+            intent.putExtra("latitude", currentLocation.getLatitude());
+            intent.putExtra("longitude", currentLocation.getLongitude());
+            intent.putExtra("localityName", currentLocalityName);
+            intent.putExtra("state", currentState);
+            intent.putExtra("country", currentCountry);
         }
+
         startActivity(intent);
         finish();
     }
@@ -239,19 +335,28 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
         try {
             Bitmap bitmap;
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                bitmap = ImageDecoder.decodeBitmap(ImageDecoder.createSource(this.getContentResolver(), imageUri));
+                bitmap = ImageDecoder.decodeBitmap(
+                        ImageDecoder.createSource(this.getContentResolver(), imageUri));
             } else {
                 bitmap = MediaStore.Images.Media.getBitmap(this.getContentResolver(), imageUri);
             }
+
             int maxWidth = 512;
             int maxHeight = 512;
-            float ratio = Math.min((float) maxWidth / bitmap.getWidth(), (float) maxHeight / bitmap.getHeight());
+            float ratio = Math.min((float) maxWidth / bitmap.getWidth(),
+                    (float) maxHeight / bitmap.getHeight());
+
             if (ratio < 1.0f) {
-                bitmap = Bitmap.createScaledBitmap(bitmap, Math.round(ratio * bitmap.getWidth()), Math.round(ratio * bitmap.getHeight()), true);
+                bitmap = Bitmap.createScaledBitmap(bitmap,
+                        Math.round(ratio * bitmap.getWidth()),
+                        Math.round(ratio * bitmap.getHeight()),
+                        true);
             }
+
             ByteArrayOutputStream byteArrayOutputStream = new ByteArrayOutputStream();
             bitmap.compress(Bitmap.CompressFormat.JPEG, 75, byteArrayOutputStream);
             return Base64.encodeToString(byteArrayOutputStream.toByteArray(), Base64.NO_WRAP);
+
         } catch (IOException e) {
             Log.e(TAG, "Error encoding image", e);
             return null;

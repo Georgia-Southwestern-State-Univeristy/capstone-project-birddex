@@ -41,7 +41,7 @@ public class SearchCollectionFragment extends Fragment {
         View v = inflater.inflate(R.layout.fragment_search_collection, container, false);
 
         rvCollection = v.findViewById(R.id.rvCollection);
-        
+
         // Set up the grid layout manager with 3 columns.
         rvCollection.setLayoutManager(new GridLayoutManager(getContext(), 3));
 
@@ -72,7 +72,7 @@ public class SearchCollectionFragment extends Fragment {
                 .get()
                 .addOnSuccessListener(queryDocumentSnapshots -> {
                     imageUrls.clear();
-                    
+
                     // Log the number of documents found.
                     Log.d(TAG, "Found " + queryDocumentSnapshots.size() + " documents in collection.");
 
@@ -88,7 +88,7 @@ public class SearchCollectionFragment extends Fragment {
 
                     // Fill the remaining slots with null to maintain a 3x5 grid look (up to 15).
                     while (imageUrls.size() < 15) {
-                        imageUrls.add(null); 
+                        imageUrls.add(null);
                     }
 
                     adapter.notifyDataSetChanged();

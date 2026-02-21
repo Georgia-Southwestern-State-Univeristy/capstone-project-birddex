@@ -3,25 +3,13 @@ package com.birddex.app;
 import android.content.Intent;
 import android.net.Uri;
 import android.os.Bundle;
-import android.util.Log;
 import android.widget.Button;
 import android.widget.ImageView;
 import android.widget.TextView;
-import android.widget.Toast;
-
 import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatActivity;
 
-import com.google.firebase.auth.FirebaseAuth;
-import com.google.firebase.auth.FirebaseUser;
-
-import java.util.Date;
-import java.util.UUID;
-
 public class BirdInfoActivity extends AppCompatActivity {
-
-    private static final String TAG = "BirdInfoActivity";
-    private FirebaseManager firebaseManager;
 
     private String currentImageUriStr;
     private String currentBirdId;
@@ -29,7 +17,6 @@ public class BirdInfoActivity extends AppCompatActivity {
     private String currentScientificName;
     private String currentSpecies;
     private String currentFamily;
-    private String currentImageUrl; // Firebase Storage URL
 
     @Override
     protected void onCreate(@Nullable Bundle savedInstanceState) {
@@ -44,84 +31,42 @@ public class BirdInfoActivity extends AppCompatActivity {
         Button btnStore = findViewById(R.id.btnStore);
         Button btnDiscard = findViewById(R.id.btnDiscard);
 
-        firebaseManager = new FirebaseManager();
-
         currentImageUriStr = getIntent().getStringExtra("imageUri");
         currentBirdId = getIntent().getStringExtra("birdId");
         currentCommonName = getIntent().getStringExtra("commonName");
         currentScientificName = getIntent().getStringExtra("scientificName");
         currentSpecies = getIntent().getStringExtra("species");
         currentFamily = getIntent().getStringExtra("family");
-        currentImageUrl = getIntent().getStringExtra("imageUrl");
 
         if (currentImageUriStr != null) {
             birdImageView.setImageURI(Uri.parse(currentImageUriStr));
         }
 
-        commonNameTextView.setText("Common Name: " + currentCommonName);
-        scientificNameTextView.setText("Scientific Name: " + currentScientificName);
-        speciesTextView.setText("Species: " + currentSpecies);
-        familyTextView.setText("Family: " + currentFamily);
+        commonNameTextView.setText("Common Name: " + (currentCommonName != null ? currentCommonName : "N/A"));
+        scientificNameTextView.setText("Scientific Name: " + (currentScientificName != null ? currentScientificName : "N/A"));
+        speciesTextView.setText("Species: " + (currentSpecies != null ? currentSpecies : "N/A"));
+        familyTextView.setText("Family: " + (currentFamily != null ? currentFamily : "N/A"));
 
-        btnStore.setOnClickListener(v -> storeBirdDiscovery());
-        btnDiscard.setOnClickListener(v -> {
-            startActivity(new Intent(BirdInfoActivity.this, HomeActivity.class));
-            finish();
+        // Store -> open card screen
+        btnStore.setOnClickListener(v -> {
+            Intent i = new Intent(BirdInfoActivity.this, CardMakerActivity.class);
+            i.putExtra(CardMakerActivity.EXTRA_IMAGE_URI, currentImageUriStr);
+            i.putExtra(CardMakerActivity.EXTRA_BIRD_NAME, currentCommonName);
+            i.putExtra(CardMakerActivity.EXTRA_SCI_NAME, currentScientificName);
+            i.putExtra(CardMakerActivity.EXTRA_CONFIDENCE, "--"); // Not provided here, default
+            i.putExtra(CardMakerActivity.EXTRA_RARITY, "Unknown"); // Not provided here, default
+            i.putExtra(CardMakerActivity.EXTRA_BIRD_ID, currentBirdId);
+            i.putExtra(CardMakerActivity.EXTRA_SPECIES, currentSpecies);
+            i.putExtra(CardMakerActivity.EXTRA_FAMILY, currentFamily);
+            startActivity(i);
         });
-    }
 
-    private void storeBirdDiscovery() {
-        FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
-        if (user == null) {
-            Log.e(TAG, "Store failed: User is not authenticated.");
-            Toast.makeText(this, "Error: No user logged in. Please log in again.", Toast.LENGTH_LONG).show();
-            return;
-        }
-
-        String userId = user.getUid();
-        String userBirdId = UUID.randomUUID().toString();
-        String collectionSlotId = UUID.randomUUID().toString();
-        Date now = new Date();
-
-        // Create and populate the UserBird object
-        UserBird userBird = new UserBird();
-        userBird.setId(userBirdId);
-        userBird.setUserId(userId); 
-        userBird.setBirdId(currentBirdId); // Use the bird's unique ID
-        userBird.setCaptureDate(now);
-
-        // Create and populate the CollectionSlot object
-        CollectionSlot collectionSlot = new CollectionSlot();
-        collectionSlot.setId(collectionSlotId);
-        collectionSlot.setUserBirdId(userBirdId);
-        collectionSlot.setTimestamp(now);  // Set the timestamp
-        collectionSlot.setImageUrl(currentImageUrl); // Set the image URL
-        
-        // Log the data being sent to Firestore for debugging
-        Log.d(TAG, "--- Preparing to write to Firestore ---");
-        Log.d(TAG, "User UID: " + userId);
-        Log.d(TAG, "UserBird to save (userBirds/" + userBird.getId() + "): userId field = " + userBird.getUserId() + ", birdId field = " + userBird.getBirdId());
-        Log.d(TAG, "CollectionSlot to save (users/" + userId + "/collectionSlot/" + collectionSlot.getId() + "): userBirdId field = " + collectionSlot.getUserBirdId());
-
-        // Save both objects to Firestore using FirebaseManager
-        firebaseManager.addUserBird(userBird, task -> {
-            if (task.isSuccessful()) {
-                Log.d(TAG, "SUCCESS: Saved UserBird entry: " + userBirdId);
-                firebaseManager.addCollectionSlot(userId, collectionSlotId, collectionSlot, slotTask -> {
-                    if (slotTask.isSuccessful()) {
-                        Log.d(TAG, "SUCCESS: Saved CollectionSlot: " + collectionSlotId);
-                        Toast.makeText(BirdInfoActivity.this, "Saved to your collection!", Toast.LENGTH_SHORT).show();
-                        startActivity(new Intent(BirdInfoActivity.this, HomeActivity.class));
-                        finish();
-                    } else {
-                        Log.e(TAG, "FAILURE: Could not save CollectionSlot. User may see this bird in general list but not in their personal collection.", slotTask.getException());
-                        Toast.makeText(BirdInfoActivity.this, "Error saving to collection slot. Please try again.", Toast.LENGTH_LONG).show();
-                    }
-                });
-            } else {
-                Log.e(TAG, "FAILURE: Could not save UserBird entry. This is the root of the PERMISSION_DENIED error.", task.getException());
-                Toast.makeText(BirdInfoActivity.this, "Failed to save bird data: " + task.getException().getMessage(), Toast.LENGTH_LONG).show();
-            }
+        btnDiscard.setOnClickListener(v -> {
+            // Go back to the home screen, clearing the task stack
+            Intent home = new Intent(BirdInfoActivity.this, HomeActivity.class);
+            home.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
+            startActivity(home);
+            finish();
         });
     }
 }

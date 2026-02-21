@@ -94,7 +94,7 @@ public class CardMakerActivity extends AppCompatActivity {
             return;
         }
 
-        // Build card view using your generator (now bird_card.xml uses fitCenter + square area)
+        // Build card view using generator (now bird_card.xml uses fitCenter + square area)
         BirdCardGenerator.BirdCardData data =
                 new BirdCardGenerator.BirdCardData(
                         currentCommonName != null ? currentCommonName : "Unknown Bird",

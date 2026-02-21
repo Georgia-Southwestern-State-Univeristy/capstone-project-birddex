@@ -3,6 +3,7 @@ package com.birddex.app;
 import android.util.Log;
 
 import com.google.android.gms.tasks.OnCompleteListener;
+import com.google.android.gms.tasks.Task;
 import com.google.android.gms.tasks.Tasks;
 import com.google.firebase.auth.FirebaseAuth;
 import com.google.firebase.auth.FirebaseUser;
@@ -318,21 +319,21 @@ public class FirebaseManager {
         db.collection("birdCards").document(cardId).delete().addOnCompleteListener(listener);
     }
 
-    // BirdSightings Collection
-    public void addBirdSighting(BirdSighting birdSighting, OnCompleteListener<Void> listener) {
-        db.collection("birdSightings").document(birdSighting.getId()).set(birdSighting).addOnCompleteListener(listener);
+    // UserBirdSightings Collection
+    public void addUserBirdSighting(UserBirdSighting userBirdSighting, OnCompleteListener<Void> listener) {
+        db.collection("userBirdSightings").document(userBirdSighting.getId()).set(userBirdSighting).addOnCompleteListener(listener);
     }
 
-    public void getBirdSightingById(String birdSightId, OnCompleteListener<DocumentSnapshot> listener) {
-        db.collection("birdSightings").document(birdSightId).get().addOnCompleteListener(listener);
+    public void getUserBirdSightingById(String userBirdSightId, OnCompleteListener<DocumentSnapshot> listener) {
+        db.collection("userBirdSightings").document(userBirdSightId).get().addOnCompleteListener(listener);
     }
 
-    public void updateBirdSighting(BirdSighting birdSighting, OnCompleteListener<Void> listener) {
-        db.collection("birdSightings").document(birdSighting.getId()).set(birdSighting).addOnCompleteListener(listener);
+    public void updateUserBirdSighting(UserBirdSighting userBirdSighting, OnCompleteListener<Void> listener) {
+        db.collection("userBirdSightings").document(userBirdSighting.getId()).set(userBirdSighting).addOnCompleteListener(listener);
     }
 
-    public void deleteBirdSighting(String birdSightId, OnCompleteListener<Void> listener) {
-        db.collection("birdSightings").document(birdSightId).delete().addOnCompleteListener(listener);
+    public void deleteUserBirdSighting(String userBirdSightId, OnCompleteListener<Void> listener) {
+        db.collection("userBirdSightings").document(userBirdSightId).delete().addOnCompleteListener(listener);
     }
 
     // HunterSightings Collection
@@ -373,7 +374,8 @@ public class FirebaseManager {
     public void addPost(String threadId, Post post, OnCompleteListener<DocumentReference> listener) {
         if (post.getId() == null || post.getId().isEmpty()) {
             db.collection("threads").document(threadId).collection("posts").add(post).addOnCompleteListener(listener);
-        } else {
+        }
+        else {
             db.collection("threads").document(threadId).collection("posts").document(post.getId()).set(post).addOnCompleteListener(task -> listener.onComplete(null));
         }
     }
@@ -405,5 +407,18 @@ public class FirebaseManager {
 
     public void deleteReport(String reportId, OnCompleteListener<Void> listener) {
         db.collection("reports").document(reportId).delete().addOnCompleteListener(listener);
+    }
+
+    /**
+     * Triggers an immediate fetch and store of eBird data into the eBirdApiSightings collection
+     * by calling a Firebase Cloud Function.
+     *
+     * @param listener The listener to be notified upon completion or failure.
+     */
+    public void triggerEbirdDataFetch(OnCompleteListener<HttpsCallableResult> listener) {
+        Log.d(TAG, "Calling Cloud Function: triggerEbirdDataFetch");
+        mFunctions.getHttpsCallable("triggerEbirdDataFetch")
+                .call()
+                .addOnCompleteListener(listener);
     }
 }

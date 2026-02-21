@@ -3,6 +3,8 @@ const auth = require("firebase-functions/v1/auth");
 
 // 2. Use the standard v2 imports for your other functions
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
+const { onSchedule } = require("firebase-functions/v2/scheduler");
+const { onDocumentDeleted } = require("firebase-functions/v2/firestore");
 const { defineSecret } = require("firebase-functions/params");
 const admin = require("firebase-admin");
 const axios = require("axios");
@@ -203,6 +205,33 @@ The JSON object should have these keys and corresponding facts:
     console.error(`❌ Failed to generate HUNTER facts for ${commonName} (${birdId}) after ${maxRetries} retries due to rate limits.`);
     return { birdId: birdId, lastGenerated: admin.firestore.FieldValue.serverTimestamp(), error: `Failed after ${maxRetries} retries due to rate limits.` };
 }
+
+// ======================================================
+// New: checkDisplayName Cloud Function
+// ======================================================
+exports.checkDisplayName = onCall(async (request) => {
+    const { displayName } = request.data;
+
+    if (!displayName || typeof displayName !== 'string' || displayName.trim().length === 0) {
+        throw new HttpsError('invalid-argument', 'The displayName field is required and must be a non-empty string.');
+    }
+
+    try {
+        const usersSnapshot = await db.collection('users')
+                                       .where('displayName', '==', displayName)
+                                       .limit(1)
+                                       .get();
+
+        const isAvailable = usersSnapshot.empty;
+
+        console.log(`DisplayName check for "${displayName}": isAvailable = ${isAvailable}`);
+        return { isAvailable: isAvailable };
+
+    } catch (error) {
+        console.error("Error checking displayName in Cloud Function:", error);
+        throw new HttpsError('internal', 'Unable to check display name availability.');
+    }
+});
 
 
 // ======================================================
@@ -547,12 +576,12 @@ exports.searchBirdImage = onCall({ secrets: [NUTHATCH_API_KEY] }, async (request
 });
 
 // ======================================================\
-// 4. AUTOMATIC USER DATA CLEANUP
+// 4. AUTOMATIC USER DATA CLEANUP (ENTIRE ACCOUNT)
 //=======================================================
 // Using the v1 auth module directly ensures 'user' is never undefined.
 exports.cleanupUserData = auth.user().onDelete(async (user) => {
     const uid = user.uid;
-    console.log(`🧹 Starting cleanup for user: ${uid}`);
+    console.log(`🧹 Starting cleanup for user account: ${uid}`);
 
     const batch = db.batch();
 
@@ -572,10 +601,177 @@ exports.cleanupUserData = auth.user().onDelete(async (user) => {
         }
 
         await batch.commit();
-        console.log(`✅ Successfully deleted all data for ${uid}`);
+        console.log(`✅ Successfully deleted all data for user account ${uid}`);
         return null;
     } catch (err) {
-        console.error("❌ Cleanup failed:", err);
+        console.error("❌ Cleanup failed for user account:", err);
         return null;
+    }
+});
+
+
+// ======================================================
+// 5. AUTOMATIC SIGHTING CLEANUP (SINGLE ITEM) - v2 Syntax
+// ======================================================
+/**
+ * Triggers when a user's collectionSlot is deleted and cleans up
+ * all related data (userBirds, birdSightings).
+ */
+exports.oncollectionslotdeleted = onDocumentDeleted("users/{userId}/collectionSlot/{slotId}", async (event) => {
+    const deletedData = event.data.data();
+    const userBirdId = deletedData.userBirdId;
+
+    if (!userBirdId) {
+        console.log("No userBirdId in deleted collectionSlot. Nothing to clean up.");
+        return null;
+    }
+
+    console.log(`🧹 Starting cleanup for userBirdId: ${userBirdId}`);
+    const batch = db.batch();
+
+    try {
+        // 1. Delete the UserBird document
+        const userBirdRef = db.collection("userBirds").doc(userBirdId);
+        batch.delete(userBirdRef);
+
+        // 2. Query for and delete the associated BirdSighting document
+        const sightingsQuery = db.collection("birdSightings").where("user_sighting.userBirdId", "==", userBirdId);
+        const sightingsSnapshot = await sightingsQuery.get();
+
+        if (sightingsSnapshot.empty) {
+            console.log(`No birdSightings found for userBirdId: ${userBirdId}.`);
+        } else {
+            sightingsSnapshot.forEach(doc => {
+                console.log(`Deleting birdSighting: ${doc.id}`);
+                batch.delete(doc.ref);
+            });
+        }
+
+        // Commit all deletions
+        await batch.commit();
+        console.log(`✅ Successfully cleaned up data for userBirdId: ${userBirdId}`);
+        return null;
+
+    } catch (err) {
+        console.error(`❌ Failed to cleanup data for userBirdId: ${userBirdId}`, err);
+        return null;
+    }
+});
+
+
+// --- NEW CORE EBIRD FETCH/STORE LOGIC (for both scheduled & callable functions) ---
+async function _fetchAndStoreEBirdDataCore() {
+    console.log("Executing _fetchAndStoreEBirdDataCore...");
+
+    // 1. Specify the region code for the area you want to query.
+    const REGION_CODE = "US-GA";
+    // 2. Construct the eBird API endpoint URL for recent notable observations.
+    const ebirdApiUrl = `https://api.ebird.org/v2/data/obs/${REGION_CODE}/recent/notable`;
+
+    try {
+        // --- Make the API Call ---
+        const response = await axios.get(ebirdApiUrl, {
+            headers: {
+                "X-eBirdApiToken": EBIRD_API_KEY.value(),
+            },
+        });
+
+        const ebirdSightings = response.data;
+        if (!ebirdSightings || ebirdSightings.length === 0) {
+            console.log("No new eBird sightings found.");
+            return { status: "success", message: "No new eBird sightings found." };
+        }
+
+        console.log(`Found ${ebirdSightings.length} sightings from eBird API.`);
+        const batch = db.batch();
+        let sightingsAdded = 0;
+
+        // --- Process and Store the Data ---
+        for (const sighting of ebirdSightings) {
+            // Use the eBird sighting ID as our document ID to prevent duplicates
+            const docId = sighting.subId;
+            if (!docId) continue; // Skip if there's no unique ID
+
+            const docRef = db.collection("eBirdApiSightings").doc(docId);
+
+            // Create a new document with the data you need for the map
+            const newSighting = {
+                speciesCode: sighting.speciesCode,
+                commonName: sighting.comName,
+                scientificName: sighting.sciName,
+                observationDate: new Date(sighting.obsDt),
+                location: {
+                    latitude: sighting.lat,
+                    longitude: sighting.lng,
+                    localityName: sighting.locName,
+                },
+                howMany: sighting.howMany || 1,
+                isReviewed: sighting.obsReviewed,
+            };
+
+            batch.set(docRef, newSighting);
+            sightingsAdded++;
+        }
+
+        // Commit all the new sightings to Firestore in one batch
+        if (sightingsAdded > 0) {
+            await batch.commit();
+            console.log(`✅ Successfully added or updated ${sightingsAdded} eBird sightings.`);
+        } else {
+            console.log("No valid sightings to add to the batch.");
+        }
+        return { status: "success", message: `Successfully added or updated ${sightingsAdded} eBird sightings.` };
+    } catch (error) {
+        console.error("❌ Error fetching or storing eBird data:", error);
+        throw new HttpsError("internal", `eBird data processing failed: ${error.message}`);
+    }
+}
+
+// ======================================================
+// SCHEDULED EBIRD SIGHTING FETCH (Calls the core logic)
+// ======================================================
+/**
+ * A scheduled Cloud Function to fetch recent eBird sightings for a specific region
+ * and store them in the 'eBirdApiSightings' collection.
+ * This function now calls the _fetchAndStoreEBirdDataCore helper.
+ */
+exports.fetchAndStoreEBirdData = onSchedule({
+    schedule: "every 72 hours",
+    secrets: [EBIRD_API_KEY]
+}, async (event) => {
+    console.log("Scheduled function: Starting eBird data fetch.");
+    try {
+        await _fetchAndStoreEBirdDataCore();
+        console.log("Scheduled function: eBird data fetch completed successfully.");
+        return null;
+    } catch (error) {
+        console.error("Scheduled function: Error during eBird data fetch:", error);
+        return null;
+    }
+});
+
+
+// ======================================================
+// NEW: CALLABLE EBIRD SIGHTING FETCH (for app warmup)
+// ======================================================
+/**
+ * A callable Cloud Function that the Android app can invoke on warmup
+ * to trigger an immediate fetch and store of eBird sightings.
+ * This function also calls the _fetchAndStoreEBirdDataCore helper.
+ */
+exports.triggerEbirdDataFetch = onCall({ secrets: [EBIRD_API_KEY] }, async (request) => {
+    console.log("Callable function: Triggered eBird data fetch from app.");
+    try {
+        // You can add an optional authentication check here if only logged-in users should trigger this.
+        // if (!request.auth) {
+        //     throw new HttpsError("unauthenticated", "Authentication required to trigger eBird data fetch.");
+        // }
+
+        const result = await _fetchAndStoreEBirdDataCore();
+        console.log("Callable function: eBird data fetch completed successfully.");
+        return result; // Return the result/message from the core function
+    } catch (error) {
+        console.error("Callable function: Error during eBird data fetch:", error);
+        throw error; // Re-throw HttpsError or create a new one for app client
     }
 });

@@ -10,6 +10,7 @@ import android.location.Location;
 import android.os.Looper;
 import android.util.Log;
 
+import androidx.annotation.Nullable;
 import androidx.core.content.ContextCompat;
 
 import com.google.android.gms.location.FusedLocationProviderClient;
@@ -41,9 +42,23 @@ public class LocationHelper {
 
     private final ExecutorService geoExecutor = Executors.newSingleThreadExecutor();
 
+    // New interface for richer location data
     public interface LocationListener {
-        void onLocationReceived(Location location, String localityName);
+        void onLocationReceived(Location location, @Nullable String localityName, @Nullable String state, @Nullable String country);
         void onLocationError(String errorMessage);
+    }
+
+    // Simple data class to hold address components
+    private static class AddressComponents {
+        @Nullable String localityName;
+        @Nullable String state;
+        @Nullable String country;
+
+        AddressComponents(@Nullable String localityName, @Nullable String state, @Nullable String country) {
+            this.localityName = localityName;
+            this.state = state;
+            this.country = country;
+        }
     }
 
     public LocationHelper(Context context, LocationListener listener) {
@@ -69,9 +84,9 @@ public class LocationHelper {
                 if (location != null) {
                     // Perform reverse geocoding on a background thread
                     geoExecutor.execute(() -> {
-                        String locality = getLocalityFromLocation(location);
+                        AddressComponents addressComponents = getAddressDetailsFromLocation(location);
                         ((Activity) context).runOnUiThread(() -> {
-                            listener.onLocationReceived(location, locality);
+                            listener.onLocationReceived(location, addressComponents.localityName, addressComponents.state, addressComponents.country);
                         });
                     });
                 } else {
@@ -131,9 +146,9 @@ public class LocationHelper {
                     .addOnSuccessListener(location -> {
                         if (location != null) {
                             geoExecutor.execute(() -> {
-                                String locality = getLocalityFromLocation(location);
+                                AddressComponents addressComponents = getAddressDetailsFromLocation(location);
                                 ((Activity) context).runOnUiThread(() -> {
-                                    listener.onLocationReceived(location, locality);
+                                    listener.onLocationReceived(location, addressComponents.localityName, addressComponents.state, addressComponents.country);
                                 });
                             });
                         } else {
@@ -153,25 +168,23 @@ public class LocationHelper {
         }
     }
 
-    // Reverse geocoding helper
-    private String getLocalityFromLocation(Location location) {
-        Geocoder geocoder = new Geocoder(applicationContext, Locale.getDefault()); // Use applicationContext
+    // Reverse geocoding helper to get locality, state, and country
+    private AddressComponents getAddressDetailsFromLocation(Location location) {
+        Geocoder geocoder = new Geocoder(applicationContext, Locale.getDefault());
         try {
             List<Address> results = geocoder.getFromLocation(location.getLatitude(), location.getLongitude(), 1);
             if (results != null && !results.isEmpty()) {
                 Address address = results.get(0);
-                String city = address.getLocality();
-                String state = address.getAdminArea();
-                if (city != null && state != null) {
-                    return city + ", " + state;
-                } else if (state != null) {
-                    return state;
-                }
+                return new AddressComponents(
+                        address.getLocality(),
+                        address.getAdminArea(), // State
+                        address.getCountryName() // Country
+                );
             }
         } catch (IOException e) {
             Log.e(TAG, "Geocoder failed: " + e.getMessage());
         }
-        return String.format(Locale.US, "Lat: %.4f, Lng: %.4f", location.getLatitude(), location.getLongitude());
+        return new AddressComponents(null, null, null); // Return nulls if geocoding fails
     }
 
     public void shutdown() {

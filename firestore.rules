@@ -35,7 +35,6 @@ service cloud.firestore {
     }
 
     // Bird Facts and Hunter Facts: Allow authenticated users to read all facts.
-    // Writes are restricted to Cloud Functions.
     match /birdFacts/{birdId} {
       allow read: if request.auth != null;
 
@@ -54,6 +53,7 @@ service cloud.firestore {
     }
 
     // Locations can be created and read by any authenticated user.
+    // The write access remains unchanged as they are shared resources.
     match /locations/{locationId} {
       allow read, create: if request.auth != null;
       allow update, delete: if false;
@@ -67,18 +67,25 @@ service cloud.firestore {
 
     // User can only manage their own media.
     match /media/{mediaId} {
-      allow read, write: if request.auth != null && request.auth.uid == resource.data.userId;
+      allow read, write: if request.auth != null && resource.data.userId == request.auth.uid;
     }
 
     // User can only manage their own bird cards.
     match /birdCards/{cardId} {
-      allow read, write: if request.auth != null && request.auth.uid == resource.data.userId;
+      allow read, write: if request.auth != null && resource.data.userId == request.auth.uid;
     }
 
-    // Sighting data can be read by anyone, but only written by the user who owns it.
-    match /birdSightings/{sightingId} {
+    // User-generated Bird Sightings - Renamed from 'birdSightings' to 'userBirdSightings'
+    match /userBirdSightings/{userBirdSightingId} {
         allow read: if request.auth != null;
-        allow write: if request.auth != null && request.auth.uid == resource.data.userId;
+        allow create: if request.auth != null && request.resource.data.user_sighting.userId == request.auth.uid;
+        allow update, delete: if request.auth != null && resource.data.user_sighting.userId == request.auth.uid;
+    }
+
+    // eBird API Sightings - New collection, read-only for authenticated users (written by Cloud Function)
+    match /eBirdApiSightings/{ebirdSightingId} {
+        allow read: if request.auth != null;
+        allow write: if false; // Only Cloud Functions should write to this
     }
 
     match /hunterSightings/{sightingId} {
@@ -97,7 +104,7 @@ service cloud.firestore {
         allow create, update, delete: if request.auth != null && request.auth.uid == resource.data.userId;
     }
 
-    // eBird cache is read-only for clients.
+    // eBird cache is read-only for clients (written by Cloud Function).
     match /ebird_ga_cache/{document} {
       allow read: if request.auth != null;
       allow write: if false;

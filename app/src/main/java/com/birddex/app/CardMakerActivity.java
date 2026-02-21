@@ -240,7 +240,7 @@ public class CardMakerActivity extends AppCompatActivity {
                         Intent home = new Intent(CardMakerActivity.this, HomeActivity.class);
                         home.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
 
-                        // Optional: if you want HomeActivity to open the collection tab
+                        // Optional: if anyone wants HomeActivity to open the collection tab
                         home.putExtra("openTab", "collection");
 
                         startActivity(home);

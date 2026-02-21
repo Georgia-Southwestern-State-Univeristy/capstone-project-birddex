@@ -2,7 +2,8 @@ import java.util.Properties
 
 plugins {
     alias(libs.plugins.android.application)
-    alias(libs.plugins.google.gms.google.services) 
+    alias(libs.plugins.google.gms.google.services)
+    alias(libs.plugins.ksp) // Using alias for KSP
 }
 
 android {
@@ -49,7 +50,8 @@ dependencies {
     implementation("androidx.camera:camera-lifecycle:$cameraxVersion")
     implementation("androidx.camera:camera-view:$cameraxVersion")
 
-    implementation("com.vanniktech:android-image-cropper:4.7.0")
+    // Changed from com.vanniktech:android-image-cropper to com.github.CanHub:Android-Image-Cropper
+    implementation("com.github.CanHub:Android-Image-Cropper:4.0.0") // Consider updating to the latest stable version
     
     implementation(platform("com.google.firebase:firebase-bom:34.9.0"))
     // Google Play Services dependencies
@@ -72,7 +74,9 @@ dependencies {
     // Networking and Image Libraries
     implementation("com.android.volley:volley:1.2.1")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    // Updated Glide to 5.0.5 and changed annotationProcessor to ksp
     implementation("com.github.bumptech.glide:glide:5.0.5")
+    ksp("com.github.bumptech.glide:compiler:5.0.5")
     implementation(libs.guava)
 
     testImplementation(libs.junit)

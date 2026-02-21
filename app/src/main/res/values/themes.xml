@@ -6,4 +6,15 @@
     </style>
 
     <style name="Theme.BirdDex" parent="Base.Theme.BirdDex" />
+
+    <style name="CropActivityTheme" parent="Theme.AppCompat.Light.NoActionBar">
+        <!-- Set the window background to black for the cropping activity -->
+        <item name="android:windowBackground">@android:color/black</item>
+    </style>
+
+    <!-- Shape Appearance Overlay for a 50% corner size (circular) -->
+    <style name="ShapeAppearanceOverlay.App.CornerSize50Percent" parent="ShapeAppearance.MaterialComponents.SmallComponent">
+        <item name="cornerFamily">rounded</item>
+        <item name="cornerSize">50%</item>
+    </style>
 </resources>

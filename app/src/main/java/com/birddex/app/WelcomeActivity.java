@@ -10,6 +10,7 @@ import androidx.appcompat.app.AppCompatActivity;
 
 import com.google.firebase.auth.FirebaseAuth;
 import com.google.firebase.auth.FirebaseUser;
+import com.google.firebase.functions.HttpsCallableResult; // Added import
 
 import java.util.List;
 import java.util.concurrent.TimeUnit;
@@ -21,14 +22,20 @@ import java.util.concurrent.TimeUnit;
 public class WelcomeActivity extends AppCompatActivity {
 
     private static final String TAG = "WelcomeActivity";
+    private FirebaseManager firebaseManager; // Added FirebaseManager instance
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
+        firebaseManager = new FirebaseManager(); // Initialize FirebaseManager
+
         // Pre-fetch/Verify Georgia bird list cache in the background.
         // This ensures data is ready and fresh (within 72h) when needed.
         warmUpBirdCache();
+
+        // Also trigger the eBird API sightings fetch for map data
+        triggerEbirdApiSightingsFetch();
 
         // Retrieve the current Firebase user if they are already authenticated.
         FirebaseUser currentUser = FirebaseAuth.getInstance().getCurrentUser();
@@ -68,6 +75,23 @@ public class WelcomeActivity extends AppCompatActivity {
             @Override
             public void onFailure(Exception e) {
                 Log.e(TAG, "Bird cache warm-up failed: " + e.getMessage());
+            }
+        });
+    }
+
+    /**
+     * Triggers the Cloud Function to fetch and store recent eBird API sightings
+     * for map population. This runs silently in the background on app warmup.
+     */
+    private void triggerEbirdApiSightingsFetch() {
+        Log.d(TAG, "Starting eBird API sightings fetch for map data...");
+        firebaseManager.triggerEbirdDataFetch(task -> {
+            if (task.isSuccessful()) {
+                HttpsCallableResult result = task.getResult();
+                // You can log the result message from the Cloud Function if needed
+                Log.i(TAG, "eBird API sightings fetch completed: " + result.getData());
+            } else {
+                Log.e(TAG, "eBird API sightings fetch failed: ", task.getException());
             }
         });
     }

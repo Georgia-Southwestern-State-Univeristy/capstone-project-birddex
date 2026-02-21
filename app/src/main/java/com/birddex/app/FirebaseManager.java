@@ -3,6 +3,7 @@ package com.birddex.app;
 import android.util.Log;
 
 import com.google.android.gms.tasks.OnCompleteListener;
+import com.google.android.gms.tasks.Task;
 import com.google.android.gms.tasks.Tasks;
 import com.google.firebase.auth.FirebaseAuth;
 import com.google.firebase.auth.FirebaseUser;
@@ -27,7 +28,7 @@ public class FirebaseManager {
     public interface AuthListener {
         void onSuccess(FirebaseUser user);
         void onFailure(String errorMessage);
-        void onDisplayNameTaken();
+        void onUsernameTaken();
     }
 
     public interface PasswordResetListener {
@@ -35,7 +36,7 @@ public class FirebaseManager {
         void onFailure(String errorMessage);
     }
 
-    public interface DisplayNameCheckListener {
+    public interface UsernameCheckListener {
         void onCheckComplete(boolean isAvailable);
         void onFailure(String errorMessage);
     }
@@ -46,19 +47,19 @@ public class FirebaseManager {
         mFunctions = FirebaseFunctions.getInstance();
     }
 
-    public void createAccount(String displayName, String email, String password, AuthListener listener) {
-        // First, check if the display name is available using a Cloud Function
-        checkDisplayNameAvailability(displayName, new DisplayNameCheckListener() {
+    public void createAccount(String username, String email, String password, AuthListener listener) {
+        // First, check if the username is available using a Cloud Function
+        checkUsernameAvailability(username, new UsernameCheckListener() {
             @Override
             public void onCheckComplete(boolean isAvailable) {
                 if (isAvailable) {
-                    // Display name is available, proceed with account creation
+                    // Username is available, proceed with account creation
                     mAuth.createUserWithEmailAndPassword(email, password)
                             .addOnCompleteListener(authTask -> {
                                 if (authTask.isSuccessful()) {
                                     FirebaseUser firebaseUser = mAuth.getCurrentUser();
                                     if (firebaseUser != null) {
-                                        User user = new User(firebaseUser.getUid(), email, displayName, new Date(), null);
+                                        User user = new User(firebaseUser.getUid(), email, username, new Date(), null);
                                         addUser(user, task1 -> {
                                             if (task1.isSuccessful()) {
                                                 listener.onSuccess(firebaseUser);
@@ -78,24 +79,24 @@ public class FirebaseManager {
                                 }
                             });
                 } else {
-                    // Display name is already taken
-                    listener.onDisplayNameTaken();
+                    // Username is already taken
+                    listener.onUsernameTaken();
                 }
             }
 
             @Override
             public void onFailure(String errorMessage) {
-                // Error during display name check
-                listener.onFailure("Error checking display name: " + errorMessage);
+                // Error during username check
+                listener.onFailure("Error checking username: " + errorMessage);
             }
         });
     }
 
-    public void checkDisplayNameAvailability(String displayName, DisplayNameCheckListener listener) {
+    public void checkUsernameAvailability(String username, UsernameCheckListener listener) {
         Map<String, Object> data = new HashMap<>();
-        data.put("displayName", displayName);
+        data.put("username", username);
 
-        mFunctions.getHttpsCallable("checkDisplayName")
+        mFunctions.getHttpsCallable("checkUsername")
                 .call(data)
                 .addOnCompleteListener(task -> {
                     if (task.isSuccessful()) {
@@ -106,17 +107,17 @@ public class FirebaseManager {
                             if (isAvailable != null) {
                                 listener.onCheckComplete(isAvailable);
                             } else {
-                                listener.onFailure("Invalid response from checkDisplayName function.");
+                                listener.onFailure("Invalid response from checkUsername function.");
                             }
                         } else {
-                            listener.onFailure("Invalid response format from checkDisplayName function.");
+                            listener.onFailure("Invalid response format from checkUsername function.");
                         }
                     } else {
                         String errorMessage = "Callable function call failed.";
                         if (task.getException() != null) {
                             errorMessage += " " + task.getException().getMessage();
                         }
-                        Log.e(TAG, "checkDisplayNameAvailability failed: " + errorMessage, task.getException());
+                        Log.e(TAG, "checkUsernameAvailability failed: " + errorMessage, task.getException());
                         listener.onFailure(errorMessage);
                     }
                 });
@@ -135,13 +136,60 @@ public class FirebaseManager {
         db.collection("users").document(userId).get().addOnCompleteListener(listener);
     }
 
-    public void updateUserProfile(User user, OnCompleteListener<Void> listener) {
-        if (user == null || user.getId() == null) {
-            Log.e(TAG, "Cannot update user in Firestore, User object or ID is null.");
-            if (listener != null) listener.onComplete(Tasks.forException(new IllegalArgumentException("User object or ID is null.")));
+    public void updateUserProfile(User updatedUser, AuthListener listener) {
+        FirebaseUser currentUser = mAuth.getCurrentUser();
+        if (currentUser == null || updatedUser == null || updatedUser.getId() == null) {
+            Log.e(TAG, "Cannot update user profile: currentUser, updatedUser, or updatedUser ID is null.");
+            if (listener != null) listener.onFailure("User not authenticated or invalid user data.");
             return;
         }
-        db.collection("users").document(user.getId()).set(user).addOnCompleteListener(listener);
+
+        String userId = currentUser.getUid();
+        String newUsername = updatedUser.getUsername();
+
+        // 1. Fetch current user profile to compare usernames
+        getUserProfile(userId, task -> {
+            if (task.isSuccessful() && task.getResult() != null) {
+                User oldUser = task.getResult().toObject(User.class);
+                if (oldUser != null && newUsername.equals(oldUser.getUsername())) {
+                    // Username is not changed, proceed with update without availability check
+                    db.collection("users").document(userId).set(updatedUser)
+                            .addOnCompleteListener(updateTask -> {
+                                if (updateTask.isSuccessful()) {
+                                    listener.onSuccess(currentUser);
+                                } else {
+                                    listener.onFailure("Failed to update user profile: " + updateTask.getException().getMessage());
+                                }
+                            });
+                } else {
+                    // Username has changed, check availability
+                    checkUsernameAvailability(newUsername, new UsernameCheckListener() {
+                        @Override
+                        public void onCheckComplete(boolean isAvailable) {
+                            if (isAvailable) {
+                                db.collection("users").document(userId).set(updatedUser)
+                                        .addOnCompleteListener(updateTask -> {
+                                            if (updateTask.isSuccessful()) {
+                                                listener.onSuccess(currentUser);
+                                            } else {
+                                                listener.onFailure("Failed to update user profile: " + updateTask.getException().getMessage());
+                                            }
+                                        });
+                            } else {
+                                listener.onUsernameTaken();
+                            }
+                        }
+
+                        @Override
+                        public void onFailure(String errorMessage) {
+                            listener.onFailure("Error checking username availability: " + errorMessage);
+                        }
+                    });
+                }
+            } else {
+                listener.onFailure("Failed to retrieve current user profile: " + (task.getException() != null ? task.getException().getMessage() : "Unknown error"));
+            }
+        });
     }
 
     public void deleteUser(String userId, OnCompleteListener<Void> listener) {
@@ -201,7 +249,47 @@ public class FirebaseManager {
 
     // UserBird Collection
     public void addUserBird(UserBird userBird, OnCompleteListener<Void> listener) {
-        db.collection("userBirds").document(userBird.getId()).set(userBird).addOnCompleteListener(listener);
+        if (userBird == null || userBird.getUserId() == null || userBird.getBirdSpeciesId() == null) {
+            Log.e(TAG, "Cannot add userBird to Firestore: UserBird object, userId, or birdSpeciesId is null.");
+            if (listener != null) listener.onComplete(Tasks.forException(new IllegalArgumentException("User object or ID is null.")));
+            return;
+        }
+
+        // 1. Check for duplicates
+        db.collection("userBirds")
+                .whereEqualTo("userId", userBird.getUserId())
+                .whereEqualTo("birdSpeciesId", userBird.getBirdSpeciesId())
+                .get()
+                .addOnCompleteListener(task -> {
+                    if (task.isSuccessful()) {
+                        boolean isDuplicate = !task.getResult().isEmpty();
+                        int pointsEarned = isDuplicate ? 0 : 1; // Corrected to 1 point for new birds
+
+                        userBird.setIsDuplicate(isDuplicate);
+                        userBird.setPointsEarned(pointsEarned);
+                        
+                        Log.d(TAG, "Duplicate check for UserBird (user: " + userBird.getUserId() + ", bird: " + userBird.getBirdSpeciesId() + "): isDuplicate = " + isDuplicate + ", pointsEarned = " + pointsEarned);
+
+                        // 2. Save the UserBird document with updated fields
+                        db.collection("userBirds").document(userBird.getId()).set(userBird)
+                                .addOnCompleteListener(saveTask -> {
+                                    if (saveTask.isSuccessful()) {
+                                        Log.d(TAG, "UserBird saved successfully: " + userBird.getId());
+                                    } else {
+                                        Log.e(TAG, "Failed to save UserBird: " + userBird.getId(), saveTask.getException());
+                                    }
+                                    // Pass on the original listener's result
+                                    if (listener != null) { // Check if listener is not null before using
+                                        listener.onComplete(saveTask);
+                                    }
+                                });
+                    } else {
+                        Log.e(TAG, "Failed to check for duplicate userBirds: ", task.getException());
+                        if (listener != null) { // Check if listener is not null before using
+                            listener.onComplete(Tasks.forException(task.getException()));
+                        }
+                    }
+                });
     }
 
     public void getUserBirdById(String userBirdId, OnCompleteListener<DocumentSnapshot> listener) {
@@ -318,21 +406,21 @@ public class FirebaseManager {
         db.collection("birdCards").document(cardId).delete().addOnCompleteListener(listener);
     }
 
-    // BirdSightings Collection
-    public void addBirdSighting(BirdSighting birdSighting, OnCompleteListener<Void> listener) {
-        db.collection("birdSightings").document(birdSighting.getId()).set(birdSighting).addOnCompleteListener(listener);
+    // UserBirdSightings Collection
+    public void addUserBirdSighting(UserBirdSighting userBirdSighting, OnCompleteListener<Void> listener) {
+        db.collection("userBirdSightings").document(userBirdSighting.getId()).set(userBirdSighting).addOnCompleteListener(listener);
     }
 
-    public void getBirdSightingById(String birdSightId, OnCompleteListener<DocumentSnapshot> listener) {
-        db.collection("birdSightings").document(birdSightId).get().addOnCompleteListener(listener);
+    public void getUserBirdSightingById(String userBirdSightId, OnCompleteListener<DocumentSnapshot> listener) {
+        db.collection("userBirdSightings").document(userBirdSightId).get().addOnCompleteListener(listener);
     }
 
-    public void updateBirdSighting(BirdSighting birdSighting, OnCompleteListener<Void> listener) {
-        db.collection("birdSightings").document(birdSighting.getId()).set(birdSighting).addOnCompleteListener(listener);
+    public void updateUserBirdSighting(UserBirdSighting userBirdSighting, OnCompleteListener<Void> listener) {
+        db.collection("userBirdSightings").document(userBirdSighting.getId()).set(userBirdSighting).addOnCompleteListener(listener);
     }
 
-    public void deleteBirdSighting(String birdSightId, OnCompleteListener<Void> listener) {
-        db.collection("birdSightings").document(birdSightId).delete().addOnCompleteListener(listener);
+    public void deleteUserBirdSighting(String userBirdSightId, OnCompleteListener<Void> listener) {
+        db.collection("userBirdSightings").document(userBirdSightId).delete().addOnCompleteListener(listener);
     }
 
     // HunterSightings Collection
@@ -373,7 +461,8 @@ public class FirebaseManager {
     public void addPost(String threadId, Post post, OnCompleteListener<DocumentReference> listener) {
         if (post.getId() == null || post.getId().isEmpty()) {
             db.collection("threads").document(threadId).collection("posts").add(post).addOnCompleteListener(listener);
-        } else {
+        }
+        else {
             db.collection("threads").document(threadId).collection("posts").document(post.getId()).set(post).addOnCompleteListener(task -> listener.onComplete(null));
         }
     }
@@ -405,5 +494,18 @@ public class FirebaseManager {
 
     public void deleteReport(String reportId, OnCompleteListener<Void> listener) {
         db.collection("reports").document(reportId).delete().addOnCompleteListener(listener);
+    }
+
+    /**
+     * Triggers an immediate fetch and store of eBird data into the eBirdApiSightings collection
+     * by calling a Firebase Cloud Function.
+     *
+     * @param listener The listener to be notified upon completion or failure.
+     */
+    public void triggerEbirdDataFetch(OnCompleteListener<HttpsCallableResult> listener) {
+        Log.d(TAG, "Calling Cloud Function: triggerEbirdDataFetch");
+        mFunctions.getHttpsCallable("triggerEbirdDataFetch")
+                .call()
+                .addOnCompleteListener(listener);
     }
 }

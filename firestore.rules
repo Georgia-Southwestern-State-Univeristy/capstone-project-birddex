@@ -3,28 +3,32 @@ service cloud.firestore {
   match /databases/{database}/documents {
 
     // Allow authenticated users to query the 'users' collection (e.g., for displayName checks).
-    // Individual user profiles remain under their specific userId rule for writes.
-    match /users {
-      allow read: if request.auth != null;
-    }
-
     match /users/{userId} {
-      // Allow authenticated users to read any user's profile (for display name lookup on the client).
-      // Allow a user to write to their own profile.
+      // Allow a user to create their own profile, but prevent direct writes to calculated totals.
+      // Allow a user to update their own profile, except for the calculated totals.
       allow read: if request.auth != null;
-      allow write: if request.auth != null && request.auth.uid == userId;
+      allow create: if request.auth != null && request.auth.uid == userId;
+      // Allow update only if totalBirds, duplicateBirds, and totalPoints are unchanged (only CF can change these)
+      // Also allow updating 'profilePictureUrl', 'username', and 'bio'.
+      allow update: if request.auth != null && request.auth.uid == userId &&
+                     (!("totalBirds" in request.resource.data) || request.resource.data.totalBirds == resource.data.totalBirds) &&
+                     (!("duplicateBirds" in request.resource.data) || request.resource.data.duplicateBirds == resource.data.duplicateBirds) &&
+                     (!("totalPoints" in request.resource.data) || request.resource.data.totalPoints == resource.data.totalPoints) &&
+                     // Only allow changes to profilePictureUrl, username, and bio (or keep existing values)
+                     request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+                         "profilePictureUrl",
+                         "username",
+                         "bio",
+                         "totalBirds", // Include these if they are to be unchanged, ensuring no app client updates them
+                         "duplicateBirds",
+                         "totalPoints"
+                     ]);
 
-      // DEPRECATED: still here for older clients.
+      // Subcollection for user-specific collection slots
       match /collectionSlot/{slotId} {
         allow read: if request.auth != null;
         allow write: if request.auth != null && request.auth.uid == userId;
       }
-    }
-
-    // Collection items can be read by any user, but only managed by their owner.
-    match /collectionSlot/{slotId} {
-      allow read: if request.auth != null;
-      allow write: if request.auth != null && request.auth.uid == resource.data.userId;
     }
 
     // The 'birds' collection contains public, static reference data.
@@ -35,7 +39,6 @@ service cloud.firestore {
     }
 
     // Bird Facts and Hunter Facts: Allow authenticated users to read all facts.
-    // Writes are restricted to Cloud Functions.
     match /birdFacts/{birdId} {
       allow read: if request.auth != null;
 
@@ -46,14 +49,15 @@ service cloud.firestore {
     }
 
     // 'userBirds' contains records of captures specific to a user.
+    // Now includes pointsEarned and isDuplicate, which are set by the app, but totals updated by CF.
     match /userBirds/{userBirdId} {
-      // A user can only read, update, or delete a document if their UID matches the 'userId' field within it.
-      allow read, update, delete: if request.auth != null && request.auth.uid == resource.data.userId;
-      // A user can only create a document if their UID matches the 'userId' in the new document.
+      allow read: if request.auth != null;
       allow create: if request.auth != null && request.auth.uid == request.resource.data.userId;
+      allow update, delete: if request.auth != null && request.auth.uid == resource.data.userId;
     }
 
     // Locations can be created and read by any authenticated user.
+    // The write access remains unchanged as they are shared resources.
     match /locations/{locationId} {
       allow read, create: if request.auth != null;
       allow update, delete: if false;
@@ -67,18 +71,22 @@ service cloud.firestore {
 
     // User can only manage their own media.
     match /media/{mediaId} {
-      allow read, write: if request.auth != null && request.auth.uid == resource.data.userId;
+      allow read, write: if request.auth != null && resource.data.userId == request.auth.uid;
     }
 
-    // User can only manage their own bird cards.
-    match /birdCards/{cardId} {
-      allow read, write: if request.auth != null && request.auth.uid == resource.data.userId;
-    }
-
-    // Sighting data can be read by anyone, but only written by the user who owns it.
-    match /birdSightings/{sightingId} {
+    // User-generated Bird Sightings - Now 'userBirdSightings'
+    // Users can create and update their own, but NOT delete.
+    match /userBirdSightings/{userBirdSightingId} {
         allow read: if request.auth != null;
-        allow write: if request.auth != null && request.auth.uid == resource.data.userId;
+        allow create: if request.auth != null && request.resource.data.user_sighting.userId == request.auth.uid;
+        allow update: if request.auth != null && resource.data.user_sighting.userId == request.auth.uid;
+        // Removed delete permission for clients
+    }
+
+    // eBird API Sightings - New collection, read-only for authenticated users (written by Cloud Function)
+    match /eBirdApiSightings/{ebirdSightingId} {
+        allow read: if request.auth != null;
+        allow write: if false; // Only Cloud Functions should write to this
     }
 
     match /hunterSightings/{sightingId} {
@@ -97,7 +105,7 @@ service cloud.firestore {
         allow create, update, delete: if request.auth != null && request.auth.uid == resource.data.userId;
     }
 
-    // eBird cache is read-only for clients.
+    // eBird cache is read-only for clients (written by Cloud Function).
     match /ebird_ga_cache/{document} {
       allow read: if request.auth != null;
       allow write: if false;

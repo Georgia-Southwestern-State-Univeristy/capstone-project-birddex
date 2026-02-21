@@ -14,8 +14,13 @@ import androidx.appcompat.app.AppCompatActivity;
 
 import com.google.firebase.auth.FirebaseAuth;
 import com.google.firebase.auth.FirebaseUser;
+import com.google.firebase.firestore.FirebaseFirestore;
+import com.google.firebase.firestore.Query;
+import com.google.firebase.firestore.DocumentSnapshot;
 
 import java.util.Date;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.UUID;
 
 public class BirdInfoActivity extends AppCompatActivity {
@@ -30,6 +35,11 @@ public class BirdInfoActivity extends AppCompatActivity {
     private String currentSpecies;
     private String currentFamily;
     private String currentImageUrl; // Firebase Storage URL
+    private Double currentLatitude;
+    private Double currentLongitude;
+    private String currentLocalityName;
+    private String currentState; // New field for state
+    private String currentCountry; // New field for country
 
     @Override
     protected void onCreate(@Nullable Bundle savedInstanceState) {
@@ -39,7 +49,7 @@ public class BirdInfoActivity extends AppCompatActivity {
         ImageView birdImageView = findViewById(R.id.birdImageView);
         TextView commonNameTextView = findViewById(R.id.commonNameTextView);
         TextView scientificNameTextView = findViewById(R.id.scientificNameTextView);
-        TextView speciesTextView = findViewById(R.id.speciesTextView);
+        TextView speciesTextView = findViewById(R.id.speciesTextView); // Corrected ID lookup
         TextView familyTextView = findViewById(R.id.familyTextView);
         Button btnStore = findViewById(R.id.btnStore);
         Button btnDiscard = findViewById(R.id.btnDiscard);
@@ -53,6 +63,13 @@ public class BirdInfoActivity extends AppCompatActivity {
         currentSpecies = getIntent().getStringExtra("species");
         currentFamily = getIntent().getStringExtra("family");
         currentImageUrl = getIntent().getStringExtra("imageUrl");
+
+        // Get location data from intent (all are nullable)
+        currentLatitude = getIntent().hasExtra("latitude") ? getIntent().getDoubleExtra("latitude", 0.0) : null;
+        currentLongitude = getIntent().hasExtra("longitude") ? getIntent().getDoubleExtra("longitude", 0.0) : null;
+        currentLocalityName = getIntent().getStringExtra("localityName");
+        currentState = getIntent().getStringExtra("state");
+        currentCountry = getIntent().getStringExtra("country");
 
         if (currentImageUriStr != null) {
             birdImageView.setImageURI(Uri.parse(currentImageUriStr));
@@ -83,45 +100,141 @@ public class BirdInfoActivity extends AppCompatActivity {
         String collectionSlotId = UUID.randomUUID().toString();
         Date now = new Date();
 
-        // Create and populate the UserBird object
-        UserBird userBird = new UserBird();
-        userBird.setId(userBirdId);
-        userBird.setUserId(userId); 
-        userBird.setBirdId(currentBirdId); // Use the bird's unique ID
-        userBird.setCaptureDate(now);
+        // --- Handle Location (create and save) ---
+        String newLocationId = UUID.randomUUID().toString();
+        if (currentLatitude != null && currentLongitude != null) {
+            Location location = new Location(
+                    newLocationId,
+                    new HashMap<>(), // metadata
+                    currentLatitude,
+                    currentLongitude,
+                    currentCountry,
+                    currentState,
+                    currentLocalityName
+            );
 
-        // Create and populate the CollectionSlot object
-        CollectionSlot collectionSlot = new CollectionSlot();
-        collectionSlot.setId(collectionSlotId);
-        collectionSlot.setUserBirdId(userBirdId);
-        collectionSlot.setTimestamp(now);  // Set the timestamp
-        collectionSlot.setImageUrl(currentImageUrl); // Set the image URL
-        
-        // Log the data being sent to Firestore for debugging
-        Log.d(TAG, "--- Preparing to write to Firestore ---");
-        Log.d(TAG, "User UID: " + userId);
-        Log.d(TAG, "UserBird to save (userBirds/" + userBird.getId() + "): userId field = " + userBird.getUserId() + ", birdId field = " + userBird.getBirdId());
-        Log.d(TAG, "CollectionSlot to save (users/" + userId + "/collectionSlot/" + collectionSlot.getId() + "): userBirdId field = " + collectionSlot.getUserBirdId());
+            firebaseManager.addLocation(location, locationTask -> {
+                if (locationTask.isSuccessful()) {
+                    Log.d(TAG, "SUCCESS: Saved Location entry: " + newLocationId);
+                } else {
+                    Log.e(TAG, "FAILURE: Could not save Location entry.", locationTask.getException());
+                }
+                // Proceed, passing the new locationId and the 'now' timestamp
+                getAndSetSlotIndexAndCreateUserBirdAndCollectionSlot(userId, userBirdId, collectionSlotId, now, newLocationId);
+            });
+        } else {
+            Log.w(TAG, "No valid location data. UserBird will be saved without a linked location.");
+            // Proceed without a locationId, but still pass 'now'
+            getAndSetSlotIndexAndCreateUserBirdAndCollectionSlot(userId, userBirdId, collectionSlotId, now, null);
+        }
+    }
 
-        // Save both objects to Firestore using FirebaseManager
+    private void getAndSetSlotIndexAndCreateUserBirdAndCollectionSlot(String userId, String userBirdId, String collectionSlotId, Date now, @Nullable String locationId) {
+        FirebaseFirestore.getInstance()
+                .collection("users").document(userId).collection("collectionSlot")
+                .orderBy("slotIndex", Query.Direction.DESCENDING)
+                .limit(1)
+                .get()
+                .addOnCompleteListener(task -> {
+                    if (task.isSuccessful()) {
+                        int nextSlotIndex = 0;
+                        if (!task.getResult().isEmpty()) {
+                            DocumentSnapshot document = task.getResult().getDocuments().get(0);
+                            if (document.contains("slotIndex")) {
+                                Long maxSlotIndex = document.getLong("slotIndex");
+                                if (maxSlotIndex != null) {
+                                    nextSlotIndex = maxSlotIndex.intValue() + 1;
+                                } else {
+                                    Log.e(TAG, "slotIndex in document is null, defaulting to 0");
+                                }
+                            } else {
+                                Log.e(TAG, "Document does not contain slotIndex field, defaulting to 0");
+                            }
+                        }
+                        createUserBirdAndCollectionSlot(userId, userBirdId, collectionSlotId, now, locationId, nextSlotIndex);
+                    } else {
+                        Log.e(TAG, "Error getting max slotIndex: " + task.getException().getMessage());
+                        Toast.makeText(BirdInfoActivity.this, "Error assigning collection slot. Please try again.", Toast.LENGTH_LONG).show();
+                        finish();
+                    }
+                });
+    }
+
+    private void createUserBirdAndCollectionSlot(String userId, String userBirdId, String collectionSlotId, Date now, @Nullable String locationId, int slotIndex) {
+        UserBird userBird = new UserBird(
+                userBirdId,
+                userId,
+                currentBirdId,
+                currentImageUrl,
+                locationId,
+                now, // timeSpotted
+                null, // birdFactsId
+                null  // hunterFactsId
+        );
+
         firebaseManager.addUserBird(userBird, task -> {
             if (task.isSuccessful()) {
                 Log.d(TAG, "SUCCESS: Saved UserBird entry: " + userBirdId);
+
+                CollectionSlot collectionSlot = new CollectionSlot();
+                collectionSlot.setId(collectionSlotId);
+                collectionSlot.setUserBirdId(userBirdId);
+                collectionSlot.setTimestamp(now);
+                collectionSlot.setImageUrl(currentImageUrl);
+                collectionSlot.setRarity("R1"); // Set initial rarity to R1
+                collectionSlot.setSlotIndex(slotIndex); // Set the calculated slot index
+
                 firebaseManager.addCollectionSlot(userId, collectionSlotId, collectionSlot, slotTask -> {
                     if (slotTask.isSuccessful()) {
-                        Log.d(TAG, "SUCCESS: Saved CollectionSlot: " + collectionSlotId);
-                        Toast.makeText(BirdInfoActivity.this, "Saved to your collection!", Toast.LENGTH_SHORT).show();
-                        startActivity(new Intent(BirdInfoActivity.this, HomeActivity.class));
-                        finish();
+                        Log.d(TAG, "SUCCESS: Saved CollectionSlot: " + collectionSlotId + " with rarity R1 and slotIndex " + slotIndex);
+                        saveUserBirdSighting(userId, userBirdId, now);
                     } else {
-                        Log.e(TAG, "FAILURE: Could not save CollectionSlot. User may see this bird in general list but not in their personal collection.", slotTask.getException());
-                        Toast.makeText(BirdInfoActivity.this, "Error saving to collection slot. Please try again.", Toast.LENGTH_LONG).show();
+                        Log.e(TAG, "FAILURE: Could not save CollectionSlot.", slotTask.getException());
+                        Toast.makeText(BirdInfoActivity.this, "Error saving to collection slot.", Toast.LENGTH_LONG).show();
+                        finish();
                     }
                 });
             } else {
-                Log.e(TAG, "FAILURE: Could not save UserBird entry. This is the root of the PERMISSION_DENIED error.", task.getException());
+                Log.e(TAG, "FAILURE: Could not save UserBird entry.", task.getException());
                 Toast.makeText(BirdInfoActivity.this, "Failed to save bird data: " + task.getException().getMessage(), Toast.LENGTH_LONG).show();
+                finish();
             }
+        });
+    }
+
+    private void saveUserBirdSighting(String userId, String userBirdId, Date timestamp) {
+        // --- Create user_sighting map ---
+        Map<String, Object> userSightingData = new HashMap<>();
+        userSightingData.put("userBirdId", userBirdId);
+        userSightingData.put("userId", userId);
+
+        // --- Create Location object for denormalization ---
+        Location sightingLocation = null;
+        if (currentLatitude != null && currentLongitude != null) {
+            sightingLocation = new Location(null, new HashMap<>(), currentLatitude, currentLongitude, currentCountry, currentState, currentLocalityName);
+        }
+
+        // --- Create and save UserBirdSighting document ---
+        String userBirdSightId = UUID.randomUUID().toString();
+        UserBirdSighting userBirdSighting = new UserBirdSighting(
+                userBirdSightId,
+                userSightingData,
+                sightingLocation,
+                currentBirdId,
+                currentCommonName,
+                currentImageUrl,
+                timestamp
+        );
+
+        firebaseManager.addUserBirdSighting(userBirdSighting, userBirdSightingTask -> {
+            if (userBirdSightingTask.isSuccessful()) {
+                Log.d(TAG, "SUCCESS: Saved denormalized UserBirdSighting document: " + userBirdSightId);
+            } else {
+                Log.e(TAG, "FAILURE: Could not save UserBirdSighting document", userBirdSightingTask.getException());
+            }
+            Toast.makeText(BirdInfoActivity.this, "Saved to your collection!", Toast.LENGTH_SHORT).show();
+            startActivity(new Intent(BirdInfoActivity.this, HomeActivity.class));
+            finish();
         });
     }
 }

@@ -11,6 +11,15 @@ public class CollectionSlot {
     private String rarity; // New field for card rarity (e.g., R1, R2, ...)
     private int slotIndex; // New field for explicit slot positioning
 
+    private String commonName;
+    private String scientificName;
+
+    public String getCommonName() { return commonName; }
+    public void setCommonName(String commonName) { this.commonName = commonName; }
+
+    public String getScientificName() { return scientificName; }
+    public void setScientificName(String scientificName) { this.scientificName = scientificName; }
+
     public CollectionSlot() {
         // Default constructor
     }

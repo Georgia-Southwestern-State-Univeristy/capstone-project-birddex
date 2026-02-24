@@ -54,6 +54,7 @@ public class CardMakerActivity extends AppCompatActivity {
     private String currentImageUriStr;
     private String currentBirdId;
     private String currentCommonName;
+    private String currentRarity;
     private String currentScientificName;
     private String currentSpecies;
     private String currentFamily;
@@ -74,7 +75,8 @@ public class CardMakerActivity extends AppCompatActivity {
         currentCommonName = getIntent().getStringExtra(EXTRA_BIRD_NAME);
         currentScientificName = getIntent().getStringExtra(EXTRA_SCI_NAME);
         String confidence = getIntent().getStringExtra(EXTRA_CONFIDENCE);
-        String rarity = getIntent().getStringExtra(EXTRA_RARITY);
+        currentRarity = getIntent().getStringExtra(EXTRA_RARITY);
+        String rarity = currentRarity; // keep your existing card generator code working
         currentBirdId = getIntent().getStringExtra(EXTRA_BIRD_ID);
         currentSpecies = getIntent().getStringExtra(EXTRA_SPECIES);
         currentFamily = getIntent().getStringExtra(EXTRA_FAMILY);
@@ -226,6 +228,9 @@ public class CardMakerActivity extends AppCompatActivity {
         collectionSlot.setUserBirdId(userBirdId);
         collectionSlot.setTimestamp(now);
         collectionSlot.setImageUrl(currentImageUrl);
+        collectionSlot.setCommonName(currentCommonName);
+        collectionSlot.setScientificName(currentScientificName);
+        collectionSlot.setRarity(currentRarity);
 
         Log.d(TAG, "--- Preparing to write to Firestore ---");
         Log.d(TAG, "User UID: " + userId);

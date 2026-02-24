@@ -6,6 +6,9 @@ import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Toast;
+import com.google.firebase.firestore.DocumentSnapshot;
+import java.util.HashMap;
+import java.util.Map;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
@@ -81,6 +84,54 @@ public class SearchCollectionFragment extends Fragment {
                         slot.setSlotIndex(idx);
                         slot.setImageUrl(document.getString("imageUrl"));
                         slot.setRarity(document.getString("rarity"));
+                        slot.setCommonName(document.getString("commonName"));
+                        slot.setScientificName(document.getString("scientificName"));
+                        String docCommon = document.getString("commonName");
+                        String docSci = document.getString("scientificName");
+                        String userBirdId = document.getString("userBirdId");
+                        String slotDocId = document.getId();
+
+                        boolean missingNames = (docCommon == null || docCommon.trim().isEmpty())
+                                && (docSci == null || docSci.trim().isEmpty());
+
+                        if (missingNames && userBirdId != null && !userBirdId.trim().isEmpty()) {
+                            FirebaseFirestore.getInstance()
+                                    .collection("userBirds")
+                                    .document(userBirdId)
+                                    .get()
+                                    .addOnSuccessListener(userBirdSnap -> {
+                                        String birdId = userBirdSnap.getString("birdSpeciesId");
+                                        if (birdId == null || birdId.trim().isEmpty()) return;
+
+                                        FirebaseFirestore.getInstance()
+                                                .collection("birds")
+                                                .document(birdId)
+                                                .get()
+                                                .addOnSuccessListener(birdSnap -> {
+                                                    String commonName = birdSnap.getString("commonName");
+                                                    String scientificName = birdSnap.getString("scientificName");
+
+                                                    // Update UI slot
+                                                    if (commonName != null) slot.setCommonName(commonName);
+                                                    if (scientificName != null) slot.setScientificName(scientificName);
+                                                    adapter.notifyItemChanged(idx);
+
+                                                    // Persist back into collectionSlot doc so it’s fixed permanently
+                                                    Map<String, Object> updates = new HashMap<>();
+                                                    if (commonName != null) updates.put("commonName", commonName);
+                                                    if (scientificName != null) updates.put("scientificName", scientificName);
+
+                                                    if (!updates.isEmpty()) {
+                                                        FirebaseFirestore.getInstance()
+                                                                .collection("users")
+                                                                .document(user.getUid())
+                                                                .collection("collectionSlot")
+                                                                .document(slotDocId)
+                                                                .update(updates);
+                                                    }
+                                                });
+                                    });
+                        }
                     }
 
                     adapter.notifyDataSetChanged();

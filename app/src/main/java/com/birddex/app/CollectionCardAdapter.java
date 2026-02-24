@@ -13,15 +13,9 @@ import com.bumptech.glide.Glide;
 
 import java.util.List;
 
-/**
- * Shows the user's collection as a vertical list of "cards".
- *
- * - Always expects 15 items (slotIndex 0..14)
- * - If imageUrl is null/empty, it shows the UNKNOWN placeholder card.
- */
 public class CollectionCardAdapter extends RecyclerView.Adapter<CollectionCardAdapter.VH> {
 
-    private final List<CollectionSlot> slots; // slotIndex 0..14
+    private final List<CollectionSlot> slots;
 
     public CollectionCardAdapter(@NonNull List<CollectionSlot> slots) {
         this.slots = slots;
@@ -32,8 +26,6 @@ public class CollectionCardAdapter extends RecyclerView.Adapter<CollectionCardAd
         ImageView imageView3;
         TextView txtScientific;
         TextView txtRarity;
-        TextView txtConfidence;
-        TextView txtFooter;
 
         VH(@NonNull View itemView) {
             super(itemView);
@@ -41,8 +33,6 @@ public class CollectionCardAdapter extends RecyclerView.Adapter<CollectionCardAd
             imageView3 = itemView.findViewById(R.id.imageView3);
             txtScientific = itemView.findViewById(R.id.txtScientific);
             txtRarity = itemView.findViewById(R.id.txtRarity);
-            txtConfidence = itemView.findViewById(R.id.txtConfidence);
-            txtFooter = itemView.findViewById(R.id.txtFooter);
         }
     }
 
@@ -60,27 +50,36 @@ public class CollectionCardAdapter extends RecyclerView.Adapter<CollectionCardAd
         String url = slot != null ? slot.getImageUrl() : null;
         String rarity = slot != null ? slot.getRarity() : null;
 
+        String common = slot != null ? slot.getCommonName() : null;
+        String sci = slot != null ? slot.getScientificName() : null;
+
         boolean hasImage = url != null && !url.trim().isEmpty();
 
         if (hasImage) {
-            holder.txtBirdName.setText("CAPTURED BIRD");
-            holder.txtScientific.setText("Scientific: --");
-            holder.txtRarity.setText("Rarity: " + (rarity != null ? rarity : "--"));
-            holder.txtConfidence.setText("Confidence: --");
-            holder.txtFooter.setText("BirdDex • Captured");
+            if (common != null && !common.trim().isEmpty()) {
+                holder.txtBirdName.setText(common);
+            } else if (sci != null && !sci.trim().isEmpty()) {
+                holder.txtBirdName.setText(sci); // fallback to scientific name
+            } else {
+                holder.txtBirdName.setText("Unknown Bird"); // never show "Captured"
+            }
+
+            // Scientific line (optional)
+            if (sci != null && !sci.trim().isEmpty()) holder.txtScientific.setText(sci);
+            else holder.txtScientific.setText("--");
+
+            // Rarity
+            if (rarity != null && !rarity.trim().isEmpty()) holder.txtRarity.setText("Rarity: " + rarity);
+            else holder.txtRarity.setText("Rarity: --");
 
             Glide.with(holder.itemView.getContext())
                     .load(url)
                     .centerCrop()
                     .into(holder.imageView3);
         } else {
-            // Placeholder / unverified slot
-            holder.txtBirdName.setText("UNKNOWN BIRD");
-            holder.txtScientific.setText("Scientific: --");
+            holder.txtBirdName.setText("UNKNOWN");
+            holder.txtScientific.setText("--");
             holder.txtRarity.setText("Rarity: Unknown");
-            holder.txtConfidence.setText("Confidence: --");
-            holder.txtFooter.setText("BirdDex • Not Yet Captured");
-
             holder.imageView3.setImageResource(R.drawable.birddexlogo);
         }
     }

@@ -11,7 +11,6 @@ import android.util.Log;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
-import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -21,6 +20,8 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.core.content.ContextCompat;
 import androidx.fragment.app.Fragment;
+import androidx.recyclerview.widget.LinearLayoutManager;
+import androidx.recyclerview.widget.RecyclerView;
 
 import com.google.android.gms.location.FusedLocationProviderClient;
 import com.google.android.gms.location.LocationCallback;
@@ -29,6 +30,8 @@ import com.google.android.gms.location.LocationResult;
 import com.google.android.gms.location.LocationServices;
 import com.google.android.gms.location.Priority;
 import com.google.firebase.firestore.DocumentSnapshot;
+
+import org.json.JSONObject;
 
 import java.io.IOException;
 import java.util.ArrayList;
@@ -43,7 +46,8 @@ public class NearbyFragment extends Fragment {
 
     private static final String TAG = "NearbyFragment";
     private TextView txtLocation;
-    private LinearLayout birdsContainer;
+    private RecyclerView rvNearby;
+    private NearbyAdapter adapter;
 
     private FusedLocationProviderClient fusedLocationClient;
     private ActivityResultLauncher<String[]> locationPermissionLauncher;
@@ -54,11 +58,15 @@ public class NearbyFragment extends Fragment {
     private String currentLocalityName;
 
     private FirebaseManager firebaseManager;
+    private EbirdApi ebirdApi;
 
     private boolean isUpdating = false;
     private String lastPlaceShown = null;
 
-    private ExecutorService geoExecutor; // Initialize in onCreateView
+    private ExecutorService geoExecutor;
+
+    private List<Bird> firestoreBirds = new ArrayList<>();
+    private List<Bird> ebirdBirds = new ArrayList<>();
 
     @Nullable
     @Override
@@ -69,9 +77,15 @@ public class NearbyFragment extends Fragment {
         View v = inflater.inflate(R.layout.fragment_nearby, container, false);
 
         txtLocation = v.findViewById(R.id.txtLocation);
-        birdsContainer = v.findViewById(R.id.birdsContainer);
+        rvNearby = v.findViewById(R.id.rvNearby);
+
+        // Initialize RecyclerView with Vertical LayoutManager
+        rvNearby.setLayoutManager(new LinearLayoutManager(requireContext()));
+        adapter = new NearbyAdapter(new ArrayList<>());
+        rvNearby.setAdapter(adapter);
 
         firebaseManager = new FirebaseManager(requireContext());
+        ebirdApi = new EbirdApi();
 
         fusedLocationClient = LocationServices.getFusedLocationProviderClient(requireActivity());
         locationRequest = new LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 3000L)
@@ -108,11 +122,9 @@ public class NearbyFragment extends Fragment {
 
                         requireActivity().runOnUiThread(() -> {
                             txtLocation.setText("Location: " + place);
-                            fetchAndShowNearbyBirds();
+                            fetchAllNearbyData();
                         });
                     });
-                } else {
-                    Log.d(TAG, "geoExecutor is shut down or terminated, not submitting new task.");
                 }
             }
         };
@@ -126,12 +138,12 @@ public class NearbyFragment extends Fragment {
                         startLocationUpdates();
                     } else {
                         txtLocation.setText("Location: Permission denied");
-                        showBirds(new ArrayList<>());
-                        Toast.makeText(requireContext(), "Location permission denied. Cannot show nearby birds.", Toast.LENGTH_LONG).show();
+                        adapter.updateList(new ArrayList<>());
+                        Toast.makeText(requireContext(), "Location permission denied.", Toast.LENGTH_LONG).show();
                     }
                 });
 
-        geoExecutor = Executors.newSingleThreadExecutor(); // Initialize here
+        geoExecutor = Executors.newSingleThreadExecutor();
         requestLocationOrLoad();
 
         return v;
@@ -166,7 +178,7 @@ public class NearbyFragment extends Fragment {
 
         if (!(fineGranted || coarseGranted)) {
             txtLocation.setText("Location: Permission denied");
-            showBirds(new ArrayList<>());
+            adapter.updateList(new ArrayList<>());
             return;
         }
 
@@ -183,8 +195,7 @@ public class NearbyFragment extends Fragment {
         } catch (SecurityException se) {
             Log.e(TAG, "SecurityException when starting location updates: ", se);
             txtLocation.setText("Location: Permission denied");
-            showBirds(new ArrayList<>());
-            Toast.makeText(requireContext(), "Location permission denied. Cannot show nearby birds.", Toast.LENGTH_LONG).show();
+            adapter.updateList(new ArrayList<>());
         }
     }
 
@@ -217,14 +228,12 @@ public class NearbyFragment extends Fragment {
     public void onDestroyView() {
         super.onDestroyView();
         if (geoExecutor != null && !geoExecutor.isShutdown()) {
-            geoExecutor.shutdownNow(); // Interrupt any ongoing tasks and prevent new ones
+            geoExecutor.shutdownNow();
             try {
-                // Wait a while for tasks to terminate
                 if (!geoExecutor.awaitTermination(60, TimeUnit.SECONDS)) {
                     Log.e(TAG, "Executor did not terminate in time.");
                 }
             } catch (InterruptedException ie) {
-                // (Re-)Cancel if current thread also interrupted
                 java.lang.Thread.currentThread().interrupt();
             }
         }
@@ -248,52 +257,122 @@ public class NearbyFragment extends Fragment {
         return String.format(Locale.US, "%.4f, %.4f", location.getLatitude(), location.getLongitude());
     }
 
-    private void fetchAndShowNearbyBirds() {
+    private void fetchAllNearbyData() {
         if (currentLocation == null) {
-            Log.w(TAG, "Current location is null, cannot fetch nearby birds.");
-            showBirds(new ArrayList<>());
+            adapter.updateList(new ArrayList<>());
             return;
         }
 
+        firestoreBirds.clear();
+        ebirdBirds.clear();
+
+        // 1. Fetch from Firestore
         firebaseManager.getAllBirds(task -> {
             if (task.isSuccessful()) {
-                List<Bird> nearbyBirds = new ArrayList<>();
                 for (DocumentSnapshot document : task.getResult().getDocuments()) {
                     Bird bird = document.toObject(Bird.class);
-                    // Ensure bird is not null and has valid last seen location data
-                    if (bird != null &&
-                        bird.getLastSeenLatitudeGeorgia() != null &&
-                        bird.getLastSeenLongitudeGeorgia() != null &&
-                        currentLocation != null // Defensive check, though already checked at start of method
-                    ) {
-                        double distance = calculateDistance(
-                                currentLocation.getLatitude(), currentLocation.getLongitude(),
-                                bird.getLastSeenLatitudeGeorgia(), bird.getLastSeenLongitudeGeorgia()
-                        );
-                        // Filter birds within a certain range (e.g., 100,000 meters = 100 km)
-                        if (distance <= 100000) {
-                            nearbyBirds.add(bird);
+                    if (bird != null && bird.getLastSeenLatitudeGeorgia() != null && bird.getLastSeenLongitudeGeorgia() != null) {
+                        double distance = calculateDistance(currentLocation.getLatitude(), currentLocation.getLongitude(),
+                                bird.getLastSeenLatitudeGeorgia(), bird.getLastSeenLongitudeGeorgia());
+                        if (distance <= 100000) { // Within 100km
+                            firestoreBirds.add(bird);
                         }
                     }
                 }
-                // Sort by distance before showing
-                Collections.sort(nearbyBirds, (b1, b2) -> {
-                    // Ensure locations are not null for comparison
-                    if (b1.getLastSeenLatitudeGeorgia() == null || b1.getLastSeenLongitudeGeorgia() == null) return 1; // Put birds with no location at the end
-                    if (b2.getLastSeenLatitudeGeorgia() == null || b2.getLastSeenLongitudeGeorgia() == null) return -1; // Put birds with no location at the end
-
-                    double dist1 = calculateDistance(currentLocation.getLatitude(), currentLocation.getLongitude(), b1.getLastSeenLatitudeGeorgia(), b1.getLastSeenLongitudeGeorgia());
-                    double dist2 = calculateDistance(currentLocation.getLatitude(), currentLocation.getLongitude(), b2.getLastSeenLatitudeGeorgia(), b2.getLastSeenLongitudeGeorgia());
-                    return Double.compare(dist1, dist2);
-                });
-
-                showBirds(nearbyBirds);
             } else {
                 Log.e(TAG, "Error getting birds from Firestore: ", task.getException());
-                Toast.makeText(requireContext(), "Failed to load bird data.", Toast.LENGTH_SHORT).show();
-                showBirds(new ArrayList<>());
+            }
+            combineAndSortLists();
+        });
+
+        // 2. Fetch from eBird API
+        ebirdApi.fetchGeorgiaBirdList(new EbirdApi.EbirdCallback() {
+            @Override
+            public void onSuccess(List<JSONObject> birdsJson) {
+                for (JSONObject json : birdsJson) {
+                    try {
+                        Bird bird = new Bird();
+                        bird.setId(json.optString("id"));
+                        bird.setCommonName(json.optString("commonName"));
+                        bird.setScientificName(json.optString("scientificName"));
+                        bird.setFamily(json.optString("family"));
+                        bird.setSpecies(json.optString("species"));
+                        
+                        if (!json.isNull("lastSeenLatitudeGeorgia")) {
+                            bird.setLastSeenLatitudeGeorgia(json.optDouble("lastSeenLatitudeGeorgia"));
+                        }
+                        if (!json.isNull("lastSeenLongitudeGeorgia")) {
+                            bird.setLastSeenLongitudeGeorgia(json.optDouble("lastSeenLongitudeGeorgia"));
+                        }
+                        if (!json.isNull("lastSeenTimestampGeorgia")) {
+                            bird.setLastSeenTimestampGeorgia(json.optLong("lastSeenTimestampGeorgia"));
+                        }
+
+                        if (bird.getLastSeenLatitudeGeorgia() != null && bird.getLastSeenLongitudeGeorgia() != null) {
+                            double distance = calculateDistance(currentLocation.getLatitude(), currentLocation.getLongitude(),
+                                    bird.getLastSeenLatitudeGeorgia(), bird.getLastSeenLongitudeGeorgia());
+                            if (distance <= 100000) { // Within 100km
+                                ebirdBirds.add(bird);
+                            }
+                        }
+                    } catch (Exception e) {
+                        Log.e(TAG, "Error parsing bird JSON: " + e.getMessage());
+                    }
+                }
+                combineAndSortLists();
+            }
+
+            @Override
+            public void onFailure(Exception e) {
+                Log.e(TAG, "Failed to fetch eBird data: " + e.getMessage());
+                combineAndSortLists();
             }
         });
+    }
+
+    private void combineAndSortLists() {
+        // Calculate timestamp for 3 calendar days ago (72 hours)
+        long threeDaysAgo = System.currentTimeMillis() - (3L * 24 * 60 * 60 * 1000);
+        List<Bird> combinedList = new ArrayList<>();
+        
+        // Filter and add firestoreBirds
+        for (Bird fb : firestoreBirds) {
+            if (fb.getLastSeenTimestampGeorgia() != null && fb.getLastSeenTimestampGeorgia() >= threeDaysAgo) {
+                combinedList.add(fb);
+            }
+        }
+
+        // Add eBird birds, avoiding duplicates if already in combinedList based on ID, and filtering by time
+        for (Bird eb : ebirdBirds) {
+            if (eb.getLastSeenTimestampGeorgia() != null && eb.getLastSeenTimestampGeorgia() >= threeDaysAgo) {
+                boolean alreadyPresent = false;
+                for (Bird b : combinedList) {
+                    if (b.getId() != null && b.getId().equals(eb.getId())) {
+                        alreadyPresent = true;
+                        break;
+                    }
+                }
+                if (!alreadyPresent) {
+                    combinedList.add(eb);
+                }
+            }
+        }
+
+        // Sort by distance from current location
+        Collections.sort(combinedList, (b1, b2) -> {
+            if (b1.getLastSeenLatitudeGeorgia() == null || b1.getLastSeenLongitudeGeorgia() == null) return 1;
+            if (b2.getLastSeenLatitudeGeorgia() == null || b2.getLastSeenLongitudeGeorgia() == null) return -1;
+
+            double dist1 = calculateDistance(currentLocation.getLatitude(), currentLocation.getLongitude(), 
+                    b1.getLastSeenLatitudeGeorgia(), b1.getLastSeenLongitudeGeorgia());
+            double dist2 = calculateDistance(currentLocation.getLatitude(), currentLocation.getLongitude(), 
+                    b2.getLastSeenLatitudeGeorgia(), b2.getLastSeenLongitudeGeorgia());
+            return Double.compare(dist1, dist2);
+        });
+
+        if (isAdded()) {
+            requireActivity().runOnUiThread(() -> adapter.updateList(combinedList));
+        }
     }
 
     private double calculateDistance(double lat1, double lon1, double lat2, double lon2) {
@@ -306,46 +385,6 @@ public class NearbyFragment extends Fragment {
         if (loc1 == null || loc2 == null) return false;
         float[] distResult = new float[1];
         Location.distanceBetween(loc1.getLatitude(), loc1.getLongitude(), loc2.getLatitude(), loc2.getLongitude(), distResult);
-        return distResult[0] < 5; // Consider locations similar if less than 5 meters apart
-    }
-
-    private void showBirds(List<Bird> birds) {
-        if (!isAdded()) {
-            return;
-        }
-        birdsContainer.removeAllViews();
-
-        if (birds.isEmpty()) {
-            TextView tv = new TextView(requireContext());
-            tv.setText("No nearby birds found with recent sightings.");
-            tv.setTextSize(16f);
-            tv.setPadding(0, 8, 0, 8);
-            birdsContainer.addView(tv);
-            return;
-        }
-
-        for (Bird bird : birds) {
-            TextView tv = new TextView(requireContext());
-            // Ensure lastSeenLatitudeGeorgia and lastSeenLongitudeGeorgia are not null for distance calculation
-            if (bird.getLastSeenLatitudeGeorgia() != null && bird.getLastSeenLongitudeGeorgia() != null && currentLocation != null) {
-                double distance = calculateDistance(
-                        currentLocation.getLatitude(), currentLocation.getLongitude(),
-                        bird.getLastSeenLatitudeGeorgia(), bird.getLastSeenLongitudeGeorgia()
-                );
-                String distanceStr;
-                if (distance < 1000) {
-                    distanceStr = String.format(Locale.US, "%.0f meters away", distance);
-                } else {
-                    distanceStr = String.format(Locale.US, "%.1f km away", distance / 1000);
-                }
-                tv.setText("• " + bird.getCommonName() + " (" + distanceStr + ")");
-            } else {
-                // If last seen location is unknown, just show the common name
-                tv.setText("• " + bird.getCommonName() + " (Location unknown)");
-            }
-            tv.setTextSize(16f);
-            tv.setPadding(0, 8, 0, 8);
-            birdsContainer.addView(tv);
-        }
+        return distResult[0] < 5;
     }
 }

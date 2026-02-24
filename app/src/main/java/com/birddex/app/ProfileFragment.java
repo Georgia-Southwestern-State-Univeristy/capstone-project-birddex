@@ -6,9 +6,7 @@ import android.util.Log;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
-import android.widget.EditText;
 import android.widget.ImageButton;
-import android.widget.ImageView;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -38,7 +36,7 @@ public class ProfileFragment extends Fragment {
     private ShapeableImageView ivPfp; // Changed to ShapeableImageView
     private TextView tvUsername;
     private TextView tvPoints;
-    private EditText etBio;
+    private TextView tvBio;
 
     private FirebaseAuth mAuth;
     private FirebaseFirestore db;
@@ -70,7 +68,7 @@ public class ProfileFragment extends Fragment {
                         }
                         if (newBio != null) {
                             currentBio = newBio;
-                            etBio.setText(newBio);
+                            tvBio.setText(newBio);
                         }
                         if (newProfilePictureUrl != null) {
                             currentProfilePictureUrl = newProfilePictureUrl;
@@ -96,18 +94,18 @@ public class ProfileFragment extends Fragment {
         View v = inflater.inflate(R.layout.fragment_profile, container, false);
 
         // Initialize UI components
-        ivPfp = v.findViewById(R.id.ivPfp); // Initialize ShapeableImageView
+        ivPfp = v.findViewById(R.id.ivPfp);
         tvUsername = v.findViewById(R.id.tvUsername);
         tvPoints = v.findViewById(R.id.tvPoints);
-        etBio = v.findViewById(R.id.etBio);
+        tvBio = v.findViewById(R.id.tvBio);
         RecyclerView rvFavorites = v.findViewById(R.id.rvFavorites);
         ImageButton btnSettings = v.findViewById(R.id.btnSettings);
         ImageButton btnEditProfile = v.findViewById(R.id.btnEditProfile);
 
-        // Set initial hardcoded values (will be overwritten by Firestore)
+        // Set initial loading values
         tvUsername.setText("Loading...");
         tvPoints.setText("Total Points: --");
-        etBio.setText("Loading bio...");
+        tvBio.setText("Loading bio...");
 
         // 3-grid favorites
         rvFavorites.setLayoutManager(new GridLayoutManager(requireContext(), 3));
@@ -141,7 +139,7 @@ public class ProfileFragment extends Fragment {
             Log.e(TAG, "No user logged in.");
             // Optionally redirect to login or show a message
             tvUsername.setText("Guest");
-            etBio.setText("Please log in.");
+            tvBio.setText("Please log in.");
             ivPfp.setImageResource(R.drawable.ic_profile);
             return;
         }
@@ -155,7 +153,7 @@ public class ProfileFragment extends Fragment {
                         currentProfilePictureUrl = documentSnapshot.getString("profilePictureUrl");
 
                         tvUsername.setText(currentUsername != null ? currentUsername : "No Username");
-                        etBio.setText(currentBio != null ? currentBio : "No bio yet.");
+                        tvBio.setText(currentBio != null ? currentBio : "No bio yet.");
 
                         // Load profile picture
                         loadProfilePicture(currentProfilePictureUrl);
@@ -167,7 +165,7 @@ public class ProfileFragment extends Fragment {
                     } else {
                         Log.w(TAG, "User document does not exist for ID: " + userId);
                         tvUsername.setText("New User");
-                        etBio.setText("Welcome! Update your profile.");
+                        tvBio.setText("Welcome! Update your profile.");
                         ivPfp.setImageResource(R.drawable.ic_profile);
                     }
                 })
@@ -175,7 +173,7 @@ public class ProfileFragment extends Fragment {
                     Log.e(TAG, "Error fetching user profile: " + e.getMessage(), e);
                     Toast.makeText(requireContext(), "Failed to load profile.", Toast.LENGTH_SHORT).show();
                     tvUsername.setText("Error");
-                    etBio.setText("Error loading bio.");
+                    tvBio.setText("Error loading bio.");
                     ivPfp.setImageResource(R.drawable.ic_profile);
                 });
     }

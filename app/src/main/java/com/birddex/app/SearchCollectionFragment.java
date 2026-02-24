@@ -22,16 +22,12 @@ import com.google.firebase.firestore.QueryDocumentSnapshot;
 import java.util.ArrayList;
 import java.util.List;
 
-/**
- * SearchCollectionFragment displays the user's collection of identified birds.
- * It fetches the bird images from Firestore and displays them in a 3x5 grid.
- */
 public class SearchCollectionFragment extends Fragment {
 
     private static final String TAG = "SearchCollectionFragment";
     private RecyclerView rvCollection;
-    private SimpleGridAdapter adapter;
-    private final List<String> imageUrls = new ArrayList<>();
+    private CollectionCardAdapter adapter;
+    private final List<CollectionSlot> slots = new ArrayList<>();
 
     @Nullable
     @Override
@@ -41,24 +37,22 @@ public class SearchCollectionFragment extends Fragment {
         View v = inflater.inflate(R.layout.fragment_search_collection, container, false);
 
         rvCollection = v.findViewById(R.id.rvCollection);
-        
-        // Set up the grid layout manager with 3 columns.
+
+        // Vertical card list
+        rvCollection.setHasFixedSize(true);
         rvCollection.setLayoutManager(new GridLayoutManager(getContext(), 3));
 
-        // Initialize the adapter with an empty list.
-        adapter = new SimpleGridAdapter(imageUrls);
+        // Always show exactly 15 cards
+        ensure15Slots();
+
+        adapter = new CollectionCardAdapter(slots);
         rvCollection.setAdapter(adapter);
 
-        // Fetch the user's collection from Firestore.
         fetchUserCollection();
 
         return v;
     }
 
-    /**
-     * Fetches up to 15 bird discoveries from the user's "collection" in Firestore.
-     * Orders them by slotIndex so the user-defined order appears first.
-     */
     private void fetchUserCollection() {
         FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
         if (user == null) return;
@@ -67,28 +61,26 @@ public class SearchCollectionFragment extends Fragment {
                 .collection("users")
                 .document(user.getUid())
                 .collection("collectionSlot")
-                .orderBy("slotIndex", Query.Direction.ASCENDING) // Order by slotIndex ascending
-                .limit(15) // Limit to 15 slots as requested.
+                .whereLessThan("slotIndex", 15)
+                .orderBy("slotIndex", Query.Direction.ASCENDING)
                 .get()
                 .addOnSuccessListener(queryDocumentSnapshots -> {
-                    imageUrls.clear();
-                    
-                    // Log the number of documents found.
+                    ensure15Slots();
+
                     Log.d(TAG, "Found " + queryDocumentSnapshots.size() + " documents in collection.");
 
-                    // Extract image URLs from the documents.
+                    // Place results into their slotIndex (0..14)
                     for (QueryDocumentSnapshot document : queryDocumentSnapshots) {
-                        // Log the full document data to inspect its contents.
                         Log.d(TAG, "Document data: " + document.getData());
-                        String imageUrl = document.getString("imageUrl");
-                        if (imageUrl != null) {
-                            imageUrls.add(imageUrl);
-                        }
-                    }
 
-                    // Fill the remaining slots with null to maintain a 3x5 grid look (up to 15).
-                    while (imageUrls.size() < 15) {
-                        imageUrls.add(null); 
+                        Long idxL = document.getLong("slotIndex");
+                        int idx = idxL != null ? idxL.intValue() : -1;
+                        if (idx < 0 || idx >= 15) continue;
+
+                        CollectionSlot slot = slots.get(idx);
+                        slot.setSlotIndex(idx);
+                        slot.setImageUrl(document.getString("imageUrl"));
+                        slot.setRarity(document.getString("rarity"));
                     }
 
                     adapter.notifyDataSetChanged();
@@ -97,5 +89,16 @@ public class SearchCollectionFragment extends Fragment {
                     Log.e(TAG, "Error fetching collection", e);
                     Toast.makeText(getContext(), "Failed to load collection.", Toast.LENGTH_SHORT).show();
                 });
+    }
+
+    private void ensure15Slots() {
+        slots.clear();
+        for (int i = 0; i < 15; i++) {
+            CollectionSlot s = new CollectionSlot();
+            s.setSlotIndex(i);
+            s.setImageUrl(null);
+            s.setRarity(null);
+            slots.add(s);
+        }
     }
 }

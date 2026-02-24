@@ -1,115 +1,113 @@
 <?xml version="1.0" encoding="utf-8"?>
 <androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
-    xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
-    android:layout_height="match_parent">
+    android:layout_height="wrap_content">
 
     <androidx.cardview.widget.CardView
         android:id="@+id/cardContainer"
-        android:layout_width="407dp"
-        android:layout_height="737dp"
-        android:layout_margin="12dp"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_margin="6dp"
         app:cardBackgroundColor="#3A3939"
-        app:cardCornerRadius="18dp"
+        app:cardCornerRadius="12dp"
         app:cardUseCompatPadding="true"
-        app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toTopOf="parent">
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintBottom_toBottomOf="parent">
 
         <androidx.constraintlayout.widget.ConstraintLayout
-            android:id="@+id/cardInner"
-            android:layout_width="388dp"
-            android:layout_height="703dp"
-            android:padding="16dp">
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:padding="8dp">
 
-            <!-- Bird Name -->
             <TextView
                 android:id="@+id/txtBirdName"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
-                android:text="UNKNOWN BIRD"
+                android:ellipsize="end"
+                android:maxLines="1"
+                android:text="UNKNOWN"
                 android:textAlignment="center"
                 android:textColor="#111111"
-                android:textSize="30sp"
+                android:textSize="12sp"
                 android:textStyle="bold"
                 app:layout_constraintEnd_toEndOf="parent"
                 app:layout_constraintStart_toStartOf="parent"
                 app:layout_constraintTop_toTopOf="parent" />
 
-            <!-- Bird Image (square + shrink to fit) -->
-
-            <!-- Stats row (code expects this exact id) -->
-
             <ImageView
                 android:id="@+id/imageView3"
-                android:layout_width="359dp"
-                android:layout_height="358dp"
-                app:layout_constraintBottom_toBottomOf="parent"
+                android:layout_width="0dp"
+                android:layout_height="0dp"
+                android:layout_marginTop="6dp"
+                android:adjustViewBounds="true"
+                android:scaleType="centerCrop"
+                app:layout_constraintDimensionRatio="1:1"
                 app:layout_constraintEnd_toEndOf="parent"
-                app:layout_constraintHorizontal_bias="0.0"
                 app:layout_constraintStart_toStartOf="parent"
-                app:layout_constraintTop_toBottomOf="@+id/txtBirdName"
-                app:layout_constraintVertical_bias="0.0"
-                app:srcCompat="@drawable/birdDexlogo" />
+                app:layout_constraintTop_toBottomOf="@id/txtBirdName"
+                app:srcCompat="@drawable/birddexlogo" />
 
-            <LinearLayout
-                android:id="@+id/statsRow"
+            <!-- Keep these IDs so adapter doesn't crash, but make them tiny -->
+            <TextView
+                android:id="@+id/txtScientific"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="23dp"
-                android:layout_marginBottom="16dp"
-                android:orientation="vertical"
-                app:layout_constraintBottom_toTopOf="@+id/txtFooter"
-                app:layout_constraintEnd_toEndOf="parent"
+                android:layout_marginTop="6dp"
+                android:ellipsize="end"
+                android:maxLines="1"
+                android:text="--"
+                android:textColor="#111111"
+                android:textSize="10sp"
+                app:layout_constraintTop_toBottomOf="@id/imageView3"
                 app:layout_constraintStart_toStartOf="parent"
-                app:layout_constraintTop_toBottomOf="@+id/imageView3">
+                app:layout_constraintEnd_toEndOf="parent" />
 
-                <TextView
-                    android:id="@+id/txtScientific"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="Cyanocitta cristata"
-                    android:textColor="#111111"
-                    android:textSize="16sp" />
+            <TextView
+                android:id="@+id/txtRarity"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:ellipsize="end"
+                android:maxLines="1"
+                android:text="Rarity: --"
+                android:textColor="#111111"
+                android:textSize="10sp"
+                android:textStyle="bold"
+                app:layout_constraintTop_toBottomOf="@id/txtScientific"
+                app:layout_constraintStart_toStartOf="parent"
+                app:layout_constraintEnd_toEndOf="parent" />
 
-                <TextView
-                    android:id="@+id/txtRarity"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="6dp"
-                    android:text="Rarity: Unknown"
-                    android:textColor="#111111"
-                    android:textSize="18sp"
-                    android:textStyle="bold" />
+            <TextView
+                android:id="@+id/txtConfidence"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:ellipsize="end"
+                android:maxLines="1"
+                android:text="Conf: --"
+                android:textColor="#111111"
+                android:textSize="10sp"
+                app:layout_constraintTop_toBottomOf="@id/txtRarity"
+                app:layout_constraintStart_toStartOf="parent"
+                app:layout_constraintEnd_toEndOf="parent" />
 
-                <TextView
-                    android:id="@+id/txtConfidence"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="6dp"
-                    android:text="Confidence: --"
-                    android:textColor="#111111"
-                    android:textSize="16sp" />
-            </LinearLayout>
-
-            <!-- Footer -->
             <TextView
                 android:id="@+id/txtFooter"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="16dp"
-                android:layout_marginBottom="112dp"
+                android:layout_marginTop="6dp"
                 android:background="#666666"
-                android:padding="10dp"
-                android:text="BirdDex • Not Yet Captured"
+                android:ellipsize="end"
+                android:maxLines="1"
+                android:padding="6dp"
+                android:text="Not Captured"
                 android:textColor="#FFFFFF"
-                android:textSize="16sp"
-                app:layout_constraintBottom_toBottomOf="parent"
-                app:layout_constraintEnd_toEndOf="parent"
+                android:textSize="10sp"
+                app:layout_constraintTop_toBottomOf="@id/txtConfidence"
                 app:layout_constraintStart_toStartOf="parent"
-                app:layout_constraintTop_toBottomOf="@id/statsRow" />
+                app:layout_constraintEnd_toEndOf="parent"
+                app:layout_constraintBottom_toBottomOf="parent" />
 
         </androidx.constraintlayout.widget.ConstraintLayout>
     </androidx.cardview.widget.CardView>

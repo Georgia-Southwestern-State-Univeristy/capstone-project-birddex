@@ -38,7 +38,7 @@ public class SimpleGridAdapter extends RecyclerView.Adapter<SimpleGridAdapter.VH
     @Override
     public VH onCreateViewHolder(@NonNull ViewGroup parent, int viewType) {
         View v = LayoutInflater.from(parent.getContext())
-                .inflate(R.layout.item_collection_cell_verified, parent, false);
+                .inflate(R.layout.item_collection_cell, parent, false);
         return new VH(v);
     }
 

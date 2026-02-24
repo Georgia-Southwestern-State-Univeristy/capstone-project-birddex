@@ -1,50 +1,56 @@
 package com.birddex.app;
 
-import android.app.AlertDialog; 
+import android.annotation.SuppressLint;
+import android.app.AlertDialog;
 import android.content.Context;
-import android.content.DialogInterface; 
+import android.content.DialogInterface;
 import android.content.Intent;
 import android.os.Bundle;
-import android.text.InputType; 
-import android.util.Log; 
+import android.text.InputType;
+import android.util.Log;
 import android.widget.Button;
-import android.widget.EditText; 
-import android.widget.LinearLayout; 
+import android.widget.EditText;
+import android.widget.LinearLayout;
 import android.widget.TextView;
-import android.widget.Toast; 
+import android.widget.Toast;
 
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.appcompat.widget.SwitchCompat;
 
-import com.google.android.gms.tasks.OnCompleteListener; // Added import
-import com.google.android.gms.tasks.Task; // Added import
-import com.google.firebase.auth.AuthCredential; 
-import com.google.firebase.auth.EmailAuthProvider; 
+import com.google.android.gms.tasks.OnCompleteListener;
+import com.google.android.gms.tasks.Task;
+import com.google.firebase.auth.AuthCredential;
+import com.google.firebase.auth.EmailAuthProvider;
 import com.google.firebase.auth.FirebaseAuth;
-import com.google.firebase.auth.FirebaseAuthRecentLoginRequiredException; 
+import com.google.firebase.auth.FirebaseAuthRecentLoginRequiredException;
 import com.google.firebase.auth.FirebaseUser;
 
 public class SettingsActivity extends AppCompatActivity {
 
-    private TextView tvUserEmail;
+    private TextView tvUserEmail, tvUserName;
     private SwitchCompat switchNotifications;
-    private Button btnLogout;
+    private Button btnLogout, btnUpdateEmail, btnChangePassword;
 
     private final SettingsApi settingsApi = new SettingsApi();
-    private FirebaseManager firebaseManager; 
+    private FirebaseManager firebaseManager;
 
-    private static final String TAG = "SettingsActivity"; 
+    private static final String TAG = "SettingsActivity";
 
+    @SuppressLint("MissingInflatedId")
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_settings);
 
+        // Initialize UI components
         tvUserEmail = findViewById(R.id.tvUserEmail);
+        tvUserName = findViewById(R.id.tvUserName);
         switchNotifications = findViewById(R.id.switchNotifications);
         btnLogout = findViewById(R.id.btnLogout);
+        btnUpdateEmail = findViewById(R.id.btnUpdateEmail);
+        btnChangePassword = findViewById(R.id.btnChangePassword);
 
-        firebaseManager = new FirebaseManager(this); 
+        firebaseManager = new FirebaseManager(this);
 
         FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
         if (user == null) {
@@ -52,8 +58,12 @@ public class SettingsActivity extends AppCompatActivity {
             return;
         }
 
-        tvUserEmail.setText(user.getEmail() != null ? user.getEmail() : "(no email)");
+        // NEW: Reload user to check for verification status and sync Firestore email
+        user.reload().addOnCompleteListener(task -> {
+            loadUserProfile(user);
+        });
 
+        // Initialize settings from API
         settingsApi.getSettings(user.getUid(), new SettingsApi.SettingsCallback() {
             @Override
             public void onSuccess(UserSettings settings) {
@@ -74,24 +84,55 @@ public class SettingsActivity extends AppCompatActivity {
             }
         });
 
+        // Set up click listeners for all buttons
         btnLogout.setOnClickListener(v -> {
             FirebaseAuth.getInstance().signOut();
             goToWelcomeAndClear();
         });
 
-        // Example of how you would call these methods later from a UI element:
-        // Button changeEmailButton = findViewById(R.id.btn_change_email);
-        // changeEmailButton.setOnClickListener(v -> {
-        //     String newEmail = "new.email@example.com"; // Get from an EditText
-        //     attemptUpdateEmail(newEmail);
-        // });
 
-        // Button resetPasswordButton = findViewById(R.id.btn_reset_password);
-        // resetPasswordButton.setOnClickListener(v -> {
-        //     // Choose which reset method to call:
-        //     // initiatePasswordReset(); 
-        //     promptForPasswordResetEmail();
-        // });
+        btnUpdateEmail.setOnClickListener(v -> {
+            promptForNewEmail();
+        });
+
+        tvUserEmail.setOnClickListener(v -> {
+            promptForNewEmail();
+        });
+
+        btnChangePassword.setOnClickListener(v -> {
+            initiatePasswordReset();
+            Toast.makeText(SettingsActivity.this, "Please check your email to update your password.", Toast.LENGTH_LONG).show();
+        });
+    }
+
+    /**
+     * NEW: Centralized method to load user profile and sync Auth email with Firestore.
+     */
+    private void loadUserProfile(FirebaseUser user) {
+        firebaseManager.getUserProfile(user.getUid(), task -> {
+            if (task.isSuccessful() && task.getResult() != null) {
+                User userProfile = task.getResult().toObject(User.class);
+                if (userProfile != null) {
+                    tvUserName.setText(userProfile.getUsername());
+
+                    // Sync Firestore email if the Auth email has been updated and verified
+                    String currentAuthEmail = user.getEmail();
+                    if (currentAuthEmail != null && !currentAuthEmail.equals(userProfile.getEmail())) {
+                        Log.d(TAG, "Email mismatch detected. Syncing Firestore with Auth email.");
+                        userProfile.setEmail(currentAuthEmail);
+                        firebaseManager.updateUserProfile(userProfile, new FirebaseManager.AuthListener() {
+                            @Override public void onSuccess(FirebaseUser user) { Log.d(TAG, "Firestore email synced successfully."); }
+                            @Override public void onFailure(String errorMessage) { Log.e(TAG, "Failed to sync email to Firestore: " + errorMessage); }
+                            @Override public void onUsernameTaken() {}
+                        });
+                    }
+                    tvUserEmail.setText(currentAuthEmail != null ? currentAuthEmail : userProfile.getEmail());
+                }
+            } else {
+                Log.e(TAG, "Failed to fetch user profile", task.getException());
+                tvUserEmail.setText(user.getEmail() != null ? user.getEmail() : "(no email)");
+            }
+        });
     }
 
     private void goToWelcomeAndClear() {
@@ -102,169 +143,15 @@ public class SettingsActivity extends AppCompatActivity {
     }
 
     /**
-     * Attempts to update the user's email. If re-authentication is required, it prompts the user.
-     * @param newEmail The new email address to set.
+     * Displays a dialog to prompt the user for a new email address.
      */
-    private void attemptUpdateEmail(String newEmail) {
-        FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
-        if (user == null) {
-            Toast.makeText(this, "No user is currently logged in.", Toast.LENGTH_SHORT).show();
-            return;
-        }
-
-        // Call the updateUserEmail method from your FirebaseManager
-        firebaseManager.updateUserEmail(newEmail, task -> {
-            if (task.isSuccessful()) {
-                Log.d(TAG, "User email address updated successfully.");
-                Toast.makeText(SettingsActivity.this, "Email updated to " + newEmail, Toast.LENGTH_LONG).show();
-                tvUserEmail.setText(newEmail); // Update displayed email
-                // Optionally clear the input field if it was an EditText
-                // etNewEmail.setText(""); 
-            } else {
-                Exception exception = task.getException();
-                if (exception instanceof FirebaseAuthRecentLoginRequiredException) {
-                    Log.w(TAG, "Re-authentication is required for email update.");
-                    promptForReauthenticationAndRetry(newEmail);
-                } else {
-                    Log.e(TAG, "Failed to update email: " + exception.getMessage(), exception);
-                    Toast.makeText(SettingsActivity.this, "Failed to update email: " + exception.getMessage(), Toast.LENGTH_LONG).show();
-                }
-            }
-        });
-    }
-
-    /**
-     * Displays a dialog to prompt the user for their current password for re-authentication,
-     * then retries the email update.
-     * @param newEmail The new email address that was being set.
-     */
-    private void promptForReauthenticationAndRetry(String newEmail) {
+    private void promptForNewEmail() {
         AlertDialog.Builder builder = new AlertDialog.Builder(this);
-        builder.setTitle("Re-authenticate to change email");
-        builder.setMessage("For security reasons, please re-enter your current password.");
-
-        // Set up the input for password
-        final EditText passwordInput = new EditText(this);
-        passwordInput.setHint("Current Password");
-        passwordInput.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
-
-        // Add padding to the EditText
-        LinearLayout layout = new LinearLayout(this);
-        layout.setOrientation(LinearLayout.VERTICAL);
-        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-        );
-        int margin = (int) (16 * getResources().getDisplayMetrics().density); // 16dp margin
-        params.setMargins(margin, 0, margin, 0);
-        passwordInput.setLayoutParams(params);
-        layout.addView(passwordInput);
-        builder.setView(layout);
-
-
-        // Set up the buttons
-        builder.setPositiveButton("Verify", (dialog, which) -> {
-            String password = passwordInput.getText().toString().trim();
-            if (password.isEmpty()) {
-                Toast.makeText(SettingsActivity.this, "Password cannot be empty.", Toast.LENGTH_SHORT).show();
-                return;
-            }
-            reauthenticateUserAndRetryUpdateEmail(password, newEmail);
-        });
-        builder.setNegativeButton("Cancel", (dialog, which) -> dialog.cancel());
-
-        builder.show();
-    }
-
-    /**
-     * Re-authenticates the user with the provided password and, if successful, retries
-     * the email update.
-     * @param currentPassword The user's current password.
-     * @param newEmail The new email address to set.
-     */
-    private void reauthenticateUserAndRetryUpdateEmail(String currentPassword, String newEmail) {
-        FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
-        if (user == null) {
-            Toast.makeText(SettingsActivity.this, "No user is currently logged in.", Toast.LENGTH_SHORT).show();
-            return;
-        }
-
-        // Create a credential using the user's current email and the provided password
-        AuthCredential credential = EmailAuthProvider.getCredential(user.getEmail(), currentPassword);
-
-        user.reauthenticate(credential)
-            .addOnCompleteListener(reauthTask -> {
-                if (reauthTask.isSuccessful()) {
-                    Log.d(TAG, "User re-authenticated successfully.");
-                    // Now that the user is re-authenticated, retry the email update
-                    firebaseManager.updateUserEmail(newEmail, updateTask -> {
-                        if (updateTask.isSuccessful()) {
-                            Log.d(TAG, "User email address updated successfully after re-auth.");
-                            Toast.makeText(SettingsActivity.this, "Email updated to " + newEmail, Toast.LENGTH_LONG).show();
-                            tvUserEmail.setText(newEmail); // Update displayed email
-                            // Optionally clear the input field if it was an EditText
-                            // etNewEmail.setText(""); 
-                        } else {
-                            Log.e(TAG, "Failed to update email after re-auth: " + updateTask.getException().getMessage(), updateTask.getException());
-                            Toast.makeText(SettingsActivity.this, "Failed to update email: " + updateTask.getException().getMessage(), Toast.LENGTH_LONG).show();
-                        }
-                    });
-                } else {
-                    Log.e(TAG, "Re-authentication failed: " + reauthTask.getException().getMessage(), reauthTask.getException());
-                    Toast.makeText(SettingsActivity.this, "Re-authentication failed: Invalid password.", Toast.LENGTH_LONG).show();
-                }
-            });
-    }
-
-    /**
-     * Initiates the password reset process by sending a password reset email.
-     * This method can be called directly, or after prompting the user for an email address.
-     */
-    private void initiatePasswordReset() {
-        FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
-        String emailToReset = null;
-
-        if (user != null && user.getEmail() != null) {
-            // If user is logged in and has an email, suggest that email for reset
-            emailToReset = user.getEmail();
-        } else {
-            // If no user or no email, you would need to prompt the user to enter their email.
-            // For now, we will show an error, but you'd replace this with a dialog.
-            Toast.makeText(this, "Please provide an email to reset the password.", Toast.LENGTH_SHORT).show();
-            return;
-        }
-        
-        // If an email is available (either from current user or user input),
-        // proceed to send the password reset email.
-        if (emailToReset != null) {
-            final String finalEmailToReset = emailToReset; // Create a final copy
-            firebaseManager.sendPasswordResetEmail(finalEmailToReset, new OnCompleteListener<Void>() { // Corrected this line
-                @Override
-                public void onComplete(Task<Void> task) {
-                    if (task.isSuccessful()) {
-                        Log.d(TAG, "Password reset email sent to " + finalEmailToReset);
-                        Toast.makeText(SettingsActivity.this, "Password reset email sent to " + finalEmailToReset, Toast.LENGTH_LONG).show();
-                    } else {
-                        Log.e(TAG, "Failed to send password reset email: " + task.getException().getMessage(), task.getException());
-                        Toast.makeText(SettingsActivity.this, "Failed to send password reset email: " + task.getException().getMessage(), Toast.LENGTH_LONG).show();
-                    }
-                }
-            });
-        }
-    }
-
-    /**
-     * This is an example of how you might prompt for an email for password reset
-     * if the current user's email is not available or if you want to allow resetting
-     * for any email.
-     */
-    private void promptForPasswordResetEmail() {
-        AlertDialog.Builder builder = new AlertDialog.Builder(this);
-        builder.setTitle("Password Reset");
-        builder.setMessage("Enter your email to receive a password reset link.");
+        builder.setTitle("Update Email");
+        builder.setMessage("Enter your new email address. A verification link will be sent to the new email.");
 
         final EditText emailInput = new EditText(this);
-        emailInput.setHint("Email");
+        emailInput.setHint("New Email");
         emailInput.setInputType(InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS);
 
         LinearLayout layout = new LinearLayout(this);
@@ -279,24 +166,100 @@ public class SettingsActivity extends AppCompatActivity {
         layout.addView(emailInput);
         builder.setView(layout);
 
-        builder.setPositiveButton("Send Reset Email", (dialog, which) -> {
-            String email = emailInput.getText().toString().trim();
-            if (email.isEmpty()) {
-                Toast.makeText(SettingsActivity.this, "Email cannot be empty.", Toast.LENGTH_SHORT).show();
-                return;
+        builder.setPositiveButton("Update", (dialog, which) -> {
+            String newEmail = emailInput.getText().toString().trim();
+            if (!newEmail.isEmpty()) {
+                attemptUpdateEmail(newEmail);
             }
-            firebaseManager.sendPasswordResetEmail(email, new OnCompleteListener<Void>() { // Corrected this line
-                @Override
-                public void onComplete(Task<Void> task) {
-                    if (task.isSuccessful()) {
-                        Toast.makeText(SettingsActivity.this, "Password reset email sent to " + email, Toast.LENGTH_LONG).show();
-                    } else {
-                        Toast.makeText(SettingsActivity.this, "Failed to send reset email: " + task.getException().getMessage(), Toast.LENGTH_LONG).show();
-                    }
-                }
-            });
         });
         builder.setNegativeButton("Cancel", (dialog, which) -> dialog.cancel());
         builder.show();
+    }
+
+    /**
+     * CHANGED: Initiates the email update flow using verification email.
+     */
+
+    private void attemptUpdateEmail(String newEmail) {
+        firebaseManager.updateUserEmail(newEmail, authUpdateTask -> {
+            if (authUpdateTask.isSuccessful()) {
+                // Email update finalized only AFTER user verifies. No immediate Firestore update here.
+                new AlertDialog.Builder(this)
+                        .setTitle("Verification Sent")
+                        .setMessage("A verification link has been sent to " + newEmail + ". Please click it to finalize the update. Your profile will sync once verified.")
+                        .setPositiveButton("OK", null)
+                        .show();
+            } else {
+                Exception exception = authUpdateTask.getException();
+                if (exception instanceof FirebaseAuthRecentLoginRequiredException) {
+                    promptForReauthenticationAndRetry(newEmail);
+                } else {
+                    Log.e(TAG, "Failed to initiate email update", exception);
+                    Toast.makeText(SettingsActivity.this, "Failed to initiate update: " + exception.getMessage(), Toast.LENGTH_LONG).show();
+                }
+            }
+        });
+    }
+
+    //UI Layer Input
+    private void promptForReauthenticationAndRetry(String newEmail) {
+        AlertDialog.Builder builder = new AlertDialog.Builder(this);
+        builder.setTitle("Re-authenticate");
+        builder.setMessage("Please re-enter your current password to continue with the email update.");
+
+        final EditText passwordInput = new EditText(this);
+        passwordInput.setHint("Password");
+        passwordInput.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
+
+        LinearLayout layout = new LinearLayout(this);
+        layout.setOrientation(LinearLayout.VERTICAL);
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+        );
+        int margin = (int) (16 * getResources().getDisplayMetrics().density);
+        params.setMargins(margin, 0, margin, 0);
+        passwordInput.setLayoutParams(params);
+        layout.addView(passwordInput);
+        builder.setView(layout);
+
+        builder.setPositiveButton("Verify", (dialog, which) -> {
+            String password = passwordInput.getText().toString().trim();
+            if (!password.isEmpty()) {
+                reauthenticateUserAndRetryUpdateEmail(password, newEmail);
+            }
+        });
+        builder.setNegativeButton("Cancel", (dialog, which) -> dialog.cancel());
+        builder.show();
+    }
+
+    //Logic & Security Layer
+    private void reauthenticateUserAndRetryUpdateEmail(String currentPassword, String newEmail) {
+        FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
+        if (user == null) return;
+
+        AuthCredential credential = EmailAuthProvider.getCredential(user.getEmail(), currentPassword);
+        user.reauthenticate(credential)
+                .addOnCompleteListener(reauthTask -> {
+                    if (reauthTask.isSuccessful()) {
+                        Log.d(TAG, "Re-authentication successful. Retrying email update.");
+                        attemptUpdateEmail(newEmail);
+                    } else {
+                        Toast.makeText(SettingsActivity.this, "Re-authentication failed.", Toast.LENGTH_SHORT).show();
+                    }
+                });
+    }
+
+    private void initiatePasswordReset() {
+        FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
+        if (user != null && user.getEmail() != null) {
+            firebaseManager.sendPasswordResetEmail(user.getEmail(), task -> {
+                if(task.isSuccessful()) {
+                    Toast.makeText(SettingsActivity.this, "Password reset email sent.", Toast.LENGTH_SHORT).show();
+                } else {
+                    Toast.makeText(SettingsActivity.this, "Failed to send password reset email.", Toast.LENGTH_SHORT).show();
+                }
+            });
+        }
     }
 }

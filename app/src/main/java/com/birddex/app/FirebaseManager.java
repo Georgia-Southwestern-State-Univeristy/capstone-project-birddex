@@ -2,7 +2,7 @@ package com.birddex.app;
 
 import android.content.Context;
 import android.util.Log;
-import android.widget.Toast; // Added import
+import android.widget.Toast;
 
 import com.google.android.gms.tasks.OnCompleteListener;
 import com.google.android.gms.tasks.Task;
@@ -26,7 +26,7 @@ public class FirebaseManager {
     private final FirebaseAuth mAuth;
     private final FirebaseFirestore db;
     private final FirebaseFunctions mFunctions;
-    private Context context; 
+    private Context context;
 
     public interface AuthListener {
         void onSuccess(FirebaseUser user);
@@ -45,8 +45,8 @@ public class FirebaseManager {
         void onFailure(String errorMessage);
     }
 
-    public FirebaseManager(Context context) { 
-        this.context = context.getApplicationContext(); 
+    public FirebaseManager(Context context) {
+        this.context = context.getApplicationContext();
         mAuth = FirebaseAuth.getInstance();
         db = FirebaseFirestore.getInstance();
         mFunctions = FirebaseFunctions.getInstance();
@@ -234,16 +234,16 @@ public class FirebaseManager {
      */
     public void sendPasswordResetEmail(String email, OnCompleteListener<Void> listener) {
         mAuth.sendPasswordResetEmail(email)
-            .addOnCompleteListener(task -> {
-                if (task.isSuccessful()) {
-                    Toast.makeText(context, "Password reset email sent to " + email, Toast.LENGTH_LONG).show();
-                } else {
-                    Toast.makeText(context, "Failed to send password reset email: " + task.getException().getMessage(), Toast.LENGTH_LONG).show();
-                }
-                if (listener != null) {
-                    listener.onComplete(task);
-                }
-            });
+                .addOnCompleteListener(task -> {
+                    if (task.isSuccessful()) {
+                        Toast.makeText(context, "Password reset email sent to " + email, Toast.LENGTH_LONG).show();
+                    } else {
+                        Toast.makeText(context, "Failed to send password reset email: " + task.getException().getMessage(), Toast.LENGTH_LONG).show();
+                    }
+                    if (listener != null) {
+                        listener.onComplete(task);
+                    }
+                });
     }
 
     /**
@@ -255,19 +255,18 @@ public class FirebaseManager {
     public void updateUserEmail(String newEmail, OnCompleteListener<Void> listener) {
         FirebaseUser user = mAuth.getCurrentUser();
         if (user != null) {
-            user.updateEmail(newEmail)
-                .addOnCompleteListener(task -> {
-                    if (task.isSuccessful()) {
-                        Toast.makeText(context, "User email updated to " + newEmail, Toast.LENGTH_LONG).show();
-                    } else {
-                        // Firebase often requires recent re-authentication for email changes.
-                        // The error message will typically indicate this.
-                        Toast.makeText(context, "Failed to update email: " + task.getException().getMessage(), Toast.LENGTH_LONG).show();
-                    }
-                    if (listener != null) {
-                        listener.onComplete(task);
-                    }
-                });
+            // Using recommended verifyBeforeUpdateEmail instead of updateEmail
+            user.verifyBeforeUpdateEmail(newEmail)
+                    .addOnCompleteListener(task -> {
+                        if (task.isSuccessful()) {
+                            Toast.makeText(context, "Verification email sent to " + newEmail + ". Please verify to complete the update.", Toast.LENGTH_LONG).show();
+                        } else {
+                            Toast.makeText(context, "Failed to initiate email update: " + task.getException().getMessage(), Toast.LENGTH_LONG).show();
+                        }
+                        if (listener != null) {
+                            listener.onComplete(task);
+                        }
+                    });
         } else {
             Toast.makeText(context, "No user is currently logged in.", Toast.LENGTH_SHORT).show();
             if (listener != null) {
@@ -284,7 +283,7 @@ public class FirebaseManager {
     public void getBirdById(String birdId, OnCompleteListener<DocumentSnapshot> listener) {
         db.collection("birds").document(birdId).get().addOnCompleteListener(listener);
     }
-    
+
     public void getAllBirds(OnCompleteListener<QuerySnapshot> listener) {
         db.collection("birds").get().addOnCompleteListener(listener);
     }
@@ -313,11 +312,11 @@ public class FirebaseManager {
                 .addOnCompleteListener(task -> {
                     if (task.isSuccessful()) {
                         boolean isDuplicate = !task.getResult().isEmpty();
-                        int pointsEarned = isDuplicate ? 0 : 1; 
+                        int pointsEarned = isDuplicate ? 0 : 1;
 
                         userBird.setIsDuplicate(isDuplicate);
                         userBird.setPointsEarned(pointsEarned);
-                        
+
                         Log.d(TAG, "Duplicate check for UserBird (user: " + userBird.getUserId() + ", bird: " + userBird.getBirdSpeciesId() + "): isDuplicate = " + isDuplicate + ", pointsEarned = " + pointsEarned);
 
                         // 2. Save the UserBird document with updated fields
@@ -329,13 +328,13 @@ public class FirebaseManager {
                                         Log.e(TAG, "Failed to save UserBird: " + userBird.getId(), saveTask.getException());
                                     }
                                     // Pass on the original listener's result
-                                    if (listener != null) { 
+                                    if (listener != null) {
                                         listener.onComplete(saveTask);
                                     }
                                 });
                     } else {
                         Log.e(TAG, "Failed to check for duplicate userBirds: ", task.getException());
-                        if (listener != null) { 
+                        if (listener != null) {
                             listener.onComplete(Tasks.forException(task.getException()));
                         }
                     }
@@ -353,7 +352,7 @@ public class FirebaseManager {
     public void deleteUserBird(String userBirdId, OnCompleteListener<Void> listener) {
         db.collection("userBirds").document(userBirdId).delete().addOnCompleteListener(listener);
     }
-    
+
     // CollectionSlot Subcollection
     public void addCollectionSlot(String userId, String collectionSlotId, CollectionSlot collectionSlot, OnCompleteListener<Void> listener) {
         db.collection("users").document(userId).collection("collectionSlot").document(collectionSlotId).set(collectionSlot).addOnCompleteListener(listener);
@@ -370,12 +369,12 @@ public class FirebaseManager {
     public void deleteCollectionSlot(String userId, String collectionSlotId, OnCompleteListener<Void> listener) {
         db.collection("users").document(userId).collection("collectionSlot").document(collectionSlotId).delete().addOnCompleteListener(listener);
     }
-    
+
     // BirdFact Collection
     public void addBirdFact(BirdFact birdFact, OnCompleteListener<Void> listener) {
         db.collection("birdFacts").document(birdFact.getId()).set(birdFact).addOnCompleteListener(listener);
     }
-    
+
     public void getBirdFactById(String birdFactsId, OnCompleteListener<DocumentSnapshot> listener) {
         db.collection("birdFacts").document(birdFactsId).get().addOnCompleteListener(listener);
     }

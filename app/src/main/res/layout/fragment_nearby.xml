@@ -1,32 +1,49 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    android:id="@+id/root"
+<androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:orientation="vertical"
-    android:padding="16dp">
+    android:background="?attr/colorSurface">
+
+    <TextView
+        android:id="@+id/tvNearbyTitle"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="20dp"
+        android:layout_marginTop="20dp"
+        android:text="Nearby Sightings"
+        android:textColor="?attr/colorOnSurface"
+        android:textSize="24sp"
+        android:textStyle="bold"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent" />
 
     <TextView
         android:id="@+id/txtLocation"
-        android:layout_width="match_parent"
+        android:layout_width="0dp"
         android:layout_height="wrap_content"
-        android:text="Location: ..."
-        android:textSize="18sp"
-        android:textStyle="bold" />
+        android:layout_marginHorizontal="20dp"
+        android:layout_marginTop="4dp"
+        android:text="Detecting location..."
+        android:textColor="?attr/colorOnSurfaceVariant"
+        android:textSize="14sp"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toBottomOf="@id/tvNearbyTitle" />
 
-    <TextView
-        android:id="@+id/txtHint"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:text="Birds you might see nearby:"
-        android:layout_marginTop="10dp"
-        android:textSize="16sp" />
+    <androidx.recyclerview.widget.RecyclerView
+        android:id="@+id/rvNearby"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:layout_marginTop="12dp"
+        android:clipToPadding="false"
+        android:paddingHorizontal="12dp"
+        android:paddingBottom="80dp"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toBottomOf="@id/txtLocation"
+        tools:listitem="@layout/item_nearby_bird" />
 
-    <LinearLayout
-        android:id="@+id/birdsContainer"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="vertical"
-        android:layout_marginTop="12dp" />
-
-</LinearLayout>
+</androidx.constraintlayout.widget.ConstraintLayout>

@@ -6,9 +6,7 @@ import android.util.Log;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
-import android.widget.EditText;
 import android.widget.ImageButton;
-import android.widget.ImageView;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -90,7 +88,7 @@ public class ProfileFragment extends Fragment {
         View v = inflater.inflate(R.layout.fragment_profile, container, false);
 
         // Initialize UI components
-        ivPfp = v.findViewById(R.id.ivPfp); // Initialize ShapeableImageView
+        ivPfp = v.findViewById(R.id.ivPfp);
         tvUsername = v.findViewById(R.id.tvUsername);
         tvPoints = v.findViewById(R.id.tvPoints);
         etBio = v.findViewById(R.id.etBio);
@@ -100,7 +98,7 @@ public class ProfileFragment extends Fragment {
         ImageButton btnSettings = v.findViewById(R.id.btnSettings);
         ImageButton btnEditProfile = v.findViewById(R.id.btnEditProfile);
 
-        // Set initial hardcoded values (will be overwritten by Firestore)
+        // Set initial loading values
         tvUsername.setText("Loading...");
         tvPoints.setText("Total Points: --");
         etBio.setText("Loading bio...");
@@ -142,7 +140,7 @@ public class ProfileFragment extends Fragment {
         if (user == null) {
             Log.e(TAG, "No user logged in.");
             tvUsername.setText("Guest");
-            etBio.setText("Please log in.");
+            tvBio.setText("Please log in.");
             ivPfp.setImageResource(R.drawable.ic_profile);
             updateOpenAiRequestsRemainingUI(0, null); // Reset UI if no user
             updatePfpChangesRemainingUI(0, null); // Reset UI if no user
@@ -181,7 +179,7 @@ public class ProfileFragment extends Fragment {
                     } else {
                         Log.w(TAG, "User document does not exist for ID: " + userId);
                         tvUsername.setText("New User");
-                        etBio.setText("Welcome! Update your profile.");
+                        tvBio.setText("Welcome! Update your profile.");
                         ivPfp.setImageResource(R.drawable.ic_profile);
                         updateOpenAiRequestsRemainingUI(0, null); // Reset UI if no user doc
                         updatePfpChangesRemainingUI(0, null); // Reset UI if no user doc
@@ -191,7 +189,7 @@ public class ProfileFragment extends Fragment {
                     Log.e(TAG, "Error fetching user profile: " + e.getMessage(), e);
                     Toast.makeText(requireContext(), "Failed to load profile.", Toast.LENGTH_SHORT).show();
                     tvUsername.setText("Error");
-                    etBio.setText("Error loading bio.");
+                    tvBio.setText("Error loading bio.");
                     ivPfp.setImageResource(R.drawable.ic_profile);
                     updateOpenAiRequestsRemainingUI(0, null); // Reset UI on error
                     updatePfpChangesRemainingUI(0, null); // Reset UI on error

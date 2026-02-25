@@ -13,6 +13,9 @@ import android.view.ViewGroup;
 import android.widget.Button;
 import android.widget.FrameLayout;
 import android.widget.Toast;
+import com.google.firebase.firestore.DocumentSnapshot;
+import com.google.firebase.firestore.FirebaseFirestore;
+import com.google.firebase.firestore.Query;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
@@ -64,6 +67,7 @@ public class CardMakerActivity extends AppCompatActivity {
     private Uri originalImageUri;
     private String currentBirdId;
     private String currentCommonName;
+    private String currentRarity;
     private String currentScientificName;
     private String currentSpecies;
     private String currentFamily;

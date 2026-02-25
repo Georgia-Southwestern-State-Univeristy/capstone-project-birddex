@@ -88,6 +88,9 @@
             </intent-filter>
         </activity>
         <activity android:name=".CardMakerActivity" />
+        <activity
+            android:name=".ViewBirdCardActivity"
+            android:exported="false" />
     </application>
 
 </manifest>

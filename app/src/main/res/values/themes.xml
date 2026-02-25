@@ -1,8 +1,18 @@
 <resources xmlns:tools="http://schemas.android.com/tools">
     <!-- Base application theme. -->
     <style name="Base.Theme.BirdDex" parent="Theme.Material3.DayNight.NoActionBar">
-        <!-- Customize your light theme here. -->
-        <!-- <item name="colorPrimary">@color/my_light_primary</item> -->
+        <!-- Navigation (Primary) -->
+        <item name="colorPrimary">@color/nav_brown</item>
+        <item name="colorOnPrimary">@color/page_cream</item>
+
+        <!-- Pages -->
+        <item name="colorSurface">@color/page_cream</item>
+        <item name="colorOnBackground">@color/on_page</item>
+        <item name="colorOnSurface">@color/on_page</item>
+        <item name="colorOnSurfaceVariant">@color/on_page_variant</item>
+
+        <!-- Optional nice-to-have -->
+        <item name="android:statusBarColor">@color/nav_brown</item>
     </style>
 
     <style name="Theme.BirdDex" parent="Base.Theme.BirdDex" />
@@ -10,6 +20,16 @@
     <style name="CropActivityTheme" parent="Theme.AppCompat.Light.NoActionBar">
         <!-- Set the window background to black for the cropping activity -->
         <item name="android:windowBackground">@android:color/black</item>
+    </style>
+
+    <!-- Base overlay used by shapes in the app -->
+    <style name="ShapeAppearanceOverlay.App" parent="">
+        <!-- You can put shared shape defaults here if you want -->
+    </style>
+
+    <!-- 10% corner overlay -->
+    <style name="ShapeAppearanceOverlay.App.CornerSize10Percent" parent="ShapeAppearanceOverlay.App">
+        <item name="cornerSize">10%</item>
     </style>
 
     <!-- Shape Appearance Overlay for a 50% corner size (circular) -->

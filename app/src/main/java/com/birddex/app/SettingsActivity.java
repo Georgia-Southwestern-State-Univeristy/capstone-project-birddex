@@ -124,6 +124,11 @@ public class SettingsActivity extends AppCompatActivity {
                             @Override public void onSuccess(FirebaseUser user) { Log.d(TAG, "Firestore email synced successfully."); }
                             @Override public void onFailure(String errorMessage) { Log.e(TAG, "Failed to sync email to Firestore: " + errorMessage); }
                             @Override public void onUsernameTaken() {}
+
+                            @Override
+                            public void onEmailTaken() {
+
+                            }
                         });
                     }
                     tvUserEmail.setText(currentAuthEmail != null ? currentAuthEmail : userProfile.getEmail());

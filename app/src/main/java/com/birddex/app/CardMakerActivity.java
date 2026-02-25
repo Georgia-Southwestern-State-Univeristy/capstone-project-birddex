@@ -71,7 +71,7 @@ public class CardMakerActivity extends AppCompatActivity {
     private String currentScientificName;
     private String currentSpecies;
     private String currentFamily;
-    private String currentRarity;
+
 
     @Override
     protected void onCreate(@Nullable Bundle savedInstanceState) {

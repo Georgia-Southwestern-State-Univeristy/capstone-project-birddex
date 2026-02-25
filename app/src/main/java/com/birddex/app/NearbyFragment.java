@@ -29,24 +29,15 @@ import com.google.android.gms.location.LocationRequest;
 import com.google.android.gms.location.LocationResult;
 import com.google.android.gms.location.LocationServices;
 import com.google.android.gms.location.Priority;
-import com.google.android.gms.tasks.Task;
-import com.google.android.gms.tasks.Tasks;
-import com.google.firebase.auth.FirebaseAuth;
-import com.google.firebase.auth.FirebaseUser;
 import com.google.firebase.firestore.DocumentSnapshot;
-import com.google.firebase.firestore.FirebaseFirestore;
-import com.google.firebase.firestore.QuerySnapshot;
-import com.google.firebase.functions.HttpsCallableResult;
 
 import org.json.JSONObject;
 
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
-import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -60,30 +51,71 @@ public class NearbyFragment extends Fragment {
 
     private FusedLocationProviderClient fusedLocationClient;
     private ActivityResultLauncher<String[]> locationPermissionLauncher;
-
+    private String currentLocalityName;
     private LocationRequest locationRequest;
     private LocationCallback locationCallback;
     private Location currentLocation;
-    private String currentLocalityName;
+    private Geocoder geocoder;
 
     private FirebaseManager firebaseManager;
-    private FirebaseFirestore db; // Added FirebaseFirestore instance
-    private FirebaseAuth mAuth; // Added FirebaseAuth instance
+    private EbirdApi ebirdApi;
 
     private boolean isUpdating = false;
     private String lastPlaceShown = null;
-
     private ExecutorService geoExecutor;
 
     private List<Bird> firestoreBirds = new ArrayList<>();
     private List<Bird> ebirdBirds = new ArrayList<>();
+
+    @Override
+    public void onCreate(@Nullable Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        firebaseManager = new FirebaseManager(requireContext());
+        ebirdApi = new EbirdApi();
+        fusedLocationClient = LocationServices.getFusedLocationProviderClient(requireActivity());
+        geocoder = new Geocoder(requireContext(), Locale.getDefault());
+        geoExecutor = Executors.newSingleThreadExecutor();
+
+
+        locationRequest = new LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 3000L)
+                .setMinUpdateIntervalMillis(1000L)
+                .build();
+
+        locationCallback = new LocationCallback() {
+            @Override
+            public void onLocationResult(@NonNull LocationResult locationResult) {
+                if (!isUpdating) {
+                    isUpdating = true;
+                    for (Location location : locationResult.getLocations()) {
+                        currentLocation = location;
+                        updateLocationUI();
+                        break; // We only care about the latest location
+                    }
+                    isUpdating = false;
+                }
+            }
+        };
+
+        locationPermissionLauncher = registerForActivityResult(
+                new ActivityResultContracts.RequestMultiplePermissions(),
+                permissions -> {
+                    boolean fineGranted = permissions.getOrDefault(Manifest.permission.ACCESS_FINE_LOCATION, false);
+                    boolean coarseGranted = permissions.getOrDefault(Manifest.permission.ACCESS_COARSE_LOCATION, false);
+                    if (fineGranted || coarseGranted) {
+                        startLocationUpdates();
+                    } else {
+                        txtLocation.setText("Location: Permission denied");
+                        adapter.updateList(new ArrayList<>());
+                        Toast.makeText(requireContext(), "Location permission denied.", Toast.LENGTH_LONG).show();
+                    }
+                });
+    }
 
     @Nullable
     @Override
     public View onCreateView(@NonNull LayoutInflater inflater,
                              @Nullable ViewGroup container,
                              @Nullable Bundle savedInstanceState) {
-
         View v = inflater.inflate(R.layout.fragment_nearby, container, false);
 
         txtLocation = v.findViewById(R.id.txtLocation);
@@ -94,152 +126,31 @@ public class NearbyFragment extends Fragment {
         adapter = new NearbyAdapter(new ArrayList<>());
         rvNearby.setAdapter(adapter);
 
-        firebaseManager = new FirebaseManager(requireContext());
-        db = FirebaseFirestore.getInstance(); // Initialize Firestore
-        mAuth = FirebaseAuth.getInstance(); // Initialize FirebaseAuth
-
-        fusedLocationClient = LocationServices.getFusedLocationProviderClient(requireActivity());
-        locationRequest = new LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 3000L)
-                .setMinUpdateIntervalMillis(1500L)
-                .setMinUpdateDistanceMeters(10f)
-                .build();
-
-        locationCallback = new LocationCallback() {
-            @Override
-            public void onLocationResult(@NonNull LocationResult locationResult) {
-                Location location = locationResult.getLastLocation();
-                if (location == null) {
-                    Log.w(TAG, "Location result is null.");
-                    return;
-                }
-
-                currentLocation = location;
-                
-                requireActivity().runOnUiThread(() -> {
-                    if (lastPlaceShown == null) {
-                        txtLocation.setText("Location: Getting address...");
-                    }
-                });
-
-                if (geoExecutor != null && !geoExecutor.isShutdown() && !geoExecutor.isTerminated()) {
-                    geoExecutor.execute(() -> {
-                        String place = getCityStateFromLocation(location);
-                        currentLocalityName = place;
-
-                        // Only trigger fetch if location has significantly changed or if it's the first time
-                        if (place != null && place.equals(lastPlaceShown) && areLocationsSimilar(currentLocation, location)) {
-                            return; // Location hasn't changed enough, no need to refetch
-                        }
-                        lastPlaceShown = place;
-
-                        requireActivity().runOnUiThread(() -> {
-                            txtLocation.setText("Location: " + place);
-                            triggerAndFetchNearbyBirds(); // Call new method
-                        });
-                    });
-                }
-            }
-        };
-
-        locationPermissionLauncher =
-                registerForActivityResult(new ActivityResultContracts.RequestMultiplePermissions(), result -> {
-                    boolean fine = Boolean.TRUE.equals(result.get(Manifest.permission.ACCESS_FINE_LOCATION));
-                    boolean coarse = Boolean.TRUE.equals(result.get(Manifest.permission.ACCESS_COARSE_LOCATION));
-
-                    if (fine || coarse) {
-                        startLocationUpdates();
-                    } else {
-                        txtLocation.setText("Location: Permission denied");
-                        showSightings(new ArrayList<>());
-                        Toast.makeText(requireContext(), "Location permission denied. Cannot show nearby birds.", Toast.LENGTH_LONG).show();
-                    }
-                });
-
-        geoExecutor = Executors.newSingleThreadExecutor();
+        // Request location or load from last known location
         requestLocationOrLoad();
 
         return v;
     }
 
-    private void requestLocationOrLoad() {
-        boolean fineGranted = ContextCompat.checkSelfPermission(requireContext(),
-                Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED;
-
-        boolean coarseGranted = ContextCompat.checkSelfPermission(requireContext(),
-                Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED;
-
-        if (fineGranted || coarseGranted) {
-            startLocationUpdates();
-        } else {
-            txtLocation.setText("Location: Requesting permission...");
-            locationPermissionLauncher.launch(new String[]{
-                    Manifest.permission.ACCESS_FINE_LOCATION,
-                    Manifest.permission.ACCESS_COARSE_LOCATION
-            });
-        }
-    }
-
-    private void startLocationUpdates() {
-        boolean fineGranted = ContextCompat.checkSelfPermission(
-                requireContext(), Manifest.permission.ACCESS_FINE_LOCATION
-        ) == PackageManager.PERMISSION_GRANTED;
-
-        boolean coarseGranted = ContextCompat.checkSelfPermission(
-                requireContext(), Manifest.permission.ACCESS_COARSE_LOCATION
-        ) == PackageManager.PERMISSION_GRANTED;
-
-        if (!(fineGranted || coarseGranted)) {
-            txtLocation.setText("Location: Permission denied");
-            showSightings(new ArrayList<>());
-            return;
-        }
-
-        if (isUpdating) return;
-
-        try {
-            txtLocation.setText("Location: Listening for updates...");
-            fusedLocationClient.requestLocationUpdates(
-                    locationRequest,
-                    locationCallback,
-                    Looper.getMainLooper()
-            );
-            isUpdating = true;
-        } catch (SecurityException se) {
-            Log.e(TAG, "SecurityException when starting location updates: ", se);
-            txtLocation.setText("Location: Permission denied");
-            showSightings(new ArrayList<>());
-            Toast.makeText(requireContext(), "Location permission denied. Cannot show nearby birds.", Toast.LENGTH_LONG).show();
-        }
-    }
-
-    private void stopLocationUpdates() {
-        if (!isUpdating) return;
-        fusedLocationClient.removeLocationUpdates(locationCallback);
-        isUpdating = false;
-    }
-
     @Override
-    public void onStart() {
-        super.onStart();
-        boolean fineGranted = ContextCompat.checkSelfPermission(requireContext(),
-                Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED;
-        boolean coarseGranted = ContextCompat.checkSelfPermission(requireContext(),
-                Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED;
-
-        if (fineGranted || coarseGranted) {
+    public void onResume() {
+        super.onResume();
+        if (ContextCompat.checkSelfPermission(requireContext(), Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED ||
+                ContextCompat.checkSelfPermission(requireContext(), Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
             startLocationUpdates();
         }
     }
 
     @Override
-    public void onStop() {
-        super.onStop();
+    public void onPause() {
+        super.onPause();
         stopLocationUpdates();
     }
 
     @Override
     public void onDestroyView() {
         super.onDestroyView();
+        stopLocationUpdates();
         if (geoExecutor != null && !geoExecutor.isShutdown()) {
             geoExecutor.shutdownNow();
             try {
@@ -252,67 +163,106 @@ public class NearbyFragment extends Fragment {
         }
     }
 
-    private String getCityStateFromLocation(Location location) {
-        Geocoder geocoder = new Geocoder(requireContext(), Locale.getDefault());
-        try {
-            List<Address> results = geocoder.getFromLocation(location.getLatitude(), location.getLongitude(), 1);
-            if (results != null && !results.isEmpty()) {
-                Address a = results.get(0);
-                String city = a.getLocality();
-                if (city == null) city = a.getSubAdminArea();
-                String state = a.getAdminArea();
-                if (city != null && state != null) return city + ", " + state;
-                if (state != null) return state;
-            }
-        } catch (IOException e) {
-            Log.e(TAG, "Geocoder failed: " + e.getMessage());
+    private void requestLocationOrLoad() {
+        boolean fineGranted = ContextCompat.checkSelfPermission(requireContext(), Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED;
+        boolean coarseGranted = ContextCompat.checkSelfPermission(requireContext(), Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED;
+
+        if (fineGranted || coarseGranted) {
+            startLocationUpdates();
+        } else {
+            locationPermissionLauncher.launch(new String[]{
+                    Manifest.permission.ACCESS_FINE_LOCATION,
+                    Manifest.permission.ACCESS_COARSE_LOCATION
+            });
         }
-        return String.format(Locale.US, "%.4f, %.4f", location.getLatitude(), location.getLongitude());
     }
 
-    /**
-     * Triggers the Cloud Function to fetch eBird sightings, then fetches both eBird and user sightings,
-     * combines them, and displays them.
-     */
-    private void triggerAndFetchNearbyBirds() {
+    private void startLocationUpdates() {
+        try {
+            fusedLocationClient.requestLocationUpdates(locationRequest,
+                    locationCallback,
+                    Looper.getMainLooper());
+        } catch (SecurityException se) {
+            Log.e(TAG, "SecurityException when starting location updates: ", se);
+            txtLocation.setText("Location: Permission denied");
+            adapter.updateList(new ArrayList<>());
+            Toast.makeText(requireContext(), "Location permission denied.", Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private void stopLocationUpdates() {
+        fusedLocationClient.removeLocationUpdates(locationCallback);
+    }
+
+    private void updateLocationUI() {
+        if (currentLocation != null) {
+            geoExecutor.execute(() -> {
+                try {
+                    List<Address> addresses = geocoder.getFromLocation(currentLocation.getLatitude(), currentLocation.getLongitude(), 1);
+                    String place = "Unknown Location";
+                    if (addresses != null && !addresses.isEmpty()) {
+                        Address address = addresses.get(0);
+                        if (address.getLocality() != null) {
+                            place = address.getLocality();
+                            currentLocalityName = place; // Store the locality name
+                        } else if (address.getSubAdminArea() != null) {
+                            place = address.getSubAdminArea();
+                            currentLocalityName = place;
+                        } else if (address.getAdminArea() != null) {
+                            place = address.getAdminArea();
+                            currentLocalityName = place;
+                        }
+                    }
+
+                    String finalPlace = place;
+                    requireActivity().runOnUiThread(() -> {
+                        txtLocation.setText("Location: " + finalPlace);
+                        fetchAllNearbyData();
+                    });
+                } catch (IOException e) {
+                    Log.e(TAG, "Error getting locality name: " + e.getMessage());
+                    requireActivity().runOnUiThread(() -> {
+                        txtLocation.setText("Location: N/A");
+                        fetchAllNearbyData(); // Still try to fetch data if location available
+                    });
+                }
+            });
+        } else {
+            txtLocation.setText("Location: Not available");
+            fetchAllNearbyData(); // Still try to fetch data even if location not available, will result in empty list
+        }
+    }
+
+    private void fetchAllNearbyData() {
         if (currentLocation == null) {
-            Log.w(TAG, "Current location is null, cannot trigger/fetch nearby birds.");
-            showSightings(new ArrayList<>());
+            adapter.updateList(new ArrayList<>());
             return;
         }
 
-        Log.d(TAG, "Triggering eBird data fetch Cloud Function...");
-        firebaseManager.triggerEbirdDataFetch(task -> {
+        firestoreBirds.clear();
+        ebirdBirds.clear();
+
+        // 1. Fetch from Firestore
+        firebaseManager.getAllBirds(task -> {
             if (task.isSuccessful()) {
-                HttpsCallableResult result = task.getResult();
-                Log.i(TAG, "eBird API sightings fetch Cloud Function completed: " + result.getData());
-                
-                // Now fetch both lists concurrently
-                Task<List<SightingDisplayData>> ebirdSightingsTask = fetchEBirdApiSightingsList();
-                Task<List<SightingDisplayData>> userSightingsTask = fetchUserBirdSightingsList();
-
-                Tasks.whenAllSuccess(ebirdSightingsTask, userSightingsTask)
-                        .addOnSuccessListener(results -> {
-                            List<SightingDisplayData> ebirdSightings = (List<SightingDisplayData>) results.get(0);
-                            List<SightingDisplayData> userSightings = (List<SightingDisplayData>) results.get(1);
-                            combineAndShowAllSightings(ebirdSightings, userSightings);
-                        })
-                        .addOnFailureListener(e -> {
-                            Log.e(TAG, "Error combining eBird and user sightings: ", e);
-                            Toast.makeText(requireContext(), "Failed to load all nearby bird sightings.", Toast.LENGTH_SHORT).show();
-                            showSightings(new ArrayList<>());
-                        });
-
+                for (DocumentSnapshot document : task.getResult().getDocuments()) {
+                    Bird bird = document.toObject(Bird.class);
+                    if (bird != null && bird.getLastSeenLatitudeGeorgia() != null && bird.getLastSeenLongitudeGeorgia() != null) {
+                        double distance = calculateDistance(currentLocation.getLatitude(), currentLocation.getLongitude(),
+                                bird.getLastSeenLatitudeGeorgia(), bird.getLastSeenLongitudeGeorgia());
+                        if (distance <= 100000) { // Within 100km
+                            firestoreBirds.add(bird);
+                        }
+                    }
+                }
             } else {
-                Log.e(TAG, "eBird API sightings fetch Cloud Function failed: ", task.getException());
-                Toast.makeText(requireContext(), "Failed to update map data.", Toast.LENGTH_SHORT).show();
-                showSightings(new ArrayList<>());
+                Log.e(TAG, "Error getting birds from Firestore: ", task.getException());
             }
             combineAndSortLists();
         });
 
         // 2. Fetch from eBird API
-        ebirdApi.fetchGeorgiaBirdList(new EbirdApi.EbirdCallback() {
+        ebirdApi.fetchCoreGeorgiaBirdList(new EbirdApi.EbirdCoreBirdListCallback() {
             @Override
             public void onSuccess(List<JSONObject> birdsJson) {
                 for (JSONObject json : birdsJson) {
@@ -323,7 +273,10 @@ public class NearbyFragment extends Fragment {
                         bird.setScientificName(json.optString("scientificName"));
                         bird.setFamily(json.optString("family"));
                         bird.setSpecies(json.optString("species"));
-                        
+
+                        // Using the current location for eBird API.
+                        // Assuming eBird API returns lastSeenLatitudeGeorgia and lastSeenLongitudeGeorgia,
+                        // which implies that these are properties that exist in your Bird model for eBird data too.
                         if (!json.isNull("lastSeenLatitudeGeorgia")) {
                             bird.setLastSeenLatitudeGeorgia(json.optDouble("lastSeenLatitudeGeorgia"));
                         }
@@ -360,9 +313,10 @@ public class NearbyFragment extends Fragment {
         // Calculate timestamp for 3 calendar days ago (72 hours)
         long threeDaysAgo = System.currentTimeMillis() - (3L * 24 * 60 * 60 * 1000);
         List<Bird> combinedList = new ArrayList<>();
-        
+
         // Filter and add firestoreBirds
         for (Bird fb : firestoreBirds) {
+            // Check for null to avoid NullPointerExceptions
             if (fb.getLastSeenTimestampGeorgia() != null && fb.getLastSeenTimestampGeorgia() >= threeDaysAgo) {
                 combinedList.add(fb);
             }
@@ -370,6 +324,7 @@ public class NearbyFragment extends Fragment {
 
         // Add eBird birds, avoiding duplicates if already in combinedList based on ID, and filtering by time
         for (Bird eb : ebirdBirds) {
+            // Check for null to avoid NullPointerExceptions
             if (eb.getLastSeenTimestampGeorgia() != null && eb.getLastSeenTimestampGeorgia() >= threeDaysAgo) {
                 boolean alreadyPresent = false;
                 for (Bird b : combinedList) {
@@ -386,168 +341,25 @@ public class NearbyFragment extends Fragment {
 
         // Sort by distance from current location
         Collections.sort(combinedList, (b1, b2) -> {
-            if (b1.getLastSeenLatitudeGeorgia() == null || b1.getLastSeenLongitudeGeorgia() == null) return 1;
-            if (b2.getLastSeenLatitudeGeorgia() == null || b2.getLastSeenLongitudeGeorgia() == null) return -1;
+            if (currentLocation == null) return 0; // Cannot sort by distance if current location is null
+            if (b1.getLastSeenLatitudeGeorgia() == null || b1.getLastSeenLongitudeGeorgia() == null) return 1; // Put birds with no location at the end
+            if (b2.getLastSeenLatitudeGeorgia() == null || b2.getLastSeenLongitudeGeorgia() == null) return -1; // Put birds with no location at the end
 
-            double dist1 = calculateDistance(currentLocation.getLatitude(), currentLocation.getLongitude(), 
+            double dist1 = calculateDistance(currentLocation.getLatitude(), currentLocation.getLongitude(),
                     b1.getLastSeenLatitudeGeorgia(), b1.getLastSeenLongitudeGeorgia());
-            double dist2 = calculateDistance(currentLocation.getLatitude(), currentLocation.getLongitude(), 
+            double dist2 = calculateDistance(currentLocation.getLatitude(), currentLocation.getLongitude(),
                     b2.getLastSeenLatitudeGeorgia(), b2.getLastSeenLongitudeGeorgia());
             return Double.compare(dist1, dist2);
         });
 
-        if (isAdded()) {
+        if (isAdded()) { // Check if the fragment is currently added to its activity
             requireActivity().runOnUiThread(() -> adapter.updateList(combinedList));
         }
     }
 
-    /**
-     * Fetches eBird sightings directly from the 'eBirdApiSightings' Firestore collection.
-     * @return A Task containing a list of SightingDisplayData.
-     */
-    private Task<List<SightingDisplayData>> fetchEBirdApiSightingsList() {
-        return db.collection("eBirdApiSightings").get()
-                .continueWith(task -> {
-                    List<SightingDisplayData> ebirdSightings = new ArrayList<>();
-                    if (task.isSuccessful()) {
-                        for (DocumentSnapshot document : task.getResult().getDocuments()) {
-                            String commonName = document.getString("commonName");
-                            Map<String, Object> locationMap = (Map<String, Object>) document.get("location");
-
-                            if (commonName != null && locationMap != null && locationMap.containsKey("latitude") && locationMap.containsKey("longitude")) {
-                                Double lat = (Double) locationMap.get("latitude");
-                                Double lng = (Double) locationMap.get("longitude");
-
-                                if (lat != null && lng != null) {
-                                    double distance = calculateDistance(
-                                            currentLocation.getLatitude(), currentLocation.getLongitude(),
-                                            lat, lng
-                                    );
-                                    if (distance <= 100000) { // Filter within 100 km
-                                        ebirdSightings.add(new SightingDisplayData(commonName, lat, lng, distance, false)); // false for not user sighting
-                                    }
-                                }
-                            }
-                        }
-                    } else {
-                        Log.e(TAG, "Error getting eBird sightings from Firestore: ", task.getException());
-                    }
-                    return ebirdSightings;
-                });
-    }
-
-    /**
-     * Fetches the current user's bird sightings from the 'userBirdSightings' Firestore collection.
-     * @return A Task containing a list of SightingDisplayData.
-     */
-    private Task<List<SightingDisplayData>> fetchUserBirdSightingsList() {
-        FirebaseUser currentUser = mAuth.getCurrentUser();
-        if (currentUser == null) {
-            return Tasks.forResult(new ArrayList<>()); // Return empty list if not authenticated
-        }
-
-        return firebaseManager.getAllUserBirdSightingsForCurrentUser()
-                .continueWith(task -> {
-                    List<SightingDisplayData> userSightings = new ArrayList<>();
-                    if (task.isSuccessful()) {
-                        for (DocumentSnapshot document : task.getResult().getDocuments()) {
-                            UserBirdSighting userBirdSighting = document.toObject(UserBirdSighting.class);
-                            if (userBirdSighting != null) {
-                                com.birddex.app.Location sightingLocation = userBirdSighting.getLocation();
-                                if (sightingLocation != null) {
-                                double lat = sightingLocation.getLatitude();
-                                double lng = sightingLocation.getLongitude();
-
-                                double distance = calculateDistance(
-                                        currentLocation.getLatitude(), currentLocation.getLongitude(),
-                                        lat, lng
-                                );
-                                if (distance <= 100000) { // Filter within 100 km
-                                    userSightings.add(new SightingDisplayData(userBirdSighting.getCommonName(), lat, lng, distance, true)); // true for user sighting
-                                }
-                                }
-                            }
-                        }
-                    } else {
-                        Log.e(TAG, "Error getting user bird sightings from Firestore: ", task.getException());
-                    }
-                    return userSightings;
-                });
-    }
-
-    /**
-     * Combines eBird API sightings and user bird sightings, sorts them by distance, and displays them.
-     */
-    private void combineAndShowAllSightings(List<SightingDisplayData> ebirdSightings, List<SightingDisplayData> userSightings) {
-        List<SightingDisplayData> combinedList = new ArrayList<>();
-        combinedList.addAll(ebirdSightings);
-        combinedList.addAll(userSightings);
-
-        // Sort by distance
-        Collections.sort(combinedList, Comparator.comparingDouble(s -> s.distance));
-
-        showSightings(combinedList);
-    }
-
     private double calculateDistance(double lat1, double lon1, double lat2, double lon2) {
-        float[] results = new float[1];
-        Location.distanceBetween(lat1, lon1, lat2, lon2, results);
-        return results[0];
-    }
-
-    private boolean areLocationsSimilar(Location loc1, Location loc2) {
-        if (loc1 == null || loc2 == null) return false;
         float[] distResult = new float[1];
-        Location.distanceBetween(loc1.getLatitude(), loc1.getLongitude(), loc2.getLatitude(), loc2.getLongitude(), distResult);
-        return distResult[0] < 5; // Consider locations similar if less than 5 meters apart
-    }
-
-    // Renamed and modified to accept SightingDisplayData
-    private void showSightings(List<SightingDisplayData> sightings) {
-        if (!isAdded()) {
-            return;
-        }
-        birdsContainer.removeAllViews();
-
-        if (sightings.isEmpty()) {
-            TextView tv = new TextView(requireContext());
-            tv.setText("No recent nearby bird sightings found.");
-            tv.setTextSize(16f);
-            tv.setPadding(0, 8, 0, 8);
-            birdsContainer.addView(tv);
-            return;
-        }
-
-        for (SightingDisplayData sighting : sightings) {
-            TextView tv = new TextView(requireContext());
-            String distanceStr;
-            if (sighting.distance < 1000) {
-                distanceStr = String.format(Locale.US, "%.0f meters away", sighting.distance);
-            } else {
-                distanceStr = String.format(Locale.US, "%.1f km away", sighting.distance / 1000);
-            }
-            String prefix = sighting.isUserSighting ? "(Your sighting) • " : "• ";
-            tv.setText(prefix + sighting.commonName + " (" + distanceStr + ")");
-            tv.setTextSize(16f);
-            tv.setPadding(0, 8, 0, 8);
-            birdsContainer.addView(tv);
-        }
-    }
-
-    // Helper class to hold sighting data for display
-    private static class SightingDisplayData {
-        String commonName;
-        double latitude;
-        double longitude;
-        double distance;
-        boolean isUserSighting; // Added to distinguish user sightings
-
-        SightingDisplayData(String commonName, double latitude, double longitude, double distance, boolean isUserSighting) {
-            this.commonName = commonName;
-            this.latitude = latitude;
-            this.longitude = longitude;
-            this.distance = distance;
-            this.isUserSighting = isUserSighting;
-        }
+        Location.distanceBetween(lat1, lon1, lat2, lon2, distResult);
+        return distResult[0]; // Returns distance in meters
     }
 }

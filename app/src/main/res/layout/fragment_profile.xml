@@ -77,19 +77,21 @@
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent"/>
 
-    <!-- Bio displayed as TextView -->
-    <TextView
-        android:id="@+id/tvBio"
+    <!-- Bio displayed as EditText -->
+    <EditText
+        android:id="@+id/etBio"
         style="@style/BirdDex.Text.Body"
         android:layout_width="0dp"
         android:layout_height="wrap_content"
         android:layout_marginTop="14dp"
         android:background="@drawable/bg_input"
         android:gravity="center"
-        android:layout_marginTop="14dp"
+        android:inputType="textMultiLine"
+        android:hint="@string/hint_bio_empty"
+        android:autofillHints="textPersonFacts"
         app:layout_constraintTop_toBottomOf="@+id/tvPoints"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toBottomOf="@id/tvPoints" />
+        app:layout_constraintEnd_toEndOf="parent" />
 
     <!-- New TextView for OpenAI requests remaining -->
     <TextView

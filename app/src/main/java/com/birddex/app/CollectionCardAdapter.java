@@ -10,10 +10,16 @@ import androidx.annotation.NonNull;
 import androidx.recyclerview.widget.RecyclerView;
 
 import com.bumptech.glide.Glide;
+import android.content.Intent;
 
 import java.util.List;
 
 public class CollectionCardAdapter extends RecyclerView.Adapter<CollectionCardAdapter.VH> {
+
+    public static final String EXTRA_IMAGE_URL = "com.birddex.app.extra.IMAGE_URL";
+    public static final String EXTRA_COMMON_NAME = "com.birddex.app.extra.COMMON_NAME";
+    public static final String EXTRA_SCI_NAME = "com.birddex.app.extra.SCI_NAME";
+    public static final String EXTRA_RARITY = "com.birddex.app.extra.RARITY";
 
     private final List<CollectionSlot> slots;
 
@@ -54,6 +60,18 @@ public class CollectionCardAdapter extends RecyclerView.Adapter<CollectionCardAd
         String sci = slot != null ? slot.getScientificName() : null;
 
         boolean hasImage = url != null && !url.trim().isEmpty();
+
+        // Tap to open full card view (only if slot has an image)
+        holder.itemView.setOnClickListener(v -> {
+            if (!hasImage) return;
+
+            Intent i = new Intent(v.getContext(), ViewBirdCardActivity.class);
+            i.putExtra(EXTRA_IMAGE_URL, url);
+            i.putExtra(EXTRA_COMMON_NAME, common);
+            i.putExtra(EXTRA_SCI_NAME, sci);
+            i.putExtra(EXTRA_RARITY, rarity);
+            v.getContext().startActivity(i);
+        });
 
         if (hasImage) {
             if (common != null && !common.trim().isEmpty()) {

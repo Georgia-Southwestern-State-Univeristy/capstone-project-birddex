@@ -88,6 +88,11 @@ public class LoginActivity extends AppCompatActivity {
                     public void onUsernameTaken() {
                         // This callback is not used during sign-in.
                     }
+
+                    @Override
+                    public void onEmailTaken() {
+                        // This callback is not used during sign-in.
+                    }
                 });
             }
         });

@@ -88,7 +88,7 @@ public class BirdInfoActivity extends AppCompatActivity {
         btnStore.setOnClickListener(v -> {
             // If you don't have imageUrl yet, you can still go to CardMakerActivity.
             // Firebase save will still attempt (and may store null imageUrl depending on your models).
-            storeBirdDiscovery();
+            // Removed the call to storeBirdDiscovery() here.
 
             Intent i = new Intent(BirdInfoActivity.this, CardMakerActivity.class);
             i.putExtra(CardMakerActivity.EXTRA_IMAGE_URI, currentImageUriStr);

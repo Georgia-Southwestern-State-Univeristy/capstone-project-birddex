@@ -2,7 +2,7 @@ package com.birddex.app;
 
 import android.content.Context;
 import android.util.Log;
-import android.widget.Toast; // Added import
+import android.widget.Toast;
 
 import com.google.android.gms.tasks.OnCompleteListener;
 import com.google.android.gms.tasks.Task;
@@ -14,6 +14,7 @@ import com.google.firebase.firestore.DocumentSnapshot;
 import com.google.firebase.firestore.FirebaseFirestore;
 import com.google.firebase.firestore.QuerySnapshot;
 import com.google.firebase.functions.FirebaseFunctions;
+import com.google.firebase.functions.FirebaseFunctionsException; // Added for specific error handling
 import com.google.firebase.functions.HttpsCallableResult;
 
 import java.util.Date;
@@ -26,114 +27,144 @@ public class FirebaseManager {
     private final FirebaseAuth mAuth;
     private final FirebaseFirestore db;
     private final FirebaseFunctions mFunctions;
-    private Context context; 
+    private Context context;
 
     public interface AuthListener {
         void onSuccess(FirebaseUser user);
         void onFailure(String errorMessage);
         void onUsernameTaken();
+        void onEmailTaken(); // Added for email check failure
     }
 
-    // Removed PasswordResetListener interface as it's replaced by OnCompleteListener<Void>
-    // public interface PasswordResetListener {
-    //     void onSuccess();
-    //     void onFailure(String errorMessage);
-    // }
+    // Deprecated: public interface UsernameCheckListener { ... }
 
-    public interface UsernameCheckListener {
-        void onCheckComplete(boolean isAvailable);
+    // New listener for combined username and email check
+    public interface UsernameAndEmailCheckListener {
+        void onCheckComplete(boolean isUsernameAvailable, boolean isEmailAvailable);
         void onFailure(String errorMessage);
     }
 
-    public FirebaseManager(Context context) { 
-        this.context = context.getApplicationContext(); 
+    // New listener for PFP change result
+    public interface PfpChangeLimitListener {
+        void onSuccess(int pfpChangesToday, Date pfpCooldownResetTimestamp);
+        void onFailure(String errorMessage);
+        void onLimitExceeded();
+    }
+
+    // New listener for OpenAI request limit
+    public interface OpenAiRequestLimitListener {
+        void onCheckComplete(boolean hasRequestsRemaining, int remaining, Date openAiCooldownResetTimestamp);
+        void onFailure(String errorMessage);
+    }
+
+    public FirebaseManager(Context context) {
+        this.context = context.getApplicationContext();
         mAuth = FirebaseAuth.getInstance();
         db = FirebaseFirestore.getInstance();
         mFunctions = FirebaseFunctions.getInstance();
     }
 
     public void createAccount(String username, String email, String password, AuthListener listener) {
-        // First, check if the username is available using a Cloud Function
-        checkUsernameAvailability(username, new UsernameCheckListener() {
+        // First, check if the username AND email are available using a Cloud Function
+        checkUsernameAndEmailAvailability(username, email, new UsernameAndEmailCheckListener() {
             @Override
-            public void onCheckComplete(boolean isAvailable) {
-                if (isAvailable) {
-                    // Username is available, proceed with account creation
-                    mAuth.createUserWithEmailAndPassword(email, password)
-                            .addOnCompleteListener(authTask -> {
-                                if (authTask.isSuccessful()) {
-                                    FirebaseUser firebaseUser = mAuth.getCurrentUser();
-                                    if (firebaseUser != null) {
-                                        User user = new User(firebaseUser.getUid(), email, username, new Date(), null);
-                                        addUser(user, task1 -> {
-                                            if (task1.isSuccessful()) {
-                                                // Send email verification
-                                                firebaseUser.sendEmailVerification()
-                                                        .addOnCompleteListener(emailTask -> {
-                                                            if (emailTask.isSuccessful()) {
-                                                                // Use context to get string resource
-                                                                String message = context.getString(R.string.email_verification_expiration_message);
-                                                                Log.d(TAG, "Email verification sent. " + message);
-                                                            } else {
-                                                                Log.e(TAG, "Failed to send email verification.", emailTask.getException());
-                                                            }
-                                                        });
-                                                listener.onSuccess(firebaseUser);
-                                            } else {
-                                                listener.onFailure("Failed to save user profile.");
-                                            }
-                                        });
-                                    } else {
-                                        listener.onFailure("FirebaseUser is null after account creation.");
-                                    }
-                                } else {
-                                    String message = "Sign up failed.";
-                                    if (authTask.getException() != null) {
-                                        message += " " + authTask.getException().getMessage();
-                                    }
-                                    listener.onFailure(message);
-                                }
-                            });
-                } else {
-                    // Username is already taken
+            public void onCheckComplete(boolean isUsernameAvailable, boolean isEmailAvailable) {
+                if (!isUsernameAvailable) {
                     listener.onUsernameTaken();
+                    return;
                 }
+                if (!isEmailAvailable) {
+                    listener.onEmailTaken(); // New callback for email taken
+                    return;
+                }
+
+                // Both username and email are available, proceed with account creation
+                mAuth.createUserWithEmailAndPassword(email, password)
+                        .addOnCompleteListener(authTask -> {
+                            if (authTask.isSuccessful()) {
+                                FirebaseUser firebaseUser = mAuth.getCurrentUser();
+                                if (firebaseUser != null) {
+                                    // Send email verification
+                                    firebaseUser.sendEmailVerification()
+                                            .addOnCompleteListener(emailTask -> {
+                                                if (emailTask.isSuccessful()) {
+                                                    String message = context.getString(R.string.email_verification_expiration_message);
+                                                    Log.d(TAG, "Email verification sent. " + message);
+                                                } else {
+                                                    Log.e(TAG, "Failed to send email verification.", emailTask.getException());
+                                                }
+                                            });
+
+                                    // After Firebase Auth user is created (and Cloud Function has run),
+                                    // explicitly add/update the username in Firestore.
+                                    User newUser = new User(firebaseUser.getUid(), email, username, null, null); // Assuming null for createdAt and defaultLocationId
+                                    addUser(newUser, addDocTask -> {
+                                        if (addDocTask.isSuccessful()) {
+                                            listener.onSuccess(firebaseUser);
+                                        } else {
+                                            Log.e(TAG, "Failed to add username to Firestore: ", addDocTask.getException());
+                                            listener.onFailure("Account created, but failed to save username.");
+                                        }
+                                    });
+
+                                } else {
+                                    listener.onFailure("FirebaseUser is null after account creation.");
+                                }
+                            } else {
+                                String message = "Sign up failed.";
+                                if (authTask.getException() != null) {
+                                    message += " " + authTask.getException().getMessage();
+                                }
+                                listener.onFailure(message);
+                            }
+                        });
             }
 
             @Override
             public void onFailure(String errorMessage) {
-                // Error during username check
-                listener.onFailure("Error checking username: " + errorMessage);
+                // Error during username/email check
+                listener.onFailure("Error checking username and email: " + errorMessage);
             }
         });
     }
 
-    public void checkUsernameAvailability(String username, UsernameCheckListener listener) {
+    // Renamed and updated from checkUsernameAvailability
+    public void checkUsernameAndEmailAvailability(String username, String email, UsernameAndEmailCheckListener listener) {
         Map<String, Object> data = new HashMap<>();
         data.put("username", username);
+        data.put("email", email); // Now sending email as well
 
-        mFunctions.getHttpsCallable("checkUsername")
+        mFunctions.getHttpsCallable("checkUsernameAndEmailAvailability") // Updated function name
                 .call(data)
                 .addOnCompleteListener(task -> {
                     if (task.isSuccessful()) {
                         HttpsCallableResult result = task.getResult();
                         if (result != null && result.getData() instanceof Map) {
                             Map<String, Object> resultMap = (Map<String, Object>) result.getData();
-                            Boolean isAvailable = (Boolean) resultMap.get("isAvailable");
-                            if (isAvailable != null) {
-                                listener.onCheckComplete(isAvailable);
+                            Boolean isUsernameAvailable = (Boolean) resultMap.get("isUsernameAvailable");
+                            Boolean isEmailAvailable = (Boolean) resultMap.get("isEmailAvailable");
+
+                            if (isUsernameAvailable != null && isEmailAvailable != null) {
+                                listener.onCheckComplete(isUsernameAvailable, isEmailAvailable);
                             } else {
-                                listener.onFailure("Invalid response from checkUsername function.");
+                                listener.onFailure("Invalid response from checkUsernameAndEmailAvailability function: missing availability booleans.");
                             }
                         } else {
-                            listener.onFailure("Invalid response format from checkUsername function.");
+                            listener.onFailure("Invalid response format from checkUsernameAndEmailAvailability function.");
                         }
                     } else {
                         String errorMessage = "Callable function call failed.";
                         if (task.getException() != null) {
                             errorMessage += " " + task.getException().getMessage();
+                            if (task.getException() instanceof FirebaseFunctionsException) {
+                                FirebaseFunctionsException ffe = (FirebaseFunctionsException) task.getException();
+                                if (ffe.getCode() == FirebaseFunctionsException.Code.UNAUTHENTICATED) {
+                                    // Note: This function doesn't require authentication, so this error might indicate a misconfiguration.
+                                    errorMessage = "Function error: Authentication was unexpectedly required for availability check.";
+                                }
+                            }
                         }
-                        Log.e(TAG, "checkUsernameAvailability failed: " + errorMessage, task.getException());
+                        Log.e(TAG, "checkUsernameAndEmailAvailability failed: " + errorMessage, task.getException());
                         listener.onFailure(errorMessage);
                     }
                 });
@@ -145,11 +176,37 @@ public class FirebaseManager {
             if (listener != null) listener.onComplete(Tasks.forException(new IllegalArgumentException("User object or ID is null.")));
             return;
         }
-        db.collection("users").document(user.getId()).set(user).addOnCompleteListener(listener);
+        // Use merge:true to ensure it updates existing fields (like username) and preserves new limit fields
+        db.collection("users").document(user.getId()).set(user, com.google.firebase.firestore.SetOptions.merge()).addOnCompleteListener(listener);
     }
 
     public void getUserProfile(String userId, OnCompleteListener<DocumentSnapshot> listener) {
         db.collection("users").document(userId).get().addOnCompleteListener(listener);
+    }
+
+    /**
+     * Fetches the username for a given user ID from Firestore.
+     * @param userId The ID of the user whose username to fetch.
+     * @param listener A listener to handle the completion of the task, returning the username or an error.
+     */
+    public void getUsername(String userId, OnCompleteListener<String> listener) {
+        getUserProfile(userId, task -> {
+            if (task.isSuccessful() && task.getResult() != null) {
+                DocumentSnapshot document = task.getResult();
+                if (document.exists()) {
+                    String username = document.getString("username");
+                    if (username != null) {
+                        listener.onComplete(Tasks.forResult(username));
+                    } else {
+                        listener.onComplete(Tasks.forException(new IllegalStateException("Username not found in user document.")));
+                    }
+                } else {
+                    listener.onComplete(Tasks.forException(new IllegalStateException("User document not found.")));
+                }
+            } else {
+                listener.onComplete(Tasks.forException(new Exception("Failed to fetch user profile for username: " + (task.getException() != null ? task.getException().getMessage() : "Unknown error"))));
+            }
+        });
     }
 
     public void updateUserProfile(User updatedUser, AuthListener listener) {
@@ -162,14 +219,37 @@ public class FirebaseManager {
 
         String userId = currentUser.getUid();
         String newUsername = updatedUser.getUsername();
+        String currentUserEmail = currentUser.getEmail(); // Get current email for the check
+
+        // Create a map with only the fields the client is allowed to update
+        Map<String, Object> updates = new HashMap<>();
+        if (newUsername != null) {
+            updates.put("username", newUsername);
+        }
+        if (updatedUser.getProfilePictureUrl() != null) {
+            updates.put("profilePictureUrl", updatedUser.getProfilePictureUrl());
+        }
+        if (updatedUser.getBio() != null) {
+            updates.put("bio", updatedUser.getBio());
+        }
+
+        // If no updatable fields are present, don't perform a Firestore update.
+        if (updates.isEmpty()) {
+            listener.onSuccess(currentUser);
+            return;
+        }
 
         // 1. Fetch current user profile to compare usernames
         getUserProfile(userId, task -> {
             if (task.isSuccessful() && task.getResult() != null) {
                 User oldUser = task.getResult().toObject(User.class);
-                if (oldUser != null && newUsername.equals(oldUser.getUsername())) {
+                String oldUsername = oldUser != null ? oldUser.getUsername() : null;
+
+                boolean usernameChanged = (newUsername != null && !newUsername.equals(oldUsername)) || (newUsername == null && oldUsername != null);
+
+                if (!usernameChanged) {
                     // Username is not changed, proceed with update without availability check
-                    db.collection("users").document(userId).set(updatedUser)
+                    db.collection("users").document(userId).update(updates)
                             .addOnCompleteListener(updateTask -> {
                                 if (updateTask.isSuccessful()) {
                                     listener.onSuccess(currentUser);
@@ -178,12 +258,12 @@ public class FirebaseManager {
                                 }
                             });
                 } else {
-                    // Username has changed, check availability
-                    checkUsernameAvailability(newUsername, new UsernameCheckListener() {
+                    // Username has changed, check availability (pass current email as it's not changing here)
+                    checkUsernameAndEmailAvailability(newUsername, currentUserEmail, new UsernameAndEmailCheckListener() {
                         @Override
-                        public void onCheckComplete(boolean isAvailable) {
-                            if (isAvailable) {
-                                db.collection("users").document(userId).set(updatedUser)
+                        public void onCheckComplete(boolean isUsernameAvailable, boolean isEmailAvailable) {
+                            if (isUsernameAvailable) {
+                                db.collection("users").document(userId).update(updates)
                                         .addOnCompleteListener(updateTask -> {
                                             if (updateTask.isSuccessful()) {
                                                 listener.onSuccess(currentUser);
@@ -192,7 +272,7 @@ public class FirebaseManager {
                                             }
                                         });
                             } else {
-                                listener.onUsernameTaken();
+                                listener.onUsernameTaken(); // Only username is checked for update here
                             }
                         }
 
@@ -234,16 +314,17 @@ public class FirebaseManager {
      */
     public void sendPasswordResetEmail(String email, OnCompleteListener<Void> listener) {
         mAuth.sendPasswordResetEmail(email)
-            .addOnCompleteListener(task -> {
-                if (task.isSuccessful()) {
-                    Toast.makeText(context, "Password reset email sent to " + email, Toast.LENGTH_LONG).show();
-                } else {
-                    Toast.makeText(context, "Failed to send password reset email: " + task.getException().getMessage(), Toast.LENGTH_LONG).show();
-                }
-                if (listener != null) {
-                    listener.onComplete(task);
-                }
-            });
+                .addOnCompleteListener(task -> {
+                    if (task.isSuccessful()) {
+                        Toast.makeText(context, "Password reset email sent to " + email, Toast.LENGTH_LONG).show();
+                    }
+                    else {
+                        Toast.makeText(context, "Failed to send password reset email: " + task.getException().getMessage(), Toast.LENGTH_LONG).show();
+                    }
+                    if (listener != null) {
+                        listener.onComplete(task);
+                    }
+                });
     }
 
     /**
@@ -256,24 +337,141 @@ public class FirebaseManager {
         FirebaseUser user = mAuth.getCurrentUser();
         if (user != null) {
             user.updateEmail(newEmail)
-                .addOnCompleteListener(task -> {
-                    if (task.isSuccessful()) {
-                        Toast.makeText(context, "User email updated to " + newEmail, Toast.LENGTH_LONG).show();
-                    } else {
-                        // Firebase often requires recent re-authentication for email changes.
-                        // The error message will typically indicate this.
-                        Toast.makeText(context, "Failed to update email: " + task.getException().getMessage(), Toast.LENGTH_LONG).show();
-                    }
-                    if (listener != null) {
-                        listener.onComplete(task);
-                    }
-                });
+                    .addOnCompleteListener(task -> {
+                        if (task.isSuccessful()) {
+                            Toast.makeText(context, "User email updated to " + newEmail, Toast.LENGTH_LONG).show();
+                        } else {
+                            Toast.makeText(context, "Failed to update email: " + task.getException().getMessage(), Toast.LENGTH_LONG).show();
+                        }
+                        if (listener != null) {
+                            listener.onComplete(task);
+                        }
+                    });
         } else {
             Toast.makeText(context, "No user is currently logged in.", Toast.LENGTH_SHORT).show();
             if (listener != null) {
                 listener.onComplete(Tasks.forException(new IllegalStateException("No user is currently logged in.")));
             }
         }
+    }
+
+    /**
+     * Calls a Cloud Function to record a profile picture change and decrement the daily limit.
+     * @param listener A listener to handle the result of the operation.
+     */
+    public void recordPfpChange(PfpChangeLimitListener listener) {
+        FirebaseUser currentUser = mAuth.getCurrentUser();
+        if (currentUser == null) {
+            listener.onFailure("User not authenticated.");
+            return;
+        }
+
+        mFunctions.getHttpsCallable("recordPfpChange")
+                .call()
+                .addOnCompleteListener(task -> {
+                    if (task.isSuccessful()) {
+                        HttpsCallableResult result = task.getResult();
+                        if (result != null && result.getData() instanceof Map) {
+                            Map<String, Object> resultMap = (Map<String, Object>) result.getData();
+                            // Retrieve as Number and convert to int to avoid ClassCastException
+                            Number pfpChangesTodayNum = (Number) resultMap.get("pfpChangesToday");
+                            int pfpChangesToday = pfpChangesTodayNum != null ? pfpChangesTodayNum.intValue() : 0;
+
+                            // Retrieve cooldown timestamp
+                            com.google.firebase.Timestamp pfpCooldownTimestamp = (com.google.firebase.Timestamp) resultMap.get("pfpCooldownResetTimestamp");
+                            Date pfpCooldownResetDate = pfpCooldownTimestamp != null ? pfpCooldownTimestamp.toDate() : null;
+
+                            listener.onSuccess(pfpChangesToday, pfpCooldownResetDate);
+                        } else {
+                            listener.onFailure("Invalid response from recordPfpChange function.");
+                        }
+                    }
+                    else {
+                        String errorMessage = "Failed to record PFP change.";
+                        if (task.getException() != null) {
+                            errorMessage += " " + task.getException().getMessage();
+                            if (task.getException() instanceof FirebaseFunctionsException) {
+                                FirebaseFunctionsException ffe = (FirebaseFunctionsException) task.getException();
+                                if (ffe.getCode() == FirebaseFunctionsException.Code.RESOURCE_EXHAUSTED) {
+                                    listener.onLimitExceeded();
+                                    return;
+                                } else if (ffe.getCode() == FirebaseFunctionsException.Code.UNAUTHENTICATED) {
+                                    errorMessage = "Authentication required to change profile picture.";
+                                }
+                            }
+                        }
+                        Log.e(TAG, "recordPfpChange failed: " + errorMessage, task.getException());
+                        listener.onFailure(errorMessage);
+                    }
+                });
+    }
+
+    /**
+     * Fetches the user's current OpenAI request remaining count and cooldown timestamp from Firestore.
+     * @param listener A listener to handle the result.
+     */
+    public void getOpenAiRequestsRemaining(OpenAiRequestLimitListener listener) {
+        FirebaseUser currentUser = mAuth.getCurrentUser();
+        if (currentUser == null) {
+            listener.onFailure("User not authenticated.");
+            return;
+        }
+
+        db.collection("users").document(currentUser.getUid()).get()
+                .addOnCompleteListener(task -> {
+                    if (task.isSuccessful()) {
+                        DocumentSnapshot document = task.getResult();
+                        if (document.exists()) {
+                            Long remainingLong = document.getLong("openAiRequestsRemaining");
+                            int remaining = remainingLong != null ? remainingLong.intValue() : 0;
+
+                            com.google.firebase.Timestamp openAiCooldownTimestamp = document.getTimestamp("openAiCooldownResetTimestamp");
+                            Date openAiCooldownResetDate = openAiCooldownTimestamp != null ? openAiCooldownTimestamp.toDate() : null;
+
+                            listener.onCheckComplete(remaining > 0, remaining, openAiCooldownResetDate);
+                        } else {
+                            listener.onFailure("User document not found.");
+                        }
+                    }
+                    else {
+                        Log.e(TAG, "Failed to get OpenAI requests remaining: ", task.getException());
+                        listener.onFailure("Failed to fetch OpenAI request limit: " + task.getException().getMessage());
+                    }
+                });
+    }
+
+    /**
+     * Fetches the user's current PFP changes remaining count and cooldown timestamp from Firestore.
+     * @param listener A listener to handle the result.
+     */
+    public void getPfpChangesRemaining(PfpChangeLimitListener listener) {
+        FirebaseUser currentUser = mAuth.getCurrentUser();
+        if (currentUser == null) {
+            listener.onFailure("User not authenticated.");
+            return;
+        }
+
+        db.collection("users").document(currentUser.getUid()).get()
+                .addOnCompleteListener(task -> {
+                    if (task.isSuccessful()) {
+                        DocumentSnapshot document = task.getResult();
+                        if (document.exists()) {
+                            Long remainingLong = document.getLong("pfpChangesToday");
+                            int remaining = remainingLong != null ? remainingLong.intValue() : 0;
+
+                            com.google.firebase.Timestamp pfpCooldownTimestamp = document.getTimestamp("pfpCooldownResetTimestamp");
+                            Date pfpCooldownResetDate = pfpCooldownTimestamp != null ? pfpCooldownTimestamp.toDate() : null;
+
+                            listener.onSuccess(remaining, pfpCooldownResetDate);
+                        } else {
+                            listener.onFailure("User document not found.");
+                        }
+                    }
+                    else {
+                        Log.e(TAG, "Failed to get PFP changes remaining: ", task.getException());
+                        listener.onFailure("Failed to fetch PFP change limit: " + task.getException().getMessage());
+                    }
+                });
     }
 
     // Bird Collection
@@ -284,7 +482,7 @@ public class FirebaseManager {
     public void getBirdById(String birdId, OnCompleteListener<DocumentSnapshot> listener) {
         db.collection("birds").document(birdId).get().addOnCompleteListener(listener);
     }
-    
+
     public void getAllBirds(OnCompleteListener<QuerySnapshot> listener) {
         db.collection("birds").get().addOnCompleteListener(listener);
     }
@@ -313,11 +511,11 @@ public class FirebaseManager {
                 .addOnCompleteListener(task -> {
                     if (task.isSuccessful()) {
                         boolean isDuplicate = !task.getResult().isEmpty();
-                        int pointsEarned = isDuplicate ? 0 : 1; 
+                        int pointsEarned = isDuplicate ? 0 : 1;
 
                         userBird.setIsDuplicate(isDuplicate);
                         userBird.setPointsEarned(pointsEarned);
-                        
+
                         Log.d(TAG, "Duplicate check for UserBird (user: " + userBird.getUserId() + ", bird: " + userBird.getBirdSpeciesId() + "): isDuplicate = " + isDuplicate + ", pointsEarned = " + pointsEarned);
 
                         // 2. Save the UserBird document with updated fields
@@ -325,17 +523,19 @@ public class FirebaseManager {
                                 .addOnCompleteListener(saveTask -> {
                                     if (saveTask.isSuccessful()) {
                                         Log.d(TAG, "UserBird saved successfully: " + userBird.getId());
-                                    } else {
+                                    }
+                                    else {
                                         Log.e(TAG, "Failed to save UserBird: " + userBird.getId(), saveTask.getException());
                                     }
                                     // Pass on the original listener's result
-                                    if (listener != null) { 
+                                    if (listener != null) {
                                         listener.onComplete(saveTask);
                                     }
                                 });
-                    } else {
+                    }
+                    else {
                         Log.e(TAG, "Failed to check for duplicate userBirds: ", task.getException());
-                        if (listener != null) { 
+                        if (listener != null) {
                             listener.onComplete(Tasks.forException(task.getException()));
                         }
                     }
@@ -346,6 +546,18 @@ public class FirebaseManager {
         db.collection("userBirds").document(userBirdId).get().addOnCompleteListener(listener);
     }
 
+    public Task<QuerySnapshot> getAllUserBirdSightingsForCurrentUser() {
+        FirebaseUser currentUser = mAuth.getCurrentUser();
+        if (currentUser == null) {
+            Log.e(TAG, "Cannot get user bird sightings: User not authenticated.");
+            return Tasks.forException(new IllegalStateException("User not authenticated."));
+        }
+
+        return db.collection("userBirdSightings")
+                .whereEqualTo("userId", currentUser.getUid())
+                .get();
+    }
+
     public void updateUserBird(UserBird userBird, OnCompleteListener<Void> listener) {
         db.collection("userBirds").document(userBird.getId()).set(userBird).addOnCompleteListener(listener);
     }
@@ -353,7 +565,7 @@ public class FirebaseManager {
     public void deleteUserBird(String userBirdId, OnCompleteListener<Void> listener) {
         db.collection("userBirds").document(userBirdId).delete().addOnCompleteListener(listener);
     }
-    
+
     // CollectionSlot Subcollection
     public void addCollectionSlot(String userId, String collectionSlotId, CollectionSlot collectionSlot, OnCompleteListener<Void> listener) {
         db.collection("users").document(userId).collection("collectionSlot").document(collectionSlotId).set(collectionSlot).addOnCompleteListener(listener);
@@ -370,12 +582,29 @@ public class FirebaseManager {
     public void deleteCollectionSlot(String userId, String collectionSlotId, OnCompleteListener<Void> listener) {
         db.collection("users").document(userId).collection("collectionSlot").document(collectionSlotId).delete().addOnCompleteListener(listener);
     }
-    
+
+    // UserBirdImage Subcollection
+    public void addUserBirdImage(String userId, String userBirdImageId, UserBirdImage userBirdImage, OnCompleteListener<Void> listener) {
+        db.collection("users").document(userId).collection("userBirdImage").document(userBirdImageId).set(userBirdImage).addOnCompleteListener(listener);
+    }
+
+    public void getUserBirdImageById(String userId, String userBirdImageId, OnCompleteListener<DocumentSnapshot> listener) {
+        db.collection("users").document(userId).collection("userBirdImage").document(userBirdImageId).get().addOnCompleteListener(listener);
+    }
+
+    public void updateUserBirdImage(String userId, UserBirdImage userBirdImage, OnCompleteListener<Void> listener) {
+        db.collection("users").document(userId).collection("userBirdImage").document(userBirdImage.getId()).set(userBirdImage).addOnCompleteListener(listener);
+    }
+
+    public void deleteUserBirdImage(String userId, String userBirdImageId, OnCompleteListener<Void> listener) {
+        db.collection("users").document(userId).collection("userBirdImage").document(userBirdImageId).delete().addOnCompleteListener(listener);
+    }
+
     // BirdFact Collection
     public void addBirdFact(BirdFact birdFact, OnCompleteListener<Void> listener) {
         db.collection("birdFacts").document(birdFact.getId()).set(birdFact).addOnCompleteListener(listener);
     }
-    
+
     public void getBirdFactById(String birdFactsId, OnCompleteListener<DocumentSnapshot> listener) {
         db.collection("birdFacts").document(birdFactsId).get().addOnCompleteListener(listener);
     }

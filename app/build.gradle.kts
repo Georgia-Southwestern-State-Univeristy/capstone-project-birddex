@@ -3,6 +3,7 @@ import java.util.Properties
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.google.gms.google.services)
+    alias(libs.plugins.google.firebase.crashlytics) // Apply the Crashlytics plugin
     alias(libs.plugins.ksp) // Using alias for KSP
 }
 
@@ -69,6 +70,7 @@ dependencies {
     implementation("com.google.firebase:firebase-functions")
     implementation("com.google.firebase:firebase-appcheck-playintegrity") // Added for App Check Play Integrity
     implementation("com.google.firebase:firebase-appcheck-debug")
+    implementation("com.google.firebase:firebase-crashlytics") // Added Crashlytics SDK
 
 
     // Networking and Image Libraries

@@ -6,6 +6,7 @@ import android.util.Log;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.EditText; // Added import for EditText
 import android.widget.ImageButton;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -140,7 +141,7 @@ public class ProfileFragment extends Fragment {
         if (user == null) {
             Log.e(TAG, "No user logged in.");
             tvUsername.setText("Guest");
-            tvBio.setText("Please log in.");
+            etBio.setText("Please log in.");
             ivPfp.setImageResource(R.drawable.ic_profile);
             updateOpenAiRequestsRemainingUI(0, null); // Reset UI if no user
             updatePfpChangesRemainingUI(0, null); // Reset UI if no user
@@ -179,7 +180,7 @@ public class ProfileFragment extends Fragment {
                     } else {
                         Log.w(TAG, "User document does not exist for ID: " + userId);
                         tvUsername.setText("New User");
-                        tvBio.setText("Welcome! Update your profile.");
+                        etBio.setText("Welcome! Update your profile.");
                         ivPfp.setImageResource(R.drawable.ic_profile);
                         updateOpenAiRequestsRemainingUI(0, null); // Reset UI if no user doc
                         updatePfpChangesRemainingUI(0, null); // Reset UI if no user doc
@@ -189,7 +190,7 @@ public class ProfileFragment extends Fragment {
                     Log.e(TAG, "Error fetching user profile: " + e.getMessage(), e);
                     Toast.makeText(requireContext(), "Failed to load profile.", Toast.LENGTH_SHORT).show();
                     tvUsername.setText("Error");
-                    tvBio.setText("Error loading bio.");
+                    etBio.setText("Error loading bio.");
                     ivPfp.setImageResource(R.drawable.ic_profile);
                     updateOpenAiRequestsRemainingUI(0, null); // Reset UI on error
                     updatePfpChangesRemainingUI(0, null); // Reset UI on error

@@ -11,4 +11,5 @@
         Please check your inbox (and spam folder) to verify your account before logging in. The email verification link will expire in 72 hours.</string>
     <string name="go_to_login">Go to Login</string>
     <string name="email_verification_expiration_message">The link will expire in 72 hours.</string>
+    <string name="hint_bio_empty">No bio yet.</string>
 </resources>

@@ -2,6 +2,7 @@
 agp = "9.0.1"
 google-services = "4.4.2"
 firebase-bom = "33.1.2"
+firebase-crashlytics-plugin = "3.0.6"
 junit = "4.13.2"
 junitVersion = "1.3.0"
 espressoCore = "3.7.0"
@@ -29,4 +30,5 @@ cardview = { group = "androidx.cardview", name = "cardview", version.ref = "card
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
 google-gms-google-services = { id = "com.google.gms.google-services", version.ref = "google-services" }
+google-firebase-crashlytics = { id = "com.google.firebase.crashlytics", version.ref = "firebase-crashlytics-plugin" }
 ksp = { id = "com.google.devtools.ksp", version.ref = "ksp" }

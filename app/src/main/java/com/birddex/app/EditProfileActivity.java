@@ -22,6 +22,7 @@ import androidx.core.content.ContextCompat;
 import com.google.android.material.button.MaterialButton;
 import com.google.android.material.textfield.TextInputEditText;
 import com.google.firebase.auth.FirebaseAuth;
+import com.google.firebase.auth.FirebaseUser;
 import com.google.firebase.firestore.FirebaseFirestore;
 import com.google.firebase.firestore.Query;
 import com.google.firebase.firestore.QuerySnapshot;
@@ -34,9 +35,9 @@ import com.canhub.cropper.CropImageContractOptions;
 import com.canhub.cropper.CropImageOptions;
 import com.canhub.cropper.CropImageView;
 
-
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Date; // Import Date
 
 public class EditProfileActivity extends AppCompatActivity {
 
@@ -45,6 +46,7 @@ public class EditProfileActivity extends AppCompatActivity {
 
     private TextInputEditText etUsername;
     private TextInputEditText etBio;
+    private TextView tvPfpChangesRemaining; // New TextView to display PFP changes remaining
     private String initialUsername;
     private String initialBio;
     private String initialProfilePictureUrl; // This will hold the URL from the intent, and then the new uploaded one
@@ -54,6 +56,7 @@ public class EditProfileActivity extends AppCompatActivity {
     private FirebaseFirestore db;
     private FirebaseStorage storage;
     private StorageReference storageRef;
+    private FirebaseManager firebaseManager; // Added FirebaseManager
 
     // UI elements
     private ImageView ivPfpPreview;
@@ -67,7 +70,6 @@ public class EditProfileActivity extends AppCompatActivity {
     private ActivityResultLauncher<Intent> pickImageLauncher;
     private ActivityResultLauncher<CropImageContractOptions> cropImageLauncher;
 
-
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -78,20 +80,24 @@ public class EditProfileActivity extends AppCompatActivity {
         db = FirebaseFirestore.getInstance();
         storage = FirebaseStorage.getInstance();
         storageRef = storage.getReference();
+        firebaseManager = new FirebaseManager(this); // Initialize FirebaseManager
 
         // Initialize UI
         ivPfpPreview = findViewById(R.id.ivPfpPreview);
         btnChangePhoto = findViewById(R.id.btnChangePhoto);
         etUsername = findViewById(R.id.etUsername);
         etBio = findViewById(R.id.etBio);
+        tvPfpChangesRemaining = findViewById(R.id.tvPfpChangesRemaining); // Assuming you add this TextView to activity_edit_profile.xml
 
-        // Get initial data from intent
-        initialUsername = getIntent().getStringExtra("username");
+        // Get initial data from intent (only bio and profile picture URL are passed via intent now)
+        // Username will be fetched from Firebase
         initialBio = getIntent().getStringExtra("bio");
         initialProfilePictureUrl = getIntent().getStringExtra("profilePictureUrl");
 
-        etUsername.setText(initialUsername);
         etBio.setText(initialBio);
+
+        // Fetch user profile data including username
+        fetchUserProfileData();
 
         // Load existing profile picture
         if (initialProfilePictureUrl != null && !initialProfilePictureUrl.isEmpty()) {
@@ -102,6 +108,9 @@ public class EditProfileActivity extends AppCompatActivity {
 
         MaterialButton btnSave = findViewById(R.id.btnSave);
         TextView tvCancel = findViewById(R.id.tvCancel);
+
+        // Fetch and display PFP changes remaining
+        fetchPfpChangesRemaining();
 
         // Register for image picking result
         pickImageLauncher = registerForActivityResult(new ActivityResultContracts.StartActivityForResult(),
@@ -149,17 +158,39 @@ public class EditProfileActivity extends AppCompatActivity {
                 return;
             }
 
-            // If a new image was cropped (imageUri is not null), upload it now
-            if (imageUri != null) {
-                Log.d(TAG, "Save button clicked, imageUri is not null. Starting upload.");
-                uploadImageToFirebase(imageUri, newUsername, newBio); // Pass username and bio here
-            } else {
-                Log.d(TAG, "Save button clicked, imageUri is null. Skipping image upload.");
-                // If no new image, but username/bio changed, save those
-                // If uploadedProfilePictureDownloadUrl is not null, it means an image was already uploaded successfully
-                saveProfileChanges(newUsername, newBio, uploadedProfilePictureDownloadUrl);
-            }
+            // Check if a new image was cropped OR if the old URL is different from current imageUri
+            boolean pfpChanged = (imageUri != null) || (uploadedProfilePictureDownloadUrl != null && !uploadedProfilePictureDownloadUrl.equals(initialProfilePictureUrl));
 
+            if (pfpChanged) {
+                Log.d(TAG, "PFP changed, calling recordPfpChange Cloud Function.");
+                firebaseManager.recordPfpChange(new FirebaseManager.PfpChangeLimitListener() {
+                    @Override
+                    public void onSuccess(int pfpChangesToday, Date pfpCooldownResetTimestamp) { // Updated signature
+                        Log.d(TAG, "PFP change recorded. Remaining: " + pfpChangesToday);
+                        tvPfpChangesRemaining.setText("PFP changes remaining today: " + pfpChangesToday);
+                        // The pfpCooldownResetTimestamp can be used to display when the limit resets,
+                        // but for now, we\'ll just log it.
+                        Log.d(TAG, "PFP Cooldown Reset Timestamp: " + pfpCooldownResetTimestamp);
+                        uploadImageToFirebase(imageUri, newUsername, newBio); // Proceed with upload
+                    }
+
+                    @Override
+                    public void onFailure(String errorMessage) {
+                        Log.e(TAG, "Failed to record PFP change: " + errorMessage);
+                        Toast.makeText(EditProfileActivity.this, "Error: " + errorMessage, Toast.LENGTH_LONG).show();
+                    }
+
+                    @Override
+                    public void onLimitExceeded() {
+                        Log.w(TAG, "PFP change limit exceeded.");
+                        Toast.makeText(EditProfileActivity.this, "You have reached your daily limit for profile picture changes.", Toast.LENGTH_LONG).show();
+                    }
+                });
+            } else {
+                Log.d(TAG, "PFP not changed. Skipping recordPfpChange and image upload.");
+                // If no new image, and username/bio changed, save those
+                saveProfileChanges(newUsername, newBio, initialProfilePictureUrl); // Pass current PFP URL
+            }
         });
 
         tvCancel.setOnClickListener(v -> {
@@ -173,23 +204,109 @@ public class EditProfileActivity extends AppCompatActivity {
             }
             imageUri = null; // Clear the temporary imageUri
             uploadedProfilePictureDownloadUrl = null; // Clear any uploaded URL
+            setResult(RESULT_CANCELED); // Set result to canceled
             finish();
         });
     }
 
-    private void checkPermissionsAndPickImage() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_MEDIA_IMAGES) != PackageManager.PERMISSION_GRANTED) {
-                ActivityCompat.requestPermissions(this, new String[]{Manifest.permission.READ_MEDIA_IMAGES}, REQUEST_READ_EXTERNAL_STORAGE);
+    private void fetchUserProfileData() {
+        FirebaseUser currentUser = mAuth.getCurrentUser();
+        if (currentUser == null) {
+            Log.e(TAG, "User not logged in. Cannot fetch profile data.");
+            // Optionally, redirect to login or show an error
+            return;
+        }
+
+        String userId = currentUser.getUid();
+        firebaseManager.getUserProfile(userId, task -> {
+            if (task.isSuccessful() && task.getResult() != null) {
+                User user = task.getResult().toObject(User.class);
+                if (user != null) {
+                    initialUsername = user.getUsername();
+                    etUsername.setText(initialUsername);
+                    // Also update initialBio and initialProfilePictureUrl if they are to be fetched from Firestore
+                    // For now, only username is changed as per the request.
+                    initialBio = user.getBio();
+                    etBio.setText(initialBio);
+                    if (user.getProfilePictureUrl() != null && !user.getProfilePictureUrl().isEmpty()) {
+                        initialProfilePictureUrl = user.getProfilePictureUrl();
+                        Glide.with(this).load(initialProfilePictureUrl).into(ivPfpPreview);
+                    } else {
+                        ivPfpPreview.setImageResource(R.drawable.ic_profile);
+                        initialProfilePictureUrl = null;
+                    }
+                } else {
+                    Log.e(TAG, "User document found but could not be parsed to User object.");
+                    Toast.makeText(this, "Error loading profile data.", Toast.LENGTH_SHORT).show();
+                }
             } else {
-                pickImage();
+                Log.e(TAG, "Failed to fetch user profile: " + (task.getException() != null ? task.getException().getMessage() : "Unknown error"));
+                Toast.makeText(this, "Failed to load profile data.", Toast.LENGTH_SHORT).show();
             }
+        });
+    }
+
+    private void fetchPfpChangesRemaining() {
+        String userId = mAuth.getCurrentUser() != null ? mAuth.getCurrentUser().getUid() : null;
+        if (userId == null) {
+            tvPfpChangesRemaining.setText("Not logged in.");
+            return;
         }
-        else if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
-            ActivityCompat.requestPermissions(this, new String[]{Manifest.permission.READ_EXTERNAL_STORAGE}, REQUEST_READ_EXTERNAL_STORAGE);
-        } else {
-            pickImage();
+
+        db.collection("users").document(userId).get().addOnSuccessListener(documentSnapshot -> {
+            if (documentSnapshot.exists()) {
+                // The Cloud Function \'checkUsernameAndEmailAvailability\' should ensure these fields exist and are up-to-date
+                Long pfpChangesTodayLong = documentSnapshot.getLong("pfpChangesToday");
+                int pfpChangesToday = pfpChangesTodayLong != null ? pfpChangesTodayLong.intValue() : 0;
+                tvPfpChangesRemaining.setText("PFP changes remaining today: " + pfpChangesToday);
+                if (pfpChangesToday <= 0) {
+                    btnChangePhoto.setEnabled(false);
+                    Toast.makeText(this, "You have no PFP changes left today.", Toast.LENGTH_LONG).show();
+                }
+            } else {
+                tvPfpChangesRemaining.setText("User data not found.");
+            }
+        }).addOnFailureListener(e -> {
+            Log.e(TAG, "Error fetching pfpChangesToday: " + e.getMessage(), e);
+            tvPfpChangesRemaining.setText("Error loading PFP limits.");
+        });
+    }
+
+    private void checkPermissionsAndPickImage() {
+        // Only allow picking if changes are remaining
+        String userId = mAuth.getCurrentUser() != null ? mAuth.getCurrentUser().getUid() : null;
+        if (userId == null) {
+            Toast.makeText(this, "Please log in to change profile picture.", Toast.LENGTH_SHORT).show();
+            return;
         }
+        db.collection("users").document(userId).get().addOnSuccessListener(documentSnapshot -> {
+            if (documentSnapshot.exists()) {
+                Long pfpChangesTodayLong = documentSnapshot.getLong("pfpChangesToday");
+                int pfpChangesToday = pfpChangesTodayLong != null ? pfpChangesTodayLong.intValue() : 0;
+                if (pfpChangesToday <= 0) {
+                    Toast.makeText(this, "You have reached your daily limit for profile picture changes.", Toast.LENGTH_LONG).show();
+                    return;
+                }
+                // Proceed if limit is not exceeded
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_MEDIA_IMAGES) != PackageManager.PERMISSION_GRANTED) {
+                        ActivityCompat.requestPermissions(this, new String[]{Manifest.permission.READ_MEDIA_IMAGES}, REQUEST_READ_EXTERNAL_STORAGE);
+                    } else {
+                        pickImage();
+                    }
+                }
+                else if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
+                    ActivityCompat.requestPermissions(this, new String[]{Manifest.permission.READ_EXTERNAL_STORAGE}, REQUEST_READ_EXTERNAL_STORAGE);
+                } else {
+                    pickImage();
+                }
+            } else {
+                Toast.makeText(this, "User data not found to check limits.", Toast.LENGTH_SHORT).show();
+            }
+        }).addOnFailureListener(e -> {
+            Log.e(TAG, "Error checking PFP limits before picking image: " + e.getMessage(), e);
+            Toast.makeText(this, "Error checking PFP limits. Try again later.", Toast.LENGTH_LONG).show();
+        });
     }
 
     @Override
@@ -229,9 +346,18 @@ public class EditProfileActivity extends AppCompatActivity {
             return;
         }
 
+        // Only attempt to upload if newImageUri is not null. Otherwise, it means the PFP wasn\'t changed via image picker.
+        if (newImageUri == null) {
+            Log.d(TAG, "No new image URI to upload. Proceeding to save profile changes with existing PFP URL.");
+            saveProfileChanges(newUsername, newBio, initialProfilePictureUrl);
+            return;
+        }
+
         String userId = mAuth.getCurrentUser().getUid();
 
         // Step 1: Delete the old profile picture if it exists
+        // This needs to be done with care as it\'s separate from the limit.
+        // The old URL is `initialProfilePictureUrl`
         if (initialProfilePictureUrl != null && !initialProfilePictureUrl.isEmpty() &&
             (initialProfilePictureUrl.startsWith("gs://") || initialProfilePictureUrl.startsWith("https://firebasestorage.googleapis.com"))) {
             try {
@@ -272,9 +398,9 @@ public class EditProfileActivity extends AppCompatActivity {
             });
     }
 
-    private void saveProfileChanges(String newUsername, String newBio, String uploadedProfilePictureDownloadUrl) {
+    private void saveProfileChanges(String newUsername, String newBio, String finalProfilePictureUrl) {
         String userId = mAuth.getCurrentUser().getUid();
-        Log.d(TAG, "Saving profile changes for user: " + userId + " with uploaded URL: " + uploadedProfilePictureDownloadUrl);
+        Log.d(TAG, "Saving profile changes for user: " + userId + ", PFP URL: " + finalProfilePictureUrl);
 
         Map<String, Object> updates = new HashMap<>();
         boolean hasChanges = false;
@@ -282,82 +408,44 @@ public class EditProfileActivity extends AppCompatActivity {
         // Check for username change
         if (!newUsername.equals(initialUsername)) {
             hasChanges = true;
-            // Perform username uniqueness check
-            db.collection("users")
-                .whereEqualTo("username", newUsername)
-                .get()
-                .addOnCompleteListener(task -> {
-                    if (task.isSuccessful()) {
-                        QuerySnapshot documentSnapshot = task.getResult();
-                        if (documentSnapshot != null && !documentSnapshot.isEmpty()) {
-                            // Check if the found username belongs to the current user
-                            boolean isCurrentUser = false;
-                            if (mAuth.getCurrentUser() != null) {
-                                for (com.google.firebase.firestore.DocumentSnapshot doc : documentSnapshot.getDocuments()) {
-                                    if (doc.getId().equals(userId)) {
-                                        isCurrentUser = true;
-                                        break;
-                                    }
-                                }
-                            }
-                            if (!isCurrentUser) {
-                                etUsername.setError("This username is already taken. Please choose a different one.");
-                                Toast.makeText(this, "Username is already taken.", Toast.LENGTH_SHORT).show();
-                                return; // Stop the save process
-                            }
-                        }
-                        // If username is unique or belongs to the current user, proceed with updates
-                        updates.put("username", newUsername);
-                        // Now continue with other updates and actual save if username is valid
-                        continueSavingProfile(newUsername, newBio, uploadedProfilePictureDownloadUrl, updates, true);
-
-                    } else {
-                        Log.e(TAG, "Error checking username uniqueness: " + task.getException().getMessage());
-                        Toast.makeText(this, "Error checking username. Please try again.", Toast.LENGTH_LONG).show();
-                    }
-                });
-            return; // Exit here, continueSavingProfile will be called asynchronously
+            // Perform username uniqueness check is done implicitly by the `checkUsernameAvailability` CF
+            // in `FirebaseManager.updateUserProfile` when the username changes.
+            updates.put("username", newUsername);
         }
 
-        // Check for bio change (only if username wasn't changed or if it passed the check)
+        // Check for bio change
         if (!newBio.equals(initialBio)) {
             updates.put("bio", newBio);
             hasChanges = true;
         }
 
-        // Always put the uploadedProfilePictureDownloadUrl if it's present.
-        // This ensures the profilePictureUrl in Firestore is updated if a new image was uploaded.
-        if (uploadedProfilePictureDownloadUrl != null && !uploadedProfilePictureDownloadUrl.isEmpty()) {
-            // Only update if it's genuinely new or different from the *initial* URL the activity started with
-            if (initialProfilePictureUrl == null || !uploadedProfilePictureDownloadUrl.equals(initialProfilePictureUrl)) {
-                 updates.put("profilePictureUrl", uploadedProfilePictureDownloadUrl);
-                 hasChanges = true;
-            }
+        // Update profile picture URL only if it was genuinely changed (new image uploaded or existing cleared)
+        // Use `finalProfilePictureUrl` which would be the newly uploaded one or the original if no new upload happened
+        if (finalProfilePictureUrl != null && !finalProfilePictureUrl.equals(initialProfilePictureUrl)) {
+            updates.put("profilePictureUrl", finalProfilePictureUrl);
+            hasChanges = true;
+        } else if (initialProfilePictureUrl != null && finalProfilePictureUrl == null) {
+            // Scenario: user explicitly removed PFP (e.g., from EditProfileActivity, not yet implemented but for future)
+            updates.put("profilePictureUrl", null);
+            hasChanges = true;
         }
-        // If uploadedProfilePictureDownloadUrl is null, it means no new image was uploaded.
-        // In this case, we don't put "profilePictureUrl" in the 'updates' map,
-        // which means it will retain its existing value in Firestore.
-        // This is the desired behavior if the user didn't change the PFP.
 
-        // If username didn't change, call continueSavingProfile directly
-        continueSavingProfile(newUsername, newBio, uploadedProfilePictureDownloadUrl, updates, hasChanges);
-    }
-
-    private void continueSavingProfile(String newUsername, String newBio, String uploadedProfilePictureDownloadUrl, Map<String, Object> updates, boolean hasChanges) {
-        String userId = mAuth.getCurrentUser().getUid();
-
+        // Use FirebaseManager to update user profile, which handles username uniqueness
         if (hasChanges) {
-            db.collection("users").document(userId)
-                .update(updates)
-                .addOnSuccessListener(aVoid -> {
-                    Log.d(TAG, "Firestore profile updated successfully.");
-                    // Update local 'initial' values to reflect what's now in Firestore
+            // Create a temporary User object with only the fields to be updated + userId
+            // FirebaseManager.updateUserProfile will handle merging
+            User userToUpdate = new User(userId, null, newUsername, null, null);
+            userToUpdate.setBio(newBio);
+            userToUpdate.setProfilePictureUrl(finalProfilePictureUrl); // This will be merged into Firestore
+
+            firebaseManager.updateUserProfile(userToUpdate, new FirebaseManager.AuthListener() {
+                @Override
+                public void onSuccess(com.google.firebase.auth.FirebaseUser user) {
+                    Log.d(TAG, "Firestore profile updated successfully via FirebaseManager.");
+                    // Update local \'initial\' values to reflect what\'s now in Firestore
                     initialUsername = newUsername;
                     initialBio = newBio;
-                    // If a new image was uploaded, update initialProfilePictureUrl with the new one
-                    if (uploadedProfilePictureDownloadUrl != null) {
-                        initialProfilePictureUrl = uploadedProfilePictureDownloadUrl;
-                    }
+                    initialProfilePictureUrl = finalProfilePictureUrl; // Update with the final URL
 
                     Intent resultIntent = new Intent();
                     resultIntent.putExtra("newUsername", newUsername);
@@ -365,16 +453,33 @@ public class EditProfileActivity extends AppCompatActivity {
                     resultIntent.putExtra("newProfilePictureUrl", initialProfilePictureUrl); // Pass the now-current URL
                     setResult(RESULT_OK, resultIntent);
                     finish();
-                })
-                .addOnFailureListener(e -> {
-                    Log.e(TAG, "Failed to update profile in Firestore: " + e.getMessage(), e);
-                    Toast.makeText(this, "Failed to update profile: " + e.getMessage(), Toast.LENGTH_LONG).show();
-                });
+                }
+
+                @Override
+                public void onFailure(String errorMessage) {
+                    Log.e(TAG, "Failed to update profile in Firestore via FirebaseManager: " + errorMessage);
+                    Toast.makeText(EditProfileActivity.this, "Failed to update profile: " + errorMessage, Toast.LENGTH_LONG).show();
+                }
+
+                @Override
+                public void onUsernameTaken() {
+                    etUsername.setError("This username is already taken. Please choose a different one.");
+                    Toast.makeText(EditProfileActivity.this, "Username is already taken.", Toast.LENGTH_SHORT).show();
+                }
+
+                @Override
+                public void onEmailTaken() {
+                    // This case should ideally not happen for updateUserProfile, as email is not updated via this path.
+                    // However, we must implement it due to the AuthListener interface contract.
+                    Log.w(TAG, "onEmailTaken called unexpectedly in EditProfileActivity. This typically means the email is being checked by the CF but not updated here.");
+                    Toast.makeText(EditProfileActivity.this, "Email is already in use by another account.", Toast.LENGTH_SHORT).show();
+                }
+            });
         } else {
             Log.d(TAG, "No profile changes detected to save to Firestore. Finishing activity.");
             Intent resultIntent = new Intent();
-            resultIntent.putExtra("newUsername", newUsername);
-            resultIntent.putExtra("newBio", newBio);
+            resultIntent.putExtra("newUsername", initialUsername);
+            resultIntent.putExtra("newBio", initialBio);
             resultIntent.putExtra("newProfilePictureUrl", initialProfilePictureUrl); // Pass the original/current PFP URL
             setResult(RESULT_OK, resultIntent);
             finish();

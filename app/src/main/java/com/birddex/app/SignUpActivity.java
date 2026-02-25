@@ -30,7 +30,7 @@ public class SignUpActivity extends AppCompatActivity {
         setContentView(R.layout.activity_sign_up);
 
         // Initialize helper classes for Firebase operations and input validation.
-        firebaseManager = new FirebaseManager(this); // Pass 'this' (Context) to FirebaseManager
+        firebaseManager = new FirebaseManager(this); // Pass \'this\' (Context) to FirebaseManager
         signINupValidator = new sign_IN_upValidator();
 
         // Bind UI components to variables.
@@ -70,6 +70,13 @@ public class SignUpActivity extends AppCompatActivity {
                     public void onUsernameTaken() { 
                         // Inform the user if the username is already in use.
                         usernameEditText.setError("Username already taken.");
+                    }
+
+                    @Override
+                    public void onEmailTaken() {
+                        // Inform the user if the email is already in use.
+                        emailEditText.setError("Email already taken.");
+                        Toast.makeText(SignUpActivity.this, "Email is already taken.", Toast.LENGTH_SHORT).show();
                     }
                 });
             }

@@ -26,27 +26,26 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * BirdLookupActivity allows users to search for birds within the Georgia regional list.
- * It uses Cloud Functions to securely fetch data and find images.
+ * BirdLookupActivity is currently configured to demonstrate direct bird detail and image fetching by name.
+ * It no longer pre-loads the full Georgia bird list or provides local search functionality.
  */
-public class BirdLookupActivity extends AppCompatActivity {
+public class BirdLookupActivity extends AppCompatActivity implements NetworkMonitor.NetworkStatusListener {
 
     private static final String TAG = "BirdLookupActivity";
     private EditText commonNameEditText;
-    private EditText scientificNameEditText;
+    private EditText scientificNameEditText; // This field is now unused for direct search
     private Button searchButton;
-    private ListView resultsListView;
     private ConstraintLayout finalDisplayLayout;
     private ImageView birdImageView;
     private TextView speciesInfoTextView;
+    private TextView generalFactsTextView;
+    private TextView hunterFactsTextView;
 
     private FirebaseFirestore db;
-    private ArrayAdapter<String> resultsAdapter;
-    private List<JSONObject> allGeorgiaBirds;
-    private List<JSONObject> filteredResults;
 
     private NuthatchApi nuthatchApi;
     private EbirdApi ebirdApi;
+    private NetworkMonitor networkMonitor;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -54,134 +53,229 @@ public class BirdLookupActivity extends AppCompatActivity {
         //setContentView(R.layout.activity_bird_lookup);
 
         // --- UI Initialization ---
-        //commonNameEditText = findViewById(R.id.commonNameEditText);
+        //**commonNameEditText = findViewById(R.id.commonNameEditText);
+        // scientificNameEditText is present in layout but not actively used for this simplified flow.
         //scientificNameEditText = findViewById(R.id.scientificNameEditText);
         //searchButton = findViewById(R.id.searchButton);
-        //resultsListView = findViewById(R.id.resultsListView);
+        // resultsListView removed - no longer displaying a list of search results
         //finalDisplayLayout = findViewById(R.id.finalDisplayLayout);
         //birdImageView = findViewById(R.id.birdImageView);
         //speciesInfoTextView = findViewById(R.id.speciesInfoTextView);
+        //generalFactsTextView = findViewById(R.id.generalFactsTextView);
+        //hunterFactsTextView = findViewById(R.id.hunterFactsTextView);
 
         // --- Backend Initialization ---
         db = FirebaseFirestore.getInstance();
-        allGeorgiaBirds = new ArrayList<>();
-        filteredResults = new ArrayList<>();
-        resultsAdapter = new ArrayAdapter<>(this, android.R.layout.simple_list_item_1, new ArrayList<>());
-        resultsListView.setAdapter(resultsAdapter);
 
         // API Helpers (Now using Cloud Functions)
         nuthatchApi = new NuthatchApi();
         ebirdApi = new EbirdApi();
+        networkMonitor = new NetworkMonitor(this, this);
 
-        // Pre-load the Georgia bird list from the secure Cloud Function cache
-        fetchGeorgiaBirdList();
-
-        // --- Click Listeners ---
+        // Search button now triggers direct fetch and display for a single bird
         searchButton.setOnClickListener(v -> {
+            if (!networkMonitor.isConnected()) {
+                Toast.makeText(this, "No internet connection. Cannot perform search.", Toast.LENGTH_SHORT).show();
+                return;
+            }
+
             String commonNameQuery = commonNameEditText.getText().toString().trim();
-            String scientificNameQuery = scientificNameEditText.getText().toString().trim();
-
-            if (commonNameQuery.isEmpty() && scientificNameQuery.isEmpty()) {
-                Toast.makeText(this, "Please enter a search term.", Toast.LENGTH_SHORT).show();
+            if (commonNameQuery.isEmpty()) {
+                Toast.makeText(this, "Please enter a bird common name.", Toast.LENGTH_SHORT).show();
                 return;
             }
-            if (allGeorgiaBirds.isEmpty()) {
-                Toast.makeText(this, "Bird list is still loading...", Toast.LENGTH_SHORT).show();
-                return;
-            }
-            resetToSearchState();
-            searchLocalBirdList(commonNameQuery, scientificNameQuery);
+            
+            // Clear previous results and show loading state if desired, then fetch
+            resetToFinalDisplayState(); // Show final display area
+            // You might want to add a loading spinner here
+
+            // Attempt to fetch details directly based on common name
+            // NOTE: This assumes 'getBirdDetailsAndFacts' can handle common name search,
+            // but the Cloud Function currently expects birdId. This will need adjustment
+            // if you want to search by common name via Cloud Function.
+            // For now, it will attempt to find an image and then display a placeholder for facts.
+            findImageAndDisplay(commonNameQuery, "Unknown Scientific Name", "Unknown Family", null);
+            Toast.makeText(this, "Attempting to fetch details for: " + commonNameQuery, Toast.LENGTH_SHORT).show();
         });
 
-        resultsListView.setOnItemClickListener((parent, view, position, id) -> {
-            try {
-                JSONObject selectedBird = filteredResults.get(position);
-                String commonName = selectedBird.getString("commonName");
-                String sciName = selectedBird.getString("scientificName");
-                String family = selectedBird.getString("family");
-
-                resetToFinalDisplayState();
-                findImageAndDisplay(commonName, sciName, family);
-            } catch (JSONException e) {
-                Log.e(TAG, "Error getting selected bird data", e);
-            }
-        });
+        // resultsListView.setOnItemClickListener removed as there is no resultsListView
     }
 
-    private void fetchGeorgiaBirdList() {
-        ebirdApi.fetchGeorgiaBirdList(new EbirdApi.EbirdCallback() {
+    @Override
+    protected void onResume() {
+        super.onResume();
+        networkMonitor.register();
+        // Re-enable search button if network is available
+        if (networkMonitor.isConnected()) {
+            searchButton.setEnabled(true);
+        } else {
+            searchButton.setEnabled(false);
+            Toast.makeText(this, "Internet disconnected. Search functionality limited.", Toast.LENGTH_LONG).show();
+        }
+    }
+
+    @Override
+    protected void onPause() {
+        super.onPause();
+        networkMonitor.unregister();
+    }
+
+    // --- NetworkMonitor Callbacks ---
+    @Override
+    public void onNetworkAvailable() {
+        Log.d(TAG, "Network became available in BirdLookupActivity.");
+        Toast.makeText(this, "Internet connection restored.", Toast.LENGTH_SHORT).show();
+        searchButton.setEnabled(true);
+    }
+
+    @Override
+    public void onNetworkLost() {
+        Log.e(TAG, "Network lost in BirdLookupActivity.");
+        Toast.makeText(this, "Internet connection lost. Search functionality disabled.", Toast.LENGTH_LONG).show();
+        searchButton.setEnabled(false);
+    }
+
+    /**
+     * Fetches and displays full details and facts for a specific bird.
+     * This method is intended to be called with a valid birdId.
+     * Currently, the search button does not provide a birdId directly.
+     * @param birdId The ID of the bird to fetch.
+     */
+    private void fetchAndDisplayBirdDetails(String birdId) {
+        ebirdApi.fetchBirdDetailsAndFacts(birdId, new EbirdApi.BirdDetailsCallback() {
             @Override
-            public void onSuccess(List<JSONObject> birds) {
-                allGeorgiaBirds.clear();
-                allGeorgiaBirds.addAll(birds);
-                Log.d(TAG, "Loaded " + allGeorgiaBirds.size() + " Georgia birds from Cloud cache.");
+            public void onSuccess(JSONObject birdDetails) {
+                try {
+                    String commonName = birdDetails.getString("commonName");
+                    String scientificName = birdDetails.getString("scientificName");
+                    String family = birdDetails.getString("family");
+                    String imageUrl = null;
+
+                    if (birdDetails.has("imageUrl")) {
+                        imageUrl = birdDetails.getString("imageUrl");
+                        displayFinalResults(imageUrl, commonName, scientificName, family, birdDetails);
+                    } else {
+                        searchNuthatchForImage(commonName, scientificName, family, birdDetails);
+                    }
+
+                } catch (JSONException e) {
+                    Log.e(TAG, "Error parsing bird details JSON: " + e.getMessage(), e);
+                    Toast.makeText(BirdLookupActivity.this, "Error displaying bird details.", Toast.LENGTH_SHORT).show();
+                }
             }
 
             @Override
             public void onFailure(Exception e) {
-                Log.e(TAG, "Failed to fetch bird list.", e);
-                Toast.makeText(BirdLookupActivity.this, "Failed to load regional bird data.", Toast.LENGTH_SHORT).show();
+                Log.e(TAG, "Failed to fetch bird details and facts: " + e.getMessage(), e);
+                Toast.makeText(BirdLookupActivity.this, "Failed to load bird details.", Toast.LENGTH_LONG).show();
+                // Display placeholders for facts if fetching fails
+                displayFinalResults(null, "Unknown", "Unknown", "Unknown", null);
             }
         });
     }
 
-    private void searchLocalBirdList(String commonNameQuery, String sciNameQuery) {
-        filteredResults.clear();
-        resultsAdapter.clear();
-
-        for (JSONObject bird : allGeorgiaBirds) {
-            try {
-                String comName = bird.getString("commonName").toLowerCase();
-                String sciName = bird.getString("scientificName").toLowerCase();
-                
-                boolean matchCommon = !commonNameQuery.isEmpty() && comName.contains(commonNameQuery.toLowerCase());
-                boolean matchSci = !sciNameQuery.isEmpty() && sciName.contains(sciNameQuery.toLowerCase());
-
-                if (matchCommon || matchSci) {
-                    filteredResults.add(bird);
-                    resultsAdapter.add(bird.getString("commonName") + "\n(" + bird.getString("scientificName") + ")");
-                }
-            } catch (JSONException ignored) {}
+    // Modified to accept commonName and the full birdDetails JSONObject
+    private void findImageAndDisplay(final String commonName, final String scientificName, final String family, final JSONObject birdDetails) {
+        if (!networkMonitor.isConnected()) {
+            Toast.makeText(this, "No internet connection. Cannot fetch image.", Toast.LENGTH_SHORT).show();
+            return;
         }
 
-        if (filteredResults.isEmpty()) {
-            Toast.makeText(this, "No matching birds found in Georgia.", Toast.LENGTH_SHORT).show();
-        } else {
-            resultsAdapter.notifyDataSetChanged();
-        }
-    }
-
-    private void findImageAndDisplay(final String commonName, final String scientificName, final String family) {
         // First check if we already have a high-quality image URL in Firestore
+        // Note: It's more efficient if imageUrl is part of the birdDetails from getBirdDetailsAndFacts CF already
         db.collection("bird_images").document(commonName).get()
                 .addOnSuccessListener(documentSnapshot -> {
                     if (documentSnapshot.exists() && documentSnapshot.contains("imageUrl")) {
-                        displayFinalResults(documentSnapshot.getString("imageUrl"), family, scientificName);
+                        displayFinalResults(documentSnapshot.getString("imageUrl"), commonName, scientificName, family, birdDetails);
                     } else {
-                        searchNuthatchForImage(commonName, scientificName, family);
+                        searchNuthatchForImage(commonName, scientificName, family, birdDetails);
                     }
-                }).addOnFailureListener(e -> searchNuthatchForImage(commonName, scientificName, family));
+                }).addOnFailureListener(e -> {
+                    Log.e(TAG, "Firestore image lookup failed or timed out: ", e);
+                    if (networkMonitor.isConnected()) {
+                        searchNuthatchForImage(commonName, scientificName, family, birdDetails);
+                    } else {
+                        Toast.makeText(BirdLookupActivity.this, "Failed to get bird image due to network or server issue.", Toast.LENGTH_LONG).show();
+                        displayFinalResults(null, commonName, scientificName, family, birdDetails);
+                    }
+                });
     }
 
-    private void searchNuthatchForImage(final String commonName, final String scientificName, final String family) {
+    // Modified to accept commonName and the full birdDetails JSONObject
+    private void searchNuthatchForImage(final String commonName, final String scientificName, final String family, final JSONObject birdDetails) {
+        if (!networkMonitor.isConnected()) {
+            Toast.makeText(this, "No internet connection. Cannot search for images.", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
         nuthatchApi.searchNuthatchByName(commonName, new NuthatchApi.SearchResultHandler() {
             @Override
             public void onImageFound(String imageUrl) {
-                displayFinalResults(imageUrl, family, scientificName);
+                displayFinalResults(imageUrl, commonName, scientificName, family, birdDetails);
                 saveBirdImageMetadata(commonName, scientificName, imageUrl, family);
             }
 
             @Override
             public void onImageNotFound() {
-                Toast.makeText(BirdLookupActivity.this, "No reference image found.", Toast.LENGTH_SHORT).show();
+                Toast.makeText(BirdLookupActivity.this, "No reference image found for " + commonName + ".", Toast.LENGTH_LONG).show();
+                displayFinalResults(null, commonName, scientificName, family, birdDetails);
             }
         });
     }
 
-    private void displayFinalResults(String imageUrl, String family, String scientificName) {
-        Glide.with(this).load(imageUrl).into(birdImageView);
-        String infoText = "Family: " + family + "\nScientific Name: (" + scientificName + ")";
-        speciesInfoTextView.setText(infoText);
+    // Modified to accept commonName and the full birdDetails JSONObject for displaying facts
+    private void displayFinalResults(String imageUrl, String commonName, String scientificName, String family, JSONObject birdDetails) {
+        if (imageUrl != null && !imageUrl.isEmpty()) {
+            Glide.with(this).load(imageUrl).into(birdImageView);
+        } else {
+           // birdImageView.setImageResource(R.drawable.ic_bird_placeholder); // Use a placeholder if no image
+        }
+
+        // Display core info
+        StringBuilder coreInfo = new StringBuilder();
+        coreInfo.append("Common Name: ").append(commonName).append("\n");
+        coreInfo.append("Scientific Name: ").append(scientificName).append("\n");
+        coreInfo.append("Family: ").append(family).append("\n");
+        speciesInfoTextView.setText(coreInfo.toString());
+
+        // Display General Facts
+        StringBuilder generalFacts = new StringBuilder("\n--- General Facts ---\n");
+        try {
+            if (birdDetails != null) {
+                JSONObject generalFactsJson = birdDetails.getJSONObject("generalFacts");
+                generalFacts.append("Size/Appearance: ").append(generalFactsJson.optString("sizeAppearance", "N/A")).append("\n");
+                generalFacts.append("Distinctive Behaviors: ").append(generalFactsJson.optString("distinctiveBehaviors", "N/A")).append("\n");
+                generalFacts.append("Where in Georgia Found: ").append(generalFactsJson.optString("whereInGeorgiaFound", "N/A")).append("\n");
+                generalFacts.append("Seasonal Presence: ").append(generalFactsJson.optString("seasonalPresence", "N/A")).append("\n");
+                generalFacts.append("Diet: ").append(generalFactsJson.optString("diet", "N/A")).append("\n");
+                // Add more general facts as needed
+            } else {
+                generalFacts.append("Bird details not available.");
+            }
+        } catch (JSONException e) {
+            generalFacts.append("No general facts available.");
+            Log.e(TAG, "Error parsing general facts", e);
+        }
+        generalFactsTextView.setText(generalFacts.toString());
+
+        // Display Hunter Facts
+        StringBuilder hunterFacts = new StringBuilder("\n--- Hunter Facts ---\n");
+        try {
+            if (birdDetails != null) {
+                JSONObject hunterFactsJson = birdDetails.getJSONObject("hunterFacts");
+                hunterFacts.append("Legal Status (GA): ").append(hunterFactsJson.optString("legalStatusGeorgia", "N/A")).append("\n");
+                hunterFacts.append("Season: ").append(hunterFactsJson.optString("season", "N/A")).append("\n");
+                hunterFacts.append("License Requirements: ").append(hunterFactsJson.optString("licenseRequirements", "N/A")).append("\n");
+                hunterFacts.append("Georgia DNR Link: ").append(hunterFactsJson.optString("georgiaDNRHuntingLink", "N/A")).append("\n");
+                // Add more hunter facts as needed
+            } else {
+                hunterFacts.append("Bird details not available.");
+            }
+        } catch (JSONException e) {
+            hunterFacts.append("No hunter facts available.");
+            Log.e(TAG, "Error parsing hunter facts", e);
+        }
+        hunterFactsTextView.setText(hunterFacts.toString());
     }
 
     private void saveBirdImageMetadata(String commonName, String scientificName, String imageUrl, String family) {
@@ -195,12 +289,16 @@ public class BirdLookupActivity extends AppCompatActivity {
     }
 
     private void resetToSearchState() {
-        finalDisplayLayout.setVisibility(View.GONE);
-        resultsListView.setVisibility(View.VISIBLE);
+        if (finalDisplayLayout != null) finalDisplayLayout.setVisibility(View.GONE);
+        // resultsListView removed
+        if (generalFactsTextView != null) generalFactsTextView.setText("");
+        if (hunterFactsTextView != null) hunterFactsTextView.setText("");
+        if (speciesInfoTextView != null) speciesInfoTextView.setText("");
+        if (birdImageView != null) birdImageView.setImageDrawable(null);
     }
 
     private void resetToFinalDisplayState() {
-        resultsListView.setVisibility(View.GONE);
-        finalDisplayLayout.setVisibility(View.VISIBLE);
+        // resultsListView removed
+        if (finalDisplayLayout != null) finalDisplayLayout.setVisibility(View.VISIBLE);
     }
 }

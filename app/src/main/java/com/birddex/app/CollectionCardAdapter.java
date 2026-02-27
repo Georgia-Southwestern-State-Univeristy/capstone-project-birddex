@@ -1,6 +1,7 @@
 package com.birddex.app;
 
 import android.content.Intent;
+import android.util.Log;
 import android.text.TextUtils;
 import android.util.TypedValue;
 import android.view.Gravity;
@@ -11,6 +12,12 @@ import android.widget.ImageView;
 import android.widget.TextView;
 
 import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
+import androidx.recyclerview.widget.RecyclerView;
+
+import com.bumptech.glide.Glide;
+import com.google.firebase.firestore.FirebaseFirestore;
+import com.google.firebase.firestore.DocumentSnapshot;
 import androidx.cardview.widget.CardView;
 import androidx.recyclerview.widget.RecyclerView;
 
@@ -27,10 +34,23 @@ public class CollectionCardAdapter extends RecyclerView.Adapter<CollectionCardAd
     public static final String EXTRA_LOCALITY = "com.birddex.app.extra.LOCALITY";
     public static final String EXTRA_CAUGHT_TIME = "com.birddex.app.extra.CAUGHT_TIME";
 
-    private final List<CollectionSlot> slots;
+    private static final String TAG = "CollectionCardAdapter";
 
-    public CollectionCardAdapter(@NonNull List<CollectionSlot> slots) {
+    private final List<CollectionSlot> slots;
+    private final FirebaseFirestore db;
+    @Nullable private final String userId; // Can be null if not logged in
+
+    // Rarity view types
+    private static final int VIEW_TYPE_COMMON = 0;
+    private static final int VIEW_TYPE_UNCOMMON = 1;
+    private static final int VIEW_TYPE_RARE = 2;
+    private static final int VIEW_TYPE_EPIC = 3;
+    private static final int VIEW_TYPE_LEGENDARY = 4;
+
+    public CollectionCardAdapter(@NonNull List<CollectionSlot> slots, @NonNull FirebaseFirestore db, @Nullable String userId) {
         this.slots = slots;
+        this.db = db;
+        this.userId = userId;
     }
 
     static class VH extends RecyclerView.ViewHolder {
@@ -56,9 +76,61 @@ public class CollectionCardAdapter extends RecyclerView.Adapter<CollectionCardAd
         }
     }
 
+    @Override
+    public int getItemViewType(int position) {
+        CollectionSlot slot = slots.get(position);
+        if (slot == null || slot.getRarity() == null || slot.getRarity().trim().isEmpty()) {
+            return VIEW_TYPE_COMMON; // Default to common if rarity is not set
+        }
+
+        switch (slot.getRarity().toLowerCase()) {
+            case "common":
+                return VIEW_TYPE_COMMON;
+            case "uncommon":
+                return VIEW_TYPE_UNCOMMON;
+            case "rare":
+                return VIEW_TYPE_RARE;
+            case "epic":
+                return VIEW_TYPE_EPIC;
+            case "legendary":
+                return VIEW_TYPE_LEGENDARY;
+            default:
+                return VIEW_TYPE_COMMON; // Fallback for any unrecognised rarities
+        }
+    }
+
     @NonNull
     @Override
     public VH onCreateViewHolder(@NonNull ViewGroup parent, int viewType) {
+        View v;
+        switch (viewType) {
+            case VIEW_TYPE_COMMON:
+            default:
+                v = LayoutInflater.from(parent.getContext())
+                        .inflate(R.layout.view_bird_card, parent, false); // *** CHANGED LAYOUT HERE ***
+                break;
+            case VIEW_TYPE_UNCOMMON:
+                // TODO: Replace with R.layout.item_collection_cell_uncommon when created
+                v = LayoutInflater.from(parent.getContext())
+                        .inflate(R.layout.view_bird_card, parent, false); // Temporarily use common layout
+                break;
+            case VIEW_TYPE_RARE:
+                // TODO: Replace with R.layout.item_collection_cell_rare when created
+                v = LayoutInflater.from(parent.getContext())
+                        .inflate(R.layout.view_bird_card, parent, false); // Temporarily use common layout
+                break;
+            case VIEW_TYPE_EPIC:
+                // TODO: Replace with R.layout.item_collection_cell_epic when created
+                v = LayoutInflater.from(parent.getContext())
+                        .inflate(R.layout.view_bird_card, parent, false); // Temporarily use common layout
+                break;
+            case VIEW_TYPE_LEGENDARY:
+                // TODO: Replace with R.layout.item_collection_cell_legendary when created
+                v = LayoutInflater.from(parent.getContext())
+                        .inflate(R.layout.view_bird_card, parent, false); // Temporarily use common layout
+                break;
+        }
+        return new VH(v);
         View v = LayoutInflater.from(parent.getContext())
                 .inflate(R.layout.view_bird_card, parent, false);
 
@@ -195,6 +267,7 @@ public class CollectionCardAdapter extends RecyclerView.Adapter<CollectionCardAd
 
             holder.itemView.setAlpha(0.88f);
         }
+        // --- END Fetch and load image from UserBirdImage ---
     }
 
     @Override

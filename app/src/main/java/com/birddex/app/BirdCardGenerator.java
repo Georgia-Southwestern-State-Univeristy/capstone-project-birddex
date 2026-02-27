@@ -98,6 +98,7 @@ public class BirdCardGenerator {
         return bitmap;
     }
 
+
     public static Bitmap renderViewToBitmap(@NonNull View view) {
         if (view.getWidth() == 0 || view.getHeight() == 0) {
             int widthSpec = View.MeasureSpec.makeMeasureSpec(1080, View.MeasureSpec.AT_MOST);

@@ -36,6 +36,9 @@ public class SearchCollectionFragment extends Fragment {
     private RecyclerView rvCollection;
     private EditText etSearch;
     private CollectionCardAdapter adapter;
+    private final List<CollectionSlot> slots = new ArrayList<>();
+    private FirebaseFirestore db; // Added Firestore instance
+    private FirebaseUser currentUser; // Added currentUser instance
 
     // Full collection (always keeps the full 15 slots)
     private final List<CollectionSlot> allSlots = new ArrayList<>();
@@ -58,6 +61,12 @@ public class SearchCollectionFragment extends Fragment {
 
         ensure15Slots(allSlots);
 
+        db = FirebaseFirestore.getInstance(); // Initialize Firestore
+        currentUser = FirebaseAuth.getInstance().getCurrentUser(); // Initialize currentUser
+
+        // Initialize adapter with db and currentUser UID
+        // Pass userId if currentUser is not null, otherwise null
+        adapter = new CollectionCardAdapter(slots, db, currentUser != null ? currentUser.getUid() : null);
         displayedSlots.clear();
         displayedSlots.addAll(allSlots);
 
@@ -119,12 +128,13 @@ public class SearchCollectionFragment extends Fragment {
     }
 
     private void fetchUserCollection() {
-        FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
-        if (user == null) return;
+        if (currentUser == null) {
+            adapter.notifyDataSetChanged(); // Notify even if no user, to clear/show placeholders
+            return;
+        }
 
-        FirebaseFirestore.getInstance()
-                .collection("users")
-                .document(user.getUid())
+        db.collection("users")
+                .document(currentUser.getUid())
                 .collection("collectionSlot")
                 .whereLessThan("slotIndex", 15)
                 .orderBy("slotIndex", Query.Direction.ASCENDING)
@@ -139,6 +149,7 @@ public class SearchCollectionFragment extends Fragment {
 
                         CollectionSlot slot = allSlots.get(idx);
                         slot.setSlotIndex(idx);
+                        slot.setRarity(document.getString("rarity"));
                         slot.setImageUrl(document.getString("imageUrl"));
                         slot.setTimestamp(document.getDate("timestamp"));
                         slot.setCommonName(document.getString("commonName"));
@@ -150,6 +161,52 @@ public class SearchCollectionFragment extends Fragment {
                         String userBirdId = document.getString("userBirdId");
                         String slotDocId = document.getId();
 
+                        // *** Crucial Fix: Set the userBirdId on the CollectionSlot object ***
+                        slot.setUserBirdId(userBirdId);
+
+                        boolean missingNames = (docCommon == null || docCommon.trim().isEmpty())
+                                && (docSci == null || docSci.trim().isEmpty());
+
+                        if (missingNames && userBirdId != null && !userBirdId.trim().isEmpty()) {
+                            db.collection("userBirds")
+                                    .document(userBirdId)
+                                    .get()
+                                    .addOnSuccessListener(userBirdSnap -> {
+                                        String birdId = userBirdSnap.getString("birdSpeciesId");
+                                        if (birdId == null || birdId.trim().isEmpty()) return;
+
+                                        db.collection("birds")
+                                                .document(birdId)
+                                                .get()
+                                                .addOnSuccessListener(birdSnap -> {
+                                                    String commonName = birdSnap.getString("commonName");
+                                                    String scientificName = birdSnap.getString("scientificName");
+
+                                                    // Update UI slot
+                                                    if (commonName != null) slot.setCommonName(commonName);
+                                                    if (scientificName != null) slot.setScientificName(scientificName);
+                                                    // Notify adapter for this specific item change
+                                                    adapter.notifyItemChanged(idx); 
+
+                                                    // Persist back into collectionSlot doc so it’s fixed permanently
+                                                    Map<String, Object> updates = new HashMap<>();
+                                                    if (commonName != null) updates.put("commonName", commonName);
+                                                    if (scientificName != null) updates.put("scientificName", scientificName);
+
+                                                    if (!updates.isEmpty()) {
+                                                        db.collection("users")
+                                                                .document(currentUser.getUid())
+                                                                .collection("collectionSlot")
+                                                                .document(slotDocId)
+                                                                .update(updates);
+                                                    }
+                                                });
+                                    });
+                        }
+                    }
+
+                    // After all CollectionSlots are processed, notify the adapter
+                    adapter.notifyDataSetChanged();
                         boolean missingNames = isBlank(slot.getCommonName()) && isBlank(slot.getScientificName());
                         boolean missingLocation = isBlank(slot.getState()) && isBlank(slot.getLocality());
                         boolean missingTimestamp = slot.getTimestamp() == null;
@@ -167,6 +224,7 @@ public class SearchCollectionFragment extends Fragment {
                 .addOnFailureListener(e -> {
                     Log.e(TAG, "Error fetching collection", e);
                     Toast.makeText(getContext(), "Failed to load collection.", Toast.LENGTH_SHORT).show();
+                    adapter.notifyDataSetChanged(); // Notify even on failure to show placeholders
                 });
     }
 
@@ -285,6 +343,8 @@ public class SearchCollectionFragment extends Fragment {
         for (int i = 0; i < 15; i++) {
             CollectionSlot s = new CollectionSlot();
             s.setSlotIndex(i);
+            s.setRarity("common"); // Default to common
+            slots.add(s);
             s.setImageUrl(null);
             s.setTimestamp(null);
             s.setState(null);

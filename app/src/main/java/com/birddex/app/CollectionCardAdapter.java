@@ -46,14 +46,14 @@ public class CollectionCardAdapter extends RecyclerView.Adapter<CollectionCardAd
 
     static class VH extends RecyclerView.ViewHolder {
         TextView txtBirdName;
-        ImageView imageView3;
+        ImageView imageView3; // Renamed from imageView3 to imgBird
         TextView txtScientific;
         TextView txtRarity;
 
         VH(@NonNull View itemView) {
             super(itemView);
             txtBirdName = itemView.findViewById(R.id.txtBirdName);
-            imageView3 = itemView.findViewById(R.id.imageView3);
+            imageView3 = itemView.findViewById(R.id.imgBird); // *** CHANGED ID HERE ***
             txtScientific = itemView.findViewById(R.id.txtScientific);
             txtRarity = itemView.findViewById(R.id.txtRarity);
         }
@@ -90,27 +90,27 @@ public class CollectionCardAdapter extends RecyclerView.Adapter<CollectionCardAd
             case VIEW_TYPE_COMMON:
             default:
                 v = LayoutInflater.from(parent.getContext())
-                        .inflate(R.layout.item_collection_cell_unknown, parent, false);
+                        .inflate(R.layout.view_bird_card, parent, false); // *** CHANGED LAYOUT HERE ***
                 break;
             case VIEW_TYPE_UNCOMMON:
                 // TODO: Replace with R.layout.item_collection_cell_uncommon when created
                 v = LayoutInflater.from(parent.getContext())
-                        .inflate(R.layout.item_collection_cell_unknown, parent, false); // Temporarily use common layout
+                        .inflate(R.layout.view_bird_card, parent, false); // Temporarily use common layout
                 break;
             case VIEW_TYPE_RARE:
                 // TODO: Replace with R.layout.item_collection_cell_rare when created
                 v = LayoutInflater.from(parent.getContext())
-                        .inflate(R.layout.item_collection_cell_unknown, parent, false); // Temporarily use common layout
+                        .inflate(R.layout.view_bird_card, parent, false); // Temporarily use common layout
                 break;
             case VIEW_TYPE_EPIC:
                 // TODO: Replace with R.layout.item_collection_cell_epic when created
                 v = LayoutInflater.from(parent.getContext())
-                        .inflate(R.layout.item_collection_cell_unknown, parent, false); // Temporarily use common layout
+                        .inflate(R.layout.view_bird_card, parent, false); // Temporarily use common layout
                 break;
             case VIEW_TYPE_LEGENDARY:
                 // TODO: Replace with R.layout.item_collection_cell_legendary when created
                 v = LayoutInflater.from(parent.getContext())
-                        .inflate(R.layout.item_collection_cell_unknown, parent, false); // Temporarily use common layout
+                        .inflate(R.layout.view_bird_card, parent, false); // Temporarily use common layout
                 break;
         }
         return new VH(v);

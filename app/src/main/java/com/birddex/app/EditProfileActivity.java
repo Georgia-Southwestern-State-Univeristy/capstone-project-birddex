@@ -11,7 +11,10 @@ import android.util.Log;
 import android.widget.ImageView;
 import android.widget.TextView;
 import android.widget.Toast;
-import android.graphics.Color;
+import android.graphics.Bitmap;
+import android.graphics.ImageDecoder;
+import android.util.Base64;
+import android.provider.MediaStore; // Added this import
 
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
@@ -35,6 +38,10 @@ import com.canhub.cropper.CropImageContractOptions;
 import com.canhub.cropper.CropImageOptions;
 import com.canhub.cropper.CropImageView;
 
+import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.IOException;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Date; // Import Date
@@ -171,7 +178,41 @@ public class EditProfileActivity extends AppCompatActivity {
                         // The pfpCooldownResetTimestamp can be used to display when the limit resets,
                         // but for now, we\'ll just log it.
                         Log.d(TAG, "PFP Cooldown Reset Timestamp: " + pfpCooldownResetTimestamp);
-                        uploadImageToFirebase(imageUri, newUsername, newBio); // Proceed with upload
+                        
+                        // --- MODERATION INTEGRATION START ---
+                        // Before uploading, call the moderation function
+                        String base64Image = encodeImage(imageUri);
+                        if (base64Image == null) {
+                            Toast.makeText(EditProfileActivity.this, "Failed to encode image for moderation.", Toast.LENGTH_LONG).show();
+                            return;
+                        }
+
+                        firebaseManager.callOpenAiImageModeration(base64Image, new FirebaseManager.OpenAiModerationListener() {
+                            @Override
+                            public void onSuccess(boolean isAppropriate, String moderationReason) {
+                                if (isAppropriate) {
+                                    uploadImageToFirebase(imageUri, newUsername, newBio); // Proceed with upload
+                                } else {
+                                    Toast.makeText(EditProfileActivity.this, "Profile picture rejected: " + moderationReason, Toast.LENGTH_LONG).show();
+                                    Log.w(TAG, "PFP moderation failed: " + moderationReason);
+                                    // Optionally, revert the PFP preview or clear the selected image
+                                    if (initialProfilePictureUrl != null && !initialProfilePictureUrl.isEmpty()) {
+                                        Glide.with(EditProfileActivity.this).load(initialProfilePictureUrl).into(ivPfpPreview);
+                                    } else {
+                                        ivPfpPreview.setImageResource(R.drawable.ic_profile);
+                                    }
+                                    imageUri = null; // Clear the temporary imageUri
+                                    uploadedProfilePictureDownloadUrl = null; // Clear any uploaded URL
+                                }
+                            }
+
+                            @Override
+                            public void onFailure(String errorMessage) {
+                                Toast.makeText(EditProfileActivity.this, "Image moderation failed: " + errorMessage, Toast.LENGTH_LONG).show();
+                                Log.e(TAG, "Error during PFP image moderation: " + errorMessage);
+                            }
+                        });
+                        // --- MODERATION INTEGRATION END ---
                     }
 
                     @Override
@@ -396,6 +437,45 @@ public class EditProfileActivity extends AppCompatActivity {
                 Log.e(TAG, "Failed to upload new image to Firebase Storage: " + e.getMessage(), e);
                 Toast.makeText(this, "Failed to upload image: " + e.getMessage(), Toast.LENGTH_LONG).show();
             });
+    }
+
+    /**
+     * Encodes a given image URI to a Base64 string.
+     * @param imageUri The URI of the image to encode.
+     * @return A Base64 encoded string of the image, or null if an error occurs.
+     */
+    private String encodeImage(Uri imageUri) {
+        try {
+            Bitmap bitmap;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                bitmap = ImageDecoder.decodeBitmap(
+                        ImageDecoder.createSource(this.getContentResolver(), imageUri));
+            } else {
+                bitmap = MediaStore.Images.Media.getBitmap(this.getContentResolver(), imageUri);
+            }
+
+            // Scale down bitmap to a reasonable size for moderation to save on bandwidth and processing time
+            // OpenAI Vision API has limits on image size and detail, smaller is usually faster.
+            int maxWidth = 512;
+            int maxHeight = 512;
+            float ratio = Math.min((float) maxWidth / bitmap.getWidth(),
+                    (float) maxHeight / bitmap.getHeight());
+
+            if (ratio < 1.0f) { // Only scale down if image is larger than max dimensions
+                bitmap = Bitmap.createScaledBitmap(bitmap,
+                        Math.round(ratio * bitmap.getWidth()),
+                        Math.round(ratio * bitmap.getHeight()),
+                        true);
+            }
+
+            ByteArrayOutputStream byteArrayOutputStream = new ByteArrayOutputStream();
+            bitmap.compress(Bitmap.CompressFormat.JPEG, 75, byteArrayOutputStream);
+            return Base64.encodeToString(byteArrayOutputStream.toByteArray(), Base64.NO_WRAP);
+
+        } catch (IOException e) {
+            Log.e(TAG, "Error encoding image for moderation", e);
+            return null;
+        }
     }
 
     private void saveProfileChanges(String newUsername, String newBio, String finalProfilePictureUrl) {

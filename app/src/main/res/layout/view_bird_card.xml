@@ -25,11 +25,11 @@
             android:layout_height="wrap_content"
             android:padding="16dp">
 
-            <!-- Bird Name -->
             <TextView
                 android:id="@+id/txtBirdName"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
+                android:gravity="center"
                 android:text="Blue Jay"
                 android:textColor="#111111"
                 android:textSize="30sp"
@@ -38,7 +38,6 @@
                 app:layout_constraintStart_toStartOf="parent"
                 app:layout_constraintTop_toTopOf="parent" />
 
-            <!-- Bird Image (square + shrink to fit) -->
             <ImageView
                 android:id="@+id/imgBird"
                 android:layout_width="0dp"
@@ -53,7 +52,6 @@
                 app:layout_constraintStart_toStartOf="parent"
                 app:layout_constraintTop_toBottomOf="@id/txtBirdName" />
 
-            <!-- Stats row (code expects this exact id) -->
             <LinearLayout
                 android:id="@+id/statsRow"
                 android:layout_width="0dp"
@@ -68,31 +66,36 @@
                     android:id="@+id/txtScientific"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
+                    android:gravity="center"
+                    android:textAlignment="center"
                     android:text="Cyanocitta cristata"
                     android:textColor="#555555"
                     android:textSize="16sp" />
 
                 <TextView
-                    android:id="@+id/txtRarity"
+                    android:id="@+id/txtLocation"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="6dp"
-                    android:text="Rarity: Unknown"
+                    android:gravity="center"
+                    android:textAlignment="center"
+                    android:text="Location: --"
                     android:textColor="#555555"
                     android:textSize="18sp"
                     android:textStyle="bold" />
 
                 <TextView
-                    android:id="@+id/txtConfidence"
+                    android:id="@+id/txtDateCaught"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="6dp"
-                    android:text="Confidence: --"
+                    android:gravity="center"
+                    android:textAlignment="center"
+                    android:text="Date caught: --"
                     android:textColor="#555555"
                     android:textSize="16sp" />
             </LinearLayout>
 
-            <!-- Footer -->
             <TextView
                 android:id="@+id/txtFooter"
                 android:layout_width="0dp"

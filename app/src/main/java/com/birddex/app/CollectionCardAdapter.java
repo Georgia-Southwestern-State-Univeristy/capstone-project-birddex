@@ -50,6 +50,23 @@ public class CollectionCardAdapter extends RecyclerView.Adapter<CollectionCardAd
         return new VH(v);
     }
 
+    private String formatBirdName(String name) {
+        if (name == null) return "UNKNOWN";
+
+        String trimmed = name.trim().replaceAll("\\s+", " ");
+        if (trimmed.isEmpty()) return "UNKNOWN";
+
+        String[] parts = trimmed.split(" ");
+
+        // If exactly 2 words, stack them
+        if (parts.length == 2) {
+            return parts[0] + "\n" + parts[1];
+        }
+
+        // Otherwise let Android wrap naturally
+        return trimmed;
+    }
+
     @Override
     public void onBindViewHolder(@NonNull VH holder, int position) {
         CollectionSlot slot = slots.get(position);
@@ -75,16 +92,19 @@ public class CollectionCardAdapter extends RecyclerView.Adapter<CollectionCardAd
 
         if (hasImage) {
             if (common != null && !common.trim().isEmpty()) {
-                holder.txtBirdName.setText(common);
+                holder.txtBirdName.setText(formatBirdName(common));
             } else if (sci != null && !sci.trim().isEmpty()) {
-                holder.txtBirdName.setText(sci); // fallback to scientific name
+                holder.txtBirdName.setText(formatBirdName(sci));
             } else {
-                holder.txtBirdName.setText("Unknown Bird"); // never show "Captured"
+                holder.txtBirdName.setText("Unknown\nBird");
             }
 
-            // Scientific line (optional)
-            if (sci != null && !sci.trim().isEmpty()) holder.txtScientific.setText(sci);
-            else holder.txtScientific.setText("--");
+            // Scientific line
+            if (sci != null && !sci.trim().isEmpty()) {
+                holder.txtScientific.setText(sci);
+            } else {
+                holder.txtScientific.setText("--");
+            }
 
             // Rarity
             if (rarity != null && !rarity.trim().isEmpty()) holder.txtRarity.setText("Rarity: " + rarity);

@@ -31,6 +31,8 @@ public class SearchCollectionFragment extends Fragment {
     private RecyclerView rvCollection;
     private CollectionCardAdapter adapter;
     private final List<CollectionSlot> slots = new ArrayList<>();
+    private FirebaseFirestore db; // Added Firestore instance
+    private FirebaseUser currentUser; // Added currentUser instance
 
     @Nullable
     @Override
@@ -48,7 +50,12 @@ public class SearchCollectionFragment extends Fragment {
         // Always show exactly 15 cards
         ensure15Slots();
 
-        adapter = new CollectionCardAdapter(slots);
+        db = FirebaseFirestore.getInstance(); // Initialize Firestore
+        currentUser = FirebaseAuth.getInstance().getCurrentUser(); // Initialize currentUser
+
+        // Initialize adapter with db and currentUser UID
+        // Pass userId if currentUser is not null, otherwise null
+        adapter = new CollectionCardAdapter(slots, db, currentUser != null ? currentUser.getUid() : null);
         rvCollection.setAdapter(adapter);
 
         fetchUserCollection();
@@ -57,18 +64,19 @@ public class SearchCollectionFragment extends Fragment {
     }
 
     private void fetchUserCollection() {
-        FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
-        if (user == null) return;
+        if (currentUser == null) {
+            adapter.notifyDataSetChanged(); // Notify even if no user, to clear/show placeholders
+            return;
+        }
 
-        FirebaseFirestore.getInstance()
-                .collection("users")
-                .document(user.getUid())
+        db.collection("users")
+                .document(currentUser.getUid())
                 .collection("collectionSlot")
                 .whereLessThan("slotIndex", 15)
                 .orderBy("slotIndex", Query.Direction.ASCENDING)
                 .get()
                 .addOnSuccessListener(queryDocumentSnapshots -> {
-                    ensure15Slots();
+                    ensure15Slots(); // Clear and re-initialize slots to 15 default entries
 
                     Log.d(TAG, "Found " + queryDocumentSnapshots.size() + " documents in collection.");
 
@@ -82,7 +90,6 @@ public class SearchCollectionFragment extends Fragment {
 
                         CollectionSlot slot = slots.get(idx);
                         slot.setSlotIndex(idx);
-                        slot.setImageUrl(document.getString("imageUrl"));
                         slot.setRarity(document.getString("rarity"));
                         slot.setCommonName(document.getString("commonName"));
                         slot.setScientificName(document.getString("scientificName"));
@@ -91,20 +98,21 @@ public class SearchCollectionFragment extends Fragment {
                         String userBirdId = document.getString("userBirdId");
                         String slotDocId = document.getId();
 
+                        // *** Crucial Fix: Set the userBirdId on the CollectionSlot object ***
+                        slot.setUserBirdId(userBirdId);
+
                         boolean missingNames = (docCommon == null || docCommon.trim().isEmpty())
                                 && (docSci == null || docSci.trim().isEmpty());
 
                         if (missingNames && userBirdId != null && !userBirdId.trim().isEmpty()) {
-                            FirebaseFirestore.getInstance()
-                                    .collection("userBirds")
+                            db.collection("userBirds")
                                     .document(userBirdId)
                                     .get()
                                     .addOnSuccessListener(userBirdSnap -> {
                                         String birdId = userBirdSnap.getString("birdSpeciesId");
                                         if (birdId == null || birdId.trim().isEmpty()) return;
 
-                                        FirebaseFirestore.getInstance()
-                                                .collection("birds")
+                                        db.collection("birds")
                                                 .document(birdId)
                                                 .get()
                                                 .addOnSuccessListener(birdSnap -> {
@@ -114,7 +122,8 @@ public class SearchCollectionFragment extends Fragment {
                                                     // Update UI slot
                                                     if (commonName != null) slot.setCommonName(commonName);
                                                     if (scientificName != null) slot.setScientificName(scientificName);
-                                                    adapter.notifyItemChanged(idx);
+                                                    // Notify adapter for this specific item change
+                                                    adapter.notifyItemChanged(idx); 
 
                                                     // Persist back into collectionSlot doc so it’s fixed permanently
                                                     Map<String, Object> updates = new HashMap<>();
@@ -122,9 +131,8 @@ public class SearchCollectionFragment extends Fragment {
                                                     if (scientificName != null) updates.put("scientificName", scientificName);
 
                                                     if (!updates.isEmpty()) {
-                                                        FirebaseFirestore.getInstance()
-                                                                .collection("users")
-                                                                .document(user.getUid())
+                                                        db.collection("users")
+                                                                .document(currentUser.getUid())
                                                                 .collection("collectionSlot")
                                                                 .document(slotDocId)
                                                                 .update(updates);
@@ -134,11 +142,13 @@ public class SearchCollectionFragment extends Fragment {
                         }
                     }
 
+                    // After all CollectionSlots are processed, notify the adapter
                     adapter.notifyDataSetChanged();
                 })
                 .addOnFailureListener(e -> {
                     Log.e(TAG, "Error fetching collection", e);
                     Toast.makeText(getContext(), "Failed to load collection.", Toast.LENGTH_SHORT).show();
+                    adapter.notifyDataSetChanged(); // Notify even on failure to show placeholders
                 });
     }
 
@@ -147,8 +157,7 @@ public class SearchCollectionFragment extends Fragment {
         for (int i = 0; i < 15; i++) {
             CollectionSlot s = new CollectionSlot();
             s.setSlotIndex(i);
-            s.setImageUrl(null);
-            s.setRarity(null);
+            s.setRarity("common"); // Default to common
             slots.add(s);
         }
     }

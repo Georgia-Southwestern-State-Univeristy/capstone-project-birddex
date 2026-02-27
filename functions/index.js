@@ -265,8 +265,6 @@ async function getOrCreateAndSaveBirdFacts(birdId, commonName) {
         } else {
             console.log(`General facts for ${commonName} (${birdId}) are stale. Regenerating...`);
         }
-    } else {
-        console.log(`General facts do not exist for ${commonName} (${birdId}). Generating...`);
     }
 
     if (shouldRegenerateGeneral) {
@@ -1219,4 +1217,78 @@ exports.onDeleteUserBirdImage = onDocumentDeleted("users/{userId}/userBirdImage/
     }
 
     return null;
+});
+// ======================================================
+// NEW: Callable function to moderate profile picture images using OpenAI Vision
+// ======================================================
+exports.moderatePfpImage = onCall({ secrets: [OPENAI_API_KEY], timeoutSeconds: 30 }, async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
+
+    const { imageBase64 } = request.data;
+
+    if (!imageBase64 || typeof imageBase64 !== 'string') {
+        throw new HttpsError('invalid-argument', 'Image data (Base64) is required.');
+    }
+
+    try {
+        console.log(`Starting PFP image moderation for user ${request.auth.uid}...`);
+
+        const moderationPrompt = `Analyze the provided image for inappropriate content. Inappropriate content includes, but is not limited to, nudity, sexually suggestive material, hate symbols, graphic violence, illegal activities, or promotion of self-harm.
+
+Respond STRICTLY in JSON format with two keys:
+1. "isAppropriate": true if the image is appropriate, false otherwise.
+2. "moderationReason": a brief, clear reason if "isAppropriate" is false (e.g., "Contains nudity", "Hate symbol detected", "Graphic violence"), or "N/A" if appropriate.
+
+Example for inappropriate image:
+{
+  "isAppropriate": false,
+  "moderationReason": "Contains nudity"
+}
+
+Example for appropriate image:
+{
+  "isAppropriate": true,
+  "moderationReason": "N/A"
+}`;
+
+        const aiResponse = await axios.post(
+            "https://api.openai.com/v1/chat/completions",
+            {
+                model: "gpt-4o",
+                messages: [{
+                    role: "user",
+                    content: [
+                        { type: "text", text: moderationPrompt },
+                        { type: "image_url", image_url: { url: `data:image/jpeg;base64,${imageBase64}` } }
+                    ]
+                }],
+                response_format: { type: "json_object" }, // Ensure JSON output
+                max_tokens: 200, // Sufficient for a brief reason
+                temperature: 0.0 // Keep it factual
+            },
+            {
+                headers: { "Authorization": `Bearer ${OPENAI_API_KEY.value()}` },
+                timeout: 25000
+            }
+        );
+
+        const moderationResult = JSON.parse(aiResponse.data.choices[0].message.content);
+
+        console.log(`Moderation result for user ${request.auth.uid}: ${JSON.stringify(moderationResult)}`);
+
+        // Validate the structure of the AI response
+        if (typeof moderationResult.isAppropriate === 'boolean' && typeof moderationResult.moderationReason === 'string') {
+            return moderationResult;
+        } else {
+            console.error("OpenAI moderation returned an unexpected format:", moderationResult);
+            throw new HttpsError('internal', 'OpenAI moderation response malformed.');
+        }
+
+    } catch (error) {
+        console.error("Error during PFP image moderation:", error);
+        if (error.response && error.response.data) {
+            console.error("OpenAI API error details:", error.response.data);
+        }
+        throw new HttpsError("internal", "Failed to moderate image content.");
+    }
 });

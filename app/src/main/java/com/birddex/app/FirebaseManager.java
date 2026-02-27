@@ -57,6 +57,12 @@ public class FirebaseManager {
         void onFailure(String errorMessage);
     }
 
+    // New listener for OpenAI image moderation result
+    public interface OpenAiModerationListener {
+        void onSuccess(boolean isAppropriate, String moderationReason);
+        void onFailure(String errorMessage);
+    }
+
     public FirebaseManager(Context context) {
         this.context = context.getApplicationContext();
         mAuth = FirebaseAuth.getInstance();
@@ -401,6 +407,56 @@ public class FirebaseManager {
                             }
                         }
                         Log.e(TAG, "recordPfpChange failed: " + errorMessage, task.getException());
+                        listener.onFailure(errorMessage);
+                    }
+                });
+    }
+
+    /**
+     * Calls a Cloud Function to moderate a profile picture image using OpenAI Vision.
+     * @param base64Image The Base64 encoded string of the image.
+     * @param listener A listener to handle the result of the moderation.
+     */
+    public void callOpenAiImageModeration(String base64Image, OpenAiModerationListener listener) {
+        FirebaseUser currentUser = mAuth.getCurrentUser();
+        if (currentUser == null) {
+            listener.onFailure("User not authenticated for image moderation.");
+            return;
+        }
+
+        Map<String, Object> data = new HashMap<>();
+        data.put("imageBase64", base64Image);
+
+        mFunctions.getHttpsCallable("moderatePfpImage")
+                .call(data)
+                .addOnCompleteListener(task -> {
+                    if (task.isSuccessful()) {
+                        HttpsCallableResult result = task.getResult();
+                        if (result != null && result.getData() instanceof Map) {
+                            Map<String, Object> resultMap = (Map<String, Object>) result.getData();
+                            Boolean isAppropriate = (Boolean) resultMap.get("isAppropriate");
+                            String moderationReason = (String) resultMap.get("moderationReason");
+
+                            if (isAppropriate != null && moderationReason != null) {
+                                listener.onSuccess(isAppropriate, moderationReason);
+                            } else {
+                                listener.onFailure("Invalid response from moderatePfpImage function: missing required fields.");
+                            }
+                        } else {
+                            listener.onFailure("Invalid response format from moderatePfpImage function.");
+                        }
+                    } else {
+                        String errorMessage = "Failed to moderate image.";
+                        if (task.getException() != null) {
+                            errorMessage += " " + task.getException().getMessage();
+                            if (task.getException() instanceof FirebaseFunctionsException) {
+                                FirebaseFunctionsException ffe = (FirebaseFunctionsException) task.getException();
+                                if (ffe.getCode() == FirebaseFunctionsException.Code.UNAUTHENTICATED) {
+                                    errorMessage = "Authentication required for image moderation.";
+                                }
+                            }
+                        }
+                        Log.e(TAG, "moderatePfpImage failed: " + errorMessage, task.getException());
                         listener.onFailure(errorMessage);
                     }
                 });

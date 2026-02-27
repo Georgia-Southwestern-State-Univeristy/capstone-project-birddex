@@ -129,7 +129,7 @@ public class CollectionCardAdapter extends RecyclerView.Adapter<CollectionCardAd
         holder.imgBird.setLayoutParams(imageLp);
 
         ViewGroup.LayoutParams containerLp = holder.cardContainer.getLayoutParams();
-        containerLp.height = (int) (235 * density);
+        containerLp.height = (int) (240 * density);
         holder.cardContainer.setLayoutParams(containerLp);
     }
 

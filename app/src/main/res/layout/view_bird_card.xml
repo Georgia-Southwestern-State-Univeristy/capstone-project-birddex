@@ -11,7 +11,9 @@
         android:layout_width="0dp"
         android:layout_height="wrap_content"
         android:layout_margin="12dp"
+        app:cardBackgroundColor="@android:color/white"
         app:cardCornerRadius="18dp"
+        app:cardElevation="4dp"
         app:cardUseCompatPadding="true"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
@@ -19,10 +21,10 @@
         app:layout_constraintTop_toTopOf="parent">
 
         <androidx.constraintlayout.widget.ConstraintLayout
-            android:background="@color/birddex_bg"
             android:id="@+id/cardInner"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
+            android:background="@android:color/white"
             android:padding="16dp">
 
             <TextView
@@ -44,7 +46,7 @@
                 android:layout_height="0dp"
                 android:layout_marginTop="12dp"
                 android:adjustViewBounds="true"
-                android:background="#EAEAEA"
+                android:background="#F4F4F4"
                 android:contentDescription="Bird photo"
                 android:scaleType="fitCenter"
                 app:layout_constraintDimensionRatio="1:1"

@@ -2,6 +2,9 @@ package com.birddex.app;
 
 import android.content.Intent;
 import android.util.Log;
+import android.text.TextUtils;
+import android.util.TypedValue;
+import android.view.Gravity;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
@@ -15,6 +18,10 @@ import androidx.recyclerview.widget.RecyclerView;
 import com.bumptech.glide.Glide;
 import com.google.firebase.firestore.FirebaseFirestore;
 import com.google.firebase.firestore.DocumentSnapshot;
+import androidx.cardview.widget.CardView;
+import androidx.recyclerview.widget.RecyclerView;
+
+import com.bumptech.glide.Glide;
 
 import java.util.List;
 
@@ -23,7 +30,9 @@ public class CollectionCardAdapter extends RecyclerView.Adapter<CollectionCardAd
     public static final String EXTRA_IMAGE_URL = "com.birddex.app.extra.IMAGE_URL";
     public static final String EXTRA_COMMON_NAME = "com.birddex.app.extra.COMMON_NAME";
     public static final String EXTRA_SCI_NAME = "com.birddex.app.extra.SCI_NAME";
-    public static final String EXTRA_RARITY = "com.birddex.app.extra.RARITY";
+    public static final String EXTRA_STATE = "com.birddex.app.extra.STATE";
+    public static final String EXTRA_LOCALITY = "com.birddex.app.extra.LOCALITY";
+    public static final String EXTRA_CAUGHT_TIME = "com.birddex.app.extra.CAUGHT_TIME";
 
     private static final String TAG = "CollectionCardAdapter";
 
@@ -45,17 +54,25 @@ public class CollectionCardAdapter extends RecyclerView.Adapter<CollectionCardAd
     }
 
     static class VH extends RecyclerView.ViewHolder {
+        CardView cardContainer;
+        View cardInner;
         TextView txtBirdName;
-        ImageView imageView3; // Renamed from imageView3 to imgBird
+        ImageView imgBird;
         TextView txtScientific;
-        TextView txtRarity;
+        TextView txtLocation;
+        TextView txtDateCaught;
+        TextView txtFooter;
 
         VH(@NonNull View itemView) {
             super(itemView);
+            cardContainer = itemView.findViewById(R.id.cardContainer);
+            cardInner = itemView.findViewById(R.id.cardInner);
             txtBirdName = itemView.findViewById(R.id.txtBirdName);
-            imageView3 = itemView.findViewById(R.id.imgBird); // *** CHANGED ID HERE ***
+            imgBird = itemView.findViewById(R.id.imgBird);
             txtScientific = itemView.findViewById(R.id.txtScientific);
-            txtRarity = itemView.findViewById(R.id.txtRarity);
+            txtLocation = itemView.findViewById(R.id.txtLocation);
+            txtDateCaught = itemView.findViewById(R.id.txtDateCaught);
+            txtFooter = itemView.findViewById(R.id.txtFooter);
         }
     }
 
@@ -114,111 +131,141 @@ public class CollectionCardAdapter extends RecyclerView.Adapter<CollectionCardAd
                 break;
         }
         return new VH(v);
-    }
+        View v = LayoutInflater.from(parent.getContext())
+                .inflate(R.layout.view_bird_card, parent, false);
 
-    private String formatBirdName(String name) {
-        if (name == null) return "UNKNOWN";
+        float density = parent.getResources().getDisplayMetrics().density;
+        int spacing = (int) (2 * density);
 
-        String trimmed = name.trim().replaceAll("\\s+", " ");
-        if (trimmed.isEmpty()) return "UNKNOWN";
-
-        String[] parts = trimmed.split(" ");
-
-        // If exactly 2 words, stack them
-        if (parts.length == 2) {
-            return parts[0] + "\n" + parts[1];
+        int parentWidth = parent.getMeasuredWidth();
+        if (parentWidth <= 0) {
+            parentWidth = parent.getResources().getDisplayMetrics().widthPixels;
         }
 
-        // Otherwise let Android wrap naturally
-        return trimmed;
+        int availableWidth = parentWidth
+                - parent.getPaddingLeft()
+                - parent.getPaddingRight()
+                - (spacing * 4);
+
+        int itemWidth = availableWidth / 3;
+        if (itemWidth < 1) itemWidth = ViewGroup.LayoutParams.WRAP_CONTENT;
+
+        RecyclerView.LayoutParams lp = new RecyclerView.LayoutParams(
+                itemWidth,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+        );
+        v.setLayoutParams(lp);
+
+        VH holder = new VH(v);
+        applyCompactCollectionStyle(holder);
+        return holder;
+    }
+
+    private void applyCompactCollectionStyle(@NonNull VH holder) {
+        float density = holder.itemView.getResources().getDisplayMetrics().density;
+
+        ViewGroup.MarginLayoutParams cardLp =
+                (ViewGroup.MarginLayoutParams) holder.cardContainer.getLayoutParams();
+        cardLp.setMargins((int) (1 * density), (int) (1 * density), (int) (1 * density), (int) (1 * density));
+        holder.cardContainer.setLayoutParams(cardLp);
+
+        holder.cardContainer.setRadius(10 * density);
+
+        int compactPadding = (int) (6 * density);
+        holder.cardInner.setPadding(compactPadding, compactPadding, compactPadding, compactPadding);
+
+        holder.txtBirdName.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+        holder.txtScientific.setTextSize(TypedValue.COMPLEX_UNIT_SP, 8);
+        holder.txtLocation.setTextSize(TypedValue.COMPLEX_UNIT_SP, 6);
+        holder.txtDateCaught.setTextSize(TypedValue.COMPLEX_UNIT_SP, 8);
+        holder.txtDateCaught.setGravity(Gravity.CENTER_HORIZONTAL);
+
+        holder.txtFooter.setVisibility(View.GONE);
+
+        holder.txtBirdName.setMinLines(2);
+        holder.txtBirdName.setMaxLines(2);
+        holder.txtBirdName.setEllipsize(TextUtils.TruncateAt.END);
+        holder.txtBirdName.setGravity(Gravity.CENTER);
+
+        holder.txtScientific.setMaxLines(1);
+        holder.txtScientific.setEllipsize(TextUtils.TruncateAt.END);
+
+        holder.txtLocation.setMaxLines(2);
+        holder.txtLocation.setEllipsize(TextUtils.TruncateAt.END);
+
+        holder.txtDateCaught.setMaxLines(1);
+        holder.txtDateCaught.setEllipsize(TextUtils.TruncateAt.END);
+
+        ViewGroup.LayoutParams imageLp = holder.imgBird.getLayoutParams();
+        imageLp.height = (int) (92 * density);
+        holder.imgBird.setLayoutParams(imageLp);
+
+        ViewGroup.LayoutParams containerLp = holder.cardContainer.getLayoutParams();
+        containerLp.height = (int) (240 * density);
+        holder.cardContainer.setLayoutParams(containerLp);
     }
 
     @Override
     public void onBindViewHolder(@NonNull VH holder, int position) {
         CollectionSlot slot = slots.get(position);
-        
-        // Default to placeholder image and disable click listener initially
-        holder.imageView3.setImageResource(R.drawable.birddexlogo); 
-        holder.itemView.setOnClickListener(null);
-        
-        String rarity = slot != null ? slot.getRarity() : null;
+
+        String url = slot != null ? slot.getImageUrl() : null;
         String common = slot != null ? slot.getCommonName() : null;
         String sci = slot != null ? slot.getScientificName() : null;
-        String userBirdId = slot != null ? slot.getUserBirdId() : null;
+        String state = slot != null ? slot.getState() : null;
+        String locality = slot != null ? slot.getLocality() : null;
 
-        Log.d(TAG, "onBindViewHolder for position: " + position + ", userBirdId: " + userBirdId + ", userId: " + userId);
+        boolean hasImage = url != null && !url.trim().isEmpty();
 
-        // Load bird name and scientific name
-        if (common != null && !common.trim().isEmpty()) {
-            holder.txtBirdName.setText(formatBirdName(common));
-        } else if (sci != null && !sci.trim().isEmpty()) {
-            holder.txtBirdName.setText(formatBirdName(sci));
+        holder.itemView.setOnClickListener(v -> {
+            if (!hasImage) return;
+
+            Intent i = new Intent(v.getContext(), ViewBirdCardActivity.class);
+            i.putExtra(EXTRA_IMAGE_URL, url);
+            i.putExtra(EXTRA_COMMON_NAME, common);
+            i.putExtra(EXTRA_SCI_NAME, sci);
+            i.putExtra(EXTRA_STATE, state);
+            i.putExtra(EXTRA_LOCALITY, locality);
+
+            if (slot != null && slot.getTimestamp() != null) {
+                i.putExtra(EXTRA_CAUGHT_TIME, slot.getTimestamp().getTime());
+            }
+
+            v.getContext().startActivity(i);
+        });
+
+        if (hasImage) {
+            if (common != null && !common.trim().isEmpty()) {
+                holder.txtBirdName.setText(common);
+            } else if (sci != null && !sci.trim().isEmpty()) {
+                holder.txtBirdName.setText(sci);
+            } else {
+                holder.txtBirdName.setText("Unknown Bird");
+            }
+
+            if (sci != null && !sci.trim().isEmpty()) {
+                holder.txtScientific.setText(sci);
+            } else {
+                holder.txtScientific.setText("--");
+            }
+
+            holder.txtLocation.setText(CardFormatUtils.formatLocation(state, locality));
+            holder.txtDateCaught.setText(formatCollectionDate(slot != null ? slot.getTimestamp() : null));
+
+            Glide.with(holder.itemView.getContext())
+                    .load(url)
+                    .fitCenter()
+                    .into(holder.imgBird);
+
+            holder.itemView.setAlpha(1f);
         } else {
-            holder.txtBirdName.setText("Unknown\nBird");
-        }
-
-        if (sci != null && !sci.trim().isEmpty()) {
-            holder.txtScientific.setText(sci);
-        } else {
+            holder.txtBirdName.setText("Unknown Bird");
             holder.txtScientific.setText("--");
-        }
+            holder.txtLocation.setText("Location: --");
+            holder.txtDateCaught.setText("Date caught: --");
+            holder.imgBird.setImageResource(R.drawable.birddexlogo);
 
-        // Rarity: always display the rarity from the slot data or default to "common"
-        if (rarity != null && !rarity.trim().isEmpty()) {
-            holder.txtRarity.setText("Rarity: " + rarity);
-        } else {
-            holder.txtRarity.setText("Rarity: common"); // Default to "common"
-        }
-
-        // --- Fetch and load image from UserBirdImage directly within onBindViewHolder ---
-        if (userId != null && userBirdId != null && !userBirdId.trim().isEmpty()) {
-            Log.d(TAG, "Attempting to fetch UserBirdImage for user: " + userId + ", userBirdId: " + userBirdId);
-            db.collection("users").document(userId)
-                    .collection("userBirdImage")
-                    .whereEqualTo("userBirdRefId", userBirdId) // Assuming this field links to UserBird ID
-                    .limit(1)
-                    .get()
-                    .addOnSuccessListener(queryDocumentSnapshots -> {
-                        if (!queryDocumentSnapshots.isEmpty()) {
-                            DocumentSnapshot userBirdImageDoc = queryDocumentSnapshots.getDocuments().get(0);
-                            String imageUrl = userBirdImageDoc.getString("imageUrl");
-                            Log.d(TAG, "Fetched imageUrl for userBirdId " + userBirdId + ": " + imageUrl);
-
-                            if (imageUrl != null && !imageUrl.trim().isEmpty()) {
-                                Glide.with(holder.itemView.getContext())
-                                        .load(imageUrl)
-                                        .centerCrop()
-                                        .into(holder.imageView3);
-                                // Set click listener only if image is successfully loaded
-                                holder.itemView.setOnClickListener(v -> {
-                                    Intent i = new Intent(v.getContext(), ViewBirdCardActivity.class);
-                                    i.putExtra(EXTRA_IMAGE_URL, imageUrl); 
-                                    i.putExtra(EXTRA_COMMON_NAME, common);
-                                    i.putExtra(EXTRA_SCI_NAME, sci);
-                                    i.putExtra(EXTRA_RARITY, rarity);
-                                    v.getContext().startActivity(i);
-                                });
-                            } else {
-                                Log.w(TAG, "imageUrl is null or empty for userBirdId: " + userBirdId + ". Displaying placeholder.");
-                                holder.imageView3.setImageResource(R.drawable.birddexlogo); // Fallback to placeholder
-                                holder.itemView.setOnClickListener(null); // Disable click if no image
-                            }
-                        } else {
-                            Log.w(TAG, "No UserBirdImage document found for userBirdId: " + userBirdId + ". Displaying placeholder.");
-                            holder.imageView3.setImageResource(R.drawable.birddexlogo); // Fallback to placeholder
-                            holder.itemView.setOnClickListener(null); // Disable click if no image
-                        }
-                    })
-                    .addOnFailureListener(e -> {
-                        Log.e(TAG, "Failed to fetch UserBirdImage for userBirdId: " + userBirdId + ". Error: " + e.getMessage(), e);
-                        holder.imageView3.setImageResource(R.drawable.birddexlogo); // Fallback to placeholder on error
-                        holder.itemView.setOnClickListener(null); // Disable click on error
-                    });
-        } else {
-            Log.d(TAG, "Skipping image fetch: userId or userBirdId is null/empty. userId: " + userId + ", userBirdId: " + userBirdId);
-            // If userId or userBirdId is not available, ensure placeholder is shown and click is disabled
-            holder.imageView3.setImageResource(R.drawable.birddexlogo);
-            holder.itemView.setOnClickListener(null);
+            holder.itemView.setAlpha(0.88f);
         }
         // --- END Fetch and load image from UserBirdImage ---
     }
@@ -226,5 +273,13 @@ public class CollectionCardAdapter extends RecyclerView.Adapter<CollectionCardAd
     @Override
     public int getItemCount() {
         return slots.size();
+    }
+    private String formatCollectionDate(java.util.Date date) {
+        if (date == null) return "--";
+
+        java.text.SimpleDateFormat sdf =
+                new java.text.SimpleDateFormat("M/d/yy", java.util.Locale.US);
+
+        return sdf.format(date);
     }
 }

@@ -89,9 +89,13 @@ public class BirdInfoActivity extends AppCompatActivity {
             // If you don't have imageUrl yet, you can still go to CardMakerActivity.
             // Firebase save will still attempt (and may store null imageUrl depending on your models).
             // Removed the call to storeBirdDiscovery() here.
+            long caughtTime = System.currentTimeMillis();
 
             Intent i = new Intent(BirdInfoActivity.this, CardMakerActivity.class);
             i.putExtra(CardMakerActivity.EXTRA_IMAGE_URI, currentImageUriStr);
+            i.putExtra(CardMakerActivity.EXTRA_LOCALITY, currentLocalityName);
+            i.putExtra(CardMakerActivity.EXTRA_STATE, currentState);
+            i.putExtra(CardMakerActivity.EXTRA_CAUGHT_TIME, caughtTime);
             i.putExtra(CardMakerActivity.EXTRA_BIRD_NAME, currentCommonName);
             i.putExtra(CardMakerActivity.EXTRA_SCI_NAME, currentScientificName);
             i.putExtra(CardMakerActivity.EXTRA_CONFIDENCE, "--"); // Not provided here, default

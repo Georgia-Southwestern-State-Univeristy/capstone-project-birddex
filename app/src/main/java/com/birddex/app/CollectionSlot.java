@@ -4,8 +4,8 @@ import com.google.firebase.firestore.Exclude;
 import java.util.Date;
 
 public class CollectionSlot {
-    private String id; // This will store the collectionSlotId / cardId
-    private String userBirdId; // Reference to the UserBird entry
+    private String id;
+    private String userBirdId;
     private Date timestamp;
     private String rarity; // New field for card rarity (e.g., R1, R2, ...)
     private int slotIndex; // New field for explicit slot positioning
@@ -13,14 +13,10 @@ public class CollectionSlot {
     private String commonName;
     private String scientificName;
 
-    public String getCommonName() { return commonName; }
-    public void setCommonName(String commonName) { this.commonName = commonName; }
-
-    public String getScientificName() { return scientificName; }
-    public void setScientificName(String scientificName) { this.scientificName = scientificName; }
+    private String state;
+    private String locality;
 
     public CollectionSlot() {
-        // Default constructor
     }
 
     public CollectionSlot(String id, String userBirdId, Date timestamp, String rarity, int slotIndex) {
@@ -70,5 +66,37 @@ public class CollectionSlot {
 
     public void setSlotIndex(int slotIndex) {
         this.slotIndex = slotIndex;
+    }
+
+    public String getCommonName() {
+        return commonName;
+    }
+
+    public void setCommonName(String commonName) {
+        this.commonName = commonName;
+    }
+
+    public String getScientificName() {
+        return scientificName;
+    }
+
+    public void setScientificName(String scientificName) {
+        this.scientificName = scientificName;
+    }
+
+    public String getState() {
+        return state;
+    }
+
+    public void setState(String state) {
+        this.state = state;
+    }
+
+    public String getLocality() {
+        return locality;
+    }
+
+    public void setLocality(String locality) {
+        this.locality = locality;
     }
 }

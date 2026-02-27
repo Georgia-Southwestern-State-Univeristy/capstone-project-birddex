@@ -52,6 +52,9 @@ public class CardMakerActivity extends AppCompatActivity {
     public static final String EXTRA_BIRD_ID = "birdId";
     public static final String EXTRA_SPECIES = "species";
     public static final String EXTRA_FAMILY = "family";
+    public static final String EXTRA_LOCALITY = "localityName";
+    public static final String EXTRA_STATE = "state";
+    public static final String EXTRA_CAUGHT_TIME = "caughtTime";
 
     private FirebaseManager firebaseManager;
 
@@ -63,6 +66,9 @@ public class CardMakerActivity extends AppCompatActivity {
     private String currentSpecies;
     private String currentFamily;
     private String currentConfidence;
+    private String currentLocality;
+    private String currentState;
+    private long currentCaughtTime;
 
     @Override
     protected void onCreate(@Nullable Bundle savedInstanceState) {
@@ -76,8 +82,8 @@ public class CardMakerActivity extends AppCompatActivity {
 
         TextView txtBirdName = findViewById(R.id.txtBirdName);
         TextView txtScientific = findViewById(R.id.txtScientific);
-        TextView txtRarity = findViewById(R.id.txtRarity);
-        TextView txtConfidence = findViewById(R.id.txtConfidence);
+        TextView txtLocation = findViewById(R.id.txtLocation);
+        TextView txtDateCaught = findViewById(R.id.txtDateCaught);
         TextView txtFooter = findViewById(R.id.txtFooter);
         ImageView imgBird = findViewById(R.id.imgBird);
 
@@ -93,6 +99,9 @@ public class CardMakerActivity extends AppCompatActivity {
         currentBirdId = getIntent().getStringExtra(EXTRA_BIRD_ID);
         currentSpecies = getIntent().getStringExtra(EXTRA_SPECIES);
         currentFamily = getIntent().getStringExtra(EXTRA_FAMILY);
+        currentLocality = getIntent().getStringExtra(EXTRA_LOCALITY);
+        currentState = getIntent().getStringExtra(EXTRA_STATE);
+        currentCaughtTime = getIntent().getLongExtra(EXTRA_CAUGHT_TIME, System.currentTimeMillis());
 
         if (originalImageUri == null) {
             Toast.makeText(this, "No image passed.", Toast.LENGTH_SHORT).show();
@@ -115,17 +124,8 @@ public class CardMakerActivity extends AppCompatActivity {
             txtScientific.setText("--");
         }
 
-        if (currentRarity != null && !currentRarity.trim().isEmpty()) {
-            txtRarity.setText("Rarity: " + currentRarity);
-        } else {
-            txtRarity.setText("Rarity: Unknown");
-        }
-
-        if (currentConfidence != null && !currentConfidence.trim().isEmpty()) {
-            txtConfidence.setText("Confidence: " + currentConfidence);
-        } else {
-            txtConfidence.setText("Confidence: --");
-        }
+        txtLocation.setText(CardFormatUtils.formatLocation(currentState, currentLocality));
+        txtDateCaught.setText(CardFormatUtils.formatCaughtDate(new Date(currentCaughtTime)));
 
         txtFooter.setText("Preview only • Original photo will be saved");
 
@@ -228,8 +228,7 @@ public class CardMakerActivity extends AppCompatActivity {
         String userBirdId = UUID.randomUUID().toString();
         String collectionSlotId = UUID.randomUUID().toString();
         String userBirdImageId = UUID.randomUUID().toString();
-        Date now = new Date();
-
+        Date now = currentCaughtTime > 0 ? new Date(currentCaughtTime) : new Date();
         UserBird userBird = new UserBird();
         userBird.setId(userBirdId);
         userBird.setUserId(userId);
@@ -282,6 +281,8 @@ public class CardMakerActivity extends AppCompatActivity {
                     collectionSlot.setId(collectionSlotId);
                     collectionSlot.setUserBirdId(userBirdId);
                     collectionSlot.setTimestamp(now);
+                    collectionSlot.setState(currentState);
+                    collectionSlot.setLocality(currentLocality);
 
                     // IMPORTANT: save the ORIGINAL IMAGE here, not a rendered card image
                     collectionSlot.setImageUrl(originalImageUrl);

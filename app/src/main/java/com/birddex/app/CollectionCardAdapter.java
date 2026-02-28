@@ -16,7 +16,9 @@ import androidx.recyclerview.widget.RecyclerView;
 
 import com.bumptech.glide.Glide;
 
+import java.text.SimpleDateFormat;
 import java.util.List;
+import java.util.Locale;
 
 public class CollectionCardAdapter extends RecyclerView.Adapter<CollectionCardAdapter.VH> {
 
@@ -26,6 +28,7 @@ public class CollectionCardAdapter extends RecyclerView.Adapter<CollectionCardAd
     public static final String EXTRA_STATE = "com.birddex.app.extra.STATE";
     public static final String EXTRA_LOCALITY = "com.birddex.app.extra.LOCALITY";
     public static final String EXTRA_CAUGHT_TIME = "com.birddex.app.extra.CAUGHT_TIME";
+    public static final String EXTRA_BIRD_ID = "com.birddex.app.extra.BIRD_ID";
 
     private final List<CollectionSlot> slots;
 
@@ -97,7 +100,7 @@ public class CollectionCardAdapter extends RecyclerView.Adapter<CollectionCardAd
         cardLp.setMargins((int) (1 * density), (int) (1 * density), (int) (1 * density), (int) (1 * density));
         holder.cardContainer.setLayoutParams(cardLp);
 
-        holder.cardContainer.setRadius(10 * density);
+        holder.cardContainer.setRadius(16 * density);
 
         int compactPadding = (int) (6 * density);
         holder.cardInner.setPadding(compactPadding, compactPadding, compactPadding, compactPadding);
@@ -129,7 +132,7 @@ public class CollectionCardAdapter extends RecyclerView.Adapter<CollectionCardAd
         holder.imgBird.setLayoutParams(imageLp);
 
         ViewGroup.LayoutParams containerLp = holder.cardContainer.getLayoutParams();
-        containerLp.height = (int) (240 * density);
+        containerLp.height = (int) (245 * density);
         holder.cardContainer.setLayoutParams(containerLp);
     }
 
@@ -142,6 +145,7 @@ public class CollectionCardAdapter extends RecyclerView.Adapter<CollectionCardAd
         String sci = slot != null ? slot.getScientificName() : null;
         String state = slot != null ? slot.getState() : null;
         String locality = slot != null ? slot.getLocality() : null;
+        String birdId = slot != null ? slot.getBirdId() : null;
 
         boolean hasImage = url != null && !url.trim().isEmpty();
 
@@ -154,6 +158,7 @@ public class CollectionCardAdapter extends RecyclerView.Adapter<CollectionCardAd
             i.putExtra(EXTRA_SCI_NAME, sci);
             i.putExtra(EXTRA_STATE, state);
             i.putExtra(EXTRA_LOCALITY, locality);
+            i.putExtra(EXTRA_BIRD_ID, birdId);
 
             if (slot != null && slot.getTimestamp() != null) {
                 i.putExtra(EXTRA_CAUGHT_TIME, slot.getTimestamp().getTime());
@@ -201,12 +206,10 @@ public class CollectionCardAdapter extends RecyclerView.Adapter<CollectionCardAd
     public int getItemCount() {
         return slots.size();
     }
+
     private String formatCollectionDate(java.util.Date date) {
         if (date == null) return "--";
-
-        java.text.SimpleDateFormat sdf =
-                new java.text.SimpleDateFormat("M/d/yy", java.util.Locale.US);
-
+        SimpleDateFormat sdf = new SimpleDateFormat("M/d/yy", Locale.US);
         return sdf.format(date);
     }
 }

@@ -37,35 +37,35 @@
             android:padding="16dp">
 
             <TextView
-                android:paddingStart="1dp"
                 android:id="@+id/tvUserNameLabel"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
+                android:paddingStart="1dp"
                 android:text="BirdDex User Name"
                 android:textStyle="bold" />
 
             <TextView
-                android:paddingTop="4dp"
-                android:paddingStart="1dp"
                 android:id="@+id/tvUserName"
                 android:layout_width="match_parent"
                 android:layout_height="29dp"
+                android:paddingStart="1dp"
+                android:paddingTop="4dp"
                 android:text="(User Name)" />
 
             <TextView
-                android:paddingStart="1dp"
                 android:id="@+id/tvAccountLabel"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
+                android:paddingStart="1dp"
                 android:paddingBottom="8dp"
                 android:text="Account"
                 android:textStyle="bold" />
 
             <TextView
-                android:paddingStart="1dp"
                 android:id="@+id/tvUserEmail"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
+                android:paddingStart="1dp"
                 android:paddingBottom="16dp"
                 android:text="(email)" />
 
@@ -80,11 +80,11 @@
                 android:text="Change Email" />
 
             <TextView
-                android:paddingTop="4dp"
-                android:paddingStart="1dp"
                 android:id="@+id/tvChangePasswordLabel"
                 android:layout_width="match_parent"
                 android:layout_height="31dp"
+                android:paddingStart="1dp"
+                android:paddingTop="4dp"
                 android:text="Change Password"
                 android:textStyle="bold" />
 
@@ -99,10 +99,10 @@
                 android:text="Change Now" />
 
             <TextView
-                android:paddingTop="4dp"
-                android:paddingStart="1dp"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
+                android:paddingStart="1dp"
+                android:paddingTop="4dp"
                 android:paddingBottom="8dp"
                 android:text="Notifications"
                 android:textStyle="bold" />
@@ -127,8 +127,13 @@
         android:id="@+id/imageView"
         android:layout_width="30dp"
         android:layout_height="31dp"
-        app:srcCompat="@drawable/ic_settings"
-        tools:layout_editor_absoluteX="16dp"
-        tools:layout_editor_absoluteY="16dp" />
+        android:layout_marginStart="32dp"
+        android:layout_marginEnd="6dp"
+        android:layout_marginBottom="16dp"
+        app:layout_constraintBottom_toTopOf="@+id/cardSettings"
+        app:layout_constraintEnd_toStartOf="@+id/tvSettingsTitle"
+        app:layout_constraintHorizontal_bias="1.0"
+        app:layout_constraintStart_toStartOf="parent"
+        app:srcCompat="@drawable/ic_settings" />
 
 </androidx.constraintlayout.widget.ConstraintLayout>

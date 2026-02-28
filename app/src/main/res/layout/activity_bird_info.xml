@@ -20,9 +20,11 @@
 
     <TextView
         android:id="@+id/commonNameTextView"
-        android:layout_width="wrap_content"
+        android:layout_width="0dp"
         android:layout_height="wrap_content"
         android:layout_marginTop="16dp"
+        android:layout_marginHorizontal="24dp"
+        android:gravity="center"
         android:text="Common Name: "
         android:textSize="18sp"
         app:layout_constraintStart_toStartOf="parent"
@@ -31,9 +33,11 @@
 
     <TextView
         android:id="@+id/scientificNameTextView"
-        android:layout_width="wrap_content"
+        android:layout_width="0dp"
         android:layout_height="wrap_content"
         android:layout_marginTop="8dp"
+        android:layout_marginHorizontal="24dp"
+        android:gravity="center"
         android:text="Scientific Name: "
         android:textSize="18sp"
         app:layout_constraintStart_toStartOf="parent"
@@ -42,9 +46,11 @@
 
     <TextView
         android:id="@+id/speciesTextView"
-        android:layout_width="wrap_content"
+        android:layout_width="0dp"
         android:layout_height="wrap_content"
         android:layout_marginTop="8dp"
+        android:layout_marginHorizontal="24dp"
+        android:gravity="center"
         android:text="Species: "
         android:textSize="18sp"
         app:layout_constraintStart_toStartOf="parent"
@@ -53,9 +59,11 @@
 
     <TextView
         android:id="@+id/familyTextView"
-        android:layout_width="wrap_content"
+        android:layout_width="0dp"
         android:layout_height="wrap_content"
         android:layout_marginTop="8dp"
+        android:layout_marginHorizontal="24dp"
+        android:gravity="center"
         android:text="Family: "
         android:textSize="18sp"
         app:layout_constraintStart_toStartOf="parent"

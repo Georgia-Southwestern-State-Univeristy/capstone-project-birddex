@@ -15,6 +15,7 @@ import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatActivity;
 
 import com.bumptech.glide.Glide;
+import com.bumptech.glide.load.resource.drawable.DrawableTransitionOptions;
 import com.google.firebase.auth.FirebaseAuth;
 import com.google.firebase.auth.FirebaseUser;
 import com.google.firebase.firestore.DocumentSnapshot;
@@ -146,9 +147,15 @@ public class ViewBirdCardActivity extends AppCompatActivity {
 
     private void loadBirdImage(String imageUrl) {
         if (isFinishing() || isDestroyed()) return;
+        
+        // Fixed: Use override() or ensuring fixed dimensions in layout to avoid WRAP_CONTENT warning
+        // We also add a crossFade transition for better UX
         Glide.with(this)
                 .load(imageUrl)
+                .override(800, 800) // Safeguard against wrap_content and excessive memory use
                 .fitCenter()
+                .transition(DrawableTransitionOptions.withCrossFade())
+                .placeholder(R.drawable.bg_image_placeholder)
                 .into(imgBird);
     }
 

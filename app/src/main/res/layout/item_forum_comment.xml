@@ -12,6 +12,7 @@
         android:layout_width="32dp"
         android:layout_height="32dp"
         android:src="@drawable/ic_profile"
+        android:scaleType="centerCrop"
         app:shapeAppearanceOverlay="@style/ShapeAppearanceOverlay.App.CornerSize50Percent" />
 
     <LinearLayout

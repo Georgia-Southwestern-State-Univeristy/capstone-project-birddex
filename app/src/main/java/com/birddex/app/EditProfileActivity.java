@@ -421,6 +421,8 @@ public class EditProfileActivity extends AppCompatActivity {
         String userId = mAuth.getCurrentUser().getUid();
 
         // Step 1: Delete the old profile picture if it exists
+        // This needs to be done with care as it's separate from the limit.
+        // The old URL is `initialProfilePictureUrl`
         if (initialProfilePictureUrl != null && !initialProfilePictureUrl.isEmpty() &&
             (initialProfilePictureUrl.startsWith("gs://") || initialProfilePictureUrl.startsWith("https://firebasestorage.googleapis.com"))) {
             try {
@@ -483,6 +485,7 @@ public class EditProfileActivity extends AppCompatActivity {
             }
 
             // Scale down bitmap to a reasonable size for moderation to save on bandwidth and processing time
+            // OpenAI Vision API has limits on image size and detail, smaller is usually faster.
             int maxWidth = 512;
             int maxHeight = 512;
             float ratio = Math.min((float) maxWidth / bitmap.getWidth(),
@@ -527,10 +530,12 @@ public class EditProfileActivity extends AppCompatActivity {
         }
 
         // Update profile picture URL only if it was genuinely changed (new image uploaded or existing cleared)
+        // Use `finalProfilePictureUrl` which would be the newly uploaded one or the original if no new upload happened
         if (finalProfilePictureUrl != null && !finalProfilePictureUrl.equals(initialProfilePictureUrl)) {
             updates.put("profilePictureUrl", finalProfilePictureUrl);
             hasChanges = true;
         } else if (initialProfilePictureUrl != null && finalProfilePictureUrl == null) {
+            // Scenario: user explicitly removed PFP (e.g., from EditProfileActivity, not yet implemented but for future)
             updates.put("profilePictureUrl", null);
             hasChanges = true;
         }
@@ -538,6 +543,7 @@ public class EditProfileActivity extends AppCompatActivity {
         // Use FirebaseManager to update user profile, which handles username uniqueness
         if (hasChanges) {
             // Create a temporary User object with only the fields to be updated + userId
+            // FirebaseManager.updateUserProfile will handle merging
             User userToUpdate = new User(userId, null, newUsername, null, null);
             userToUpdate.setBio(newBio);
             userToUpdate.setProfilePictureUrl(finalProfilePictureUrl); // This will be merged into Firestore
@@ -547,11 +553,12 @@ public class EditProfileActivity extends AppCompatActivity {
                 public void onSuccess(com.google.firebase.auth.FirebaseUser user) {
                     if (isFinishing() || isDestroyed()) return;
                     Log.d(TAG, "Firestore profile updated successfully via FirebaseManager.");
-                    loadingDialog.dismiss();
                     // Update local 'initial' values to reflect what's now in Firestore
                     initialUsername = newUsername;
                     initialBio = newBio;
                     initialProfilePictureUrl = finalProfilePictureUrl; // Update with the final URL
+
+                    loadingDialog.dismiss(); // Dismiss on success
 
                     Intent resultIntent = new Intent();
                     resultIntent.putExtra("newUsername", newUsername);
@@ -564,15 +571,15 @@ public class EditProfileActivity extends AppCompatActivity {
                 @Override
                 public void onFailure(String errorMessage) {
                     if (isFinishing() || isDestroyed()) return;
-                    loadingDialog.dismiss();
                     Log.e(TAG, "Failed to update profile in Firestore via FirebaseManager: " + errorMessage);
+                    loadingDialog.dismiss(); // Dismiss on failure
                     Toast.makeText(EditProfileActivity.this, "Failed to update profile: " + errorMessage, Toast.LENGTH_LONG).show();
                 }
 
                 @Override
                 public void onUsernameTaken() {
                     if (isFinishing() || isDestroyed()) return;
-                    loadingDialog.dismiss();
+                    loadingDialog.dismiss(); // Dismiss if username taken
                     etUsername.setError("This username is already taken. Please choose a different one.");
                     Toast.makeText(EditProfileActivity.this, "Username is already taken.", Toast.LENGTH_SHORT).show();
                 }
@@ -580,14 +587,16 @@ public class EditProfileActivity extends AppCompatActivity {
                 @Override
                 public void onEmailTaken() {
                     if (isFinishing() || isDestroyed()) return;
-                    loadingDialog.dismiss();
-                    Log.w(TAG, "onEmailTaken called unexpectedly in EditProfileActivity.");
+                    loadingDialog.dismiss(); // Dismiss if email taken
+                    // This case should ideally not happen for updateUserProfile, as email is not updated via this path.
+                    // However, we must implement it due to the AuthListener interface contract.
+                    Log.w(TAG, "onEmailTaken called unexpectedly in EditProfileActivity. This typically means the email is being checked by the CF but not updated here.");
                     Toast.makeText(EditProfileActivity.this, "Email is already in use by another account.", Toast.LENGTH_SHORT).show();
                 }
             });
         } else {
             Log.d(TAG, "No profile changes detected to save to Firestore. Finishing activity.");
-            loadingDialog.dismiss();
+            loadingDialog.dismiss(); // Dismiss if no changes
             Intent resultIntent = new Intent();
             resultIntent.putExtra("newUsername", initialUsername);
             resultIntent.putExtra("newBio", initialBio);

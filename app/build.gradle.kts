@@ -80,6 +80,7 @@ dependencies {
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     // Updated Glide to 5.0.5 and changed annotationProcessor to ksp
     implementation("com.github.bumptech.glide:glide:5.0.5")
+    implementation("com.github.bumptech.glide:okhttp3-integration:5.0.5")
     ksp("com.github.bumptech.glide:compiler:5.0.5")
     implementation(libs.guava)
 

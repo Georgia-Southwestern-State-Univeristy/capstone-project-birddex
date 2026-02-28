@@ -142,6 +142,11 @@ public class ViewBirdCardActivity extends AppCompatActivity {
                         String imageUrl = doc.getString("imageUrl");
                         Date timestamp = doc.getDate("timestamp");
                         String userBirdRefId = doc.getString("userBirdRefId");
+                        Boolean hiddenFromUser = doc.getBoolean("hiddenFromUser");
+
+                        if (Boolean.TRUE.equals(hiddenFromUser)) {
+                            continue;
+                        }
 
                         if (imageUrl != null && !imageUrl.trim().isEmpty() && !seenUrls.contains(imageUrl)) {
                             seenUrls.add(imageUrl);

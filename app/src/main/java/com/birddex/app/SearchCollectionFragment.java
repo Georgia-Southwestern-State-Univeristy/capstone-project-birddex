@@ -11,12 +11,15 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Button;
 import android.widget.EditText;
+import android.widget.ImageButton;
+import android.widget.TextView;
 import android.widget.Toast;
 
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
+import androidx.appcompat.app.AlertDialog;
 import androidx.fragment.app.Fragment;
 import androidx.recyclerview.widget.GridLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
@@ -27,7 +30,10 @@ import com.google.firebase.firestore.FirebaseFirestore;
 import com.google.firebase.firestore.Query;
 import com.google.firebase.firestore.QueryDocumentSnapshot;
 
+import java.text.SimpleDateFormat;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
 import java.util.Date;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -38,16 +44,37 @@ public class SearchCollectionFragment extends Fragment {
 
     private static final String TAG = "SearchCollectionFragment";
 
+    private enum SortMode {
+        DEFAULT,
+        NAME_A_TO_Z,
+        NAME_Z_TO_A,
+        NEWEST,
+        OLDEST
+    }
+
+    private enum ViewMode {
+        SPECIES_CARDS,
+        RECENT_PHOTOS
+    }
+
     private RecyclerView rvCollection;
     private EditText etSearch;
-    private Button btnUploadBirdImage;
-    private CollectionCardAdapter adapter;
+    private ImageButton btnFilter;
+    private Button btnAddBird;
+    private TextView tvCollectionEmpty;
+
+    private CollectionCardAdapter cardAdapter;
+    private RecentPhotoMemoriesAdapter recentPhotoAdapter;
 
     private ActivityResultLauncher<String> imagePickerLauncher;
 
     private final List<CollectionSlot> rawSlots = new ArrayList<>();
     private final List<CollectionSlot> uniqueSpeciesSlots = new ArrayList<>();
     private final List<CollectionSlot> displayedSlots = new ArrayList<>();
+    private final List<RecentPhotoEntry> recentPhotoEntries = new ArrayList<>();
+
+    private SortMode currentSortMode = SortMode.DEFAULT;
+    private ViewMode currentViewMode = ViewMode.SPECIES_CARDS;
 
     @Override
     public void onCreate(@Nullable Bundle savedInstanceState) {
@@ -68,15 +95,16 @@ public class SearchCollectionFragment extends Fragment {
 
         rvCollection = v.findViewById(R.id.rvCollection);
         etSearch = v.findViewById(R.id.etSearch);
-        btnUploadBirdImage = v.findViewById(R.id.btnUploadBirdImage);
+        btnFilter = v.findViewById(R.id.btnFilter);
+        btnAddBird = v.findViewById(R.id.btnAddBird);
+        tvCollectionEmpty = v.findViewById(R.id.tvCollectionEmpty);
 
-        rvCollection.setHasFixedSize(true);
-        rvCollection.setLayoutManager(new GridLayoutManager(getContext(), 3));
+        cardAdapter = new CollectionCardAdapter(displayedSlots);
+        recentPhotoAdapter = new RecentPhotoMemoriesAdapter(requireContext(), this::fetchRecentPhotos);
+        applySpeciesCardMode();
 
-        adapter = new CollectionCardAdapter(displayedSlots);
-        rvCollection.setAdapter(adapter);
-
-        btnUploadBirdImage.setOnClickListener(view -> openImagePicker());
+        btnAddBird.setOnClickListener(view -> openImagePicker());
+        btnFilter.setOnClickListener(view -> showFilterDialog());
 
         setupSearch();
         fetchUserCollection();
@@ -88,6 +116,31 @@ public class SearchCollectionFragment extends Fragment {
     public void onResume() {
         super.onResume();
         fetchUserCollection();
+
+        if (currentViewMode == ViewMode.RECENT_PHOTOS) {
+            fetchRecentPhotos();
+        }
+    }
+
+    private void applySpeciesCardMode() {
+        GridLayoutManager layoutManager = new GridLayoutManager(getContext(), 3);
+        rvCollection.setLayoutManager(layoutManager);
+        rvCollection.setAdapter(cardAdapter);
+        etSearch.setHint("Search birds...");
+    }
+
+    private void applyRecentPhotosMode() {
+        GridLayoutManager layoutManager = new GridLayoutManager(getContext(), 3);
+        layoutManager.setSpanSizeLookup(new GridLayoutManager.SpanSizeLookup() {
+            @Override
+            public int getSpanSize(int position) {
+                return recentPhotoAdapter.isHeader(position) ? 3 : 1;
+            }
+        });
+
+        rvCollection.setLayoutManager(layoutManager);
+        rvCollection.setAdapter(recentPhotoAdapter);
+        etSearch.setHint("Search birds...");
     }
 
     private void openImagePicker() {
@@ -100,17 +153,81 @@ public class SearchCollectionFragment extends Fragment {
     }
 
     private void handleSelectedImage(@Nullable Uri imageUri) {
-        if (imageUri == null) {
-            return;
-        }
-
-        if (getContext() == null) {
+        if (imageUri == null || getContext() == null) {
             return;
         }
 
         Intent cropIntent = new Intent(getContext(), CropActivity.class);
         cropIntent.putExtra(CropActivity.EXTRA_IMAGE_URI, imageUri.toString());
         startActivity(cropIntent);
+    }
+
+    private void showFilterDialog() {
+        if (getContext() == null) return;
+
+        final String[] options = {
+                "Default",
+                "Name A-Z",
+                "Name Z-A",
+                "Newest first",
+                "Oldest first",
+                "Recent Photos"
+        };
+
+        final int checkedItem = (currentViewMode == ViewMode.RECENT_PHOTOS)
+                ? 5
+                : currentSortMode.ordinal();
+
+        new AlertDialog.Builder(requireContext())
+                .setTitle("Filter collection")
+                .setSingleChoiceItems(options, checkedItem, (dialog, which) -> {
+                    switch (which) {
+                        case 0:
+                            currentViewMode = ViewMode.SPECIES_CARDS;
+                            currentSortMode = SortMode.DEFAULT;
+                            applySpeciesCardMode();
+                            applyCurrentFilter();
+                            break;
+
+                        case 1:
+                            currentViewMode = ViewMode.SPECIES_CARDS;
+                            currentSortMode = SortMode.NAME_A_TO_Z;
+                            applySpeciesCardMode();
+                            applyCurrentFilter();
+                            break;
+
+                        case 2:
+                            currentViewMode = ViewMode.SPECIES_CARDS;
+                            currentSortMode = SortMode.NAME_Z_TO_A;
+                            applySpeciesCardMode();
+                            applyCurrentFilter();
+                            break;
+
+                        case 3:
+                            currentViewMode = ViewMode.SPECIES_CARDS;
+                            currentSortMode = SortMode.NEWEST;
+                            applySpeciesCardMode();
+                            applyCurrentFilter();
+                            break;
+
+                        case 4:
+                            currentViewMode = ViewMode.SPECIES_CARDS;
+                            currentSortMode = SortMode.OLDEST;
+                            applySpeciesCardMode();
+                            applyCurrentFilter();
+                            break;
+
+                        case 5:
+                            currentViewMode = ViewMode.RECENT_PHOTOS;
+                            applyRecentPhotosMode();
+                            fetchRecentPhotos();
+                            break;
+                    }
+
+                    dialog.dismiss();
+                })
+                .setNegativeButton("Cancel", null)
+                .show();
     }
 
     private void setupSearch() {
@@ -120,12 +237,24 @@ public class SearchCollectionFragment extends Fragment {
 
             @Override
             public void onTextChanged(CharSequence s, int start, int before, int count) {
-                filterCollection(s == null ? "" : s.toString());
+                applyCurrentFilter();
             }
 
             @Override
             public void afterTextChanged(Editable s) { }
         });
+    }
+
+    private void applyCurrentFilter() {
+        String query = etSearch != null && etSearch.getText() != null
+                ? etSearch.getText().toString()
+                : "";
+
+        if (currentViewMode == ViewMode.RECENT_PHOTOS) {
+            filterRecentPhotos(query);
+        } else {
+            filterCollection(query);
+        }
     }
 
     private void fetchUserCollection() {
@@ -176,6 +305,81 @@ public class SearchCollectionFragment extends Fragment {
                     Log.e(TAG, "Error fetching collection", e);
                     Toast.makeText(getContext(), "Failed to load collection.", Toast.LENGTH_SHORT).show();
                 });
+    }
+
+    private void fetchRecentPhotos() {
+        FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
+        if (user == null) return;
+
+        // Build a lookup from birdId -> bird names using already-loaded collection data
+        Map<String, String> commonNameByBirdId = new LinkedHashMap<>();
+        Map<String, String> scientificNameByBirdId = new LinkedHashMap<>();
+
+        for (CollectionSlot slot : rawSlots) {
+            if (slot == null) continue;
+
+            String birdId = slot.getBirdId();
+            if (isBlank(birdId)) continue;
+
+            if (!isBlank(slot.getCommonName()) && !commonNameByBirdId.containsKey(birdId)) {
+                commonNameByBirdId.put(birdId, slot.getCommonName());
+            }
+
+            if (!isBlank(slot.getScientificName()) && !scientificNameByBirdId.containsKey(birdId)) {
+                scientificNameByBirdId.put(birdId, slot.getScientificName());
+            }
+        }
+
+        FirebaseFirestore.getInstance()
+                .collection("users")
+                .document(user.getUid())
+                .collection("userBirdImage")
+                .orderBy("timestamp", Query.Direction.DESCENDING)
+                .get()
+                .addOnSuccessListener(queryDocumentSnapshots -> {
+                    recentPhotoEntries.clear();
+
+                    for (QueryDocumentSnapshot document : queryDocumentSnapshots) {
+                        String imageUrl = document.getString("imageUrl");
+                        Date timestamp = document.getDate("timestamp");
+                        Boolean hiddenFromUser = document.getBoolean("hiddenFromUser");
+                        String birdId = document.getString("birdId");
+                        String commonName = document.getString("commonName");
+                        String scientificName = document.getString("scientificName");
+
+                        if (Boolean.TRUE.equals(hiddenFromUser)) {
+                            continue;
+                        }
+
+                        if (isBlank(imageUrl)) continue;
+
+                        RecentPhotoEntry entry = new RecentPhotoEntry();
+                        entry.documentId = document.getId();
+                        entry.imageUrl = imageUrl;
+                        entry.timestamp = timestamp;
+                        entry.birdId = birdId;
+
+                        // Prefer names saved directly on the image doc, otherwise fall back to collection lookup
+                        entry.commonName = !isBlank(commonName)
+                                ? commonName
+                                : commonNameByBirdId.get(birdId);
+
+                        entry.scientificName = !isBlank(scientificName)
+                                ? scientificName
+                                : scientificNameByBirdId.get(birdId);
+
+                        recentPhotoEntries.add(entry);
+                    }
+
+                    if (currentViewMode == ViewMode.RECENT_PHOTOS) {
+                        filterRecentPhotos(etSearch != null && etSearch.getText() != null
+                                ? etSearch.getText().toString()
+                                : "");
+                    }
+                })
+                .addOnFailureListener(e ->
+                        Toast.makeText(getContext(), "Failed to load recent photos.", Toast.LENGTH_SHORT).show()
+                );
     }
 
     private void backfillFromUserBird(String userId,
@@ -286,9 +490,6 @@ public class SearchCollectionFragment extends Fragment {
             String key = getSpeciesKey(slot);
             if (isBlank(key)) continue;
 
-            // Keep the first existing slot for that species.
-            // Since CardMakerActivity no longer creates new visible cards for the same species,
-            // the chosen card stays what the user set it to.
             if (!grouped.containsKey(key)) {
                 grouped.put(key, slot);
             }
@@ -297,9 +498,9 @@ public class SearchCollectionFragment extends Fragment {
         uniqueSpeciesSlots.clear();
         uniqueSpeciesSlots.addAll(grouped.values());
 
-        filterCollection(etSearch != null && etSearch.getText() != null
-                ? etSearch.getText().toString()
-                : "");
+        if (currentViewMode == ViewMode.SPECIES_CARDS) {
+            applyCurrentFilter();
+        }
     }
 
     private void filterCollection(String query) {
@@ -312,13 +513,106 @@ public class SearchCollectionFragment extends Fragment {
         } else {
             for (CollectionSlot slot : uniqueSpeciesSlots) {
                 String common = slot.getCommonName();
-                if (common != null && common.toLowerCase(Locale.US).contains(searchText)) {
+                String scientific = slot.getScientificName();
+
+                boolean commonMatch = common != null && common.toLowerCase(Locale.US).contains(searchText);
+                boolean scientificMatch = scientific != null && scientific.toLowerCase(Locale.US).contains(searchText);
+
+                if (commonMatch || scientificMatch) {
                     displayedSlots.add(slot);
                 }
             }
         }
 
-        adapter.notifyDataSetChanged();
+        sortDisplayedSlots();
+        cardAdapter.notifyDataSetChanged();
+        updateEmptyState(displayedSlots.isEmpty(), "No birds match this filter.");
+    }
+
+    private void filterRecentPhotos(String query) {
+        String searchText = query == null ? "" : query.trim().toLowerCase(Locale.US);
+
+        List<RecentPhotoMemoriesAdapter.MemoryItem> memoryItems = new ArrayList<>();
+        SimpleDateFormat headerFormat = new SimpleDateFormat("MMMM yyyy", Locale.US);
+        SimpleDateFormat dateFormat = new SimpleDateFormat("MMM d, yyyy", Locale.US);
+
+        String lastHeader = null;
+
+        for (RecentPhotoEntry entry : recentPhotoEntries) {
+            String common = entry.commonName == null ? "" : entry.commonName.toLowerCase(Locale.US);
+            String scientific = entry.scientificName == null ? "" : entry.scientificName.toLowerCase(Locale.US);
+
+            boolean matchesBird = searchText.isEmpty()
+                    || common.contains(searchText)
+                    || scientific.contains(searchText);
+
+            if (!matchesBird) {
+                continue;
+            }
+
+            String headerTitle = entry.timestamp != null
+                    ? headerFormat.format(entry.timestamp)
+                    : "Unknown Date";
+
+            String dateLabel = entry.timestamp != null
+                    ? dateFormat.format(entry.timestamp)
+                    : "Unknown date";
+
+            if (!headerTitle.equals(lastHeader)) {
+                memoryItems.add(RecentPhotoMemoriesAdapter.MemoryItem.createHeader(headerTitle));
+                lastHeader = headerTitle;
+            }
+
+            memoryItems.add(RecentPhotoMemoriesAdapter.MemoryItem.createPhoto(
+                    entry.imageUrl,
+                    dateLabel,
+                    entry.documentId
+            ));
+        }
+
+        recentPhotoAdapter.submitList(memoryItems);
+        updateEmptyState(memoryItems.isEmpty(), "No bird photos match this search.");
+    }
+
+    private void sortDisplayedSlots() {
+        switch (currentSortMode) {
+            case NAME_A_TO_Z:
+                Collections.sort(displayedSlots, Comparator.comparing(
+                        slot -> safeLower(slot.getCommonName())
+                ));
+                break;
+
+            case NAME_Z_TO_A:
+                Collections.sort(displayedSlots, (a, b) ->
+                        safeLower(b.getCommonName()).compareTo(safeLower(a.getCommonName()))
+                );
+                break;
+
+            case NEWEST:
+                Collections.sort(displayedSlots, (a, b) ->
+                        Long.compare(getTime(b.getTimestamp()), getTime(a.getTimestamp()))
+                );
+                break;
+
+            case OLDEST:
+                Collections.sort(displayedSlots, Comparator.comparingLong(
+                        slot -> getTime(slot.getTimestamp())
+                ));
+                break;
+
+            case DEFAULT:
+            default:
+                Collections.sort(displayedSlots, Comparator.comparingInt(CollectionSlot::getSlotIndex));
+                break;
+        }
+    }
+
+    private void updateEmptyState(boolean isEmpty, String emptyMessage) {
+        if (tvCollectionEmpty == null || rvCollection == null) return;
+
+        tvCollectionEmpty.setText(emptyMessage);
+        tvCollectionEmpty.setVisibility(isEmpty ? View.VISIBLE : View.GONE);
+        rvCollection.setVisibility(isEmpty ? View.GONE : View.VISIBLE);
     }
 
     private String getSpeciesKey(CollectionSlot slot) {
@@ -346,7 +640,24 @@ public class SearchCollectionFragment extends Fragment {
                 .update(updates);
     }
 
+    private long getTime(Date date) {
+        return date == null ? 0L : date.getTime();
+    }
+
+    private String safeLower(String value) {
+        return value == null ? "" : value.trim().toLowerCase(Locale.US);
+    }
+
     private boolean isBlank(String value) {
         return value == null || value.trim().isEmpty();
+    }
+
+    private static class RecentPhotoEntry {
+        String documentId;
+        String imageUrl;
+        Date timestamp;
+        String birdId;
+        String commonName;
+        String scientificName;
     }
 }

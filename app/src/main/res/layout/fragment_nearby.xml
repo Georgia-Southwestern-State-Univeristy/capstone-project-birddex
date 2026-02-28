@@ -25,11 +25,24 @@
         android:layout_height="48dp"
         android:layout_marginEnd="16dp"
         android:background="?attr/selectableItemBackgroundBorderless"
-        android:src="@drawable/ic_refresh"
         android:contentDescription="Refresh"
+        android:src="@drawable/ic_refresh"
         app:layout_constraintBottom_toBottomOf="@id/tvNearbyTitle"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintTop_toTopOf="@id/tvNearbyTitle"
+        app:tint="?attr/colorOnSurface" />
+
+    <androidx.appcompat.widget.AppCompatImageButton
+        android:id="@+id/btnSearch"
+        android:layout_width="48dp"
+        android:layout_height="48dp"
+        android:layout_marginEnd="6dp"
+        android:background="?attr/selectableItemBackgroundBorderless"
+        android:contentDescription="Search birds"
+        android:src="@drawable/ic_search"
+        app:layout_constraintBottom_toBottomOf="@id/btnRefresh"
+        app:layout_constraintEnd_toStartOf="@id/btnRefresh"
+        app:layout_constraintTop_toTopOf="@id/btnRefresh"
         app:tint="?attr/colorOnSurface" />
 
     <TextView

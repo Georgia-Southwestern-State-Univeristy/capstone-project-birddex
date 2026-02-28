@@ -110,6 +110,7 @@ public class ViewBirdCardActivity extends AppCompatActivity {
     }
 
     private void loadBirdImage(String imageUrl) {
+        if (isFinishing() || isDestroyed()) return;
         Glide.with(this)
                 .load(imageUrl)
                 .fitCenter()
@@ -130,6 +131,7 @@ public class ViewBirdCardActivity extends AppCompatActivity {
                 .whereEqualTo("birdId", currentBirdId)
                 .get()
                 .addOnSuccessListener(queryDocumentSnapshots -> {
+                    if (isFinishing() || isDestroyed()) return;
                     if (queryDocumentSnapshots.isEmpty()) {
                         Toast.makeText(this, "No stored images found for this bird.", Toast.LENGTH_SHORT).show();
                         return;
@@ -189,8 +191,10 @@ public class ViewBirdCardActivity extends AppCompatActivity {
                             .setNegativeButton("Cancel", null)
                             .show();
                 })
-                .addOnFailureListener(e ->
-                        Toast.makeText(this, "Failed to load stored images.", Toast.LENGTH_SHORT).show());
+                .addOnFailureListener(e -> {
+                    if (isFinishing() || isDestroyed()) return;
+                    Toast.makeText(this, "Failed to load stored images.", Toast.LENGTH_SHORT).show();
+                });
     }
 
     private void resolveSelectionAndApply(String userId, ImageChoice selectedChoice) {
@@ -216,6 +220,7 @@ public class ViewBirdCardActivity extends AppCompatActivity {
                 .document(selectedChoice.userBirdRefId)
                 .get()
                 .addOnSuccessListener(userBirdSnap -> {
+                    if (isFinishing() || isDestroyed()) return;
                     if (!userBirdSnap.exists()) {
                         ResolvedSelection resolved = new ResolvedSelection(
                                 selectedChoice.imageUrl,
@@ -248,6 +253,7 @@ public class ViewBirdCardActivity extends AppCompatActivity {
                             .document(locationId)
                             .get()
                             .addOnSuccessListener(locationSnap -> {
+                                if (isFinishing() || isDestroyed()) return;
                                 String resolvedState = currentState;
                                 String resolvedLocality = currentLocality;
 
@@ -269,6 +275,7 @@ public class ViewBirdCardActivity extends AppCompatActivity {
                                 applyResolvedSelection(userId, resolved);
                             })
                             .addOnFailureListener(e -> {
+                                if (isFinishing() || isDestroyed()) return;
                                 ResolvedSelection resolved = new ResolvedSelection(
                                         selectedChoice.imageUrl,
                                         timeSpotted != null ? timeSpotted : selectedChoice.timestamp,
@@ -280,6 +287,7 @@ public class ViewBirdCardActivity extends AppCompatActivity {
                             });
                 })
                 .addOnFailureListener(e -> {
+                    if (isFinishing() || isDestroyed()) return;
                     ResolvedSelection resolved = new ResolvedSelection(
                             selectedChoice.imageUrl,
                             selectedChoice.timestamp,
@@ -300,6 +308,7 @@ public class ViewBirdCardActivity extends AppCompatActivity {
                 .limit(1)
                 .get()
                 .addOnSuccessListener(queryDocumentSnapshots -> {
+                    if (isFinishing() || isDestroyed()) return;
                     if (queryDocumentSnapshots.isEmpty()) {
                         Toast.makeText(this, "No collection card found for this bird.", Toast.LENGTH_SHORT).show();
                         return;
@@ -323,6 +332,7 @@ public class ViewBirdCardActivity extends AppCompatActivity {
 
                     batch.commit()
                             .addOnSuccessListener(unused -> {
+                                if (isFinishing() || isDestroyed()) return;
                                 currentImageUrl = resolved.imageUrl;
                                 currentState = resolved.state;
                                 currentLocality = resolved.locality;
@@ -333,11 +343,15 @@ public class ViewBirdCardActivity extends AppCompatActivity {
 
                                 Toast.makeText(this, "Card image updated.", Toast.LENGTH_SHORT).show();
                             })
-                            .addOnFailureListener(e ->
-                                    Toast.makeText(this, "Failed to update card image.", Toast.LENGTH_SHORT).show());
+                            .addOnFailureListener(e -> {
+                                if (isFinishing() || isDestroyed()) return;
+                                Toast.makeText(this, "Failed to update card image.", Toast.LENGTH_SHORT).show();
+                            });
                 })
-                .addOnFailureListener(e ->
-                        Toast.makeText(this, "Failed to update collection.", Toast.LENGTH_SHORT).show());
+                .addOnFailureListener(e -> {
+                    if (isFinishing() || isDestroyed()) return;
+                    Toast.makeText(this, "Failed to update collection.", Toast.LENGTH_SHORT).show();
+                });
     }
 
     private boolean isBlank(String value) {

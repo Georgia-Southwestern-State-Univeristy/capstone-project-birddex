@@ -84,6 +84,7 @@ public class CreatePostActivity extends AppCompatActivity {
         FirebaseUser user = mAuth.getCurrentUser();
         if (user != null) {
             firebaseManager.getUserProfile(user.getUid(), task -> {
+                if (isFinishing() || isDestroyed()) return;
                 if (task.isSuccessful() && task.getResult() != null) {
                     currentUsername = task.getResult().getString("username");
                     currentUserProfilePicUrl = task.getResult().getString("profilePictureUrl");
@@ -108,6 +109,7 @@ public class CreatePostActivity extends AppCompatActivity {
                 });
 
         cropImageLauncher = registerForActivityResult(new CropImageContract(), result -> {
+            if (isFinishing() || isDestroyed()) return;
             if (result.isSuccessful()) {
                 selectedImageUri = result.getUriContent();
                 if (selectedImageUri != null) {
@@ -172,9 +174,11 @@ public class CreatePostActivity extends AppCompatActivity {
 
         ref.putFile(selectedImageUri)
                 .addOnSuccessListener(taskSnapshot -> ref.getDownloadUrl().addOnSuccessListener(uri -> {
+                    if (isFinishing() || isDestroyed()) return;
                     createFirestorePost(message, uri.toString());
                 }))
                 .addOnFailureListener(e -> {
+                    if (isFinishing() || isDestroyed()) return;
                     Log.e(TAG, "Image upload failed: " + e.getMessage());
                     binding.btnPost.setEnabled(true);
                     Toast.makeText(this, "Image upload failed: " + e.getMessage(), Toast.LENGTH_SHORT).show();
@@ -196,6 +200,7 @@ public class CreatePostActivity extends AppCompatActivity {
         post.setId(newPostRef.getId());
 
         firebaseManager.addForumPost(post, task -> {
+            if (isFinishing() || isDestroyed()) return;
             if (task.isSuccessful()) {
                 Log.d(TAG, "Post saved successfully to Firestore: " + post.getId());
                 Toast.makeText(this, "Post shared!", Toast.LENGTH_SHORT).show();

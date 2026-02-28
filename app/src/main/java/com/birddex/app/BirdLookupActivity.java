@@ -145,6 +145,7 @@ public class BirdLookupActivity extends AppCompatActivity implements NetworkMoni
         ebirdApi.fetchBirdDetailsAndFacts(birdId, new EbirdApi.BirdDetailsCallback() {
             @Override
             public void onSuccess(JSONObject birdDetails) {
+                if (isFinishing() || isDestroyed()) return;
                 try {
                     String commonName = birdDetails.getString("commonName");
                     String scientificName = birdDetails.getString("scientificName");
@@ -166,6 +167,7 @@ public class BirdLookupActivity extends AppCompatActivity implements NetworkMoni
 
             @Override
             public void onFailure(Exception e) {
+                if (isFinishing() || isDestroyed()) return;
                 Log.e(TAG, "Failed to fetch bird details and facts: " + e.getMessage(), e);
                 Toast.makeText(BirdLookupActivity.this, "Failed to load bird details.", Toast.LENGTH_LONG).show();
                 // Display placeholders for facts if fetching fails
@@ -185,12 +187,14 @@ public class BirdLookupActivity extends AppCompatActivity implements NetworkMoni
         // Note: It's more efficient if imageUrl is part of the birdDetails from getBirdDetailsAndFacts CF already
         db.collection("bird_images").document(commonName).get()
                 .addOnSuccessListener(documentSnapshot -> {
+                    if (isFinishing() || isDestroyed()) return;
                     if (documentSnapshot.exists() && documentSnapshot.contains("imageUrl")) {
                         displayFinalResults(documentSnapshot.getString("imageUrl"), commonName, scientificName, family, birdDetails);
                     } else {
                         searchNuthatchForImage(commonName, scientificName, family, birdDetails);
                     }
                 }).addOnFailureListener(e -> {
+                    if (isFinishing() || isDestroyed()) return;
                     Log.e(TAG, "Firestore image lookup failed or timed out: ", e);
                     if (networkMonitor.isConnected()) {
                         searchNuthatchForImage(commonName, scientificName, family, birdDetails);
@@ -211,12 +215,14 @@ public class BirdLookupActivity extends AppCompatActivity implements NetworkMoni
         nuthatchApi.searchNuthatchByName(commonName, new NuthatchApi.SearchResultHandler() {
             @Override
             public void onImageFound(String imageUrl) {
+                if (isFinishing() || isDestroyed()) return;
                 displayFinalResults(imageUrl, commonName, scientificName, family, birdDetails);
                 saveBirdImageMetadata(commonName, scientificName, imageUrl, family);
             }
 
             @Override
             public void onImageNotFound() {
+                if (isFinishing() || isDestroyed()) return;
                 Toast.makeText(BirdLookupActivity.this, "No reference image found for " + commonName + ".", Toast.LENGTH_LONG).show();
                 displayFinalResults(null, commonName, scientificName, family, birdDetails);
             }
@@ -225,6 +231,7 @@ public class BirdLookupActivity extends AppCompatActivity implements NetworkMoni
 
     // Modified to accept commonName and the full birdDetails JSONObject for displaying facts
     private void displayFinalResults(String imageUrl, String commonName, String scientificName, String family, JSONObject birdDetails) {
+        if (isFinishing() || isDestroyed()) return;
         if (imageUrl != null && !imageUrl.isEmpty()) {
             Glide.with(this).load(imageUrl).into(birdImageView);
         } else {

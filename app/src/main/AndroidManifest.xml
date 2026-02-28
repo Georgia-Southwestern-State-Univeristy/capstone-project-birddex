@@ -67,13 +67,16 @@
             android:name=".HomeActivity"
             android:exported="false" />
         <activity
-            android:name=".SignupCompleteActivity"
+            android:name=".SignUpCompleteActivity"
             android:exported="false" />
         <activity
             android:name=".SignUpActivity"
             android:exported="false" />
         <activity
             android:name=".LoginActivity"
+            android:exported="false" />
+        <activity
+            android:name=".EditProfileActivity"
             android:exported="false" />
 
         <!-- Crop Image Activity Declaration for com.canhub.cropper -->

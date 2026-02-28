@@ -11,6 +11,7 @@ const axios = require("axios");
 
 admin.initializeApp();
 const db = admin.firestore();
+const storage = admin.storage();
 
 // Secrets
 const OPENAI_API_KEY = defineSecret("OPENAI_API_KEY");
@@ -423,7 +424,7 @@ exports.identifyBird = onCall({ secrets: [OPENAI_API_KEY], timeoutSeconds: 30 },
 
             if (currentRequestsRemaining <= 0) {
                 // If requests are 0 and cooldown is still active, throw error
-                const remainingCooldownMs = openAiCooldownResetTimestamp ? (openAiCooldownResetTimestamp.getTime() + COOLDOWN_PERIOD_MS - currentTime.getTime()) : 0;
+                const remainingCooldownMs = openAiCooldownResetTimestamp ? (pfpCooldownResetTimestamp.getTime() + COOLDOWN_PERIOD_MS - currentTime.getTime()) : 0;
                 throw new HttpsError("resource-exhausted", `You have reached your limit for AI bird identification requests. Try again in ${Math.ceil(remainingCooldownMs / (60 * 1000))} minutes.`);
             }
 
@@ -1290,5 +1291,74 @@ Example for appropriate image:
             console.error("OpenAI API error details:", error.response.data);
         }
         throw new HttpsError("internal", "Failed to moderate image content.");
+    }
+});
+
+// ======================================================
+// NEW: SCHEDULED FORUM POST ARCHIVING (AFTER 7 DAYS)
+// ======================================================
+/**
+ * Automatically archives forum posts that are older than 7 days.
+ * Data is saved to Firebase Storage as a JSON file, then deleted from Firestore.
+ */
+exports.archiveOldForumPosts = onSchedule({
+    schedule: "every 24 hours", // Run once a day
+    timeZone: "America/New_York",
+    timeoutSeconds: 540 // 9 minutes for potentially large batches
+}, async (event) => {
+    console.log("Starting scheduled forum post archiving...");
+
+    const archiveThreshold = new Date(Date.now() - (7 * 24 * 60 * 60 * 1000));
+    const storageBucket = admin.storage().bucket();
+
+    try {
+        const postsToArchive = await db.collection("threads")
+            .where("timestamp", "<", archiveThreshold)
+            .limit(500)
+            .get();
+
+        if (postsToArchive.empty) {
+            console.log("No old posts found to archive.");
+            return null;
+        }
+
+        console.log(`Archiving ${postsToArchive.size} posts...`);
+
+        for (const postDoc of postsToArchive.docs) {
+            const postData = postDoc.data();
+            const postId = postDoc.id;
+
+            // Fetch comments (sub-collection "posts")
+            const commentsSnap = await postDoc.ref.collection("posts").get();
+            const comments = commentsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+
+            const archiveData = {
+                ...postData,
+                id: postId,
+                archivedAt: new Date().toISOString(),
+                comments: comments
+            };
+
+            // Save to Storage as JSON
+            const fileName = `archived_posts/${postId}.json`;
+            const file = storageBucket.file(fileName);
+            await file.save(JSON.stringify(archiveData), {
+                contentType: 'application/json'
+            });
+
+            // Delete from Firestore (post and comments)
+            const batch = db.batch();
+            commentsSnap.forEach(doc => batch.delete(doc.ref));
+            batch.delete(postDoc.ref);
+            await batch.commit();
+
+            console.log(`✅ Archived and deleted post: ${postId}`);
+        }
+
+        console.log("✅ Completed archiving cycle.");
+        return null;
+    } catch (error) {
+        console.error("❌ Error during forum post archiving:", error);
+        return null;
     }
 });

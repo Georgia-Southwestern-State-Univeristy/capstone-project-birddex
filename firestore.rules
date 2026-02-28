@@ -3,37 +3,26 @@ service cloud.firestore {
   match /databases/{database}/documents {
 
     match /users/{userId} {
-      // Allow authenticated users to read their own profile.
-      allow read: if request.auth != null && request.auth.uid == userId;
+      allow read: if request.auth != null; // Allow all auth users to read profiles for the forum
 
-      // Allow a user to create their own profile, but only if they are authenticated,
-      // the document ID matches their user ID, and essential fields are present and valid.
-      // Other fields (like totals and limits) are expected to be initialized by the client-side
-      // User object's constructor or by Cloud Functions.
       allow create: if request.auth != null && request.auth.uid == userId &&
                      request.resource.data.username is string && request.resource.data.username.size() > 0 &&
                      request.resource.data.email is string && request.resource.data.email.size() > 0 &&
                      request.resource.data.createdAt is timestamp;
 
 
-      // Allow a user to update their own profile, but only specific fields.
-      // Sensitive fields (like totals and limits) can only be changed by Cloud Functions.
       allow update: if request.auth != null && request.auth.uid == userId &&
-                     // Only allow changes to the whitelisted user-editable fields.
-                     // Use changedKeys() to ensure only *actual modifications* are considered.
                      request.resource.data.diff(resource.data).changedKeys().hasOnly([
                          'username',
                          'profilePictureUrl',
                          'bio'
                      ]);
 
-      // Subcollection for user-specific collection slots
       match /collectionSlot/{slotId} {
         allow read: if request.auth != null;
         allow write: if request.auth != null && request.auth.uid == userId;
       }
 
-      // Subcollection for user-specific bird images
       match /userBirdImage/{userBirdImageId} {
         allow read: if request.auth != null && request.auth.uid == userId;
         allow create: if request.auth != null && request.auth.uid == userId &&
@@ -43,66 +32,51 @@ service cloud.firestore {
       }
     }
 
-    // The 'birds' collection contains public, static reference data.
-    // ANYONE, even unauthenticated users, can read this data.
     match /birds/{birdId} {
       allow read: if true;
-      allow write: if false; // Only Cloud Functions can write to this.
+      allow write: if false;
     }
 
-    // Bird Facts and Hunter Facts: Allow authenticated users to read and write (via Cloud Functions).
-    // The Cloud Functions are called by authenticated users, so this allows the CF to write.
     match /birdFacts/{birdId} {
       allow read: if request.auth != null;
-      allow write: if request.auth != null; // Changed: Allow authenticated users (and thus CFs called by them) to write.
+      allow write: if request.auth != null;
 
-      // Allow read/write for hunterFacts subcollection documents
       match /hunterFacts/{hunterFactsDocId} {
         allow read: if request.auth != null;
-        allow write: if request.auth != null; // Changed: Allow authenticated users (and thus CFs called by them) to write.
+        allow write: if request.auth != null;
       }
     }
 
-    // 'userBirds' contains records of captures specific to a user.
-    // Now includes pointsEarned and isDuplicate, which are set by the app, but totals updated by CF.
     match /userBirds/{userBirdId} {
       allow read: if request.auth != null;
       allow create: if request.auth != null && request.auth.uid == request.resource.data.userId;
       allow update, delete: if request.auth != null && request.auth.uid == resource.data.userId;
     }
 
-    // Locations can be created and read by any authenticated user.
-    // The write access remains unchanged as they are shared resources.
     match /locations/{locationId} {
       allow read, create: if request.auth != null;
       allow update, delete: if false;
     }
 
-    // AI training data can be read by authenticated users, but creation should be restricted to Cloud Functions.
     match /identifications/{identificationId} {
       allow read: if request.auth != null;
-      allow create: if false; // Only Cloud Functions should create these documents
+      allow create: if false;
       allow update, delete: if false;
     }
 
-    // User can only manage their own media.
     match /media/{mediaId} {
       allow read, write: if request.auth != null && resource.data.userId == request.auth.uid;
     }
 
-    // User-generated Bird Sightings - Now 'userBirdSightings'
-    // Users can create and update their own, but NOT delete.
     match /userBirdSightings/{userBirdSightingId} {
         allow read: if request.auth != null;
-        allow create: if request.auth != null && request.resource.data.userId == request.auth.uid; // Corrected
+        allow create: if request.auth != null && request.resource.data.userId == request.auth.uid;
         allow update: if request.auth != null && resource.data.userId == request.auth.uid;
-        // Removed delete permission for clients
     }
 
-    // eBird API Sightings - New collection, read-only for authenticated users (written by Cloud Function)
     match /eBirdApiSightings/{ebirdSightingId} {
         allow read: if request.auth != null;
-        allow write: if false; // Only Cloud Functions should write to this
+        allow write: if false;
     }
 
     match /hunterSightings/{sightingId} {
@@ -110,15 +84,26 @@ service cloud.firestore {
         allow write: if request.auth != null && request.auth.uid == resource.data.userId;
     }
 
-    // Forum rules.
-    match /threads/{threadId} {
+    // NEW FORUM RULES
+    match /forumThreads/{threadId} {
         allow read: if request.auth != null;
-        allow create, update, delete: if request.auth != null && request.auth.uid == resource.data.userId;
+        allow create: if request.auth != null && request.resource.data.userId == request.auth.uid;
+        allow update: if request.auth != null; // Allow updates for likes and view counts
+        allow delete: if request.auth != null && resource.data.userId == request.auth.uid;
+
+        match /comments/{commentId} {
+            allow read: if request.auth != null;
+            allow create: if request.auth != null && request.resource.data.userId == request.auth.uid;
+            allow update: if request.auth != null; // Allow updates for comment likes
+            allow delete: if request.auth != null && resource.data.userId == request.auth.uid;
+        }
     }
 
-    match /threads/{threadId}/posts/{postId} {
-        allow read: if request.auth != null;
-        allow create, update, delete: if request.auth != null && request.auth.uid == resource.data.userId;
+    // Reports: Allow any authenticated user to create a report.
+    // Reading/Managing reports should be restricted (e.g., to an admin role, not yet implemented here).
+    match /reports/{reportId} {
+        allow create: if request.auth != null;
+        allow read, update, delete: if false; // Only manageable through the Firebase Console or an admin dashboard
     }
 
     // eBird cache is read-only for clients (written by Cloud Function).

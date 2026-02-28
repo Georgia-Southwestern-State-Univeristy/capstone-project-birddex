@@ -104,6 +104,7 @@ public class BirdWikiActivity extends AppCompatActivity {
                 .document(birdId)
                 .get()
                 .addOnSuccessListener(doc -> {
+                    if (isFinishing() || isDestroyed()) return;
                     if (!doc.exists()) {
                         tvPageTitle.setText("Unknown Bird");
                         return;
@@ -124,9 +125,10 @@ public class BirdWikiActivity extends AppCompatActivity {
                         loadBirdImage(commonName);
                     }
                 })
-                .addOnFailureListener(e ->
-                        Toast.makeText(this, "Failed to load bird basics.", Toast.LENGTH_SHORT).show()
-                );
+                .addOnFailureListener(e -> {
+                    if (isFinishing() || isDestroyed()) return;
+                    Toast.makeText(this, "Failed to load bird basics.", Toast.LENGTH_SHORT).show();
+                });
     }
 
     private void loadBirdImage(String commonName) {
@@ -134,6 +136,7 @@ public class BirdWikiActivity extends AppCompatActivity {
                 .document(commonName)
                 .get()
                 .addOnSuccessListener(imageDoc -> {
+                    if (isFinishing() || isDestroyed()) return;
                     String imageUrl = imageDoc.getString("imageUrl");
 
                     if (isBlank(imageUrl)) {
@@ -146,7 +149,10 @@ public class BirdWikiActivity extends AppCompatActivity {
                             .load(imageUrl)
                             .into(ivBirdHeaderImage);
                 })
-                .addOnFailureListener(e -> ivBirdHeaderImage.setVisibility(View.GONE));
+                .addOnFailureListener(e -> {
+                    if (isFinishing() || isDestroyed()) return;
+                    ivBirdHeaderImage.setVisibility(View.GONE);
+                });
     }
 
     private void loadGeneralFacts(String birdId) {
@@ -154,6 +160,7 @@ public class BirdWikiActivity extends AppCompatActivity {
                 .document(birdId)
                 .get()
                 .addOnSuccessListener(doc -> {
+                    if (isFinishing() || isDestroyed()) return;
                     if (!doc.exists()) return;
 
                     setFact("conservationStatus", doc.getString("conservationStatus"));
@@ -176,9 +183,10 @@ public class BirdWikiActivity extends AppCompatActivity {
                     setFact("timesBestLighting", doc.getString("timesBestLighting"));
                     setFact("avoidDisturbing", doc.getString("avoidDisturbing"));
                 })
-                .addOnFailureListener(e ->
-                        Toast.makeText(this, "Failed to load bird facts.", Toast.LENGTH_SHORT).show()
-                );
+                .addOnFailureListener(e -> {
+                    if (isFinishing() || isDestroyed()) return;
+                    Toast.makeText(this, "Failed to load bird facts.", Toast.LENGTH_SHORT).show();
+                });
     }
 
     private void loadHunterFacts(String birdId) {
@@ -188,6 +196,7 @@ public class BirdWikiActivity extends AppCompatActivity {
                 .document(birdId)
                 .get()
                 .addOnSuccessListener(doc -> {
+                    if (isFinishing() || isDestroyed()) return;
                     if (!doc.exists()) return;
 
                     String legalStatusGeorgia = doc.getString("legalStatusGeorgia");
@@ -214,9 +223,10 @@ public class BirdWikiActivity extends AppCompatActivity {
                     setFact("relevantRegulations", relevantRegulations);
                     setFact("georgiaDNRHuntingLink", georgiaDNRHuntingLink);
                 })
-                .addOnFailureListener(e ->
-                        Toast.makeText(this, "Failed to load hunter facts.", Toast.LENGTH_SHORT).show()
-                );
+                .addOnFailureListener(e -> {
+                    if (isFinishing() || isDestroyed()) return;
+                    Toast.makeText(this, "Failed to load hunter facts.", Toast.LENGTH_SHORT).show();
+                });
     }
 
     private String buildHunterBlock(String legalStatusGeorgia,

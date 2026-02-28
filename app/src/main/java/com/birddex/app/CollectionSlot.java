@@ -6,9 +6,11 @@ import java.util.Date;
 public class CollectionSlot {
     private String id;
     private String userBirdId;
+    private String birdId;
     private Date timestamp;
-    private String rarity; // New field for card rarity (e.g., R1, R2, ...)
-    private int slotIndex; // New field for explicit slot positioning
+    private String imageUrl;
+    private String rarity;
+    private int slotIndex;
 
     private String commonName;
     private String scientificName;
@@ -19,10 +21,11 @@ public class CollectionSlot {
     public CollectionSlot() {
     }
 
-    public CollectionSlot(String id, String userBirdId, Date timestamp, String rarity, int slotIndex) {
+    public CollectionSlot(String id, String userBirdId, Date timestamp, String imageUrl, String rarity, int slotIndex) {
         this.id = id;
         this.userBirdId = userBirdId;
         this.timestamp = timestamp;
+        this.imageUrl = imageUrl;
         this.rarity = rarity;
         this.slotIndex = slotIndex;
     }
@@ -44,12 +47,28 @@ public class CollectionSlot {
         this.userBirdId = userBirdId;
     }
 
+    public String getBirdId() {
+        return birdId;
+    }
+
+    public void setBirdId(String birdId) {
+        this.birdId = birdId;
+    }
+
     public Date getTimestamp() {
         return timestamp;
     }
 
     public void setTimestamp(Date timestamp) {
         this.timestamp = timestamp;
+    }
+
+    public String getImageUrl() {
+        return imageUrl;
+    }
+
+    public void setImageUrl(String imageUrl) {
+        this.imageUrl = imageUrl;
     }
 
     public String getRarity() {

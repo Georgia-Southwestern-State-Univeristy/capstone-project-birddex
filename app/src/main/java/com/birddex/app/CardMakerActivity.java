@@ -12,11 +12,14 @@ import android.widget.ImageView;
 import android.widget.TextView;
 import android.widget.Toast;
 import android.content.Intent;
+
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatActivity;
 
 import com.bumptech.glide.Glide;
+import com.bumptech.glide.load.engine.DiskCacheStrategy;
+import com.bumptech.glide.signature.ObjectKey;
 import com.google.android.gms.tasks.Continuation;
 import com.google.android.gms.tasks.Task;
 import com.google.android.gms.tasks.TaskCompletionSource;
@@ -28,17 +31,23 @@ import com.google.firebase.firestore.Query;
 import com.google.firebase.storage.FirebaseStorage;
 import com.google.firebase.storage.StorageReference;
 import com.google.firebase.storage.UploadTask;
-import com.bumptech.glide.load.engine.DiskCacheStrategy;
-import com.bumptech.glide.signature.ObjectKey;
+
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.util.Date;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.UUID;
 
 /**
- * CardMakerActivity now acts as a PREVIEW screen only.
+ * CardMakerActivity acts as a PREVIEW screen only.
  * It shows the styled bird card preview using view_bird_card.xml,
  * but saves ONLY the original bird photo to Firebase / collection.
+ *
+ * IMPORTANT behavior:
+ * - First time a species is captured -> create its collection card
+ * - Later captures of the same species -> save the sighting + image only
+ *   and DO NOT auto-overwrite the visible collection card
  */
 public class CardMakerActivity extends AppCompatActivity {
 
@@ -109,7 +118,6 @@ public class CardMakerActivity extends AppCompatActivity {
             return;
         }
 
-        // Populate preview card text
         if (currentCommonName != null && !currentCommonName.trim().isEmpty()) {
             txtBirdName.setText(currentCommonName);
         } else if (currentScientificName != null && !currentScientificName.trim().isEmpty()) {
@@ -126,7 +134,6 @@ public class CardMakerActivity extends AppCompatActivity {
 
         txtLocation.setText(CardFormatUtils.formatLocation(currentState, currentLocality));
         txtDateCaught.setText(CardFormatUtils.formatCaughtDate(new Date(currentCaughtTime)));
-
         txtFooter.setText("Preview only • Original photo will be saved");
 
         imgBird.setImageDrawable(null);
@@ -140,13 +147,9 @@ public class CardMakerActivity extends AppCompatActivity {
                 .into(imgBird);
 
         btnCancel.setOnClickListener(v -> finish());
-
         btnSave.setOnClickListener(v -> processAndSaveBirdDiscovery(originalImageUri));
     }
 
-    /**
-     * Handles BOTH file:// and content:// safely
-     */
     private Bitmap loadBitmapSafe(Uri uri) throws IOException {
         String scheme = uri.getScheme();
 
@@ -163,10 +166,6 @@ public class CardMakerActivity extends AppCompatActivity {
         }
     }
 
-    /**
-     * Upload ONLY the original image.
-     * Do NOT render or upload a full card bitmap anymore.
-     */
     private void processAndSaveBirdDiscovery(Uri originalImageUri) {
         FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
         if (user == null) {
@@ -228,12 +227,20 @@ public class CardMakerActivity extends AppCompatActivity {
         String userBirdId = UUID.randomUUID().toString();
         String collectionSlotId = UUID.randomUUID().toString();
         String userBirdImageId = UUID.randomUUID().toString();
+        String locationId = UUID.randomUUID().toString();
         Date now = currentCaughtTime > 0 ? new Date(currentCaughtTime) : new Date();
+
+        Map<String, Object> locationData = new HashMap<>();
+        locationData.put("id", locationId);
+        locationData.put("state", currentState);
+        locationData.put("locality", currentLocality);
+
         UserBird userBird = new UserBird();
         userBird.setId(userBirdId);
         userBird.setUserId(userId);
         userBird.setBirdSpeciesId(currentBirdId);
         userBird.setTimeSpotted(now);
+        userBird.setLocationId(locationId);
 
         UserBirdImage userBirdImage = new UserBirdImage();
         userBirdImage.setId(userBirdImageId);
@@ -241,7 +248,15 @@ public class CardMakerActivity extends AppCompatActivity {
         userBirdImage.setBirdId(currentBirdId);
         userBirdImage.setImageUrl(originalImageUrl);
         userBirdImage.setTimestamp(now);
-        userBirdImage.setUserBirdRefId(userBirdId); // This line is present and correct.
+        userBirdImage.setUserBirdRefId(userBirdId);
+
+        final TaskCompletionSource<Void> addLocationTcs = new TaskCompletionSource<>();
+        FirebaseFirestore.getInstance()
+                .collection("locations")
+                .document(locationId)
+                .set(locationData)
+                .addOnSuccessListener(unused -> addLocationTcs.setResult(null))
+                .addOnFailureListener(addLocationTcs::setException);
 
         final TaskCompletionSource<Void> addUserBirdTcs = new TaskCompletionSource<>();
         firebaseManager.addUserBird(userBird, task -> {
@@ -252,58 +267,6 @@ public class CardMakerActivity extends AppCompatActivity {
             }
         });
 
-        final TaskCompletionSource<Integer> nextSlotIndexTcs = new TaskCompletionSource<>();
-        FirebaseFirestore.getInstance()
-                .collection("users")
-                .document(userId)
-                .collection("collectionSlot")
-                .orderBy("slotIndex", Query.Direction.DESCENDING)
-                .limit(1)
-                .get()
-                .addOnCompleteListener(task -> {
-                    if (task.isSuccessful()) {
-                        int nextSlotIndex = 0;
-                        if (task.getResult() != null && !task.getResult().isEmpty()) {
-                            Long maxSlotIndexLong = task.getResult().getDocuments().get(0).getLong("slotIndex");
-                            if (maxSlotIndexLong != null) {
-                                nextSlotIndex = maxSlotIndexLong.intValue() + 1;
-                            }
-                        }
-                        nextSlotIndexTcs.setResult(nextSlotIndex);
-                    } else {
-                        nextSlotIndexTcs.setException(task.getException());
-                    }
-                });
-
-        final TaskCompletionSource<Void> addCollectionSlotTcs = new TaskCompletionSource<>();
-        nextSlotIndexTcs.getTask()
-                .addOnSuccessListener(nextSlotIndex -> {
-                    CollectionSlot collectionSlot = new CollectionSlot();
-                    collectionSlot.setId(collectionSlotId);
-                    collectionSlot.setUserBirdId(userBirdId); // *** ADDED THIS LINE ***
-                    collectionSlot.setTimestamp(now);
-                    collectionSlot.setState(currentState);
-                    collectionSlot.setLocality(currentLocality);
-
-                    // collectionSlot.setImageUrl(originalImageUrl); // Removed this line
-
-                    collectionSlot.setRarity("common"); // Set initial rarity to common
-                    collectionSlot.setSlotIndex(nextSlotIndex);
-
-                    // Save names too so collection loads cleaner
-                    collectionSlot.setCommonName(currentCommonName);
-                    collectionSlot.setScientificName(currentScientificName);
-
-                    firebaseManager.addCollectionSlot(userId, collectionSlotId, collectionSlot, task -> {
-                        if (task.isSuccessful()) {
-                            addCollectionSlotTcs.setResult(null);
-                        } else {
-                            addCollectionSlotTcs.setException(task.getException());
-                        }
-                    });
-                })
-                .addOnFailureListener(addCollectionSlotTcs::setException);
-
         final TaskCompletionSource<Void> addUserBirdImageTcs = new TaskCompletionSource<>();
         firebaseManager.addUserBirdImage(userId, userBirdImageId, userBirdImage, task -> {
             if (task.isSuccessful()) {
@@ -313,10 +276,71 @@ public class CardMakerActivity extends AppCompatActivity {
             }
         });
 
+        final TaskCompletionSource<Void> addCollectionSlotMaybeTcs = new TaskCompletionSource<>();
+
+        FirebaseFirestore.getInstance()
+                .collection("users")
+                .document(userId)
+                .collection("collectionSlot")
+                .whereEqualTo("birdId", currentBirdId)
+                .limit(1)
+                .get()
+                .addOnSuccessListener(existingSlotQuery -> {
+                    // Species already has a visible card -> do NOT auto-update it
+                    if (!existingSlotQuery.isEmpty()) {
+                        addCollectionSlotMaybeTcs.setResult(null);
+                        return;
+                    }
+
+                    // First time this species is captured -> create its visible card
+                    FirebaseFirestore.getInstance()
+                            .collection("users")
+                            .document(userId)
+                            .collection("collectionSlot")
+                            .orderBy("slotIndex", Query.Direction.DESCENDING)
+                            .limit(1)
+                            .get()
+                            .addOnSuccessListener(slotIndexQuery -> {
+                                int nextSlotIndex = 0;
+                                if (!slotIndexQuery.isEmpty()) {
+                                    Long maxSlotIndexLong = slotIndexQuery.getDocuments().get(0).getLong("slotIndex");
+                                    if (maxSlotIndexLong != null) {
+                                        nextSlotIndex = maxSlotIndexLong.intValue() + 1;
+                                    }
+                                }
+
+                                CollectionSlot collectionSlot = new CollectionSlot();
+                                collectionSlot.setId(collectionSlotId);
+                                collectionSlot.setUserBirdId(userBirdId);
+                                collectionSlot.setBirdId(currentBirdId);
+                                collectionSlot.setTimestamp(now);
+                                collectionSlot.setState(currentState);
+                                collectionSlot.setLocality(currentLocality);
+                                collectionSlot.setImageUrl(originalImageUrl);
+                                collectionSlot.setRarity(currentRarity != null && !currentRarity.trim().isEmpty()
+                                        ? currentRarity
+                                        : "Unknown");
+                                collectionSlot.setSlotIndex(nextSlotIndex);
+                                collectionSlot.setCommonName(currentCommonName);
+                                collectionSlot.setScientificName(currentScientificName);
+
+                                firebaseManager.addCollectionSlot(userId, collectionSlotId, collectionSlot, task -> {
+                                    if (task.isSuccessful()) {
+                                        addCollectionSlotMaybeTcs.setResult(null);
+                                    } else {
+                                        addCollectionSlotMaybeTcs.setException(task.getException());
+                                    }
+                                });
+                            })
+                            .addOnFailureListener(addCollectionSlotMaybeTcs::setException);
+                })
+                .addOnFailureListener(addCollectionSlotMaybeTcs::setException);
+
         Tasks.whenAll(
+                        addLocationTcs.getTask(),
                         addUserBirdTcs.getTask(),
-                        addCollectionSlotTcs.getTask(),
-                        addUserBirdImageTcs.getTask()
+                        addUserBirdImageTcs.getTask(),
+                        addCollectionSlotMaybeTcs.getTask()
                 )
                 .addOnSuccessListener(unused -> {
                     Toast.makeText(CardMakerActivity.this, "Saved to your collection!", Toast.LENGTH_SHORT).show();

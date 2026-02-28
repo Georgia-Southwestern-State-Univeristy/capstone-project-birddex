@@ -36,8 +36,6 @@ public class FirebaseManager {
         void onEmailTaken(); // Added for email check failure
     }
 
-    // Deprecated: public interface UsernameCheckListener { ... }
-
     // New listener for combined username and email check
     public interface UsernameAndEmailCheckListener {
         void onCheckComplete(boolean isUsernameAvailable, boolean isEmailAvailable);
@@ -158,8 +156,7 @@ public class FirebaseManager {
                         } else {
                             listener.onFailure("Invalid response format from checkUsernameAndEmailAvailability function.");
                         }
-                    }
-                    else {
+                    } else {
                         String errorMessage = "Callable function call failed.";
                         if (task.getException() != null) {
                             errorMessage += " " + task.getException().getMessage();
@@ -446,8 +443,7 @@ public class FirebaseManager {
                         } else {
                             listener.onFailure("Invalid response format from moderatePfpImage function.");
                         }
-                    }
-                    else {
+                    } else {
                         String errorMessage = "Failed to moderate image.";
                         if (task.getException() != null) {
                             errorMessage += " " + task.getException().getMessage();
@@ -530,6 +526,30 @@ public class FirebaseManager {
                         listener.onFailure("Failed to fetch PFP change limit: " + task.getException().getMessage());
                     }
                 });
+    }
+
+    // --- FORUM METHODS (Updated to match existing database structure) ---
+
+    public void addForumPost(ForumPost post, OnCompleteListener<Void> listener) {
+        // Saving to the "forumThreads" collection as currently used in fragments
+        db.collection("forumThreads").document(post.getId()).set(post).addOnCompleteListener(listener);
+    }
+
+    public void updateForumPost(String postId, Map<String, Object> updates, OnCompleteListener<Void> listener) {
+        db.collection("forumThreads").document(postId).update(updates).addOnCompleteListener(listener);
+    }
+
+    public void deleteForumPost(String postId, OnCompleteListener<Void> listener) {
+        db.collection("forumThreads").document(postId).delete().addOnCompleteListener(listener);
+    }
+
+    public void addForumComment(String postId, ForumComment comment, OnCompleteListener<DocumentReference> listener) {
+        // Saving to the "comments" sub-collection inside "forumThreads"
+        db.collection("forumThreads").document(postId).collection("comments").add(comment).addOnCompleteListener(listener);
+    }
+
+    public void deleteForumComment(String postId, String commentId, OnCompleteListener<Void> listener) {
+        db.collection("forumThreads").document(postId).collection("comments").document(commentId).delete().addOnCompleteListener(listener);
     }
 
     // Bird Collection
@@ -625,7 +645,6 @@ public class FirebaseManager {
     }
 
     // CollectionSlot Subcollection
-    // Removed imageUrl from addCollectionSlot method signature
     public void addCollectionSlot(String userId, String collectionSlotId, CollectionSlot collectionSlot, OnCompleteListener<Void> listener) {
         db.collection("users").document(userId).collection("collectionSlot").document(collectionSlotId).set(collectionSlot).addOnCompleteListener(listener);
     }
@@ -776,45 +795,6 @@ public class FirebaseManager {
 
     public void deleteHunterSighting(String hunterSightId, OnCompleteListener<Void> listener) {
         db.collection("hunterSightings").document(hunterSightId).delete().addOnCompleteListener(listener);
-    }
-
-    // Threads Collection
-    public void addThread(Thread thread, OnCompleteListener<Void> listener) {
-        db.collection("threads").document(thread.getId()).set(thread).addOnCompleteListener(listener);
-    }
-
-    public void getThreadById(String threadId, OnCompleteListener<DocumentSnapshot> listener) {
-        db.collection("threads").document(threadId).get().addOnCompleteListener(listener);
-    }
-
-    public void updateThread(Thread thread, OnCompleteListener<Void> listener) {
-        db.collection("threads").document(thread.getId()).set(thread).addOnCompleteListener(listener);
-    }
-
-    public void deleteThread(String threadId, OnCompleteListener<Void> listener) {
-        db.collection("threads").document(threadId).delete().addOnCompleteListener(listener);
-    }
-
-    // Posts Subcollection
-    public void addPost(String threadId, Post post, OnCompleteListener<DocumentReference> listener) {
-        if (post.getId() == null || post.getId().isEmpty()) {
-            db.collection("threads").document(threadId).collection("posts").add(post).addOnCompleteListener(listener);
-        }
-        else {
-            db.collection("threads").document(threadId).collection("posts").document(post.getId()).set(post).addOnCompleteListener(task -> listener.onComplete(null));
-        }
-    }
-
-    public void getPostById(String threadId, String postId, OnCompleteListener<DocumentSnapshot> listener) {
-        db.collection("threads").document(threadId).collection("posts").document(postId).get().addOnCompleteListener(listener);
-    }
-
-    public void updatePost(String threadId, Post post, OnCompleteListener<Void> listener) {
-        db.collection("threads").document(threadId).collection("posts").document(post.getId()).set(post).addOnCompleteListener(listener);
-    }
-
-    public void deletePost(String threadId, String postId, OnCompleteListener<Void> listener) {
-        db.collection("threads").document(threadId).collection("posts").document(postId).delete().addOnCompleteListener(listener);
     }
 
     // Reports Collection

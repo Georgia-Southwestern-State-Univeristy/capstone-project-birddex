@@ -158,8 +158,7 @@ public class FirebaseManager {
                         } else {
                             listener.onFailure("Invalid response format from checkUsernameAndEmailAvailability function.");
                         }
-                    }
-                    else {
+                    } else {
                         String errorMessage = "Callable function call failed.";
                         if (task.getException() != null) {
                             errorMessage += " " + task.getException().getMessage();
@@ -446,8 +445,7 @@ public class FirebaseManager {
                         } else {
                             listener.onFailure("Invalid response format from moderatePfpImage function.");
                         }
-                    }
-                    else {
+                    } else {
                         String errorMessage = "Failed to moderate image.";
                         if (task.getException() != null) {
                             errorMessage += " " + task.getException().getMessage();
@@ -625,7 +623,6 @@ public class FirebaseManager {
     }
 
     // CollectionSlot Subcollection
-    // Removed imageUrl from addCollectionSlot method signature
     public void addCollectionSlot(String userId, String collectionSlotId, CollectionSlot collectionSlot, OnCompleteListener<Void> listener) {
         db.collection("users").document(userId).collection("collectionSlot").document(collectionSlotId).set(collectionSlot).addOnCompleteListener(listener);
     }

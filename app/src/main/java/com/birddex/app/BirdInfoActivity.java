@@ -224,14 +224,14 @@ public class BirdInfoActivity extends AppCompatActivity {
                 collectionSlot.setId(collectionSlotId);
                 collectionSlot.setUserBirdId(userBirdId);
                 collectionSlot.setTimestamp(now);
-                // collectionSlot.setImageUrl(currentImageUrl); // Removed this line
-                collectionSlot.setRarity("common"); // Set initial rarity to common
+                collectionSlot.setImageUrl(currentImageUrl);
+                collectionSlot.setRarity("R1"); // Set initial rarity to R1
                 collectionSlot.setSlotIndex(slotIndex);
 
                 firebaseManager.addCollectionSlot(userId, collectionSlotId, collectionSlot, slotTask -> {
                     if (slotTask.isSuccessful()) {
                         Log.d(TAG, "SUCCESS: Saved CollectionSlot: " + collectionSlotId
-                                + " with rarity common and slotIndex " + slotIndex);
+                                + " with rarity R1 and slotIndex " + slotIndex);
                         saveUserBirdSighting(userId, userBirdId, now);
                     } else {
                         Log.e(TAG, "FAILURE: Could not save CollectionSlot.", slotTask.getException());

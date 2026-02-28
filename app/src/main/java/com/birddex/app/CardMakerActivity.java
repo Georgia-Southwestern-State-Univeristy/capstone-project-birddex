@@ -241,7 +241,6 @@ public class CardMakerActivity extends AppCompatActivity {
         userBirdImage.setBirdId(currentBirdId);
         userBirdImage.setImageUrl(originalImageUrl);
         userBirdImage.setTimestamp(now);
-        userBirdImage.setUserBirdRefId(userBirdId); // This line is present and correct.
 
         final TaskCompletionSource<Void> addUserBirdTcs = new TaskCompletionSource<>();
         firebaseManager.addUserBird(userBird, task -> {
@@ -280,14 +279,17 @@ public class CardMakerActivity extends AppCompatActivity {
                 .addOnSuccessListener(nextSlotIndex -> {
                     CollectionSlot collectionSlot = new CollectionSlot();
                     collectionSlot.setId(collectionSlotId);
-                    collectionSlot.setUserBirdId(userBirdId); // *** ADDED THIS LINE ***
+                    collectionSlot.setUserBirdId(userBirdId);
                     collectionSlot.setTimestamp(now);
                     collectionSlot.setState(currentState);
                     collectionSlot.setLocality(currentLocality);
 
-                    // collectionSlot.setImageUrl(originalImageUrl); // Removed this line
+                    // IMPORTANT: save the ORIGINAL IMAGE here, not a rendered card image
+                    collectionSlot.setImageUrl(originalImageUrl);
 
-                    collectionSlot.setRarity("common"); // Set initial rarity to common
+                    collectionSlot.setRarity(currentRarity != null && !currentRarity.trim().isEmpty()
+                            ? currentRarity
+                            : "Unknown");
                     collectionSlot.setSlotIndex(nextSlotIndex);
 
                     // Save names too so collection loads cleaner

@@ -138,7 +138,9 @@ public class EditProfileActivity extends AppCompatActivity {
                 imageUri = result.getUriContent();
                 if (imageUri != null) {
                     Log.d(TAG, "Cropped image URI: " + imageUri.toString());
-                    Glide.with(this).load(imageUri).into(ivPfpPreview);
+                    if (!isFinishing() && !isDestroyed()) {
+                        Glide.with(this).load(imageUri).into(ivPfpPreview);
+                    }
                     uploadedProfilePictureDownloadUrl = null; // Reset to null until uploaded
                 } else {
                     Log.e(TAG, "Cropped image URI is null");
@@ -173,6 +175,7 @@ public class EditProfileActivity extends AppCompatActivity {
                 firebaseManager.recordPfpChange(new FirebaseManager.PfpChangeLimitListener() {
                     @Override
                     public void onSuccess(int pfpChangesToday, Date pfpCooldownResetTimestamp) { // Updated signature
+                        if (isFinishing() || isDestroyed()) return;
                         Log.d(TAG, "PFP change recorded. Remaining: " + pfpChangesToday);
                         tvPfpChangesRemaining.setText("PFP changes remaining today: " + pfpChangesToday);
                         // The pfpCooldownResetTimestamp can be used to display when the limit resets,
@@ -190,6 +193,7 @@ public class EditProfileActivity extends AppCompatActivity {
                         firebaseManager.callOpenAiImageModeration(base64Image, new FirebaseManager.OpenAiModerationListener() {
                             @Override
                             public void onSuccess(boolean isAppropriate, String moderationReason) {
+                                if (isFinishing() || isDestroyed()) return;
                                 if (isAppropriate) {
                                     uploadImageToFirebase(imageUri, newUsername, newBio); // Proceed with upload
                                 } else {
@@ -208,6 +212,7 @@ public class EditProfileActivity extends AppCompatActivity {
 
                             @Override
                             public void onFailure(String errorMessage) {
+                                if (isFinishing() || isDestroyed()) return;
                                 Toast.makeText(EditProfileActivity.this, "Image moderation failed: " + errorMessage, Toast.LENGTH_LONG).show();
                                 Log.e(TAG, "Error during PFP image moderation: " + errorMessage);
                             }
@@ -217,12 +222,14 @@ public class EditProfileActivity extends AppCompatActivity {
 
                     @Override
                     public void onFailure(String errorMessage) {
+                        if (isFinishing() || isDestroyed()) return;
                         Log.e(TAG, "Failed to record PFP change: " + errorMessage);
                         Toast.makeText(EditProfileActivity.this, "Error: " + errorMessage, Toast.LENGTH_LONG).show();
                     }
 
                     @Override
                     public void onLimitExceeded() {
+                        if (isFinishing() || isDestroyed()) return;
                         Log.w(TAG, "PFP change limit exceeded.");
                         Toast.makeText(EditProfileActivity.this, "You have reached your daily limit for profile picture changes.", Toast.LENGTH_LONG).show();
                     }
@@ -260,6 +267,7 @@ public class EditProfileActivity extends AppCompatActivity {
 
         String userId = currentUser.getUid();
         firebaseManager.getUserProfile(userId, task -> {
+            if (isFinishing() || isDestroyed()) return;
             if (task.isSuccessful() && task.getResult() != null) {
                 User user = task.getResult().toObject(User.class);
                 if (user != null) {
@@ -295,6 +303,7 @@ public class EditProfileActivity extends AppCompatActivity {
         }
 
         db.collection("users").document(userId).get().addOnSuccessListener(documentSnapshot -> {
+            if (isFinishing() || isDestroyed()) return;
             if (documentSnapshot.exists()) {
                 // The Cloud Function \'checkUsernameAndEmailAvailability\' should ensure these fields exist and are up-to-date
                 Long pfpChangesTodayLong = documentSnapshot.getLong("pfpChangesToday");
@@ -308,6 +317,7 @@ public class EditProfileActivity extends AppCompatActivity {
                 tvPfpChangesRemaining.setText("User data not found.");
             }
         }).addOnFailureListener(e -> {
+            if (isFinishing() || isDestroyed()) return;
             Log.e(TAG, "Error fetching pfpChangesToday: " + e.getMessage(), e);
             tvPfpChangesRemaining.setText("Error loading PFP limits.");
         });
@@ -321,6 +331,7 @@ public class EditProfileActivity extends AppCompatActivity {
             return;
         }
         db.collection("users").document(userId).get().addOnSuccessListener(documentSnapshot -> {
+            if (isFinishing() || isDestroyed()) return;
             if (documentSnapshot.exists()) {
                 Long pfpChangesTodayLong = documentSnapshot.getLong("pfpChangesToday");
                 int pfpChangesToday = pfpChangesTodayLong != null ? pfpChangesTodayLong.intValue() : 0;
@@ -345,6 +356,7 @@ public class EditProfileActivity extends AppCompatActivity {
                 Toast.makeText(this, "User data not found to check limits.", Toast.LENGTH_SHORT).show();
             }
         }).addOnFailureListener(e -> {
+            if (isFinishing() || isDestroyed()) return;
             Log.e(TAG, "Error checking PFP limits before picking image: " + e.getMessage(), e);
             Toast.makeText(this, "Error checking PFP limits. Try again later.", Toast.LENGTH_LONG).show();
         });
@@ -421,19 +433,23 @@ public class EditProfileActivity extends AppCompatActivity {
 
         newProfileImageRef.putFile(newImageUri)
             .addOnSuccessListener(taskSnapshot -> {
+                if (isFinishing() || isDestroyed()) return;
                 Log.d(TAG, "New image uploaded successfully to Firebase Storage.");
                 newProfileImageRef.getDownloadUrl().addOnSuccessListener(uri -> {
+                    if (isFinishing() || isDestroyed()) return;
                     String downloadUrl = uri.toString();
                     Log.d(TAG, "Download URL obtained for new image: " + downloadUrl);
                     uploadedProfilePictureDownloadUrl = downloadUrl; // Store the uploaded URL
                     saveProfileChanges(newUsername, newBio, uploadedProfilePictureDownloadUrl); // Save changes with new URL
                     Toast.makeText(this, "Profile picture updated!", Toast.LENGTH_SHORT).show();
                 }).addOnFailureListener(e -> {
+                    if (isFinishing() || isDestroyed()) return;
                     Log.e(TAG, "Failed to get download URL for new image: " + e.getMessage(), e);
                     Toast.makeText(this, "Failed to get download URL: " + e.getMessage(), Toast.LENGTH_LONG).show();
                 });
             })
             .addOnFailureListener(e -> {
+                if (isFinishing() || isDestroyed()) return;
                 Log.e(TAG, "Failed to upload new image to Firebase Storage: " + e.getMessage(), e);
                 Toast.makeText(this, "Failed to upload image: " + e.getMessage(), Toast.LENGTH_LONG).show();
             });
@@ -521,6 +537,7 @@ public class EditProfileActivity extends AppCompatActivity {
             firebaseManager.updateUserProfile(userToUpdate, new FirebaseManager.AuthListener() {
                 @Override
                 public void onSuccess(com.google.firebase.auth.FirebaseUser user) {
+                    if (isFinishing() || isDestroyed()) return;
                     Log.d(TAG, "Firestore profile updated successfully via FirebaseManager.");
                     // Update local \'initial\' values to reflect what\'s now in Firestore
                     initialUsername = newUsername;
@@ -537,18 +554,21 @@ public class EditProfileActivity extends AppCompatActivity {
 
                 @Override
                 public void onFailure(String errorMessage) {
+                    if (isFinishing() || isDestroyed()) return;
                     Log.e(TAG, "Failed to update profile in Firestore via FirebaseManager: " + errorMessage);
                     Toast.makeText(EditProfileActivity.this, "Failed to update profile: " + errorMessage, Toast.LENGTH_LONG).show();
                 }
 
                 @Override
                 public void onUsernameTaken() {
+                    if (isFinishing() || isDestroyed()) return;
                     etUsername.setError("This username is already taken. Please choose a different one.");
                     Toast.makeText(EditProfileActivity.this, "Username is already taken.", Toast.LENGTH_SHORT).show();
                 }
 
                 @Override
                 public void onEmailTaken() {
+                    if (isFinishing() || isDestroyed()) return;
                     // This case should ideally not happen for updateUserProfile, as email is not updated via this path.
                     // However, we must implement it due to the AuthListener interface contract.
                     Log.w(TAG, "onEmailTaken called unexpectedly in EditProfileActivity. This typically means the email is being checked by the CF but not updated here.");

@@ -73,6 +73,7 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
         if (user != null) {
             db.collection("users").document(user.getUid()).get()
                     .addOnSuccessListener(doc -> {
+                        if (isFinishing() || isDestroyed()) return;
                         if (doc.exists()) {
                             currentUsername = doc.getString("username");
                             currentUserPfpUrl = doc.getString("profilePictureUrl");
@@ -88,6 +89,7 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
     private void loadPostDetails() {
         db.collection("forumThreads").document(postId)
                 .addSnapshotListener((doc, error) -> {
+                    if (isFinishing() || isDestroyed()) return;
                     if (error != null) return;
                     if (doc != null && doc.exists()) {
                         originalPost = doc.toObject(ForumPost.class);
@@ -100,6 +102,7 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
     }
 
     private void bindPostToLayout(ForumPost post) {
+        if (isFinishing() || isDestroyed()) return;
         View postView = binding.postContent.getRoot();
         
         TextView tvUsername = postView.findViewById(R.id.tvPostUsername);
@@ -164,6 +167,7 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
                 .setPositiveButton("Delete", (dialog, which) -> {
                     firebaseManager.deleteForumPost(post.getId(), task -> {
                         if (task.isSuccessful()) {
+                            if (isFinishing() || isDestroyed()) return;
                             Toast.makeText(this, "Post deleted", Toast.LENGTH_SHORT).show();
                             finish();
                         }
@@ -191,6 +195,7 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
         Report report = new Report("post", post.getId(), user.getUid(), reason);
         firebaseManager.addReport(report, task -> {
             if (task.isSuccessful()) {
+                if (isFinishing() || isDestroyed()) return;
                 Toast.makeText(this, "Report submitted.", Toast.LENGTH_LONG).show();
             }
         });
@@ -224,6 +229,7 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
         db.collection("forumThreads").document(postId).collection("comments")
                 .orderBy("timestamp", Query.Direction.ASCENDING)
                 .addSnapshotListener((value, error) -> {
+                    if (isFinishing() || isDestroyed()) return;
                     if (error != null) return;
                     if (value != null) {
                         List<ForumComment> comments = new ArrayList<>();
@@ -251,12 +257,14 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
         
         db.collection("forumThreads").document(postId).collection("comments").add(comment)
                 .addOnSuccessListener(docRef -> {
+                    if (isFinishing() || isDestroyed()) return;
                     binding.etComment.setText("");
                     binding.btnSendComment.setEnabled(true);
                     db.collection("forumThreads").document(postId)
                             .update("commentCount", FieldValue.increment(1));
                 })
                 .addOnFailureListener(e -> {
+                    if (isFinishing() || isDestroyed()) return;
                     binding.btnSendComment.setEnabled(true);
                     Toast.makeText(this, "Failed to post comment", Toast.LENGTH_SHORT).show();
                 });

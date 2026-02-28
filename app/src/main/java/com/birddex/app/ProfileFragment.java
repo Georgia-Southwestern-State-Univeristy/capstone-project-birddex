@@ -151,6 +151,7 @@ public class ProfileFragment extends Fragment {
         String userId = user.getUid();
         db.collection("users").document(userId).get()
                 .addOnSuccessListener(documentSnapshot -> {
+                    if (!isAdded()) return;
                     if (documentSnapshot.exists()) {
                         User userProfile = documentSnapshot.toObject(User.class);
                         if (userProfile != null) {
@@ -187,6 +188,7 @@ public class ProfileFragment extends Fragment {
                     }
                 })
                 .addOnFailureListener(e -> {
+                    if (!isAdded()) return;
                     Log.e(TAG, "Error fetching user profile: " + e.getMessage(), e);
                     Toast.makeText(requireContext(), "Failed to load profile.", Toast.LENGTH_SHORT).show();
                     tvUsername.setText("Error");
@@ -207,6 +209,7 @@ public class ProfileFragment extends Fragment {
         firebaseManager.getOpenAiRequestsRemaining(new FirebaseManager.OpenAiRequestLimitListener() {
             @Override
             public void onCheckComplete(boolean hasRequestsRemaining, int remaining, Date cooldownResetTimestamp) {
+                if (!isAdded()) return;
                 currentOpenAiRequestsRemaining = remaining;
                 openAiCooldownResetTimestamp = cooldownResetTimestamp;
                 updateOpenAiRequestsRemainingUI(remaining, cooldownResetTimestamp);
@@ -214,6 +217,7 @@ public class ProfileFragment extends Fragment {
 
             @Override
             public void onFailure(String errorMessage) {
+                if (!isAdded()) return;
                 Log.e(TAG, "Error fetching OpenAI requests remaining: " + errorMessage);
                 updateOpenAiRequestsRemainingUI(0, null); // Show error state
                 Toast.makeText(requireContext(), "Failed to load AI request limits.", Toast.LENGTH_SHORT).show();
@@ -231,6 +235,7 @@ public class ProfileFragment extends Fragment {
         firebaseManager.getPfpChangesRemaining(new FirebaseManager.PfpChangeLimitListener() {
             @Override
             public void onSuccess(int pfpChangesToday, Date cooldownResetTimestamp) {
+                if (!isAdded()) return;
                 currentPfpChangesToday = pfpChangesToday;
                 pfpCooldownResetTimestamp = cooldownResetTimestamp;
                 updatePfpChangesRemainingUI(pfpChangesToday, cooldownResetTimestamp);
@@ -238,6 +243,7 @@ public class ProfileFragment extends Fragment {
 
             @Override
             public void onFailure(String errorMessage) {
+                if (!isAdded()) return;
                 Log.e(TAG, "Error fetching PFP changes remaining: " + errorMessage);
                 updatePfpChangesRemainingUI(0, null); // Show error state
                 Toast.makeText(requireContext(), "Failed to load PFP change limits.", Toast.LENGTH_SHORT).show();
@@ -245,6 +251,7 @@ public class ProfileFragment extends Fragment {
 
             @Override
             public void onLimitExceeded() {
+                if (!isAdded()) return;
                 // This state should be handled by the Cloud Function, but for local UI consistency:
                 updatePfpChangesRemainingUI(0, pfpCooldownResetTimestamp); // Assuming cooldown timestamp is available
                 Toast.makeText(requireContext(), "PFP change limit exceeded!", Toast.LENGTH_SHORT).show();

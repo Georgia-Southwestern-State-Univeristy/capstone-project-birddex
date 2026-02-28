@@ -79,10 +79,11 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
 
         db.collection("users").document(currentUser.getUid()).get()
                 .addOnSuccessListener(documentSnapshot -> {
+                    if (!isAdded() || getActivity() == null || binding == null) return;
                     if (documentSnapshot.exists()) {
                         String profilePictureUrl = documentSnapshot.getString("profilePictureUrl");
-                        if (getContext() != null && binding != null) {
-                            Glide.with(getContext())
+                        if (getContext() != null) {
+                            Glide.with(this)
                                     .load(profilePictureUrl)
                                     .placeholder(R.drawable.ic_profile)
                                     .into(binding.ivUserProfilePicture);
@@ -95,12 +96,13 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
         db.collection("forumThreads")
                 .orderBy("timestamp", Query.Direction.DESCENDING)
                 .addSnapshotListener((value, error) -> {
+                    if (!isAdded() || binding == null) return;
                     if (error != null) {
                         Log.e(TAG, "Listen failed.", error);
                         return;
                     }
 
-                    if (value != null && binding != null) {
+                    if (value != null) {
                         List<ForumPost> posts = new ArrayList<>();
                         for (DocumentSnapshot doc : value.getDocuments()) {
                             ForumPost post = doc.toObject(ForumPost.class);
@@ -172,6 +174,7 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
                 .setMessage("Are you sure you want to delete this post?")
                 .setPositiveButton("Delete", (dialog, which) -> {
                     firebaseManager.deleteForumPost(post.getId(), task -> {
+                        if (!isAdded()) return;
                         if (task.isSuccessful()) {
                             Toast.makeText(getContext(), "Post deleted", Toast.LENGTH_SHORT).show();
                         }
@@ -198,6 +201,7 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
 
         Report report = new Report("post", post.getId(), user.getUid(), reason);
         firebaseManager.addReport(report, task -> {
+            if (!isAdded()) return;
             if (task.isSuccessful()) {
                 Toast.makeText(getContext(), "Thank you for reporting. We will review this post.", Toast.LENGTH_LONG).show();
             } else {

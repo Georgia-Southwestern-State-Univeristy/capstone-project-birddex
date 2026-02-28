@@ -13,12 +13,12 @@ import com.google.firebase.auth.FirebaseUser;
 
 /**
  * SignUpActivity handles the user registration process.
- * Users can create a new account by providing a username, email, and password.
  */
 public class SignUpActivity extends AppCompatActivity {
 
     private FirebaseManager firebaseManager;
     private sign_IN_upValidator signINupValidator;
+    private LoadingDialog loadingDialog;
 
     private EditText usernameEditText;
     private EditText emailEditText;
@@ -29,11 +29,10 @@ public class SignUpActivity extends AppCompatActivity {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_sign_up);
 
-        // Initialize helper classes for Firebase operations and input validation.
-        firebaseManager = new FirebaseManager(this); // Pass \'this\' (Context) to FirebaseManager
+        firebaseManager = new FirebaseManager(this);
         signINupValidator = new sign_IN_upValidator();
+        loadingDialog = new LoadingDialog(this);
 
-        // Bind UI components to variables.
         usernameEditText = findViewById(R.id.etUsername);
         emailEditText = findViewById(R.id.etEmail);
         passwordEditText = findViewById(R.id.etPassword);
@@ -41,40 +40,37 @@ public class SignUpActivity extends AppCompatActivity {
         Button btnSignUp = findViewById(R.id.btnSignUp);
         TextView tvAlready = findViewById(R.id.tvAlready);
 
-        // Handle the sign-up button click.
         btnSignUp.setOnClickListener(v -> {
-            // Validate the user input using the signINupValidator helper.
             if (signINupValidator.validateSignUpForm(usernameEditText, emailEditText, passwordEditText)) {
                 String username = usernameEditText.getText().toString();
                 String email = emailEditText.getText().toString();
                 String password = passwordEditText.getText().toString();
                 
-                // Attempt to create a new account with Firebase.
+                loadingDialog.show();
                 firebaseManager.createAccount(username, email, password, new FirebaseManager.AuthListener() {
                     @Override
                     public void onSuccess(FirebaseUser user) {
-                        // On successful account creation and email verification sent,
-                        // redirect to a screen instructing the user to verify their email.
+                        loadingDialog.dismiss();
                         Toast.makeText(SignUpActivity.this, "Sign up successful. Please verify your email. " + getString(R.string.email_verification_expiration_message), Toast.LENGTH_LONG).show();
                         startActivity(new Intent(SignUpActivity.this, SignUpCompleteActivity.class));
-                        finish(); // Finish current activity to prevent returning on back press.
+                        finish();
                     }
 
                     @Override
                     public void onFailure(String errorMessage) {
-                        // Display error message if account creation fails.
+                        loadingDialog.dismiss();
                         Toast.makeText(SignUpActivity.this, errorMessage, Toast.LENGTH_SHORT).show();
                     }
 
                     @Override
                     public void onUsernameTaken() { 
-                        // Inform the user if the username is already in use.
+                        loadingDialog.dismiss();
                         usernameEditText.setError("Username already taken.");
                     }
 
                     @Override
                     public void onEmailTaken() {
-                        // Inform the user if the email is already in use.
+                        loadingDialog.dismiss();
                         emailEditText.setError("Email already taken.");
                         Toast.makeText(SignUpActivity.this, "Email is already taken.", Toast.LENGTH_SHORT).show();
                     }
@@ -82,10 +78,17 @@ public class SignUpActivity extends AppCompatActivity {
             }
         });
 
-        // Navigate back to LoginActivity if the user already has an account.
         tvAlready.setOnClickListener(v -> {
             startActivity(new Intent(SignUpActivity.this, LoginActivity.class));
             finish();
         });
+    }
+
+    @Override
+    protected void onPause() {
+        super.onPause();
+        if (loadingDialog != null && loadingDialog.isShowing()) {
+            loadingDialog.dismiss();
+        }
     }
 }

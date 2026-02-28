@@ -66,6 +66,7 @@ public class CardMakerActivity extends AppCompatActivity {
     public static final String EXTRA_CAUGHT_TIME = "caughtTime";
 
     private FirebaseManager firebaseManager;
+    private LoadingDialog loadingDialog;
 
     private Uri originalImageUri;
     private String currentBirdId;
@@ -85,6 +86,7 @@ public class CardMakerActivity extends AppCompatActivity {
         setContentView(R.layout.activity_card_maker);
 
         firebaseManager = new FirebaseManager(this);
+        loadingDialog = new LoadingDialog(this);
 
         Button btnSave = findViewById(R.id.btnSaveCard);
         Button btnCancel = findViewById(R.id.btnCancelCard);
@@ -174,6 +176,8 @@ public class CardMakerActivity extends AppCompatActivity {
             return;
         }
 
+        loadingDialog.show();
+
         String userId = user.getUid();
         String originalImageFileName = "user_images/" + userId + "/" + UUID.randomUUID() + ".jpg";
 
@@ -185,6 +189,7 @@ public class CardMakerActivity extends AppCompatActivity {
             originalImageData = originalBaos.toByteArray();
         } catch (IOException e) {
             Log.e(TAG, "Error converting original image to byte array", e);
+            loadingDialog.dismiss();
             Toast.makeText(this, "Error processing original image.", Toast.LENGTH_LONG).show();
             return;
         }
@@ -196,6 +201,7 @@ public class CardMakerActivity extends AppCompatActivity {
                 })
                 .addOnFailureListener(e -> {
                     Log.e(TAG, "Original image upload failed: " + e.getMessage(), e);
+                    loadingDialog.dismiss();
                     Toast.makeText(CardMakerActivity.this, "Failed to upload image. Please try again.", Toast.LENGTH_LONG).show();
                 });
     }
@@ -219,6 +225,7 @@ public class CardMakerActivity extends AppCompatActivity {
         FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
         if (user == null) {
             Log.e(TAG, "Store failed: User is not authenticated.");
+            loadingDialog.dismiss();
             Toast.makeText(this, "Error: No user logged in. Please log in again.", Toast.LENGTH_LONG).show();
             return;
         }
@@ -343,6 +350,8 @@ public class CardMakerActivity extends AppCompatActivity {
                         addCollectionSlotMaybeTcs.getTask()
                 )
                 .addOnSuccessListener(unused -> {
+                    Log.d(TAG, "SUCCESS: All Firestore writes succeeded.");
+                    loadingDialog.dismiss();
                     Toast.makeText(CardMakerActivity.this, "Saved to your collection!", Toast.LENGTH_SHORT).show();
 
                     Intent home = new Intent(CardMakerActivity.this, HomeActivity.class);
@@ -353,7 +362,16 @@ public class CardMakerActivity extends AppCompatActivity {
                 })
                 .addOnFailureListener(e -> {
                     Log.e(TAG, "FAILURE: One or more Firestore writes failed.", e);
+                    loadingDialog.dismiss();
                     Toast.makeText(CardMakerActivity.this, "Error saving to collection. Please try again.", Toast.LENGTH_LONG).show();
                 });
+    }
+
+    @Override
+    protected void onPause() {
+        super.onPause();
+        if (loadingDialog != null && loadingDialog.isShowing()) {
+            loadingDialog.dismiss();
+        }
     }
 }

@@ -1,6 +1,7 @@
 package com.birddex.app;
 
 import android.app.AlertDialog;
+import android.content.Intent;
 import android.os.Bundle;
 import android.view.View;
 import android.widget.Button;
@@ -31,6 +32,7 @@ public class ViewBirdCardActivity extends AppCompatActivity {
 
     private ImageView imgBird;
     private Button btnChangeCardImage;
+    private Button btnBirdInfo;
     private TextView txtLocation;
     private TextView txtDateCaught;
 
@@ -52,6 +54,7 @@ public class ViewBirdCardActivity extends AppCompatActivity {
         TextView txtFooter = findViewById(R.id.txtFooter);
         imgBird = findViewById(R.id.imgBird);
         btnChangeCardImage = findViewById(R.id.btnChangeCardImage);
+        btnBirdInfo = findViewById(R.id.btnBirdInfo);
 
         currentImageUrl = getIntent().getStringExtra(CollectionCardAdapter.EXTRA_IMAGE_URL);
         String commonName = getIntent().getStringExtra(CollectionCardAdapter.EXTRA_COMMON_NAME);
@@ -84,11 +87,26 @@ public class ViewBirdCardActivity extends AppCompatActivity {
         if (currentBirdId == null || currentBirdId.trim().isEmpty()) {
             btnChangeCardImage.setEnabled(false);
             btnChangeCardImage.setText("No Saved Bird ID");
+
+            btnBirdInfo.setEnabled(false);
+            btnBirdInfo.setText("No Bird Info");
         } else {
             btnChangeCardImage.setOnClickListener(v -> openImagePickerForThisBird());
+            btnBirdInfo.setOnClickListener(v -> openBirdInfoPage());
         }
 
         btnBack.setOnClickListener(v -> finish());
+    }
+
+    private void openBirdInfoPage() {
+        if (currentBirdId == null || currentBirdId.trim().isEmpty()) {
+            Toast.makeText(this, "No bird info available.", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        Intent intent = new Intent(this, BirdWikiActivity.class);
+        intent.putExtra(BirdWikiActivity.EXTRA_BIRD_ID, currentBirdId);
+        startActivity(intent);
     }
 
     private void loadBirdImage(String imageUrl) {

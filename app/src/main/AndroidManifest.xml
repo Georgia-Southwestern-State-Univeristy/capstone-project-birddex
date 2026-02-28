@@ -67,9 +67,6 @@
         <activity
             android:name=".LoginActivity"
             android:exported="false" />
-        <activity
-            android:name=".EditProfileActivity"
-            android:exported="false" />
 
         <!-- Crop Image Activity Declaration for com.canhub.cropper -->
         <activity
@@ -90,6 +87,9 @@
         <activity android:name=".CardMakerActivity" />
         <activity
             android:name=".ViewBirdCardActivity"
+            android:exported="false" />
+        <activity
+            android:name=".BirdWikiActivity"
             android:exported="false" />
     </application>
 

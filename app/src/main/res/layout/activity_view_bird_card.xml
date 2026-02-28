@@ -33,15 +33,42 @@
             <include
                 layout="@layout/view_bird_card" />
 
-            <Button
-                android:id="@+id/btnChangeCardImage"
+            <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginStart="12dp"
                 android:layout_marginTop="8dp"
                 android:layout_marginEnd="12dp"
                 android:layout_marginBottom="20dp"
-                android:text="Change Card Image" />
+                android:orientation="horizontal"
+                android:weightSum="2">
+
+                <Button
+                    android:id="@+id/btnChangeCardImage"
+                    android:layout_width="0dp"
+                    android:layout_height="72dp"
+                    android:layout_weight="1"
+                    android:layout_marginEnd="6dp"
+                    android:gravity="center"
+                    android:lines="2"
+                    android:minHeight="72dp"
+                    android:text="Change&#10;Image"
+                    android:textAllCaps="false"
+                    android:textSize="16sp" />
+
+                <Button
+                    android:id="@+id/btnBirdInfo"
+                    android:layout_width="0dp"
+                    android:layout_height="72dp"
+                    android:layout_weight="1"
+                    android:layout_marginStart="6dp"
+                    android:gravity="center"
+                    android:lines="2"
+                    android:minHeight="72dp"
+                    android:text="Bird&#10;Info"
+                    android:textAllCaps="false"
+                    android:textSize="16sp" />
+            </LinearLayout>
         </LinearLayout>
     </ScrollView>
 

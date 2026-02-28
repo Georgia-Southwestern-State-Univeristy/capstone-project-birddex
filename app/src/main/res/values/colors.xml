@@ -17,4 +17,7 @@
     <color name="auth_label">#444444</color>
     <color name="auth_link">#111111</color>
     <color name="auth_body">#333333</color>
+
+    <!-- Material Design Error Color -->
+    <color name="md_theme_error">#B00020</color>
 </resources>

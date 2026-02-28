@@ -6,9 +6,10 @@ import java.util.Date;
 public class CollectionSlot {
     private String id;
     private String userBirdId;
+    private String birdId;
     private Date timestamp;
     private String imageUrl;
-    private String rarity;   // keep this field for future color use
+    private String rarity;
     private int slotIndex;
 
     private String commonName;
@@ -44,6 +45,14 @@ public class CollectionSlot {
 
     public void setUserBirdId(String userBirdId) {
         this.userBirdId = userBirdId;
+    }
+
+    public String getBirdId() {
+        return birdId;
+    }
+
+    public void setBirdId(String birdId) {
+        this.birdId = birdId;
     }
 
     public Date getTimestamp() {

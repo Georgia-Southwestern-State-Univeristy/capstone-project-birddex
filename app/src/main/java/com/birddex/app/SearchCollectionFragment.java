@@ -24,7 +24,7 @@ import com.google.firebase.firestore.QueryDocumentSnapshot;
 
 import java.util.ArrayList;
 import java.util.Date;
-import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -37,10 +37,8 @@ public class SearchCollectionFragment extends Fragment {
     private EditText etSearch;
     private CollectionCardAdapter adapter;
 
-    // Full collection (always keeps the full 15 slots)
-    private final List<CollectionSlot> allSlots = new ArrayList<>();
-
-    // What RecyclerView is currently showing
+    private final List<CollectionSlot> rawSlots = new ArrayList<>();
+    private final List<CollectionSlot> uniqueSpeciesSlots = new ArrayList<>();
     private final List<CollectionSlot> displayedSlots = new ArrayList<>();
 
     @Nullable
@@ -56,11 +54,6 @@ public class SearchCollectionFragment extends Fragment {
         rvCollection.setHasFixedSize(true);
         rvCollection.setLayoutManager(new GridLayoutManager(getContext(), 3));
 
-        ensure15Slots(allSlots);
-
-        displayedSlots.clear();
-        displayedSlots.addAll(allSlots);
-
         adapter = new CollectionCardAdapter(displayedSlots);
         rvCollection.setAdapter(adapter);
 
@@ -70,11 +63,16 @@ public class SearchCollectionFragment extends Fragment {
         return v;
     }
 
+    @Override
+    public void onResume() {
+        super.onResume();
+        fetchUserCollection();
+    }
+
     private void setupSearch() {
         etSearch.addTextChangedListener(new TextWatcher() {
             @Override
-            public void beforeTextChanged(CharSequence s, int start, int count, int after) {
-            }
+            public void beforeTextChanged(CharSequence s, int start, int count, int after) { }
 
             @Override
             public void onTextChanged(CharSequence s, int start, int before, int count) {
@@ -82,40 +80,8 @@ public class SearchCollectionFragment extends Fragment {
             }
 
             @Override
-            public void afterTextChanged(Editable s) {
-            }
+            public void afterTextChanged(Editable s) { }
         });
-    }
-
-    private void filterCollection(String query) {
-        String searchText = query == null ? "" : query.trim().toLowerCase(Locale.US);
-
-        displayedSlots.clear();
-
-        // If search is empty, show normal full collection page again
-        if (searchText.isEmpty()) {
-            displayedSlots.addAll(allSlots);
-            adapter.notifyDataSetChanged();
-            return;
-        }
-
-        // Only show captured birds whose COMMON NAME matches the search
-        for (CollectionSlot slot : allSlots) {
-            if (slot == null) continue;
-
-            String imageUrl = slot.getImageUrl();
-            String commonName = slot.getCommonName();
-
-            boolean hasImage = imageUrl != null && !imageUrl.trim().isEmpty();
-            boolean commonMatches = commonName != null
-                    && commonName.toLowerCase(Locale.US).contains(searchText);
-
-            if (hasImage && commonMatches) {
-                displayedSlots.add(slot);
-            }
-        }
-
-        adapter.notifyDataSetChanged();
     }
 
     private void fetchUserCollection() {
@@ -126,19 +92,18 @@ public class SearchCollectionFragment extends Fragment {
                 .collection("users")
                 .document(user.getUid())
                 .collection("collectionSlot")
-                .whereLessThan("slotIndex", 15)
                 .orderBy("slotIndex", Query.Direction.ASCENDING)
                 .get()
                 .addOnSuccessListener(queryDocumentSnapshots -> {
-                    ensure15Slots(allSlots);
+                    rawSlots.clear();
 
                     for (QueryDocumentSnapshot document : queryDocumentSnapshots) {
-                        Long idxL = document.getLong("slotIndex");
-                        int idx = idxL != null ? idxL.intValue() : -1;
-                        if (idx < 0 || idx >= 15) continue;
-
-                        CollectionSlot slot = allSlots.get(idx);
-                        slot.setSlotIndex(idx);
+                        CollectionSlot slot = new CollectionSlot();
+                        slot.setId(document.getId());
+                        slot.setSlotIndex(document.getLong("slotIndex") != null
+                                ? document.getLong("slotIndex").intValue() : 0);
+                        slot.setUserBirdId(document.getString("userBirdId"));
+                        slot.setBirdId(document.getString("birdId"));
                         slot.setImageUrl(document.getString("imageUrl"));
                         slot.setTimestamp(document.getDate("timestamp"));
                         slot.setCommonName(document.getString("commonName"));
@@ -147,22 +112,21 @@ public class SearchCollectionFragment extends Fragment {
                         slot.setLocality(document.getString("locality"));
                         slot.setRarity(document.getString("rarity"));
 
-                        String userBirdId = document.getString("userBirdId");
-                        String slotDocId = document.getId();
+                        rawSlots.add(slot);
 
+                        boolean missingBirdId = isBlank(slot.getBirdId());
                         boolean missingNames = isBlank(slot.getCommonName()) && isBlank(slot.getScientificName());
                         boolean missingLocation = isBlank(slot.getState()) && isBlank(slot.getLocality());
                         boolean missingTimestamp = slot.getTimestamp() == null;
 
-                        if ((missingNames || missingLocation || missingTimestamp) &&
-                                userBirdId != null && !userBirdId.trim().isEmpty()) {
-                            backfillFromUserBird(user.getUid(), slotDocId, idx, slot, userBirdId,
-                                    missingNames, missingLocation, missingTimestamp);
+                        String userBirdId = slot.getUserBirdId();
+                        if ((missingBirdId || missingNames || missingLocation || missingTimestamp)
+                                && !isBlank(userBirdId)) {
+                            backfillFromUserBird(user.getUid(), slot, missingBirdId, missingNames, missingLocation, missingTimestamp);
                         }
                     }
 
-                    // Re-apply whatever is in the search bar after loading data
-                    filterCollection(etSearch.getText() == null ? "" : etSearch.getText().toString());
+                    rebuildSpeciesListAndFilter();
                 })
                 .addOnFailureListener(e -> {
                     Log.e(TAG, "Error fetching collection", e);
@@ -171,26 +135,29 @@ public class SearchCollectionFragment extends Fragment {
     }
 
     private void backfillFromUserBird(String userId,
-                                      String slotDocId,
-                                      int idx,
                                       CollectionSlot slot,
-                                      String userBirdId,
+                                      boolean missingBirdId,
                                       boolean missingNames,
                                       boolean missingLocation,
                                       boolean missingTimestamp) {
 
         FirebaseFirestore.getInstance()
                 .collection("userBirds")
-                .document(userBirdId)
+                .document(slot.getUserBirdId())
                 .get()
                 .addOnSuccessListener(userBirdSnap -> {
                     if (!userBirdSnap.exists()) return;
 
-                    Map<String, Object> baseUpdates = new HashMap<>();
+                    Map<String, Object> baseUpdates = new LinkedHashMap<>();
 
                     String birdId = userBirdSnap.getString("birdSpeciesId");
                     String locationId = userBirdSnap.getString("locationId");
                     Date timeSpotted = userBirdSnap.getDate("timeSpotted");
+
+                    if (missingBirdId && !isBlank(birdId)) {
+                        slot.setBirdId(birdId);
+                        baseUpdates.put("birdId", birdId);
+                    }
 
                     if (missingTimestamp && timeSpotted != null) {
                         slot.setTimestamp(timeSpotted);
@@ -198,10 +165,10 @@ public class SearchCollectionFragment extends Fragment {
                     }
 
                     if (!baseUpdates.isEmpty()) {
-                        updateCollectionSlot(userId, slotDocId, baseUpdates);
+                        updateCollectionSlot(userId, slot.getId(), baseUpdates);
                     }
 
-                    if (missingNames && birdId != null && !birdId.trim().isEmpty()) {
+                    if (missingNames && !isBlank(birdId)) {
                         FirebaseFirestore.getInstance()
                                 .collection("birds")
                                 .document(birdId)
@@ -209,10 +176,9 @@ public class SearchCollectionFragment extends Fragment {
                                 .addOnSuccessListener(birdSnap -> {
                                     if (!birdSnap.exists()) return;
 
+                                    Map<String, Object> updates = new LinkedHashMap<>();
                                     String commonName = birdSnap.getString("commonName");
                                     String scientificName = birdSnap.getString("scientificName");
-
-                                    Map<String, Object> updates = new HashMap<>();
 
                                     if (!isBlank(commonName)) {
                                         slot.setCommonName(commonName);
@@ -225,14 +191,14 @@ public class SearchCollectionFragment extends Fragment {
                                     }
 
                                     if (!updates.isEmpty()) {
-                                        updateCollectionSlot(userId, slotDocId, updates);
+                                        updateCollectionSlot(userId, slot.getId(), updates);
                                     }
 
-                                    filterCollection(etSearch.getText() == null ? "" : etSearch.getText().toString());
+                                    rebuildSpeciesListAndFilter();
                                 });
                     }
 
-                    if (missingLocation && locationId != null && !locationId.trim().isEmpty()) {
+                    if (missingLocation && !isBlank(locationId)) {
                         FirebaseFirestore.getInstance()
                                 .collection("locations")
                                 .document(locationId)
@@ -240,10 +206,9 @@ public class SearchCollectionFragment extends Fragment {
                                 .addOnSuccessListener(locationSnap -> {
                                     if (!locationSnap.exists()) return;
 
+                                    Map<String, Object> updates = new LinkedHashMap<>();
                                     String state = locationSnap.getString("state");
                                     String locality = locationSnap.getString("locality");
-
-                                    Map<String, Object> updates = new HashMap<>();
 
                                     if (!isBlank(state)) {
                                         slot.setState(state);
@@ -256,15 +221,76 @@ public class SearchCollectionFragment extends Fragment {
                                     }
 
                                     if (!updates.isEmpty()) {
-                                        updateCollectionSlot(userId, slotDocId, updates);
+                                        updateCollectionSlot(userId, slot.getId(), updates);
                                     }
 
-                                    filterCollection(etSearch.getText() == null ? "" : etSearch.getText().toString());
+                                    rebuildSpeciesListAndFilter();
                                 });
                     }
 
-                    filterCollection(etSearch.getText() == null ? "" : etSearch.getText().toString());
+                    rebuildSpeciesListAndFilter();
                 });
+    }
+
+    private void rebuildSpeciesListAndFilter() {
+        LinkedHashMap<String, CollectionSlot> grouped = new LinkedHashMap<>();
+
+        for (CollectionSlot slot : rawSlots) {
+            if (slot == null) continue;
+            if (isBlank(slot.getImageUrl())) continue;
+
+            String key = getSpeciesKey(slot);
+            if (isBlank(key)) continue;
+
+            // Keep the first existing slot for that species.
+            // Since CardMakerActivity no longer creates new visible cards for the same species,
+            // the chosen card stays what the user set it to.
+            if (!grouped.containsKey(key)) {
+                grouped.put(key, slot);
+            }
+        }
+
+        uniqueSpeciesSlots.clear();
+        uniqueSpeciesSlots.addAll(grouped.values());
+
+        filterCollection(etSearch != null && etSearch.getText() != null
+                ? etSearch.getText().toString()
+                : "");
+    }
+
+    private void filterCollection(String query) {
+        String searchText = query == null ? "" : query.trim().toLowerCase(Locale.US);
+
+        displayedSlots.clear();
+
+        if (searchText.isEmpty()) {
+            displayedSlots.addAll(uniqueSpeciesSlots);
+        } else {
+            for (CollectionSlot slot : uniqueSpeciesSlots) {
+                String common = slot.getCommonName();
+                if (common != null && common.toLowerCase(Locale.US).contains(searchText)) {
+                    displayedSlots.add(slot);
+                }
+            }
+        }
+
+        adapter.notifyDataSetChanged();
+    }
+
+    private String getSpeciesKey(CollectionSlot slot) {
+        if (!isBlank(slot.getBirdId())) {
+            return "birdId:" + slot.getBirdId().trim();
+        }
+
+        if (!isBlank(slot.getCommonName())) {
+            return "common:" + slot.getCommonName().trim().toLowerCase(Locale.US);
+        }
+
+        if (!isBlank(slot.getScientificName())) {
+            return "sci:" + slot.getScientificName().trim().toLowerCase(Locale.US);
+        }
+
+        return null;
     }
 
     private void updateCollectionSlot(String userId, String slotDocId, Map<String, Object> updates) {
@@ -278,21 +304,5 @@ public class SearchCollectionFragment extends Fragment {
 
     private boolean isBlank(String value) {
         return value == null || value.trim().isEmpty();
-    }
-
-    private void ensure15Slots(List<CollectionSlot> targetList) {
-        targetList.clear();
-        for (int i = 0; i < 15; i++) {
-            CollectionSlot s = new CollectionSlot();
-            s.setSlotIndex(i);
-            s.setImageUrl(null);
-            s.setTimestamp(null);
-            s.setState(null);
-            s.setLocality(null);
-            s.setCommonName(null);
-            s.setScientificName(null);
-            s.setRarity(null);
-            targetList.add(s);
-        }
     }
 }

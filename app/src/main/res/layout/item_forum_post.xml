@@ -1,122 +1,188 @@
 <?xml version="1.0" encoding="utf-8"?>
 <com.google.android.material.card.MaterialCardView xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:layout_marginHorizontal="12dp"
-    android:layout_marginVertical="8dp"
+    android:layout_marginVertical="6dp"
     app:cardCornerRadius="12dp"
-    app:cardElevation="4dp"
-    app:cardBackgroundColor="?attr/colorSurface">
+    app:cardElevation="2dp">
 
-    <androidx.constraintlayout.widget.ConstraintLayout
+    <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
+        android:orientation="vertical"
         android:padding="12dp">
 
-        <!-- User profile image -->
-        <com.google.android.material.imageview.ShapeableImageView
-            android:id="@+id/ivUserPfp"
-            android:layout_width="40dp"
-            android:layout_height="40dp"
-            android:scaleType="centerCrop"
-            android:src="@drawable/ic_profile"
-            app:layout_constraintStart_toStartOf="parent"
-            app:layout_constraintTop_toTopOf="parent"
-            app:shapeAppearanceOverlay="@style/ShapeAppearanceOverlay.App.CornerSize50Percent" />
-
-        <!-- Username -->
-        <TextView
-            android:id="@+id/tvUsername"
-            android:layout_width="wrap_content"
+        <!-- User Info Header -->
+        <LinearLayout
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginStart="12dp"
-            android:text="Username"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <com.google.android.material.imageview.ShapeableImageView
+                android:id="@+id/ivPostUserProfilePicture"
+                android:layout_width="40dp"
+                android:layout_height="40dp"
+                android:src="@drawable/ic_profile"
+                app:shapeAppearanceOverlay="@style/ShapeAppearanceOverlay.App.CornerSize50Percent" />
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="12dp"
+                android:layout_weight="1"
+                android:orientation="vertical">
+
+                <TextView
+                    android:id="@+id/tvPostUsername"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:textStyle="bold"
+                    android:textColor="?attr/colorOnSurface"
+                    android:textSize="14sp"
+                    tools:text="Username" />
+
+                <TextView
+                    android:id="@+id/tvPostTimestamp"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:textColor="?attr/colorOnSurfaceVariant"
+                    android:textSize="12sp"
+                    tools:text="2 hours ago" />
+            </LinearLayout>
+
+            <ImageButton
+                android:id="@+id/btnPostOptions"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:src="@drawable/ic_more_vert"
+                android:contentDescription="Options" />
+        </LinearLayout>
+
+        <!-- Post Message -->
+        <TextView
+            android:id="@+id/tvPostMessage"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
             android:textColor="?attr/colorOnSurface"
-            android:textSize="16sp"
-            android:textStyle="bold"
-            app:layout_constraintStart_toEndOf="@id/ivUserPfp"
-            app:layout_constraintTop_toTopOf="@id/ivUserPfp" />
+            android:textSize="15sp"
+            tools:text="Just spotted a rare Red Cardinal in my backyard! Absolutely beautiful." />
 
-        <!-- Timestamp -->
-        <TextView
-            android:id="@+id/tvPostTime"
-            android:layout_width="wrap_content"
+        <!-- Bird Image -->
+        <com.google.android.material.card.MaterialCardView
+            android:id="@+id/cvPostImage"
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="2 hours ago"
-            android:textColor="?attr/colorOnSurfaceVariant"
-            android:textSize="12sp"
-            app:layout_constraintStart_toStartOf="@id/tvUsername"
-            app:layout_constraintTop_toBottomOf="@id/tvUsername" />
+            android:layout_marginTop="8dp"
+            app:cardCornerRadius="8dp"
+            app:cardElevation="0dp"
+            android:visibility="gone"
+            tools:visibility="visible">
 
-        <!-- Post Content -->
-        <TextView
-            android:id="@+id/tvPostContent"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="12dp"
-            android:text="Just spotted a rare Red-tailed Hawk near the park! #BirdWatching"
-            android:textColor="?attr/colorOnSurface"
-            android:textSize="14sp"
-            app:layout_constraintEnd_toEndOf="parent"
-            app:layout_constraintStart_toStartOf="parent"
-            app:layout_constraintTop_toBottomOf="@id/ivUserPfp" />
+            <ImageView
+                android:id="@+id/ivPostBirdImage"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:adjustViewBounds="true"
+                android:maxHeight="400dp"
+                android:scaleType="fitCenter"
+                tools:src="@drawable/ic_bird" />
+        </com.google.android.material.card.MaterialCardView>
 
-        <!-- Picture area - visibility handled dynamically (visible for picture posts) -->
-        <com.google.android.material.imageview.ShapeableImageView
-            android:id="@+id/ivPostImage"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="12dp"
-            android:adjustViewBounds="true"
-            android:maxHeight="300dp"
-            android:scaleType="centerCrop"
-            android:src="@drawable/bird_image"
-            android:visibility="visible"
-            android:clickable="true"
-            android:focusable="true"
-            android:background="?attr/selectableItemBackground"
-            app:layout_constraintEnd_toEndOf="parent"
-            app:layout_constraintStart_toStartOf="parent"
-            app:layout_constraintTop_toBottomOf="@id/tvPostContent"
-            app:shapeAppearanceOverlay="@style/ShapeAppearanceOverlay.App.CornerSize10Percent" />
-
-        <!-- Actions: Like and Comment -->
+        <!-- Post Stats & Actions -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="12dp"
-            android:orientation="horizontal"
-            app:layout_constraintTop_toBottomOf="@id/ivPostImage">
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
 
-            <com.google.android.material.button.MaterialButton
+            <LinearLayout
                 android:id="@+id/btnLike"
-                style="@style/Widget.MaterialComponents.Button.TextButton"
-                android:layout_width="0dp"
+                android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:text="Like"
-                android:textAllCaps="false"
-                android:textSize="12sp"
-                app:icon="@drawable/ic_bolt_24"
-                app:iconGravity="top"
-                app:iconPadding="0dp" />
+                android:background="?attr/selectableItemBackground"
+                android:clickable="true"
+                android:focusable="true"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:padding="8dp">
 
-            <com.google.android.material.button.MaterialButton
+                <ImageView
+                    android:id="@+id/ivLikeIcon"
+                    android:layout_width="20dp"
+                    android:layout_height="20dp"
+                    android:src="@drawable/ic_favorite_border" />
+
+                <TextView
+                    android:id="@+id/tvLikeCount"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="4dp"
+                    android:textColor="?attr/colorOnSurfaceVariant"
+                    android:textSize="14sp"
+                    tools:text="24" />
+            </LinearLayout>
+
+            <LinearLayout
                 android:id="@+id/btnComment"
-                style="@style/Widget.MaterialComponents.Button.TextButton"
-                android:layout_width="0dp"
+                android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:text="Comment"
-                android:textAllCaps="false"
-                android:textSize="12sp"
-                app:icon="@drawable/ic_forum"
-                app:iconGravity="top"
-                app:iconPadding="0dp" />
+                android:layout_marginStart="16dp"
+                android:background="?attr/selectableItemBackground"
+                android:clickable="true"
+                android:focusable="true"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:padding="8dp">
 
+                <ImageView
+                    android:layout_width="20dp"
+                    android:layout_height="20dp"
+                    android:src="@drawable/ic_comment" />
+
+                <TextView
+                    android:id="@+id/tvCommentCount"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="4dp"
+                    android:textColor="?attr/colorOnSurfaceVariant"
+                    android:textSize="14sp"
+                    tools:text="5" />
+            </LinearLayout>
+
+            <View
+                android:layout_width="0dp"
+                android:layout_height="0dp"
+                android:layout_weight="1" />
+
+            <LinearLayout
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:padding="8dp">
+
+                <ImageView
+                    android:layout_width="16dp"
+                    android:layout_height="16dp"
+                    android:src="@drawable/ic_remove_red_eye" />
+
+                <TextView
+                    android:id="@+id/tvViewCount"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="4dp"
+                    android:textColor="?attr/colorOnSurfaceVariant"
+                    android:textSize="12sp"
+                    tools:text="128 views" />
+            </LinearLayout>
         </LinearLayout>
 
-    </androidx.constraintlayout.widget.ConstraintLayout>
-
+    </LinearLayout>
 </com.google.android.material.card.MaterialCardView>

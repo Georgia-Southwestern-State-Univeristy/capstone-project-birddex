@@ -1,6 +1,5 @@
 package com.birddex.app;
 
-import android.app.AlertDialog;
 import android.content.Intent;
 import android.os.Bundle;
 import android.view.View;
@@ -10,6 +9,8 @@ import android.widget.ImageView;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import androidx.activity.result.ActivityResultLauncher;
+import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatActivity;
 
@@ -20,13 +21,7 @@ import com.google.firebase.firestore.DocumentSnapshot;
 import com.google.firebase.firestore.FirebaseFirestore;
 import com.google.firebase.firestore.WriteBatch;
 
-import java.text.SimpleDateFormat;
-import java.util.ArrayList;
-import java.util.Collections;
 import java.util.Date;
-import java.util.LinkedHashSet;
-import java.util.List;
-import java.util.Locale;
 
 public class ViewBirdCardActivity extends AppCompatActivity {
 
@@ -41,10 +36,50 @@ public class ViewBirdCardActivity extends AppCompatActivity {
     private String currentState;
     private String currentLocality;
 
+    private ActivityResultLauncher<Intent> changeCardImageLauncher;
+
     @Override
     protected void onCreate(@Nullable Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_view_bird_card);
+
+        changeCardImageLauncher = registerForActivityResult(
+                new ActivityResultContracts.StartActivityForResult(),
+                result -> {
+                    if (result.getResultCode() != RESULT_OK || result.getData() == null) {
+                        return;
+                    }
+
+                    Intent data = result.getData();
+                    String selectedImageUrl = data.getStringExtra(ChangeCardImageActivity.RESULT_IMAGE_URL);
+                    long timestampMillis = data.getLongExtra(ChangeCardImageActivity.RESULT_TIMESTAMP, -1L);
+                    String selectedUserBirdRefId = data.getStringExtra(ChangeCardImageActivity.RESULT_USER_BIRD_REF_ID);
+
+                    if (isBlank(selectedImageUrl)) {
+                        Toast.makeText(this, "Invalid image selection.", Toast.LENGTH_SHORT).show();
+                        return;
+                    }
+
+                    if (selectedImageUrl.equals(currentImageUrl)) {
+                        Toast.makeText(this, "That image is already being used.", Toast.LENGTH_SHORT).show();
+                        return;
+                    }
+
+                    FirebaseUser currentUser = FirebaseAuth.getInstance().getCurrentUser();
+                    if (currentUser == null) {
+                        Toast.makeText(this, "No user logged in.", Toast.LENGTH_SHORT).show();
+                        return;
+                    }
+
+                    ImageChoice selectedChoice = new ImageChoice(
+                            selectedImageUrl,
+                            timestampMillis > 0 ? new Date(timestampMillis) : null,
+                            selectedUserBirdRefId
+                    );
+
+                    resolveSelectionAndApply(currentUser.getUid(), selectedChoice);
+                }
+        );
 
         ImageButton btnBack = findViewById(R.id.btnBack);
         TextView txtBirdName = findViewById(R.id.txtBirdName);
@@ -117,80 +152,17 @@ public class ViewBirdCardActivity extends AppCompatActivity {
     }
 
     private void openImagePickerForThisBird() {
-        FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
-        if (user == null) {
-            Toast.makeText(this, "No user logged in.", Toast.LENGTH_SHORT).show();
+        if (isBlank(currentBirdId)) {
+            Toast.makeText(this, "No saved bird ID.", Toast.LENGTH_SHORT).show();
             return;
         }
 
-        FirebaseFirestore.getInstance()
-                .collection("users")
-                .document(user.getUid())
-                .collection("userBirdImage")
-                .whereEqualTo("birdId", currentBirdId)
-                .get()
-                .addOnSuccessListener(queryDocumentSnapshots -> {
-                    if (queryDocumentSnapshots.isEmpty()) {
-                        Toast.makeText(this, "No stored images found for this bird.", Toast.LENGTH_SHORT).show();
-                        return;
-                    }
-
-                    List<ImageChoice> choices = new ArrayList<>();
-                    LinkedHashSet<String> seenUrls = new LinkedHashSet<>();
-
-                    for (DocumentSnapshot doc : queryDocumentSnapshots.getDocuments()) {
-                        String imageUrl = doc.getString("imageUrl");
-                        Date timestamp = doc.getDate("timestamp");
-                        String userBirdRefId = doc.getString("userBirdRefId");
-                        Boolean hiddenFromUser = doc.getBoolean("hiddenFromUser");
-
-                        if (Boolean.TRUE.equals(hiddenFromUser)) {
-                            continue;
-                        }
-
-                        if (imageUrl != null && !imageUrl.trim().isEmpty() && !seenUrls.contains(imageUrl)) {
-                            seenUrls.add(imageUrl);
-                            choices.add(new ImageChoice(imageUrl, timestamp, userBirdRefId));
-                        }
-                    }
-
-                    if (choices.isEmpty()) {
-                        Toast.makeText(this, "No usable stored images found for this bird.", Toast.LENGTH_SHORT).show();
-                        return;
-                    }
-
-                    Collections.sort(choices, (a, b) -> {
-                        long ta = a.timestamp != null ? a.timestamp.getTime() : 0L;
-                        long tb = b.timestamp != null ? b.timestamp.getTime() : 0L;
-                        return Long.compare(tb, ta);
-                    });
-
-                    CharSequence[] labels = new CharSequence[choices.size()];
-                    for (int i = 0; i < choices.size(); i++) {
-                        String dateText = formatShortDate(choices.get(i).timestamp);
-                        boolean isCurrent = currentImageUrl != null && currentImageUrl.equals(choices.get(i).imageUrl);
-                        labels[i] = isCurrent
-                                ? "Image " + (i + 1) + " • " + dateText + " • Current"
-                                : "Image " + (i + 1) + " • " + dateText;
-                    }
-
-                    new AlertDialog.Builder(this)
-                            .setTitle("Choose card image")
-                            .setItems(labels, (dialog, which) -> {
-                                ImageChoice selected = choices.get(which);
-
-                                if (selected.imageUrl != null && selected.imageUrl.equals(currentImageUrl)) {
-                                    Toast.makeText(this, "That image is already being used.", Toast.LENGTH_SHORT).show();
-                                    return;
-                                }
-
-                                resolveSelectionAndApply(user.getUid(), selected);
-                            })
-                            .setNegativeButton("Cancel", null)
-                            .show();
-                })
-                .addOnFailureListener(e ->
-                        Toast.makeText(this, "Failed to load stored images.", Toast.LENGTH_SHORT).show());
+        Intent intent = new Intent(this, ChangeCardImageActivity.class);
+        intent.putExtra(ChangeCardImageActivity.EXTRA_BIRD_ID, currentBirdId);
+        intent.putExtra(ChangeCardImageActivity.EXTRA_CURRENT_IMAGE_URL, currentImageUrl);
+        intent.putExtra(ChangeCardImageActivity.EXTRA_COMMON_NAME, ((TextView) findViewById(R.id.txtBirdName)).getText().toString());
+        intent.putExtra(ChangeCardImageActivity.EXTRA_SCI_NAME, ((TextView) findViewById(R.id.txtScientific)).getText().toString());
+        changeCardImageLauncher.launch(intent);
     }
 
     private void resolveSelectionAndApply(String userId, ImageChoice selectedChoice) {
@@ -204,8 +176,8 @@ public class ViewBirdCardActivity extends AppCompatActivity {
                     selectedChoice.imageUrl,
                     selectedChoice.timestamp,
                     null,
-                    currentState,
-                    currentLocality
+                    null,
+                    null
             );
             applyResolvedSelection(userId, resolved);
             return;
@@ -221,8 +193,8 @@ public class ViewBirdCardActivity extends AppCompatActivity {
                                 selectedChoice.imageUrl,
                                 selectedChoice.timestamp,
                                 selectedChoice.userBirdRefId,
-                                currentState,
-                                currentLocality
+                                null,
+                                null
                         );
                         applyResolvedSelection(userId, resolved);
                         return;
@@ -236,8 +208,8 @@ public class ViewBirdCardActivity extends AppCompatActivity {
                                 selectedChoice.imageUrl,
                                 timeSpotted != null ? timeSpotted : selectedChoice.timestamp,
                                 selectedChoice.userBirdRefId,
-                                currentState,
-                                currentLocality
+                                null,
+                                null
                         );
                         applyResolvedSelection(userId, resolved);
                         return;
@@ -248,8 +220,8 @@ public class ViewBirdCardActivity extends AppCompatActivity {
                             .document(locationId)
                             .get()
                             .addOnSuccessListener(locationSnap -> {
-                                String resolvedState = currentState;
-                                String resolvedLocality = currentLocality;
+                                String resolvedState = null;
+                                String resolvedLocality = null;
 
                                 if (locationSnap.exists()) {
                                     String dbState = locationSnap.getString("state");
@@ -273,8 +245,8 @@ public class ViewBirdCardActivity extends AppCompatActivity {
                                         selectedChoice.imageUrl,
                                         timeSpotted != null ? timeSpotted : selectedChoice.timestamp,
                                         selectedChoice.userBirdRefId,
-                                        currentState,
-                                        currentLocality
+                                        null,
+                                        null
                                 );
                                 applyResolvedSelection(userId, resolved);
                             });
@@ -284,8 +256,8 @@ public class ViewBirdCardActivity extends AppCompatActivity {
                             selectedChoice.imageUrl,
                             selectedChoice.timestamp,
                             selectedChoice.userBirdRefId,
-                            currentState,
-                            currentLocality
+                            null,
+                            null
                     );
                     applyResolvedSelection(userId, resolved);
                 });
@@ -342,11 +314,6 @@ public class ViewBirdCardActivity extends AppCompatActivity {
 
     private boolean isBlank(String value) {
         return value == null || value.trim().isEmpty();
-    }
-
-    private String formatShortDate(Date date) {
-        if (date == null) return "Unknown date";
-        return new SimpleDateFormat("M/d/yy", Locale.US).format(date);
     }
 
     private static class ImageChoice {

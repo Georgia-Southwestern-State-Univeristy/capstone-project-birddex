@@ -91,6 +91,9 @@
         <activity
             android:name=".BirdWikiActivity"
             android:exported="false" />
+        <activity
+            android:name=".ChangeCardImageActivity"
+            android:exported="false" />
     </application>
 
 </manifest>

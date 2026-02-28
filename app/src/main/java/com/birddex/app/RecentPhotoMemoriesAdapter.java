@@ -114,7 +114,9 @@ public class RecentPhotoMemoriesAdapter extends RecyclerView.Adapter<RecyclerVie
                 .into(ivPreview);
 
         btnSaveToCameraRoll.setOnClickListener(v -> saveImageToCameraRoll(item.imageUrl));
-        btnDeleteImage.setOnClickListener(v -> confirmHideFromApp(item, dialog));
+        btnDeleteImage.setOnClickListener(v -> {
+            Toast.makeText(context, "Delete button is not wired up yet.", Toast.LENGTH_SHORT).show();
+        });
 
         ivPreview.setOnClickListener(v -> dialog.dismiss());
 
@@ -182,49 +184,6 @@ public class RecentPhotoMemoriesAdapter extends RecyclerView.Adapter<RecyclerVie
                     public void onLoadCleared(@Nullable android.graphics.drawable.Drawable placeholder) {
                     }
                 });
-    }
-
-    private void confirmHideFromApp(MemoryItem item, Dialog previewDialog) {
-        new AlertDialog.Builder(context)
-                .setTitle("Delete image from app?")
-                .setMessage("This will remove the image from your app view, but keep it stored in Firebase for developer use.")
-                .setPositiveButton("Delete", (dialogInterface, which) -> hideImageFromApp(item, previewDialog))
-                .setNegativeButton("Cancel", null)
-                .show();
-    }
-
-    private void hideImageFromApp(MemoryItem item, Dialog previewDialog) {
-        FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
-        if (user == null) {
-            Toast.makeText(context, "No user logged in.", Toast.LENGTH_SHORT).show();
-            return;
-        }
-
-        if (item.documentId == null || item.documentId.trim().isEmpty()) {
-            Toast.makeText(context, "Could not update this image.", Toast.LENGTH_SHORT).show();
-            return;
-        }
-
-        FirebaseFirestore.getInstance()
-                .collection("users")
-                .document(user.getUid())
-                .collection("userBirdImage")
-                .document(item.documentId)
-                .update(
-                        "hiddenFromUser", true,
-                        "hiddenAt", new java.util.Date()
-                )
-                .addOnSuccessListener(unused -> {
-                    previewDialog.dismiss();
-                    Toast.makeText(context, "Image removed from app.", Toast.LENGTH_SHORT).show();
-
-                    if (onPhotosChanged != null) {
-                        onPhotosChanged.run();
-                    }
-                })
-                .addOnFailureListener(e ->
-                        Toast.makeText(context, "Failed to remove image.", Toast.LENGTH_SHORT).show()
-                );
     }
 
     @Override

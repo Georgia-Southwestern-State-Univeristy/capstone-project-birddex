@@ -186,7 +186,7 @@ public class SearchCollectionFragment extends Fragment {
                                                     if (commonName != null) slot.setCommonName(commonName);
                                                     if (scientificName != null) slot.setScientificName(scientificName);
                                                     // Notify adapter for this specific item change
-                                                    adapter.notifyItemChanged(idx); 
+                                                    adapter.notifyItemChanged(idx);
 
                                                     // Persist back into collectionSlot doc so it’s fixed permanently
                                                     Map<String, Object> updates = new HashMap<>();

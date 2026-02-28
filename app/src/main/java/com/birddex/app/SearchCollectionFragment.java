@@ -1,5 +1,7 @@
 package com.birddex.app;
 
+import android.content.Intent;
+import android.net.Uri;
 import android.os.Bundle;
 import android.text.Editable;
 import android.text.TextWatcher;
@@ -7,9 +9,12 @@ import android.util.Log;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.Button;
 import android.widget.EditText;
 import android.widget.Toast;
 
+import androidx.activity.result.ActivityResultLauncher;
+import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.fragment.app.Fragment;
@@ -35,11 +40,24 @@ public class SearchCollectionFragment extends Fragment {
 
     private RecyclerView rvCollection;
     private EditText etSearch;
+    private Button btnUploadBirdImage;
     private CollectionCardAdapter adapter;
+
+    private ActivityResultLauncher<String> imagePickerLauncher;
 
     private final List<CollectionSlot> rawSlots = new ArrayList<>();
     private final List<CollectionSlot> uniqueSpeciesSlots = new ArrayList<>();
     private final List<CollectionSlot> displayedSlots = new ArrayList<>();
+
+    @Override
+    public void onCreate(@Nullable Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+
+        imagePickerLauncher = registerForActivityResult(
+                new ActivityResultContracts.GetContent(),
+                this::handleSelectedImage
+        );
+    }
 
     @Nullable
     @Override
@@ -50,12 +68,15 @@ public class SearchCollectionFragment extends Fragment {
 
         rvCollection = v.findViewById(R.id.rvCollection);
         etSearch = v.findViewById(R.id.etSearch);
+        btnUploadBirdImage = v.findViewById(R.id.btnUploadBirdImage);
 
         rvCollection.setHasFixedSize(true);
         rvCollection.setLayoutManager(new GridLayoutManager(getContext(), 3));
 
         adapter = new CollectionCardAdapter(displayedSlots);
         rvCollection.setAdapter(adapter);
+
+        btnUploadBirdImage.setOnClickListener(view -> openImagePicker());
 
         setupSearch();
         fetchUserCollection();
@@ -67,6 +88,29 @@ public class SearchCollectionFragment extends Fragment {
     public void onResume() {
         super.onResume();
         fetchUserCollection();
+    }
+
+    private void openImagePicker() {
+        if (imagePickerLauncher == null) {
+            Toast.makeText(getContext(), "Image picker is not ready yet.", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        imagePickerLauncher.launch("image/*");
+    }
+
+    private void handleSelectedImage(@Nullable Uri imageUri) {
+        if (imageUri == null) {
+            return;
+        }
+
+        if (getContext() == null) {
+            return;
+        }
+
+        Intent cropIntent = new Intent(getContext(), CropActivity.class);
+        cropIntent.putExtra(CropActivity.EXTRA_IMAGE_URI, imageUri.toString());
+        startActivity(cropIntent);
     }
 
     private void setupSearch() {

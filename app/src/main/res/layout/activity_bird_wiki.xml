@@ -1,0 +1,694 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#FFFFFF"
+    android:fillViewport="true">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="16dp">
+
+        <TextView
+            android:id="@+id/tvPageTitle"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Bird Name"
+            android:textColor="#202122"
+            android:textSize="30sp"
+            android:textStyle="bold"
+            android:fontFamily="serif" />
+
+        <TextView
+            android:id="@+id/tvPageScientificName"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:text="Scientific name"
+            android:textColor="#54595D"
+            android:textSize="18sp"
+            android:textStyle="italic"
+            android:fontFamily="serif" />
+
+        <!-- Bird image for when nuthatch finished -->
+
+        <ImageView
+            android:id="@+id/ivBirdHeaderImage"
+            android:layout_width="match_parent"
+            android:layout_height="220dp"
+            android:layout_marginTop="14dp"
+            android:background="#EAECF0"
+            android:contentDescription="Bird image"
+            android:scaleType="centerCrop"
+            android:visibility="gone" />
+
+        <!-- Family -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="24dp"
+            android:text="Family"
+            android:textColor="#202122"
+            android:textSize="22sp"
+            android:textStyle="bold"
+            android:fontFamily="serif" />
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:layout_marginTop="4dp"
+            android:background="#A2A9B1" />
+
+        <TextView
+            android:id="@+id/tvFamily"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:layout_marginBottom="4dp"
+            android:lineSpacingExtra="3dp"
+            android:text="Not available yet."
+            android:textColor="#202122"
+            android:textSize="16sp" />
+
+        <!-- Species -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="18dp"
+            android:text="Species"
+            android:textColor="#202122"
+            android:textSize="22sp"
+            android:textStyle="bold"
+            android:fontFamily="serif" />
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:layout_marginTop="4dp"
+            android:background="#A2A9B1" />
+
+        <TextView
+            android:id="@+id/tvSpecies"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:layout_marginBottom="4dp"
+            android:lineSpacingExtra="3dp"
+            android:text="Not available yet."
+            android:textColor="#202122"
+            android:textSize="16sp" />
+
+        <!-- Conservation Status -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="18dp"
+            android:text="Conservation Status"
+            android:textColor="#202122"
+            android:textSize="22sp"
+            android:textStyle="bold"
+            android:fontFamily="serif" />
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:layout_marginTop="4dp"
+            android:background="#A2A9B1" />
+
+        <TextView
+            android:id="@+id/tvConservationStatus"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:layout_marginBottom="4dp"
+            android:lineSpacingExtra="3dp"
+            android:text="Not available yet."
+            android:textColor="#202122"
+            android:textSize="16sp" />
+
+        <!-- Seasonal Presence -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="18dp"
+            android:text="Seasonal Presence"
+            android:textColor="#202122"
+            android:textSize="22sp"
+            android:textStyle="bold"
+            android:fontFamily="serif" />
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:layout_marginTop="4dp"
+            android:background="#A2A9B1" />
+
+        <TextView
+            android:id="@+id/tvSeasonalPresence"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:layout_marginBottom="4dp"
+            android:lineSpacingExtra="3dp"
+            android:text="Not available yet."
+            android:textColor="#202122"
+            android:textSize="16sp" />
+
+        <!-- Where in Georgia Found -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="18dp"
+            android:text="Where in Georgia Found"
+            android:textColor="#202122"
+            android:textSize="22sp"
+            android:textStyle="bold"
+            android:fontFamily="serif" />
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:layout_marginTop="4dp"
+            android:background="#A2A9B1" />
+
+        <TextView
+            android:id="@+id/tvWhereInGeorgiaFound"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:layout_marginBottom="4dp"
+            android:lineSpacingExtra="3dp"
+            android:text="Not available yet."
+            android:textColor="#202122"
+            android:textSize="16sp" />
+
+        <!-- Size & Appearance -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="18dp"
+            android:text="Size &amp; Appearance"
+            android:textColor="#202122"
+            android:textSize="22sp"
+            android:textStyle="bold"
+            android:fontFamily="serif" />
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:layout_marginTop="4dp"
+            android:background="#A2A9B1" />
+
+        <TextView
+            android:id="@+id/tvSizeAppearance"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:layout_marginBottom="4dp"
+            android:lineSpacingExtra="3dp"
+            android:text="Not available yet."
+            android:textColor="#202122"
+            android:textSize="16sp" />
+
+        <!-- Distinctive Behaviors -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="18dp"
+            android:text="Distinctive Behaviors"
+            android:textColor="#202122"
+            android:textSize="22sp"
+            android:textStyle="bold"
+            android:fontFamily="serif" />
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:layout_marginTop="4dp"
+            android:background="#A2A9B1" />
+
+        <TextView
+            android:id="@+id/tvDistinctiveBehaviors"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:layout_marginBottom="4dp"
+            android:lineSpacingExtra="3dp"
+            android:text="Not available yet."
+            android:textColor="#202122"
+            android:textSize="16sp" />
+
+        <!-- Similar Species -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="18dp"
+            android:text="Similar Species"
+            android:textColor="#202122"
+            android:textSize="22sp"
+            android:textStyle="bold"
+            android:fontFamily="serif" />
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:layout_marginTop="4dp"
+            android:background="#A2A9B1" />
+
+        <TextView
+            android:id="@+id/tvSimilarSpecies"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:layout_marginBottom="4dp"
+            android:lineSpacingExtra="3dp"
+            android:text="Not available yet."
+            android:textColor="#202122"
+            android:textSize="16sp" />
+
+        <!-- Peak Viewing Times -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="18dp"
+            android:text="Peak Viewing Times"
+            android:textColor="#202122"
+            android:textSize="22sp"
+            android:textStyle="bold"
+            android:fontFamily="serif" />
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:layout_marginTop="4dp"
+            android:background="#A2A9B1" />
+
+        <TextView
+            android:id="@+id/tvPeakViewingTimes"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:layout_marginBottom="4dp"
+            android:lineSpacingExtra="3dp"
+            android:text="Not available yet."
+            android:textColor="#202122"
+            android:textSize="16sp" />
+
+        <!-- Diet -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="18dp"
+            android:text="Diet"
+            android:textColor="#202122"
+            android:textSize="22sp"
+            android:textStyle="bold"
+            android:fontFamily="serif" />
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:layout_marginTop="4dp"
+            android:background="#A2A9B1" />
+
+        <TextView
+            android:id="@+id/tvDiet"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:layout_marginBottom="4dp"
+            android:lineSpacingExtra="3dp"
+            android:text="Not available yet."
+            android:textColor="#202122"
+            android:textSize="16sp" />
+
+        <!-- Nesting Habits -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="18dp"
+            android:text="Nesting Habits"
+            android:textColor="#202122"
+            android:textSize="22sp"
+            android:textStyle="bold"
+            android:fontFamily="serif" />
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:layout_marginTop="4dp"
+            android:background="#A2A9B1" />
+
+        <TextView
+            android:id="@+id/tvNestingHabits"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:layout_marginBottom="4dp"
+            android:lineSpacingExtra="3dp"
+            android:text="Not available yet."
+            android:textColor="#202122"
+            android:textSize="16sp" />
+
+        <!-- Role in Ecosystem -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="18dp"
+            android:text="Role in Ecosystem"
+            android:textColor="#202122"
+            android:textSize="22sp"
+            android:textStyle="bold"
+            android:fontFamily="serif" />
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:layout_marginTop="4dp"
+            android:background="#A2A9B1" />
+
+        <TextView
+            android:id="@+id/tvRoleInEcosystem"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:layout_marginBottom="4dp"
+            android:lineSpacingExtra="3dp"
+            android:text="Not available yet."
+            android:textColor="#202122"
+            android:textSize="16sp" />
+
+        <!-- Unique Behaviors -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="18dp"
+            android:text="Unique Behaviors"
+            android:textColor="#202122"
+            android:textSize="22sp"
+            android:textStyle="bold"
+            android:fontFamily="serif" />
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:layout_marginTop="4dp"
+            android:background="#A2A9B1" />
+
+        <TextView
+            android:id="@+id/tvUniqueBehaviorsSpecific"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:layout_marginBottom="4dp"
+            android:lineSpacingExtra="3dp"
+            android:text="Not available yet."
+            android:textColor="#202122"
+            android:textSize="16sp" />
+
+        <!-- Record-Setting Facts -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="18dp"
+            android:text="Record-Setting Facts"
+            android:textColor="#202122"
+            android:textSize="22sp"
+            android:textStyle="bold"
+            android:fontFamily="serif" />
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:layout_marginTop="4dp"
+            android:background="#A2A9B1" />
+
+        <TextView
+            android:id="@+id/tvRecordSettingFacts"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:layout_marginBottom="4dp"
+            android:lineSpacingExtra="3dp"
+            android:text="Not available yet."
+            android:textColor="#202122"
+            android:textSize="16sp" />
+
+        <!-- Cultural / Historical Notes -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="18dp"
+            android:text="Cultural / Historical Notes"
+            android:textColor="#202122"
+            android:textSize="22sp"
+            android:textStyle="bold"
+            android:fontFamily="serif" />
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:layout_marginTop="4dp"
+            android:background="#A2A9B1" />
+
+        <TextView
+            android:id="@+id/tvCulturalHistoricalNotes"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:layout_marginBottom="4dp"
+            android:lineSpacingExtra="3dp"
+            android:text="Not available yet."
+            android:textColor="#202122"
+            android:textSize="16sp" />
+
+        <!-- How to Help -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="18dp"
+            android:text="How to Help"
+            android:textColor="#202122"
+            android:textSize="22sp"
+            android:textStyle="bold"
+            android:fontFamily="serif" />
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:layout_marginTop="4dp"
+            android:background="#A2A9B1" />
+
+        <TextView
+            android:id="@+id/tvHowToHelp"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:layout_marginBottom="4dp"
+            android:lineSpacingExtra="3dp"
+            android:text="Not available yet."
+            android:textColor="#202122"
+            android:textSize="16sp" />
+
+        <!-- Threats in Georgia -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="18dp"
+            android:text="Threats in Georgia"
+            android:textColor="#202122"
+            android:textSize="22sp"
+            android:textStyle="bold"
+            android:fontFamily="serif" />
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:layout_marginTop="4dp"
+            android:background="#A2A9B1" />
+
+        <TextView
+            android:id="@+id/tvThreatsInGeorgia"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:layout_marginBottom="4dp"
+            android:lineSpacingExtra="3dp"
+            android:text="Not available yet."
+            android:textColor="#202122"
+            android:textSize="16sp" />
+
+        <!-- Best Angles / Behaviors -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="18dp"
+            android:text="Best Angles / Behaviors"
+            android:textColor="#202122"
+            android:textSize="22sp"
+            android:textStyle="bold"
+            android:fontFamily="serif" />
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:layout_marginTop="4dp"
+            android:background="#A2A9B1" />
+
+        <TextView
+            android:id="@+id/tvBestAnglesBehaviors"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:layout_marginBottom="4dp"
+            android:lineSpacingExtra="3dp"
+            android:text="Not available yet."
+            android:textColor="#202122"
+            android:textSize="16sp" />
+
+        <!-- Best Lighting Times -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="18dp"
+            android:text="Best Lighting Times"
+            android:textColor="#202122"
+            android:textSize="22sp"
+            android:textStyle="bold"
+            android:fontFamily="serif" />
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:layout_marginTop="4dp"
+            android:background="#A2A9B1" />
+
+        <TextView
+            android:id="@+id/tvTimesBestLighting"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:layout_marginBottom="4dp"
+            android:lineSpacingExtra="3dp"
+            android:text="Not available yet."
+            android:textColor="#202122"
+            android:textSize="16sp" />
+
+        <!-- Avoid Disturbing -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="18dp"
+            android:text="Avoid Disturbing"
+            android:textColor="#202122"
+            android:textSize="22sp"
+            android:textStyle="bold"
+            android:fontFamily="serif" />
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:layout_marginTop="4dp"
+            android:background="#A2A9B1" />
+
+        <TextView
+            android:id="@+id/tvAvoidDisturbing"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:layout_marginBottom="4dp"
+            android:lineSpacingExtra="3dp"
+            android:text="Not available yet."
+            android:textColor="#202122"
+            android:textSize="16sp" />
+
+        <!-- Hunter Facts -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="20dp"
+            android:text="Hunter Facts"
+            android:textColor="#202122"
+            android:textSize="22sp"
+            android:textStyle="bold"
+            android:fontFamily="serif" />
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:layout_marginTop="4dp"
+            android:background="#A2A9B1" />
+
+        <TextView
+            android:id="@+id/tvHunterFacts"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:layout_marginBottom="4dp"
+            android:lineSpacingExtra="3dp"
+            android:text="Not available yet."
+            android:textColor="#202122"
+            android:textSize="16sp" />
+
+        <!-- Relevant Regulations -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="18dp"
+            android:text="Relevant Regulations"
+            android:textColor="#202122"
+            android:textSize="22sp"
+            android:textStyle="bold"
+            android:fontFamily="serif" />
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:layout_marginTop="4dp"
+            android:background="#A2A9B1" />
+
+        <TextView
+            android:id="@+id/tvRelevantRegulations"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:layout_marginBottom="4dp"
+            android:lineSpacingExtra="3dp"
+            android:text="Not available yet."
+            android:textColor="#202122"
+            android:textSize="16sp" />
+
+        <!-- Georgia DNR Hunting Link -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="18dp"
+            android:text="Georgia DNR Hunting Link"
+            android:textColor="#202122"
+            android:textSize="22sp"
+            android:textStyle="bold"
+            android:fontFamily="serif" />
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:layout_marginTop="4dp"
+            android:background="#A2A9B1" />
+
+        <TextView
+            android:id="@+id/tvGeorgiaDNRHuntingLink"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:layout_marginBottom="8dp"
+            android:autoLink="web"
+            android:linksClickable="true"
+            android:lineSpacingExtra="3dp"
+            android:text="Not available yet."
+            android:textColor="#3366CC"
+            android:textSize="16sp" />
+
+    </LinearLayout>
+</ScrollView>

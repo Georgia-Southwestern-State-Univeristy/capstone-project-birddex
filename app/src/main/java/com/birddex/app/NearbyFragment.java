@@ -61,6 +61,7 @@ public class NearbyFragment extends Fragment {
     private LocationRequest locationRequest;
     private LocationCallback locationCallback;
     private Location currentLocation;
+    private Location lastFetchLocation;
     private String lastPlaceShown = null;
 
     private FirebaseManager firebaseManager;
@@ -68,6 +69,7 @@ public class NearbyFragment extends Fragment {
 
     private boolean isUpdating = false;
     private ExecutorService geoExecutor;
+    private int fetchCount = 0; // Tracks finished data sources
 
     private final List<Bird> firestoreBirds = new ArrayList<>();
     private final List<Bird> ebirdBirds = new ArrayList<>();
@@ -76,6 +78,7 @@ public class NearbyFragment extends Fragment {
     private static final long LOCATION_UPDATE_INTERVAL_MS = 3 * 60 * 1000; // 3 Minutes
     private static final double SEARCH_RADIUS_METERS = 50000; // 50 km radius
     private static final long SIGHTING_RECENCY_MS = 72L * 60 * 60 * 1000; // 72 Hours
+    private static final float MIN_DISTANCE_FOR_FETCH = 1000f; // 1km movement triggers auto-fetch
 
     @Nullable
     @Override
@@ -107,9 +110,12 @@ public class NearbyFragment extends Fragment {
         locationCallback = new LocationCallback() {
             @Override
             public void onLocationResult(@NonNull LocationResult locationResult) {
+                if (locationResult.getLocations().isEmpty()) return;
                 Location location = locationResult.getLastLocation();
                 if (location == null) return;
-                handleNewLocation(location);
+                
+                Log.d(TAG, "Location update received: " + location.getLatitude() + ", " + location.getLongitude());
+                handleNewLocation(location, false);
             }
         };
 
@@ -124,35 +130,71 @@ public class NearbyFragment extends Fragment {
                 });
 
         btnRefresh.setOnClickListener(view -> {
-            if (currentLocation != null) fetchAllNearbyData();
-            else startLocationUpdates();
+            Log.d(TAG, "Manual refresh clicked");
+            if (ContextCompat.checkSelfPermission(requireContext(), Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
+                // Force a fresh location check on manual refresh
+                fusedLocationClient.getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, null)
+                    .addOnSuccessListener(location -> {
+                        if (location != null) {
+                            handleNewLocation(location, true);
+                        } else {
+                            fetchAllNearbyData();
+                        }
+                    });
+            } else {
+                requestLocationOrLoad();
+            }
         });
 
-        geoExecutor = Executors.newSingleThreadExecutor();
         return v;
     }
 
     @Override
-    public void onStart() {
-        super.onStart();
+    public void onResume() {
+        super.onResume();
+        if (geoExecutor == null || geoExecutor.isShutdown()) {
+            geoExecutor = Executors.newSingleThreadExecutor();
+        }
         requestLocationOrLoad();
     }
 
-    private void handleNewLocation(Location location) {
+    @Override
+    public void onPause() {
+        super.onPause();
+        stopLocationUpdates();
+        if (loadingDialog != null && loadingDialog.isShowing()) {
+            loadingDialog.dismiss();
+        }
+    }
+
+    private void handleNewLocation(Location location, boolean forceDataFetch) {
         currentLocation = location;
         
-        // Update the city/state name in the UI
+        // 1. Check if we should fetch data based on movement/intent
+        boolean shouldFetch = forceDataFetch || lastFetchLocation == null;
+        if (!shouldFetch && lastFetchLocation != null) {
+            float distance = location.distanceTo(lastFetchLocation);
+            if (distance > MIN_DISTANCE_FOR_FETCH) {
+                Log.d(TAG, "Significant movement detected (" + distance + "m).");
+                shouldFetch = true;
+            }
+        }
+
+        // 2. Fetch data IMMEDIATELY if needed (Don't wait for Geocoder)
+        if (shouldFetch) {
+            lastFetchLocation = location;
+            fetchAllNearbyData();
+        }
+
+        // 3. Separately update the address text in the background (Geocoder can be slow/buggy on emulators)
         if (geoExecutor != null && !geoExecutor.isShutdown()) {
             geoExecutor.execute(() -> {
                 String place = getCityStateFromLocation(location);
-                if (lastPlaceShown == null || !place.equals(lastPlaceShown)) {
-                    lastPlaceShown = place;
-                    if (isAdded()) {
-                        requireActivity().runOnUiThread(() -> {
-                            txtLocation.setText("Location: " + place);
-                            fetchAllNearbyData(); // Trigger data fetch now that we have a location
-                        });
-                    }
+                if (isAdded() && getActivity() != null) {
+                    getActivity().runOnUiThread(() -> {
+                        txtLocation.setText("Location: " + place);
+                        lastPlaceShown = place;
+                    });
                 }
             });
         }
@@ -160,13 +202,19 @@ public class NearbyFragment extends Fragment {
 
     private void requestLocationOrLoad() {
         if (ContextCompat.checkSelfPermission(requireContext(), Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
-            // 1. Try to get the last known location immediately for instant display
-            fusedLocationClient.getLastLocation().addOnSuccessListener(location -> {
-                if (location != null) {
-                    handleNewLocation(location);
-                }
-            });
-            // 2. Start active polling
+            // Try to get a fresh location fix immediately for populate-on-open
+            fusedLocationClient.getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, null)
+                .addOnSuccessListener(location -> {
+                    if (location != null) {
+                        handleNewLocation(location, false);
+                    } else {
+                        // Fallback to last known if current fix fails
+                        fusedLocationClient.getLastLocation().addOnSuccessListener(lastLoc -> {
+                            if (lastLoc != null) handleNewLocation(lastLoc, false);
+                        });
+                    }
+                });
+            
             startLocationUpdates();
         } else {
             locationPermissionLauncher.launch(new String[]{
@@ -181,19 +229,15 @@ public class NearbyFragment extends Fragment {
         try {
             fusedLocationClient.requestLocationUpdates(locationRequest, locationCallback, Looper.getMainLooper());
             isUpdating = true;
-        } catch (SecurityException ignored) {}
+        } catch (SecurityException se) {
+            Log.e(TAG, "SecurityException: ", se);
+        }
     }
 
     private void stopLocationUpdates() {
         if (!isUpdating) return;
         fusedLocationClient.removeLocationUpdates(locationCallback);
         isUpdating = false;
-    }
-
-    @Override
-    public void onStop() {
-        super.onStop();
-        stopLocationUpdates();
     }
 
     @Override
@@ -219,21 +263,28 @@ public class NearbyFragment extends Fragment {
         return "Nearby";
     }
 
-    private void fetchAllNearbyData() {
+    private synchronized void fetchAllNearbyData() {
         if (currentLocation == null) return;
 
-        if (isAdded()) loadingDialog.show();
+        fetchCount = 0; // Reset tracking
+        Log.d(TAG, "Starting dual-fetch from Firestore and eBird...");
+        if (isAdded() && getActivity() != null) {
+            getActivity().runOnUiThread(() -> {
+                if (!loadingDialog.isShowing()) loadingDialog.show();
+            });
+        }
+        
         firestoreBirds.clear();
         ebirdBirds.clear();
 
         firebaseManager.getAllBirds(task -> {
             if (task.isSuccessful() && task.getResult() != null) {
-                for (DocumentSnapshot document : task.getResult().getDocuments()) {
-                    Bird bird = document.toObject(Bird.class);
+                for (DocumentSnapshot doc : task.getResult().getDocuments()) {
+                    Bird bird = doc.toObject(Bird.class);
                     if (isValidSighting(bird)) firestoreBirds.add(bird);
                 }
             }
-            processFinalList();
+            checkIfAllFetched();
         });
 
         ebirdApi.fetchCoreGeorgiaBirdList(new EbirdApi.EbirdCoreBirdListCallback() {
@@ -243,10 +294,17 @@ public class NearbyFragment extends Fragment {
                     Bird bird = parseBirdJson(json);
                     if (isValidSighting(bird)) ebirdBirds.add(bird);
                 }
-                processFinalList();
+                checkIfAllFetched();
             }
-            @Override public void onFailure(Exception e) { processFinalList(); }
+            @Override public void onFailure(Exception e) { checkIfAllFetched(); }
         });
+    }
+
+    private synchronized void checkIfAllFetched() {
+        fetchCount++;
+        if (fetchCount >= 2) {
+            processFinalList();
+        }
     }
 
     private boolean isValidSighting(Bird bird) {
@@ -289,11 +347,17 @@ public class NearbyFragment extends Fragment {
 
         Collections.sort(combined, (b1, b2) -> b2.getLastSeenTimestampGeorgia().compareTo(b1.getLastSeenTimestampGeorgia()));
 
-        if (isAdded()) {
-            requireActivity().runOnUiThread(() -> {
+        if (isAdded() && getActivity() != null) {
+            getActivity().runOnUiThread(() -> {
                 adapter.updateList(combined);
                 if (loadingDialog.isShowing()) loadingDialog.dismiss();
             });
         }
+    }
+
+    private double calculateDistance(double lat1, double lon1, double lat2, double lon2) {
+        float[] results = new float[1];
+        Location.distanceBetween(lat1, lon1, lat2, lon2, results);
+        return results[0];
     }
 }

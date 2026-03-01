@@ -26,6 +26,7 @@ import com.google.firebase.auth.FirebaseUser;
 import com.google.firebase.firestore.DocumentSnapshot;
 import com.google.firebase.firestore.FieldValue;
 import com.google.firebase.firestore.FirebaseFirestore;
+import com.google.firebase.firestore.MetadataChanges;
 import com.google.firebase.firestore.Query;
 
 import java.util.ArrayList;
@@ -85,9 +86,10 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
         FirebaseUser currentUser = mAuth.getCurrentUser();
         if (currentUser == null) return;
 
+        // Use standard get() which automatically checks cache first
         db.collection("users").document(currentUser.getUid()).get()
                 .addOnSuccessListener(documentSnapshot -> {
-                    if (!isAdded() || getActivity() == null || binding == null) return;
+                    if (!isAdded() || binding == null) return;
                     if (documentSnapshot.exists()) {
                         String profilePictureUrl = documentSnapshot.getString("profilePictureUrl");
                         if (getContext() != null) {
@@ -101,9 +103,11 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
     }
 
     private void listenForPosts() {
+        // addSnapshotListener with MetadataChanges.INCLUDE allows us to see when data 
+        // is coming from the local cache vs the server.
         db.collection("forumThreads")
                 .orderBy("timestamp", Query.Direction.DESCENDING)
-                .addSnapshotListener((value, error) -> {
+                .addSnapshotListener(MetadataChanges.INCLUDE, (value, error) -> {
                     if (!isAdded() || binding == null) return;
                     if (error != null) {
                         Log.e(TAG, "Listen failed.", error);
@@ -120,6 +124,14 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
                             }
                         }
                         adapter.setPosts(posts);
+                        
+                        // If data is from cache, it's already shown! 
+                        // If it's from server, the list will update smoothly.
+                        if (value.getMetadata().isFromCache()) {
+                            Log.d(TAG, "Forum data loaded from local cache");
+                        } else {
+                            Log.d(TAG, "Forum data synchronized with server");
+                        }
                     }
                 });
     }
@@ -153,7 +165,6 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
         FirebaseUser user = mAuth.getCurrentUser();
         if (user != null) {
             String userId = user.getUid();
-            // Check if user has already viewed this post
             if (post.getViewedBy() == null || !post.getViewedBy().containsKey(userId)) {
                 db.collection("forumThreads").document(post.getId())
                         .update("viewCount", FieldValue.increment(1),

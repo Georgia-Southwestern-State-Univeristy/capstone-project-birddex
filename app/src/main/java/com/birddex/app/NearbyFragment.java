@@ -75,6 +75,7 @@ public class NearbyFragment extends Fragment {
 
     private FirebaseManager firebaseManager;
     private EbirdApi ebirdApi;
+    private BirdCacheManager cacheManager;
 
     private boolean isUpdating = false;
     private boolean isSearchDataLoading = false;
@@ -112,6 +113,7 @@ public class NearbyFragment extends Fragment {
 
         firebaseManager = new FirebaseManager(requireContext());
         ebirdApi = new EbirdApi();
+        cacheManager = new BirdCacheManager(requireContext());
 
         fusedLocationClient = LocationServices.getFusedLocationProviderClient(requireActivity());
 
@@ -161,9 +163,17 @@ public class NearbyFragment extends Fragment {
         btnSearch.setOnClickListener(view -> openBirdSearchDialog());
         btnMap.setOnClickListener(view -> openHeatmapScreen());
 
+        loadCachedData();
         primeSearchableBirds();
 
         return v;
+    }
+
+    private void loadCachedData() {
+        List<Bird> cached = cacheManager.getCachedNearbyBirds();
+        if (!cached.isEmpty()) {
+            adapter.updateList(cached);
+        }
     }
 
     @Override
@@ -286,7 +296,8 @@ public class NearbyFragment extends Fragment {
         fetchCount = 0;
         Log.d(TAG, "Starting dual-fetch from Firestore and eBird...");
 
-        if (isAdded() && getActivity() != null) {
+        // Only show loading dialog if there's no cached data or it's a manual refresh
+        if (isAdded() && getActivity() != null && (adapter.getItemCount() == 0)) {
             getActivity().runOnUiThread(() -> {
                 if (!loadingDialog.isShowing()) loadingDialog.show();
             });
@@ -391,6 +402,9 @@ public class NearbyFragment extends Fragment {
 
         Collections.sort(combined, (b1, b2) ->
                 b2.getLastSeenTimestampGeorgia().compareTo(b1.getLastSeenTimestampGeorgia()));
+
+        // Save to cache
+        cacheManager.saveNearbyBirds(combined);
 
         if (isAdded() && getActivity() != null) {
             getActivity().runOnUiThread(() -> {

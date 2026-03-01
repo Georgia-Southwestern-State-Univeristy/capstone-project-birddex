@@ -2,6 +2,7 @@ package com.birddex.app;
 
 import android.os.Bundle;
 import android.text.method.LinkMovementMethod;
+import android.util.Log;
 import android.view.View;
 import android.widget.ImageView;
 import android.widget.TextView;
@@ -11,13 +12,16 @@ import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatActivity;
 
 import com.bumptech.glide.Glide;
+import com.google.firebase.firestore.DocumentSnapshot;
 import com.google.firebase.firestore.FirebaseFirestore;
+import com.google.firebase.firestore.Source;
 
 import java.util.HashMap;
 import java.util.Map;
 
 public class BirdWikiActivity extends AppCompatActivity {
 
+    private static final String TAG = "BirdWikiActivity";
     public static final String EXTRA_BIRD_ID = "birdId";
 
     private FirebaseFirestore db;
@@ -82,11 +86,16 @@ public class BirdWikiActivity extends AppCompatActivity {
         registerFactView("georgiaDNRHuntingLink", R.id.tvGeorgiaDNRHuntingLink);
 
         TextView linkView = findViewById(R.id.tvGeorgiaDNRHuntingLink);
-        linkView.setMovementMethod(LinkMovementMethod.getInstance());
+        if (linkView != null) {
+            linkView.setMovementMethod(LinkMovementMethod.getInstance());
+        }
     }
 
     private void registerFactView(String key, int viewId) {
-        factViews.put(key, findViewById(viewId));
+        TextView tv = findViewById(viewId);
+        if (tv != null) {
+            factViews.put(key, tv);
+        }
     }
 
     private void initializePlaceholders() {
@@ -100,133 +109,146 @@ public class BirdWikiActivity extends AppCompatActivity {
     }
 
     private void loadBirdBasics(String birdId) {
-        db.collection("birds")
-                .document(birdId)
-                .get()
-                .addOnSuccessListener(doc -> {
-                    if (isFinishing() || isDestroyed()) return;
-                    if (!doc.exists()) {
-                        tvPageTitle.setText("Unknown Bird");
-                        return;
-                    }
+        // Try Cache first
+        db.collection("birds").document(birdId).get(Source.CACHE)
+                .addOnSuccessListener(this::processBasics)
+                .addOnFailureListener(e -> fetchBasicsFromServer(birdId));
+        
+        // Always try to sync with server
+        fetchBasicsFromServer(birdId);
+    }
 
-                    String commonName = doc.getString("commonName");
-                    String scientificName = doc.getString("scientificName");
-                    String family = doc.getString("family");
-                    String species = doc.getString("species");
+    private void fetchBasicsFromServer(String birdId) {
+        db.collection("birds").document(birdId).get(Source.SERVER)
+                .addOnSuccessListener(this::processBasics)
+                .addOnFailureListener(e -> Log.e(TAG, "Failed to load basics from server", e));
+    }
 
-                    tvPageTitle.setText(firstNonBlank(commonName, "Unknown Bird"));
-                    tvPageScientificName.setText(firstNonBlank(scientificName, "Scientific name not available"));
+    private void processBasics(DocumentSnapshot doc) {
+        if (isFinishing() || isDestroyed() || !doc.exists()) return;
 
-                    setFact("family", family);
-                    setFact("species", species);
+        String commonName = doc.getString("commonName");
+        String scientificName = doc.getString("scientificName");
+        String family = doc.getString("family");
+        String species = doc.getString("species");
 
-                    if (!isBlank(commonName)) {
-                        loadBirdImage(commonName);
-                    }
-                })
-                .addOnFailureListener(e -> {
-                    if (isFinishing() || isDestroyed()) return;
-                    Toast.makeText(this, "Failed to load bird basics.", Toast.LENGTH_SHORT).show();
-                });
+        tvPageTitle.setText(firstNonBlank(commonName, "Unknown Bird"));
+        tvPageScientificName.setText(firstNonBlank(scientificName, "Scientific name not available"));
+
+        setFact("family", family);
+        setFact("species", species);
+
+        if (!isBlank(commonName)) {
+            loadBirdImage(commonName);
+        }
     }
 
     private void loadBirdImage(String commonName) {
-        db.collection("bird_images")
-                .document(commonName)
-                .get()
-                .addOnSuccessListener(imageDoc -> {
-                    if (isFinishing() || isDestroyed()) return;
-                    String imageUrl = imageDoc.getString("imageUrl");
+        // Cache first for image URL
+        db.collection("bird_images").document(commonName).get(Source.CACHE)
+                .addOnSuccessListener(this::processImage)
+                .addOnFailureListener(e -> fetchImageFromServer(commonName));
+        
+        fetchImageFromServer(commonName);
+    }
 
-                    if (isBlank(imageUrl)) {
-                        ivBirdHeaderImage.setVisibility(View.GONE);
-                        return;
-                    }
+    private void fetchImageFromServer(String commonName) {
+        db.collection("bird_images").document(commonName).get(Source.SERVER)
+                .addOnSuccessListener(this::processImage);
+    }
 
-                    ivBirdHeaderImage.setVisibility(View.VISIBLE);
-                    Glide.with(this)
-                            .load(imageUrl)
-                            .into(ivBirdHeaderImage);
-                })
-                .addOnFailureListener(e -> {
-                    if (isFinishing() || isDestroyed()) return;
-                    ivBirdHeaderImage.setVisibility(View.GONE);
-                });
+    private void processImage(DocumentSnapshot imageDoc) {
+        if (isFinishing() || isDestroyed() || !imageDoc.exists()) return;
+        String imageUrl = imageDoc.getString("imageUrl");
+
+        if (isBlank(imageUrl)) {
+            ivBirdHeaderImage.setVisibility(View.GONE);
+            return;
+        }
+
+        ivBirdHeaderImage.setVisibility(View.VISIBLE);
+        Glide.with(this)
+                .load(imageUrl)
+                .into(ivBirdHeaderImage);
     }
 
     private void loadGeneralFacts(String birdId) {
-        db.collection("birdFacts")
-                .document(birdId)
-                .get()
-                .addOnSuccessListener(doc -> {
-                    if (isFinishing() || isDestroyed()) return;
-                    if (!doc.exists()) return;
+        // Cache first
+        db.collection("birdFacts").document(birdId).get(Source.CACHE)
+                .addOnSuccessListener(this::processGeneralFacts)
+                .addOnFailureListener(e -> fetchGeneralFactsFromServer(birdId));
 
-                    setFact("conservationStatus", doc.getString("conservationStatus"));
-                    setFact("seasonalPresence", doc.getString("seasonalPresence"));
-                    setFact("whereInGeorgiaFound", doc.getString("whereInGeorgiaFound"));
+        fetchGeneralFactsFromServer(birdId);
+    }
 
-                    setFact("sizeAppearance", doc.getString("sizeAppearance"));
-                    setFact("distinctiveBehaviors", doc.getString("distinctiveBehaviors"));
-                    setFact("similarSpecies", doc.getString("similarSpecies"));
-                    setFact("peakViewingTimes", doc.getString("peakViewingTimes"));
-                    setFact("diet", doc.getString("diet"));
-                    setFact("nestingHabits", doc.getString("nestingHabits"));
-                    setFact("roleInEcosystem", doc.getString("roleInEcosystem"));
-                    setFact("uniqueBehaviorsSpecific", doc.getString("uniqueBehaviorsSpecific"));
-                    setFact("recordSettingFacts", doc.getString("recordSettingFacts"));
-                    setFact("culturalHistoricalNotes", doc.getString("culturalHistoricalNotes"));
-                    setFact("howToHelp", doc.getString("howToHelp"));
-                    setFact("threatsInGeorgia", doc.getString("threatsInGeorgia"));
-                    setFact("bestAnglesBehaviors", doc.getString("bestAnglesBehaviors"));
-                    setFact("timesBestLighting", doc.getString("timesBestLighting"));
-                    setFact("avoidDisturbing", doc.getString("avoidDisturbing"));
-                })
-                .addOnFailureListener(e -> {
-                    if (isFinishing() || isDestroyed()) return;
-                    Toast.makeText(this, "Failed to load bird facts.", Toast.LENGTH_SHORT).show();
-                });
+    private void fetchGeneralFactsFromServer(String birdId) {
+        db.collection("birdFacts").document(birdId).get(Source.SERVER)
+                .addOnSuccessListener(this::processGeneralFacts);
+    }
+
+    private void processGeneralFacts(DocumentSnapshot doc) {
+        if (isFinishing() || isDestroyed() || !doc.exists()) return;
+
+        setFact("conservationStatus", doc.getString("conservationStatus"));
+        setFact("seasonalPresence", doc.getString("seasonalPresence"));
+        setFact("whereInGeorgiaFound", doc.getString("whereInGeorgiaFound"));
+
+        setFact("sizeAppearance", doc.getString("sizeAppearance"));
+        setFact("distinctiveBehaviors", doc.getString("distinctiveBehaviors"));
+        setFact("similarSpecies", doc.getString("similarSpecies"));
+        setFact("peakViewingTimes", doc.getString("peakViewingTimes"));
+        setFact("diet", doc.getString("diet"));
+        setFact("nestingHabits", doc.getString("nestingHabits"));
+        setFact("roleInEcosystem", doc.getString("roleInEcosystem"));
+        setFact("uniqueBehaviorsSpecific", doc.getString("uniqueBehaviorsSpecific"));
+        setFact("recordSettingFacts", doc.getString("recordSettingFacts"));
+        setFact("culturalHistoricalNotes", doc.getString("culturalHistoricalNotes"));
+        setFact("howToHelp", doc.getString("howToHelp"));
+        setFact("threatsInGeorgia", doc.getString("threatsInGeorgia"));
+        setFact("bestAnglesBehaviors", doc.getString("bestAnglesBehaviors"));
+        setFact("timesBestLighting", doc.getString("timesBestLighting"));
+        setFact("avoidDisturbing", doc.getString("avoidDisturbing"));
     }
 
     private void loadHunterFacts(String birdId) {
-        db.collection("birdFacts")
-                .document(birdId)
-                .collection("hunterFacts")
-                .document(birdId)
-                .get()
-                .addOnSuccessListener(doc -> {
-                    if (isFinishing() || isDestroyed()) return;
-                    if (!doc.exists()) return;
+        db.collection("birdFacts").document(birdId).collection("hunterFacts").document(birdId).get(Source.CACHE)
+                .addOnSuccessListener(this::processHunterFacts)
+                .addOnFailureListener(e -> fetchHunterFactsFromServer(birdId));
 
-                    String legalStatusGeorgia = doc.getString("legalStatusGeorgia");
-                    String season = doc.getString("season");
-                    String licenseRequirements = doc.getString("licenseRequirements");
-                    String federalProtections = doc.getString("federalProtections");
-                    String notHuntableStatement = doc.getString("notHuntableStatement");
-                    String relevantRegulations = doc.getString("relevantRegulations");
-                    String georgiaDNRHuntingLink = doc.getString("georgiaDNRHuntingLink");
+        fetchHunterFactsFromServer(birdId);
+    }
 
-                    Object endangeredObj = doc.get("isEndangered");
-                    String isEndangered = endangeredObj != null ? String.valueOf(endangeredObj) : null;
+    private void fetchHunterFactsFromServer(String birdId) {
+        db.collection("birdFacts").document(birdId).collection("hunterFacts").document(birdId).get(Source.SERVER)
+                .addOnSuccessListener(this::processHunterFacts);
+    }
 
-                    String hunterFactsBlock = buildHunterBlock(
-                            legalStatusGeorgia,
-                            isEndangered,
-                            season,
-                            licenseRequirements,
-                            federalProtections,
-                            notHuntableStatement
-                    );
+    private void processHunterFacts(DocumentSnapshot doc) {
+        if (isFinishing() || isDestroyed() || !doc.exists()) return;
 
-                    setFact("hunterFacts", hunterFactsBlock);
-                    setFact("relevantRegulations", relevantRegulations);
-                    setFact("georgiaDNRHuntingLink", georgiaDNRHuntingLink);
-                })
-                .addOnFailureListener(e -> {
-                    if (isFinishing() || isDestroyed()) return;
-                    Toast.makeText(this, "Failed to load hunter facts.", Toast.LENGTH_SHORT).show();
-                });
+        String legalStatusGeorgia = doc.getString("legalStatusGeorgia");
+        String season = doc.getString("season");
+        String licenseRequirements = doc.getString("licenseRequirements");
+        String federalProtections = doc.getString("federalProtections");
+        String notHuntableStatement = doc.getString("notHuntableStatement");
+        String relevantRegulations = doc.getString("relevantRegulations");
+        String georgiaDNRHuntingLink = doc.getString("georgiaDNRHuntingLink");
+
+        Object endangeredObj = doc.get("isEndangered");
+        String isEndangered = endangeredObj != null ? String.valueOf(endangeredObj) : null;
+
+        String hunterFactsBlock = buildHunterBlock(
+                legalStatusGeorgia,
+                isEndangered,
+                season,
+                licenseRequirements,
+                federalProtections,
+                notHuntableStatement
+        );
+
+        setFact("hunterFacts", hunterFactsBlock);
+        setFact("relevantRegulations", relevantRegulations);
+        setFact("georgiaDNRHuntingLink", georgiaDNRHuntingLink);
     }
 
     private String buildHunterBlock(String legalStatusGeorgia,

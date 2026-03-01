@@ -52,7 +52,9 @@ import com.google.firebase.firestore.DocumentSnapshot;
 import com.google.firebase.firestore.FieldValue;
 import com.google.firebase.firestore.FirebaseFirestore;
 import com.google.firebase.firestore.ListenerRegistration;
+import com.google.firebase.firestore.MetadataChanges;
 import com.google.firebase.firestore.Query;
+import com.google.firebase.firestore.Source;
 import com.google.maps.android.heatmaps.Gradient;
 import com.google.maps.android.heatmaps.HeatmapTileProvider;
 import com.google.maps.android.heatmaps.WeightedLatLng;
@@ -159,7 +161,7 @@ public class NearbyHeatmapActivity extends AppCompatActivity
         if (mapFragment != null) {
             mapFragment.getMapAsync(this);
         } else {
-            Toast.makeText(this, R.string.map_failed_to_load, Toast.LENGTH_SHORT).show();
+            Toast.makeText(this, "Map failed to load", Toast.LENGTH_SHORT).show();
             finish();
         }
     }
@@ -199,27 +201,44 @@ public class NearbyHeatmapActivity extends AppCompatActivity
         hotspotBuckets.clear();
         clearHotspotCircles();
 
-        tvMapSubtitle.setText(R.string.loading_heatmap);
+        tvMapSubtitle.setText("Loading heatmap...");
 
+        // Heatmap data is heavy, so we try CACHE first
         loadUserBirdSightings();
         loadEbirdApiSightings();
     }
 
     private void loadForumPins() {
+        // Fetch pins from CACHE first for instant display
         db.collection("forumThreads")
                 .whereEqualTo("showLocation", true)
-                .get()
+                .get(Source.CACHE)
                 .addOnSuccessListener(querySnapshot -> {
-                    clearForumMarkers();
-                    for (DocumentSnapshot doc : querySnapshot.getDocuments()) {
-                        ForumPost post = doc.toObject(ForumPost.class);
-                        if (post != null && post.getLatitude() != null && post.getLongitude() != null) {
-                            post.setId(doc.getId());
-                            addPinToMap(post);
-                        }
+                    if (querySnapshot != null && !querySnapshot.isEmpty()) {
+                        processForumPins(querySnapshot);
                     }
+                    fetchForumPinsFromServer();
                 })
-                .addOnFailureListener(e -> Log.e(TAG, "Error loading forum pins", e));
+                .addOnFailureListener(e -> fetchForumPinsFromServer());
+    }
+
+    private void fetchForumPinsFromServer() {
+        db.collection("forumThreads")
+                .whereEqualTo("showLocation", true)
+                .get(Source.SERVER)
+                .addOnSuccessListener(this::processForumPins)
+                .addOnFailureListener(e -> Log.e(TAG, "Error loading forum pins from server", e));
+    }
+
+    private void processForumPins(com.google.firebase.firestore.QuerySnapshot querySnapshot) {
+        clearForumMarkers();
+        for (DocumentSnapshot doc : querySnapshot.getDocuments()) {
+            ForumPost post = doc.toObject(ForumPost.class);
+            if (post != null && post.getLatitude() != null && post.getLongitude() != null) {
+                post.setId(doc.getId());
+                addPinToMap(post);
+            }
+        }
     }
 
     private void addPinToMap(ForumPost post) {
@@ -316,7 +335,6 @@ public class NearbyHeatmapActivity extends AppCompatActivity
         FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
         if (user != null) {
             String userId = user.getUid();
-            // Reset notification flag if author is viewing the post
             if (userId.equals(post.getUserId()) && post.isNotificationSent()) {
                 db.collection("forumThreads").document(post.getId())
                         .update("notificationSent", false);
@@ -361,7 +379,6 @@ public class NearbyHeatmapActivity extends AppCompatActivity
             cvImage.setVisibility(View.GONE);
         }
 
-        // Navigate to forum post on click
         postContent.setOnClickListener(v -> {
             Intent intent = new Intent(this, PostDetailActivity.class);
             intent.putExtra(PostDetailActivity.EXTRA_POST_ID, post.getId());
@@ -371,7 +388,7 @@ public class NearbyHeatmapActivity extends AppCompatActivity
 
         btnPostOptions.setOnClickListener(v -> showPostOptions(post, v));
 
-        // Setup Comments
+        // Setup Comments with CACHE support
         RecyclerView rvComments = view.findViewById(R.id.rvComments);
         ForumCommentAdapter adapter = new ForumCommentAdapter(this);
         rvComments.setLayoutManager(new LinearLayoutManager(this));
@@ -380,7 +397,7 @@ public class NearbyHeatmapActivity extends AppCompatActivity
         if (popupCommentsListener != null) popupCommentsListener.remove();
         popupCommentsListener = db.collection("forumThreads").document(post.getId()).collection("comments")
                 .orderBy("timestamp", Query.Direction.ASCENDING)
-                .addSnapshotListener((value, error) -> {
+                .addSnapshotListener(MetadataChanges.INCLUDE, (value, error) -> {
                     if (error != null) return;
                     if (value != null) {
                         List<ForumComment> comments = new ArrayList<>();
@@ -395,16 +412,14 @@ public class NearbyHeatmapActivity extends AppCompatActivity
                     }
                 });
 
-        // Setup Current User PFP in comment input
         ImageView ivCurrentUser = view.findViewById(R.id.ivCurrentUserPfp);
         if (user != null) {
-            db.collection("users").document(user.getUid()).get().addOnSuccessListener(doc -> {
+            db.collection("users").document(user.getUid()).get(Source.CACHE).addOnSuccessListener(doc -> {
                 String pfp = doc.getString("profilePictureUrl");
                 Glide.with(this).load(pfp).placeholder(R.drawable.ic_profile).into(ivCurrentUser);
             });
         }
 
-        // Setup Sending
         currentPopupEditText = view.findViewById(R.id.etComment);
         View btnSend = view.findViewById(R.id.btnSendComment);
         btnSend.setOnClickListener(v -> {
@@ -615,47 +630,63 @@ public class NearbyHeatmapActivity extends AppCompatActivity
     }
 
     private void loadUserBirdSightings() {
+        // Fetch sightings from CACHE first
         db.collection("userBirdSightings")
-                .get()
+                .get(Source.CACHE)
                 .addOnSuccessListener(querySnapshot -> {
-                    for (DocumentSnapshot doc : querySnapshot.getDocuments()) {
-                        Double lat = getAnyDouble(doc, "location.latitude", "lastSeenLatitudeGeorgia", "latitude", "lat");
-                        Double lng = getAnyDouble(doc, "location.longitude", "lastSeenLongitudeGeorgia", "longitude", "lng");
-                        Long timeMillis = getAnyTimeMillis(doc, "timestamp");
-
-                        if (lat == null || lng == null) continue;
-                        if (shouldBeFiltered(lat, lng, timeMillis)) continue;
-
-                        userHeatPoints.add(new WeightedLatLng(new LatLng(lat, lng), 1.8));
-
-                        String birdName = extractBirdName(doc);
-                        addToHotspotBucket(lat, lng, birdName, true);
+                    if (querySnapshot != null && !querySnapshot.isEmpty()) {
+                        processSightings(querySnapshot, true);
                     }
-                    onCollectionFinished();
+                    fetchUserBirdSightingsFromServer();
                 })
+                .addOnFailureListener(e -> fetchUserBirdSightingsFromServer());
+    }
+
+    private void fetchUserBirdSightingsFromServer() {
+        db.collection("userBirdSightings")
+                .get(Source.SERVER)
+                .addOnSuccessListener(querySnapshot -> processSightings(querySnapshot, true))
                 .addOnFailureListener(e -> onCollectionFinished());
     }
 
     private void loadEbirdApiSightings() {
         db.collection("eBirdApiSightings")
-                .get()
+                .get(Source.CACHE)
                 .addOnSuccessListener(querySnapshot -> {
-                    for (DocumentSnapshot doc : querySnapshot.getDocuments()) {
-                        Double lat = getAnyDouble(doc, "location.latitude", "lastSeenLatitudeGeorgia", "latitude", "lat");
-                        Double lng = getAnyDouble(doc, "location.longitude", "lastSeenLongitudeGeorgia", "longitude", "lng");
-                        Long timeMillis = getAnyTimeMillis(doc, "observationDate", "timestamp");
-
-                        if (lat == null || lng == null) continue;
-                        if (shouldBeFiltered(lat, lng, timeMillis)) continue;
-
-                        eBirdHeatPoints.add(new WeightedLatLng(new LatLng(lat, lng), 1.0));
-
-                        String birdName = extractBirdName(doc);
-                        addToHotspotBucket(lat, lng, birdName, false);
+                    if (querySnapshot != null && !querySnapshot.isEmpty()) {
+                        processSightings(querySnapshot, false);
                     }
-                    onCollectionFinished();
+                    fetchEbirdApiSightingsFromServer();
                 })
+                .addOnFailureListener(e -> fetchEbirdApiSightingsFromServer());
+    }
+
+    private void fetchEbirdApiSightingsFromServer() {
+        db.collection("eBirdApiSightings")
+                .get(Source.SERVER)
+                .addOnSuccessListener(querySnapshot -> processSightings(querySnapshot, false))
                 .addOnFailureListener(e -> onCollectionFinished());
+    }
+
+    private void processSightings(com.google.firebase.firestore.QuerySnapshot querySnapshot, boolean isUserSighting) {
+        if (isUserSighting) userHeatPoints.clear();
+        else eBirdHeatPoints.clear();
+
+        for (DocumentSnapshot doc : querySnapshot.getDocuments()) {
+            Double lat = getAnyDouble(doc, "location.latitude", "lastSeenLatitudeGeorgia", "latitude", "lat");
+            Double lng = getAnyDouble(doc, "location.longitude", "lastSeenLongitudeGeorgia", "longitude", "lng");
+            Long timeMillis = getAnyTimeMillis(doc, isUserSighting ? "timestamp" : "observationDate");
+
+            if (lat == null || lng == null) continue;
+            if (shouldBeFiltered(lat, lng, timeMillis)) continue;
+
+            if (isUserSighting) userHeatPoints.add(new WeightedLatLng(new LatLng(lat, lng), 1.8));
+            else eBirdHeatPoints.add(new WeightedLatLng(new LatLng(lat, lng), 1.0));
+
+            String birdName = extractBirdName(doc);
+            addToHotspotBucket(lat, lng, birdName, isUserSighting);
+        }
+        onCollectionFinished();
     }
 
     private void onCollectionFinished() {
@@ -712,19 +743,11 @@ public class NearbyHeatmapActivity extends AppCompatActivity
 
         if (userHeatPoints.isEmpty() && eBirdHeatPoints.isEmpty()) {
             tvMapSubtitle.setText(hasNearbyCenter()
-                    ? R.string.no_nearby_sightings
-                    : R.string.no_recent_sightings);
+                    ? "No nearby sightings found."
+                    : "No recent sightings found.");
         } else {
-            String scopeText = getString(
-                    hasNearbyCenter() ? R.string.heatmap_scope_72h_50km : R.string.heatmap_scope_72h
-            );
-
-            tvMapSubtitle.setText(getString(
-                    R.string.heatmap_stats,
-                    scopeText,
-                    userHeatPoints.size(),
-                    eBirdHeatPoints.size()
-            ));
+            String scopeText = hasNearbyCenter() ? "in the last 72h within 50km" : "in the last 72h";
+            tvMapSubtitle.setText("Heatmap (" + scopeText + "): " + userHeatPoints.size() + " unverified, " + eBirdHeatPoints.size() + " verified");
         }
     }
 

@@ -4,6 +4,7 @@ import android.content.Intent;
 import android.os.Bundle;
 import android.util.Log;
 import android.view.View;
+import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -35,6 +36,7 @@ public class UserSocialProfileActivity extends AppCompatActivity implements Foru
     private ShapeableImageView ivPfp;
     private TextView tvUsername, tvBio;
     private TextView tvPostCount, tvFollowerCount, tvFollowingCount;
+    private LinearLayout btnUserFollowers, btnUserFollowing;
     private MaterialButton btnFollow;
     private RecyclerView rvPosts;
     private TabLayout tabLayout;
@@ -80,6 +82,8 @@ public class UserSocialProfileActivity extends AppCompatActivity implements Foru
         tvPostCount = findViewById(R.id.tvUserPostCount);
         tvFollowerCount = findViewById(R.id.tvUserFollowerCount);
         tvFollowingCount = findViewById(R.id.tvUserFollowingCount);
+        btnUserFollowers = findViewById(R.id.btnUserFollowers);
+        btnUserFollowing = findViewById(R.id.btnUserFollowing);
         btnFollow = findViewById(R.id.btnUserFollow);
         rvPosts = findViewById(R.id.rvUserProfilePosts);
         tabLayout = findViewById(R.id.profileTabLayout);
@@ -91,13 +95,27 @@ public class UserSocialProfileActivity extends AppCompatActivity implements Foru
 
         btnFollow.setOnClickListener(v -> toggleFollow());
 
+        // Click listeners for counts
+        btnUserFollowers.setOnClickListener(v -> {
+            Intent intent = new Intent(this, SocialActivity.class);
+            intent.putExtra(SocialActivity.EXTRA_USER_ID, targetUserId);
+            intent.putExtra(SocialActivity.EXTRA_SHOW_FOLLOWING, false);
+            startActivity(intent);
+        });
+
+        btnUserFollowing.setOnClickListener(v -> {
+            Intent intent = new Intent(this, SocialActivity.class);
+            intent.putExtra(SocialActivity.EXTRA_USER_ID, targetUserId);
+            intent.putExtra(SocialActivity.EXTRA_SHOW_FOLLOWING, true);
+            startActivity(intent);
+        });
+
         tabLayout.addOnTabSelectedListener(new TabLayout.OnTabSelectedListener() {
             @Override
             public void onTabSelected(TabLayout.Tab tab) {
                 if (tab.getPosition() == 0) {
                     rvPosts.setVisibility(View.VISIBLE);
                 } else {
-                    // Collection tab - currently hiding posts
                     rvPosts.setVisibility(View.GONE);
                 }
             }
@@ -126,11 +144,8 @@ public class UserSocialProfileActivity extends AppCompatActivity implements Foru
                                     .placeholder(R.drawable.ic_profile)
                                     .into(ivPfp);
                         }
-                    } else {
-                        Log.e(TAG, "Target user document does not exist: " + targetUserId);
                     }
-                })
-                .addOnFailureListener(e -> Log.e(TAG, "Error loading user details", e));
+                });
     }
 
     private void checkFollowingStatus() {
@@ -138,8 +153,6 @@ public class UserSocialProfileActivity extends AppCompatActivity implements Foru
             if (task.isSuccessful()) {
                 isFollowing = task.getResult();
                 updateFollowButtonUI();
-            } else {
-                Log.e(TAG, "Error checking following status", task.getException());
             }
         });
     }
@@ -163,11 +176,6 @@ public class UserSocialProfileActivity extends AppCompatActivity implements Foru
                     isFollowing = false;
                     updateFollowButtonUI();
                     loadUserDetails();
-                    Toast.makeText(this, "Unfollowed", Toast.LENGTH_SHORT).show();
-                } else {
-                    String error = task.getException() != null ? task.getException().getMessage() : "Unknown error";
-                    Toast.makeText(this, "Unfollow failed: " + error, Toast.LENGTH_LONG).show();
-                    Log.e(TAG, "Unfollow failed", task.getException());
                 }
             });
         } else {
@@ -177,11 +185,6 @@ public class UserSocialProfileActivity extends AppCompatActivity implements Foru
                     isFollowing = true;
                     updateFollowButtonUI();
                     loadUserDetails();
-                    Toast.makeText(this, "Following!", Toast.LENGTH_SHORT).show();
-                } else {
-                    String error = task.getException() != null ? task.getException().getMessage() : "Unknown error";
-                    Toast.makeText(this, "Follow failed: " + error, Toast.LENGTH_LONG).show();
-                    Log.e(TAG, "Follow failed", task.getException());
                 }
             });
         }
@@ -199,7 +202,6 @@ public class UserSocialProfileActivity extends AppCompatActivity implements Foru
                 .orderBy("timestamp", Query.Direction.DESCENDING)
                 .addSnapshotListener((value, error) -> {
                     if (error != null) {
-                        Log.e(TAG, "Error listening for user posts", error);
                         loadUserPostsFallback();
                         return;
                     }
@@ -269,9 +271,7 @@ public class UserSocialProfileActivity extends AppCompatActivity implements Foru
     }
 
     @Override
-    public void onOptionsClick(ForumPost post, View view) {
-        // Options logic
-    }
+    public void onOptionsClick(ForumPost post, View view) {}
 
     @Override
     public void onUserClick(String userId) {

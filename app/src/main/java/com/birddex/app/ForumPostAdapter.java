@@ -28,7 +28,7 @@ public class ForumPostAdapter extends RecyclerView.Adapter<ForumPostAdapter.Post
         void onCommentClick(ForumPost post);
         void onPostClick(ForumPost post);
         void onOptionsClick(ForumPost post, View view);
-        void onUserClick(String userId); // New method
+        void onUserClick(String userId);
     }
 
     public ForumPostAdapter(OnPostClickListener listener) {
@@ -72,6 +72,9 @@ public class ForumPostAdapter extends RecyclerView.Adapter<ForumPostAdapter.Post
         TextView tvCommentCount;
         TextView tvViewCount;
         ImageButton btnOptions;
+        
+        TextView tvSpottedBadge;
+        TextView tvHuntedBadge;
 
         public PostViewHolder(@NonNull View itemView) {
             super(itemView);
@@ -88,6 +91,9 @@ public class ForumPostAdapter extends RecyclerView.Adapter<ForumPostAdapter.Post
             tvCommentCount = itemView.findViewById(R.id.tvCommentCount);
             tvViewCount = itemView.findViewById(R.id.tvViewCount);
             btnOptions = itemView.findViewById(R.id.btnPostOptions);
+            
+            tvSpottedBadge = itemView.findViewById(R.id.tvSpottedBadge);
+            tvHuntedBadge = itemView.findViewById(R.id.tvHuntedBadge);
         }
 
         public void bind(ForumPost post, OnPostClickListener listener) {
@@ -96,6 +102,14 @@ public class ForumPostAdapter extends RecyclerView.Adapter<ForumPostAdapter.Post
             tvLikeCount.setText(String.valueOf(post.getLikeCount()));
             tvCommentCount.setText(String.valueOf(post.getCommentCount()));
             tvViewCount.setText(post.getViewCount() + " views");
+
+            // Status badges
+            if (tvSpottedBadge != null) {
+                tvSpottedBadge.setVisibility(post.isSpotted() ? View.VISIBLE : View.GONE);
+            }
+            if (tvHuntedBadge != null) {
+                tvHuntedBadge.setVisibility(post.isHunted() ? View.VISIBLE : View.GONE);
+            }
 
             // Timestamp
             if (post.getTimestamp() != null) {
@@ -123,7 +137,7 @@ public class ForumPostAdapter extends RecyclerView.Adapter<ForumPostAdapter.Post
             // Like status
             String currentUserId = FirebaseAuth.getInstance().getUid();
             if (currentUserId != null && post.getLikedBy() != null && post.getLikedBy().containsKey(currentUserId)) {
-                // ivLikeIcon.setImageResource(R.drawable.ic_favorite); 
+                ivLikeIcon.setImageResource(R.drawable.ic_favorite_border); // Placeholder
             } else {
                 ivLikeIcon.setImageResource(R.drawable.ic_favorite_border);
             }
@@ -133,7 +147,6 @@ public class ForumPostAdapter extends RecyclerView.Adapter<ForumPostAdapter.Post
             itemView.setOnClickListener(v -> listener.onPostClick(post));
             btnOptions.setOnClickListener(v -> listener.onOptionsClick(post, v));
             
-            // New: Click listeners for PFP and Username
             ivUserProfile.setOnClickListener(v -> listener.onUserClick(post.getUserId()));
             tvUsername.setOnClickListener(v -> listener.onUserClick(post.getUserId()));
         }

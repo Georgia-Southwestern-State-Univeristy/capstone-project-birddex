@@ -18,9 +18,16 @@ public class ForumPost {
     private int commentCount;
     private int viewCount;
     private Map<String, Boolean> likedBy;
-    private Map<String, Boolean> viewedBy; // Added to track views
+    private Map<String, Boolean> viewedBy;
     private boolean edited;
     private Timestamp lastEditedAt;
+
+    // New fields for Map and Bird Status
+    private Double latitude;
+    private Double longitude;
+    private boolean showLocation;
+    private boolean hunted;
+    private boolean spotted;
 
     public ForumPost() {
         // Required for Firestore
@@ -40,6 +47,9 @@ public class ForumPost {
         this.likedBy = new HashMap<>();
         this.viewedBy = new HashMap<>();
         this.edited = false;
+        this.showLocation = false;
+        this.hunted = false;
+        this.spotted = false;
     }
 
     // Getters and Setters
@@ -71,4 +81,15 @@ public class ForumPost {
     public void setEdited(boolean edited) { this.edited = edited; }
     public Timestamp getLastEditedAt() { return lastEditedAt; }
     public void setLastEditedAt(Timestamp lastEditedAt) { this.lastEditedAt = lastEditedAt; }
+
+    public Double getLatitude() { return latitude; }
+    public void setLatitude(Double latitude) { this.latitude = latitude; }
+    public Double getLongitude() { return longitude; }
+    public void setLongitude(Double longitude) { this.longitude = longitude; }
+    public boolean isShowLocation() { return showLocation; }
+    public void setShowLocation(boolean showLocation) { this.showLocation = showLocation; }
+    public boolean isHunted() { return hunted; }
+    public void setHunted(boolean hunted) { this.hunted = hunted; }
+    public boolean isSpotted() { return spotted; }
+    public void setSpotted(boolean spotted) { this.spotted = spotted; }
 }

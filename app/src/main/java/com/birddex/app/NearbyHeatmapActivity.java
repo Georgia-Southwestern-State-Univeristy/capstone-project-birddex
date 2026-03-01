@@ -4,7 +4,13 @@ import android.Manifest;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.os.Bundle;
+import android.util.TypedValue;
+import android.view.LayoutInflater;
+import android.view.View;
+import android.view.ViewGroup;
 import android.widget.ImageButton;
+import android.widget.ImageView;
+import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -16,6 +22,8 @@ import com.google.android.gms.maps.CameraUpdateFactory;
 import com.google.android.gms.maps.GoogleMap;
 import com.google.android.gms.maps.OnMapReadyCallback;
 import com.google.android.gms.maps.SupportMapFragment;
+import com.google.android.gms.maps.model.Circle;
+import com.google.android.gms.maps.model.CircleOptions;
 import com.google.android.gms.maps.model.LatLng;
 import com.google.android.gms.maps.model.TileOverlay;
 import com.google.android.gms.maps.model.TileOverlayOptions;
@@ -24,12 +32,20 @@ import com.google.firebase.firestore.FirebaseFirestore;
 import com.google.maps.android.heatmaps.Gradient;
 import com.google.maps.android.heatmaps.HeatmapTileProvider;
 import com.google.maps.android.heatmaps.WeightedLatLng;
+import com.google.android.material.bottomsheet.BottomSheetBehavior;
+import com.google.android.material.bottomsheet.BottomSheetDialog;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Date;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 
-public class NearbyHeatmapActivity extends AppCompatActivity implements OnMapReadyCallback {
+public class NearbyHeatmapActivity extends AppCompatActivity
+        implements OnMapReadyCallback, GoogleMap.OnCircleClickListener {
 
     public static final String EXTRA_CENTER_LAT = "extra_center_lat";
     public static final String EXTRA_CENTER_LNG = "extra_center_lng";
@@ -41,6 +57,9 @@ public class NearbyHeatmapActivity extends AppCompatActivity implements OnMapRea
 
     private static final double SEARCH_RADIUS_METERS = 50000d;
     private static final long SIGHTING_RECENCY_MS = 72L * 60 * 60 * 1000;
+
+    private static final double HOTSPOT_BUCKET_SIZE = 0.02d;
+    private static final double HOTSPOT_CIRCLE_RADIUS_METERS = 900d;
 
     private static final Gradient USER_GRADIENT = new Gradient(
             new int[]{
@@ -71,6 +90,10 @@ public class NearbyHeatmapActivity extends AppCompatActivity implements OnMapRea
 
     private final List<WeightedLatLng> userHeatPoints = new ArrayList<>();
     private final List<WeightedLatLng> eBirdHeatPoints = new ArrayList<>();
+
+    private final Map<String, HotspotBucket> hotspotBuckets = new LinkedHashMap<>();
+    private final List<Circle> hotspotCircles = new ArrayList<>();
+    private final Map<String, HotspotBucket> circleIdToBucket = new HashMap<>();
 
     private double centerLat = Double.NaN;
     private double centerLng = Double.NaN;
@@ -114,6 +137,7 @@ public class NearbyHeatmapActivity extends AppCompatActivity implements OnMapRea
         googleMap.getUiSettings().setZoomControlsEnabled(true);
         googleMap.getUiSettings().setCompassEnabled(true);
         googleMap.getUiSettings().setMyLocationButtonEnabled(true);
+        googleMap.setOnCircleClickListener(this);
 
         LatLng initialCenter = hasNearbyCenter()
                 ? new LatLng(centerLat, centerLng)
@@ -136,6 +160,8 @@ public class NearbyHeatmapActivity extends AppCompatActivity implements OnMapRea
         pendingLoads = 2;
         userHeatPoints.clear();
         eBirdHeatPoints.clear();
+        hotspotBuckets.clear();
+        clearHotspotCircles();
 
         tvMapSubtitle.setText(R.string.loading_heatmap);
 
@@ -166,6 +192,9 @@ public class NearbyHeatmapActivity extends AppCompatActivity implements OnMapRea
                         if (shouldBeFiltered(lat, lng, timeMillis)) continue;
 
                         userHeatPoints.add(new WeightedLatLng(new LatLng(lat, lng), 1.8));
+
+                        String birdName = extractBirdName(doc);
+                        addToHotspotBucket(lat, lng, birdName, true);
                     }
 
                     onCollectionFinished();
@@ -199,6 +228,9 @@ public class NearbyHeatmapActivity extends AppCompatActivity implements OnMapRea
                         if (shouldBeFiltered(lat, lng, timeMillis)) continue;
 
                         eBirdHeatPoints.add(new WeightedLatLng(new LatLng(lat, lng), 1.0));
+
+                        String birdName = extractBirdName(doc);
+                        addToHotspotBucket(lat, lng, birdName, false);
                     }
 
                     onCollectionFinished();
@@ -230,6 +262,8 @@ public class NearbyHeatmapActivity extends AppCompatActivity implements OnMapRea
             userOverlay = null;
         }
 
+        clearHotspotCircles();
+
         if (!eBirdHeatPoints.isEmpty()) {
             HeatmapTileProvider eBirdProvider = new HeatmapTileProvider.Builder()
                     .weightedData(eBirdHeatPoints)
@@ -260,6 +294,8 @@ public class NearbyHeatmapActivity extends AppCompatActivity implements OnMapRea
             );
         }
 
+        renderHotspotCircles();
+
         if (userHeatPoints.isEmpty() && eBirdHeatPoints.isEmpty()) {
             tvMapSubtitle.setText(hasNearbyCenter()
                     ? R.string.no_nearby_sightings
@@ -268,8 +304,192 @@ public class NearbyHeatmapActivity extends AppCompatActivity implements OnMapRea
             return;
         }
 
-        String scopeText = getString(hasNearbyCenter() ? R.string.heatmap_scope_72h_50km : R.string.heatmap_scope_72h);
-        tvMapSubtitle.setText(getString(R.string.heatmap_stats, scopeText, userHeatPoints.size(), eBirdHeatPoints.size()));
+        String scopeText = getString(
+                hasNearbyCenter() ? R.string.heatmap_scope_72h_50km : R.string.heatmap_scope_72h
+        );
+
+        tvMapSubtitle.setText(getString(
+                R.string.heatmap_stats,
+                scopeText,
+                userHeatPoints.size(),
+                eBirdHeatPoints.size()
+        ));
+    }
+
+    private void renderHotspotCircles() {
+        if (googleMap == null) return;
+
+        for (HotspotBucket bucket : hotspotBuckets.values()) {
+            if (bucket.pointCount == 0) continue;
+
+            LatLng center = new LatLng(bucket.getCenterLat(), bucket.getCenterLng());
+
+            Circle circle = googleMap.addCircle(
+                    new CircleOptions()
+                            .center(center)
+                            .radius(HOTSPOT_CIRCLE_RADIUS_METERS)
+                            .strokeWidth(2f)
+                            .strokeColor(Color.argb(110, 255, 255, 255))
+                            .fillColor(Color.argb(35, 255, 255, 255))
+                            .clickable(true)
+                            .zIndex(3f)
+            );
+
+            hotspotCircles.add(circle);
+            circleIdToBucket.put(circle.getId(), bucket);
+        }
+    }
+
+    private void clearHotspotCircles() {
+        for (Circle circle : hotspotCircles) {
+            circle.remove();
+        }
+        hotspotCircles.clear();
+        circleIdToBucket.clear();
+    }
+
+    @Override
+    public void onCircleClick(@NonNull Circle circle) {
+        HotspotBucket bucket = circleIdToBucket.get(circle.getId());
+        if (bucket == null) return;
+
+        showBirdListBottomSheet(bucket);
+    }
+
+    private void showBirdListBottomSheet(@NonNull HotspotBucket bucket) {
+        BottomSheetDialog dialog = new BottomSheetDialog(this);
+        dialog.setContentView(R.layout.bottom_sheet_heatmap_birds);
+
+        View bottomSheet = dialog.findViewById(com.google.android.material.R.id.design_bottom_sheet);
+        if (bottomSheet != null) {
+            bottomSheet.setBackgroundColor(Color.TRANSPARENT);
+
+            ViewGroup.LayoutParams params = bottomSheet.getLayoutParams();
+            params.height = (int) (getResources().getDisplayMetrics().heightPixels * 0.58f);
+            bottomSheet.setLayoutParams(params);
+
+            BottomSheetBehavior<View> behavior = BottomSheetBehavior.from(bottomSheet);
+            behavior.setDraggable(true);
+            behavior.setHideable(true);
+            behavior.setSkipCollapsed(false);
+            behavior.setPeekHeight(params.height);
+            behavior.setState(BottomSheetBehavior.STATE_EXPANDED);
+        }
+
+        TextView tvTitle = dialog.findViewById(R.id.tvSheetTitle);
+        TextView tvSummary = dialog.findViewById(R.id.tvSheetSummary);
+        TextView tvEmpty = dialog.findViewById(R.id.tvEmptyBirds);
+        LinearLayout birdListContainer = dialog.findViewById(R.id.birdListContainer);
+
+        if (tvTitle != null) {
+            tvTitle.setText("Birds in this hotspot");
+        }
+
+        if (tvSummary != null) {
+            tvSummary.setText(
+                    "Unverified Sightings: " + bucket.userCount +
+                            "  •  Verified Sightings: " + bucket.eBirdCount
+            );
+        }
+
+        if (birdListContainer != null) {
+            birdListContainer.removeAllViews();
+
+            List<String> birdNames = new ArrayList<>(bucket.birdCounts.keySet());
+            Collections.sort(birdNames, String.CASE_INSENSITIVE_ORDER);
+
+            if (birdNames.isEmpty()) {
+                if (tvEmpty != null) {
+                    tvEmpty.setVisibility(View.VISIBLE);
+                }
+            } else {
+                if (tvEmpty != null) {
+                    tvEmpty.setVisibility(View.GONE);
+                }
+
+                LayoutInflater inflater = LayoutInflater.from(this);
+
+                for (String birdName : birdNames) {
+                    View row = inflater.inflate(R.layout.item_heatmap_bird_placeholder, birdListContainer, false);
+
+                    ImageView ivBird = row.findViewById(R.id.ivBirdPlaceholder);
+                    TextView tvBirdName = row.findViewById(R.id.tvBirdName);
+                    TextView tvBirdCount = row.findViewById(R.id.tvBirdCount);
+
+                    Integer count = bucket.birdCounts.get(birdName);
+                    if (count == null) count = 1;
+
+                    ivBird.setImageResource(android.R.drawable.ic_menu_gallery);
+                    ivBird.setColorFilter(null);
+
+                    tvBirdName.setText(birdName);
+
+                    if (count == 1) {
+                        tvBirdCount.setText("1 sighting in this hotspot");
+                    } else {
+                        tvBirdCount.setText(count + " sightings in this hotspot");
+                    }
+
+                    LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                            ViewGroup.LayoutParams.MATCH_PARENT,
+                            ViewGroup.LayoutParams.WRAP_CONTENT
+                    );
+                    lp.bottomMargin = dp(10);
+                    row.setLayoutParams(lp);
+
+                    birdListContainer.addView(row);
+                }
+            }
+        }
+
+        dialog.show();
+    }
+
+    private int dp(int value) {
+        return (int) TypedValue.applyDimension(
+                TypedValue.COMPLEX_UNIT_DIP,
+                value,
+                getResources().getDisplayMetrics()
+        );
+    }
+
+    private void addToHotspotBucket(double lat, double lng, String birdName, boolean isUserSighting) {
+        String key = buildBucketKey(lat, lng);
+
+        HotspotBucket bucket = hotspotBuckets.get(key);
+        if (bucket == null) {
+            bucket = new HotspotBucket();
+            hotspotBuckets.put(key, bucket);
+        }
+
+        bucket.add(lat, lng, birdName, isUserSighting);
+    }
+
+    private String buildBucketKey(double lat, double lng) {
+        double bucketLat = Math.round(lat / HOTSPOT_BUCKET_SIZE) * HOTSPOT_BUCKET_SIZE;
+        double bucketLng = Math.round(lng / HOTSPOT_BUCKET_SIZE) * HOTSPOT_BUCKET_SIZE;
+        return String.format(Locale.US, "%.4f,%.4f", bucketLat, bucketLng);
+    }
+
+    private String extractBirdName(DocumentSnapshot doc) {
+        String name = getAnyString(doc,
+                "commonName",
+                "comName",
+                "birdName",
+                "species",
+                "scientificName",
+                "sciName",
+                "speciesCode",
+                "birdId");
+
+        if (name == null || name.trim().isEmpty()) {
+            return "Unknown bird";
+        }
+
+        name = name.trim();
+        name = name.replace("_", " ").replace("-", " ");
+
+        return name;
     }
 
     private boolean shouldBeFiltered(double lat, double lng, Long timeMillis) {
@@ -317,6 +537,19 @@ public class NearbyHeatmapActivity extends AppCompatActivity implements OnMapRea
         return null;
     }
 
+    private String getAnyString(DocumentSnapshot doc, String... fieldPaths) {
+        for (String fieldPath : fieldPaths) {
+            Object value = doc.get(fieldPath);
+            if (value != null) {
+                String text = String.valueOf(value).trim();
+                if (!text.isEmpty()) {
+                    return text;
+                }
+            }
+        }
+        return null;
+    }
+
     private Long getAnyTimeMillis(DocumentSnapshot doc, String... fieldPaths) {
         for (String fieldPath : fieldPaths) {
             Object raw = doc.get(fieldPath);
@@ -328,5 +561,43 @@ public class NearbyHeatmapActivity extends AppCompatActivity implements OnMapRea
             }
         }
         return null;
+    }
+
+    private static class HotspotBucket {
+        double latSum = 0d;
+        double lngSum = 0d;
+        int pointCount = 0;
+        int userCount = 0;
+        int eBirdCount = 0;
+
+        final Map<String, Integer> birdCounts = new LinkedHashMap<>();
+
+        void add(double lat, double lng, String birdName, boolean isUserSighting) {
+            latSum += lat;
+            lngSum += lng;
+            pointCount++;
+
+            if (isUserSighting) {
+                userCount++;
+            } else {
+                eBirdCount++;
+            }
+
+            String cleanName = (birdName == null || birdName.trim().isEmpty())
+                    ? "Unknown bird"
+                    : birdName.trim();
+
+            Integer currentCount = birdCounts.get(cleanName);
+            if (currentCount == null) currentCount = 0;
+            birdCounts.put(cleanName, currentCount + 1);
+        }
+
+        double getCenterLat() {
+            return pointCount == 0 ? 0d : latSum / pointCount;
+        }
+
+        double getCenterLng() {
+            return pointCount == 0 ? 0d : lngSum / pointCount;
+        }
     }
 }

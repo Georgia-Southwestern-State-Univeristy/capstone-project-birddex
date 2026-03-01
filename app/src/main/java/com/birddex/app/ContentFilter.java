@@ -14,9 +14,9 @@ public class ContentFilter {
             "hardcore", "softcore", "adult content",
 
             "penis", "vagina", "clitoris", "testicles", "scrotum", "boobs", "tits",
-            "ass", "butt", "breasts", "genitals", "cock", "balls",
+            "ass", "butt", "breasts", "genitals", "cock", "balls", "underage", "how old are you",
 
-            "fucking", "fucked", "suck", "sucking", "blowjob", "handjob",
+            "fucking", "fucked", "blowjob", "handjob", "trump", "biden", "9-11", "epstein",
             "masturbate", "masturbation", "orgasm", "cum", "cumming", "ejaculate",
             "penetrate", "penetration",
 

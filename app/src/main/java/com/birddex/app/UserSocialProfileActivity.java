@@ -19,7 +19,9 @@ import com.google.android.material.tabs.TabLayout;
 import com.google.firebase.auth.FirebaseAuth;
 import com.google.firebase.auth.FirebaseUser;
 import com.google.firebase.firestore.DocumentSnapshot;
+import com.google.firebase.firestore.FieldValue;
 import com.google.firebase.firestore.FirebaseFirestore;
+import com.google.firebase.firestore.ListenerRegistration;
 import com.google.firebase.firestore.Query;
 
 import java.util.ArrayList;
@@ -43,6 +45,7 @@ public class UserSocialProfileActivity extends AppCompatActivity implements Foru
     
     private String targetUserId;
     private boolean isFollowing = false;
+    private ListenerRegistration postsListener;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -51,6 +54,7 @@ public class UserSocialProfileActivity extends AppCompatActivity implements Foru
 
         targetUserId = getIntent().getStringExtra(EXTRA_USER_ID);
         if (targetUserId == null) {
+            Toast.makeText(this, "User ID not found.", Toast.LENGTH_SHORT).show();
             finish();
             return;
         }
@@ -62,7 +66,7 @@ public class UserSocialProfileActivity extends AppCompatActivity implements Foru
         loadUserDetails();
         checkFollowingStatus();
         setupRecyclerView();
-        loadUserPosts();
+        listenForUserPosts();
     }
 
     private void initUI() {
@@ -86,6 +90,24 @@ public class UserSocialProfileActivity extends AppCompatActivity implements Foru
         }
 
         btnFollow.setOnClickListener(v -> toggleFollow());
+
+        tabLayout.addOnTabSelectedListener(new TabLayout.OnTabSelectedListener() {
+            @Override
+            public void onTabSelected(TabLayout.Tab tab) {
+                if (tab.getPosition() == 0) {
+                    rvPosts.setVisibility(View.VISIBLE);
+                } else {
+                    // Collection tab - currently hiding posts
+                    rvPosts.setVisibility(View.GONE);
+                }
+            }
+
+            @Override
+            public void onTabUnselected(TabLayout.Tab tab) {}
+
+            @Override
+            public void onTabReselected(TabLayout.Tab tab) {}
+        });
     }
 
     private void loadUserDetails() {
@@ -95,7 +117,7 @@ public class UserSocialProfileActivity extends AppCompatActivity implements Foru
                         User user = doc.toObject(User.class);
                         if (user != null) {
                             tvUsername.setText(user.getUsername());
-                            tvBio.setText(user.getBio() != null ? user.getBio() : "No bio yet.");
+                            tvBio.setText(user.getBio() != null && !user.getBio().isEmpty() ? user.getBio() : "No bio yet.");
                             tvFollowerCount.setText(String.valueOf(user.getFollowerCount()));
                             tvFollowingCount.setText(String.valueOf(user.getFollowingCount()));
                             
@@ -104,8 +126,11 @@ public class UserSocialProfileActivity extends AppCompatActivity implements Foru
                                     .placeholder(R.drawable.ic_profile)
                                     .into(ivPfp);
                         }
+                    } else {
+                        Log.e(TAG, "Target user document does not exist: " + targetUserId);
                     }
-                });
+                })
+                .addOnFailureListener(e -> Log.e(TAG, "Error loading user details", e));
     }
 
     private void checkFollowingStatus() {
@@ -113,6 +138,8 @@ public class UserSocialProfileActivity extends AppCompatActivity implements Foru
             if (task.isSuccessful()) {
                 isFollowing = task.getResult();
                 updateFollowButtonUI();
+            } else {
+                Log.e(TAG, "Error checking following status", task.getException());
             }
         });
     }
@@ -135,7 +162,12 @@ public class UserSocialProfileActivity extends AppCompatActivity implements Foru
                 if (task.isSuccessful()) {
                     isFollowing = false;
                     updateFollowButtonUI();
-                    loadUserDetails(); // Refresh counts
+                    loadUserDetails();
+                    Toast.makeText(this, "Unfollowed", Toast.LENGTH_SHORT).show();
+                } else {
+                    String error = task.getException() != null ? task.getException().getMessage() : "Unknown error";
+                    Toast.makeText(this, "Unfollow failed: " + error, Toast.LENGTH_LONG).show();
+                    Log.e(TAG, "Unfollow failed", task.getException());
                 }
             });
         } else {
@@ -144,7 +176,12 @@ public class UserSocialProfileActivity extends AppCompatActivity implements Foru
                 if (task.isSuccessful()) {
                     isFollowing = true;
                     updateFollowButtonUI();
-                    loadUserDetails(); // Refresh counts
+                    loadUserDetails();
+                    Toast.makeText(this, "Following!", Toast.LENGTH_SHORT).show();
+                } else {
+                    String error = task.getException() != null ? task.getException().getMessage() : "Unknown error";
+                    Toast.makeText(this, "Follow failed: " + error, Toast.LENGTH_LONG).show();
+                    Log.e(TAG, "Follow failed", task.getException());
                 }
             });
         }
@@ -156,10 +193,35 @@ public class UserSocialProfileActivity extends AppCompatActivity implements Foru
         rvPosts.setAdapter(adapter);
     }
 
-    private void loadUserPosts() {
-        db.collection("forumThreads")
+    private void listenForUserPosts() {
+        postsListener = db.collection("forumThreads")
                 .whereEqualTo("userId", targetUserId)
                 .orderBy("timestamp", Query.Direction.DESCENDING)
+                .addSnapshotListener((value, error) -> {
+                    if (error != null) {
+                        Log.e(TAG, "Error listening for user posts", error);
+                        loadUserPostsFallback();
+                        return;
+                    }
+
+                    if (value != null) {
+                        List<ForumPost> posts = new ArrayList<>();
+                        for (DocumentSnapshot doc : value.getDocuments()) {
+                            ForumPost post = doc.toObject(ForumPost.class);
+                            if (post != null) {
+                                post.setId(doc.getId());
+                                posts.add(post);
+                            }
+                        }
+                        tvPostCount.setText(String.valueOf(posts.size()));
+                        adapter.setPosts(posts);
+                    }
+                });
+    }
+
+    private void loadUserPostsFallback() {
+        db.collection("forumThreads")
+                .whereEqualTo("userId", targetUserId)
                 .get()
                 .addOnSuccessListener(queryDocumentSnapshots -> {
                     List<ForumPost> posts = new ArrayList<>();
@@ -172,9 +234,6 @@ public class UserSocialProfileActivity extends AppCompatActivity implements Foru
                     }
                     tvPostCount.setText(String.valueOf(posts.size()));
                     adapter.setPosts(posts);
-                })
-                .addOnFailureListener(e -> {
-                    Log.e(TAG, "Error loading posts", e);
                 });
     }
 
@@ -188,11 +247,11 @@ public class UserSocialProfileActivity extends AppCompatActivity implements Foru
 
         if (currentlyLiked) {
             db.collection("forumThreads").document(post.getId())
-                    .update("likeCount", com.google.firebase.firestore.FieldValue.increment(-1),
-                            "likedBy." + userId, com.google.firebase.firestore.FieldValue.delete());
+                    .update("likeCount", FieldValue.increment(-1),
+                            "likedBy." + userId, FieldValue.delete());
         } else {
             db.collection("forumThreads").document(post.getId())
-                    .update("likeCount", com.google.firebase.firestore.FieldValue.increment(1),
+                    .update("likeCount", FieldValue.increment(1),
                             "likedBy." + userId, true);
         }
     }
@@ -211,7 +270,7 @@ public class UserSocialProfileActivity extends AppCompatActivity implements Foru
 
     @Override
     public void onOptionsClick(ForumPost post, View view) {
-        // Implement options if needed
+        // Options logic
     }
 
     @Override
@@ -220,6 +279,14 @@ public class UserSocialProfileActivity extends AppCompatActivity implements Foru
             Intent intent = new Intent(this, UserSocialProfileActivity.class);
             intent.putExtra(UserSocialProfileActivity.EXTRA_USER_ID, userId);
             startActivity(intent);
+        }
+    }
+
+    @Override
+    protected void onDestroy() {
+        super.onDestroy();
+        if (postsListener != null) {
+            postsListener.remove();
         }
     }
 }

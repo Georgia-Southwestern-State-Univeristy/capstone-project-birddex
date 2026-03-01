@@ -850,19 +850,21 @@ public class FirebaseManager {
 
         WriteBatch batch = db.batch();
 
-        // 1. Add followedId to current user's 'following' subcollection
-        DocumentReference followingRef = db.collection("users").document(currentUserId).collection("following").document(targetUserId);
+        // Following structure: users/{myUserId}/following/{targetUserId}
+        DocumentReference followingRef = db.collection("users").document(currentUserId)
+                .collection("following").document(targetUserId);
         Map<String, Object> followingData = new HashMap<>();
         followingData.put("timestamp", FieldValue.serverTimestamp());
         batch.set(followingRef, followingData);
 
-        // 2. Add followerId to target user's 'followers' subcollection
-        DocumentReference followersRef = db.collection("users").document(targetUserId).collection("followers").document(currentUserId);
+        // Followers structure: users/{targetUserId}/followers/{myUserId}
+        DocumentReference followersRef = db.collection("users").document(targetUserId)
+                .collection("followers").document(currentUserId);
         Map<String, Object> followersData = new HashMap<>();
         followersData.put("timestamp", FieldValue.serverTimestamp());
         batch.set(followersRef, followersData);
 
-        // 3. Increment counts
+        // Increment counts on the user documents
         batch.update(db.collection("users").document(currentUserId), "followingCount", FieldValue.increment(1));
         batch.update(db.collection("users").document(targetUserId), "followerCount", FieldValue.increment(1));
 
@@ -880,15 +882,17 @@ public class FirebaseManager {
 
         WriteBatch batch = db.batch();
 
-        // 1. Remove from 'following'
-        DocumentReference followingRef = db.collection("users").document(currentUserId).collection("following").document(targetUserId);
+        // Remove from 'following' subcollection
+        DocumentReference followingRef = db.collection("users").document(currentUserId)
+                .collection("following").document(targetUserId);
         batch.delete(followingRef);
 
-        // 2. Remove from 'followers'
-        DocumentReference followersRef = db.collection("users").document(targetUserId).collection("followers").document(currentUserId);
+        // Remove from 'followers' subcollection
+        DocumentReference followersRef = db.collection("users").document(targetUserId)
+                .collection("followers").document(currentUserId);
         batch.delete(followersRef);
 
-        // 3. Decrement counts
+        // Decrement counts
         batch.update(db.collection("users").document(currentUserId), "followingCount", FieldValue.increment(-1));
         batch.update(db.collection("users").document(targetUserId), "followerCount", FieldValue.increment(-1));
 
@@ -902,7 +906,8 @@ public class FirebaseManager {
             return;
         }
 
-        db.collection("users").document(currentUser.getUid()).collection("following").document(targetUserId).get()
+        db.collection("users").document(currentUser.getUid())
+                .collection("following").document(targetUserId).get()
                 .addOnCompleteListener(task -> {
                     if (task.isSuccessful()) {
                         listener.onComplete(Tasks.forResult(task.getResult() != null && task.getResult().exists()));

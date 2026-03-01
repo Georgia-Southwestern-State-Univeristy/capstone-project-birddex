@@ -15,6 +15,7 @@ import com.google.android.material.tabs.TabLayout;
 import com.google.firebase.auth.FirebaseAuth;
 import com.google.firebase.firestore.DocumentSnapshot;
 import com.google.firebase.firestore.FirebaseFirestore;
+import com.google.firebase.firestore.Source;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -83,34 +84,50 @@ public class SocialActivity extends AppCompatActivity implements UserAdapter.OnU
     private void loadUsers(boolean isFollowers) {
         if (targetUserId == null) return;
 
-        progressBar.setVisibility(View.VISIBLE);
-        rvUserList.setVisibility(View.GONE);
+        // Don't show progress bar if we likely have cached data
+        if (adapter.getItemCount() == 0) {
+            progressBar.setVisibility(View.VISIBLE);
+        }
+        
         tvEmpty.setVisibility(View.GONE);
 
         String subCollection = isFollowers ? "followers" : "following";
 
+        // Try to get IDs from CACHE first
         db.collection("users").document(targetUserId).collection(subCollection)
-                .get()
+                .get(Source.CACHE)
                 .addOnSuccessListener(queryDocumentSnapshots -> {
-                    List<String> userIds = new ArrayList<>();
-                    for (DocumentSnapshot doc : queryDocumentSnapshots) {
-                        userIds.add(doc.getId());
+                    if (queryDocumentSnapshots != null && !queryDocumentSnapshots.isEmpty()) {
+                        processIds(queryDocumentSnapshots.getDocuments(), isFollowers);
                     }
-
-                    if (userIds.isEmpty()) {
-                        progressBar.setVisibility(View.GONE);
-                        tvEmpty.setVisibility(View.VISIBLE);
-                        tvEmpty.setText(isFollowers ? "No followers found." : "Not following anyone yet.");
-                        return;
-                    }
-
-                    fetchUserDetails(userIds);
+                    // Sync with server in background
+                    fetchIdsFromServer(subCollection, isFollowers);
                 })
-                .addOnFailureListener(e -> {
-                    progressBar.setVisibility(View.GONE);
-                    tvEmpty.setVisibility(View.VISIBLE);
-                    tvEmpty.setText("Failed to load users.");
-                });
+                .addOnFailureListener(e -> fetchIdsFromServer(subCollection, isFollowers));
+    }
+
+    private void fetchIdsFromServer(String subCollection, boolean isFollowers) {
+        db.collection("users").document(targetUserId).collection(subCollection)
+                .get(Source.SERVER)
+                .addOnSuccessListener(queryDocumentSnapshots -> processIds(queryDocumentSnapshots.getDocuments(), isFollowers));
+    }
+
+    private void processIds(List<DocumentSnapshot> docs, boolean isFollowers) {
+        List<String> userIds = new ArrayList<>();
+        for (DocumentSnapshot doc : docs) {
+            userIds.add(doc.getId());
+        }
+
+        if (userIds.isEmpty()) {
+            progressBar.setVisibility(View.GONE);
+            if (adapter.getItemCount() == 0) {
+                tvEmpty.setVisibility(View.VISIBLE);
+                tvEmpty.setText(isFollowers ? "No followers found." : "Not following anyone yet.");
+            }
+            return;
+        }
+
+        fetchUserDetails(userIds);
     }
 
     private void fetchUserDetails(List<String> userIds) {
@@ -119,32 +136,62 @@ public class SocialActivity extends AppCompatActivity implements UserAdapter.OnU
         final int[] count = {0};
 
         for (String id : userIds) {
-            db.collection("users").document(id).get()
+            // Try cache for each user profile
+            db.collection("users").document(id).get(Source.CACHE)
                     .addOnSuccessListener(doc -> {
                         User user = doc.toObject(User.class);
                         if (user != null) {
                             user.setId(doc.getId());
-                            users.add(user);
-                        }
-                        count[0]++;
-                        if (count[0] == total) {
-                            displayUsers(users);
+                            addUserToList(user, users, count, total);
+                        } else {
+                            fetchUserFromServer(id, users, count, total);
                         }
                     })
-                    .addOnFailureListener(e -> {
-                        count[0]++;
-                        if (count[0] == total) {
-                            displayUsers(users);
-                        }
-                    });
+                    .addOnFailureListener(e -> fetchUserFromServer(id, users, count, total));
+        }
+    }
+
+    private void fetchUserFromServer(String id, List<User> users, int[] count, int total) {
+        db.collection("users").document(id).get(Source.SERVER)
+                .addOnSuccessListener(doc -> {
+                    User user = doc.toObject(User.class);
+                    if (user != null) {
+                        user.setId(doc.getId());
+                        addUserToList(user, users, count, total);
+                    } else {
+                        incrementAndCheck(users, count, total);
+                    }
+                })
+                .addOnFailureListener(e -> incrementAndCheck(users, count, total));
+    }
+
+    private synchronized void addUserToList(User user, List<User> users, int[] count, int total) {
+        // Prevent duplicates in the temporary list
+        boolean exists = false;
+        for (User u : users) {
+            if (u.getId().equals(user.getId())) {
+                exists = true;
+                break;
+            }
+        }
+        if (!exists) users.add(user);
+        incrementAndCheck(users, count, total);
+    }
+
+    private void incrementAndCheck(List<User> users, int[] count, int total) {
+        count[0]++;
+        if (count[0] >= total) {
+            displayUsers(users);
         }
     }
 
     private void displayUsers(List<User> users) {
         progressBar.setVisibility(View.GONE);
-        if (users.isEmpty()) {
+        if (users.isEmpty() && adapter.getItemCount() == 0) {
             tvEmpty.setVisibility(View.VISIBLE);
+            rvUserList.setVisibility(View.GONE);
         } else {
+            tvEmpty.setVisibility(View.GONE);
             rvUserList.setVisibility(View.VISIBLE);
             adapter.setUsers(users);
         }

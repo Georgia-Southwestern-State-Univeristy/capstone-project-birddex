@@ -27,6 +27,7 @@ import com.google.firebase.auth.FirebaseAuth;
 import com.google.firebase.auth.FirebaseUser;
 import com.google.firebase.firestore.DocumentSnapshot;
 import com.google.firebase.firestore.FirebaseFirestore;
+import com.google.firebase.firestore.Source;
 
 import java.util.Arrays;
 import java.util.Date;
@@ -143,7 +144,7 @@ public class ProfileFragment extends Fragment {
             btnFollow.setVisibility(View.GONE);
             tvOpenAiRequestsRemaining.setVisibility(View.VISIBLE);
             tvPfpChangesRemaining.setVisibility(View.VISIBLE);
-            etBio.setFocusable(false); // Only editable through EditProfileActivity
+            etBio.setFocusable(false);
             etBio.setClickable(false);
 
             btnSettings.setOnClickListener(view -> startActivity(new Intent(requireContext(), SettingsActivity.class)));
@@ -180,10 +181,8 @@ public class ProfileFragment extends Fragment {
     private void updateFollowButton() {
         if (isFollowing) {
             btnFollow.setText("Following");
-            btnFollow.setIconResource(R.drawable.ic_bolt_24); // Placeholder for a checkmark or similar
         } else {
             btnFollow.setText("Follow");
-            btnFollow.setIcon(null);
         }
     }
 
@@ -196,7 +195,7 @@ public class ProfileFragment extends Fragment {
                     if (task.isSuccessful()) {
                         isFollowing = false;
                         updateFollowButton();
-                        fetchUserProfile(); // Refresh counts
+                        fetchUserProfile();
                     }
                 }
             });
@@ -207,7 +206,7 @@ public class ProfileFragment extends Fragment {
                     if (task.isSuccessful()) {
                         isFollowing = true;
                         updateFollowButton();
-                        fetchUserProfile(); // Refresh counts
+                        fetchUserProfile();
                     }
                 }
             });
@@ -227,39 +226,53 @@ public class ProfileFragment extends Fragment {
     private void fetchUserProfile() {
         if (profileUserId == null) return;
 
-        db.collection("users").document(profileUserId).get()
-                .addOnSuccessListener(documentSnapshot -> {
-                    if (!isAdded()) return;
-                    if (documentSnapshot.exists()) {
-                        User userProfile = documentSnapshot.toObject(User.class);
-                        if (userProfile != null) {
-                            currentUsername = userProfile.getUsername();
-                            currentBio = userProfile.getBio();
-                            currentProfilePictureUrl = userProfile.getProfilePictureUrl();
-
-                            tvUsername.setText(currentUsername != null ? currentUsername : "No Username");
-                            etBio.setText(currentBio != null ? currentBio : "No bio yet.");
-                            tvPoints.setText("Total Points: " + userProfile.getTotalPoints());
-                            tvFollowerCount.setText(String.valueOf(userProfile.getFollowerCount()));
-                            tvFollowingCount.setText(String.valueOf(userProfile.getFollowingCount()));
-
-                            loadProfilePicture(currentProfilePictureUrl);
-
-                            if (isCurrentUser) {
-                                currentPfpChangesToday = userProfile.getPfpChangesToday();
-                                pfpCooldownResetTimestamp = userProfile.getPfpCooldownResetTimestamp();
-                                updatePfpChangesRemainingUI(currentPfpChangesToday, pfpCooldownResetTimestamp);
-
-                                currentOpenAiRequestsRemaining = userProfile.getOpenAiRequestsRemaining();
-                                openAiCooldownResetTimestamp = userProfile.getOpenAiCooldownResetTimestamp();
-                                updateOpenAiRequestsRemainingUI(currentOpenAiRequestsRemaining, openAiCooldownResetTimestamp);
-                            }
-                        }
-                    }
+        // Fetch from CACHE first for instant load
+        db.collection("users").document(profileUserId).get(Source.CACHE)
+                .addOnSuccessListener(this::handleUserSnapshot)
+                .addOnFailureListener(e -> {
+                    // Cache might be empty or missing, fetch from server
+                    fetchUserProfileFromServer();
                 });
+
+        // Always fetch from server in background to ensure data is fresh
+        fetchUserProfileFromServer();
     }
 
-    // ... keeping AI/PFP limit UI methods from before ...
+    private void fetchUserProfileFromServer() {
+        db.collection("users").document(profileUserId).get(Source.SERVER)
+                .addOnSuccessListener(this::handleUserSnapshot)
+                .addOnFailureListener(e -> Log.e(TAG, "Server fetch failed", e));
+    }
+
+    private void handleUserSnapshot(DocumentSnapshot documentSnapshot) {
+        if (!isAdded() || documentSnapshot == null || !documentSnapshot.exists()) return;
+
+        User userProfile = documentSnapshot.toObject(User.class);
+        if (userProfile != null) {
+            currentUsername = userProfile.getUsername();
+            currentBio = userProfile.getBio();
+            currentProfilePictureUrl = userProfile.getProfilePictureUrl();
+
+            tvUsername.setText(currentUsername != null ? currentUsername : "No Username");
+            etBio.setText(currentBio != null ? currentBio : "No bio yet.");
+            tvPoints.setText("Total Points: " + userProfile.getTotalPoints());
+            tvFollowerCount.setText(String.valueOf(userProfile.getFollowerCount()));
+            tvFollowingCount.setText(String.valueOf(userProfile.getFollowingCount()));
+
+            loadProfilePicture(currentProfilePictureUrl);
+
+            if (isCurrentUser) {
+                currentPfpChangesToday = userProfile.getPfpChangesToday();
+                pfpCooldownResetTimestamp = userProfile.getPfpCooldownResetTimestamp();
+                updatePfpChangesRemainingUI(currentPfpChangesToday, pfpCooldownResetTimestamp);
+
+                currentOpenAiRequestsRemaining = userProfile.getOpenAiRequestsRemaining();
+                openAiCooldownResetTimestamp = userProfile.getOpenAiCooldownResetTimestamp();
+                updateOpenAiRequestsRemainingUI(currentOpenAiRequestsRemaining, openAiCooldownResetTimestamp);
+            }
+        }
+    }
+
     private void fetchOpenAiRequestsRemaining() {
         firebaseManager.getOpenAiRequestsRemaining(new FirebaseManager.OpenAiRequestLimitListener() {
             @Override

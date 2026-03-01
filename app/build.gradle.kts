@@ -4,6 +4,7 @@ plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.google.gms.google.services)
     alias(libs.plugins.google.firebase.crashlytics) // Apply the Crashlytics plugin
+    alias(libs.plugins.google.firebase.perf) // Apply the Performance Monitoring plugin
     alias(libs.plugins.ksp) // Using alias for KSP
 }
 
@@ -74,6 +75,7 @@ dependencies {
     implementation("com.google.firebase:firebase-appcheck-debug")
     implementation("com.google.firebase:firebase-crashlytics") // Added Crashlytics SDK
     implementation("com.google.firebase:firebase-messaging") // Added Firebase Cloud Messaging
+    implementation("com.google.firebase:firebase-perf") // Added Firebase Performance Monitoring SDK
     implementation("com.google.android.gms:play-services-maps:18.2.0")
     implementation("com.google.maps.android:android-maps-utils:3.8.2")
 

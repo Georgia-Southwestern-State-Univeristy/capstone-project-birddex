@@ -30,6 +30,7 @@ import com.google.firebase.auth.FirebaseUser;
 import com.google.firebase.firestore.DocumentSnapshot;
 import com.google.firebase.firestore.FieldValue;
 import com.google.firebase.firestore.FirebaseFirestore;
+import com.google.firebase.firestore.MetadataChanges;
 import com.google.firebase.firestore.Query;
 import com.google.firebase.firestore.WriteBatch;
 
@@ -103,8 +104,9 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
     }
 
     private void loadPostDetails() {
+        // addSnapshotListener with MetadataChanges.INCLUDE automatically handles caching
         db.collection("forumThreads").document(postId)
-                .addSnapshotListener((doc, error) -> {
+                .addSnapshotListener(MetadataChanges.INCLUDE, (doc, error) -> {
                     if (isFinishing() || isDestroyed()) return;
                     if (error != null) return;
                     if (doc != null && doc.exists()) {
@@ -116,27 +118,29 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
                             if (user != null) {
                                 String userId = user.getUid();
                                 
-                                // Check for unique view
-                                if (originalPost.getViewedBy() == null || !originalPost.getViewedBy().containsKey(userId)) {
-                                    db.collection("forumThreads").document(postId)
-                                            .update("viewCount", FieldValue.increment(1),
-                                                    "viewedBy." + userId, true);
-                                }
+                                // Only increment views if this is fresh data from the server, not just a cache load
+                                if (!doc.getMetadata().isFromCache()) {
+                                    // Check for unique view
+                                    if (originalPost.getViewedBy() == null || !originalPost.getViewedBy().containsKey(userId)) {
+                                        db.collection("forumThreads").document(postId)
+                                                .update("viewCount", FieldValue.increment(1),
+                                                        "viewedBy." + userId, true);
+                                    }
 
-                                // Reset notification flags if the author is viewing the post
-                                if (userId.equals(originalPost.getUserId())) {
-                                    Map<String, Object> updates = new HashMap<>();
-                                    if (originalPost.isNotificationSent()) {
-                                        updates.put("notificationSent", false);
-                                    }
-                                    if (originalPost.isLikeNotificationSent()) {
-                                        updates.put("likeNotificationSent", false);
-                                    }
-                                    // Set lastViewedAt to now
-                                    updates.put("lastViewedAt", FieldValue.serverTimestamp());
-                                    
-                                    if (!updates.isEmpty()) {
-                                        db.collection("forumThreads").document(postId).update(updates);
+                                    // Reset notification flags if the author is viewing the post
+                                    if (userId.equals(originalPost.getUserId())) {
+                                        Map<String, Object> updates = new HashMap<>();
+                                        if (originalPost.isNotificationSent()) {
+                                            updates.put("notificationSent", false);
+                                        }
+                                        if (originalPost.isLikeNotificationSent()) {
+                                            updates.put("likeNotificationSent", false);
+                                        }
+                                        updates.put("lastViewedAt", FieldValue.serverTimestamp());
+                                        
+                                        if (!updates.isEmpty()) {
+                                            db.collection("forumThreads").document(postId).update(updates);
+                                        }
                                     }
                                 }
                             }
@@ -371,7 +375,7 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
     private void listenForComments() {
         db.collection("forumThreads").document(postId).collection("comments")
                 .orderBy("timestamp", Query.Direction.ASCENDING)
-                .addSnapshotListener((value, error) -> {
+                .addSnapshotListener(MetadataChanges.INCLUDE, (value, error) -> {
                     if (isFinishing() || isDestroyed()) return;
                     if (error != null) return;
                     if (value != null) {
@@ -557,20 +561,12 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
                             backlogData.put("type", "comment_reply");
                             backlogData.put("originalId", doc.getId());
                             backlogData.put("data", doc.getData());
-                            backlogData.put("deletedBy", user.getUid());
-                            backlogData.put("deletedAt", FieldValue.serverTimestamp());
-                            batch.set(db.collection("deleted_backlog").document(), backlogData);
+                            backlogByUserId(batch, user.getUid(), "comment_reply", doc.getId(), doc.getData());
                             
                             batch.delete(doc.getReference());
                         }
                         
-                        Map<String, Object> commentBacklog = new HashMap<>();
-                        commentBacklog.put("type", "comment");
-                        commentBacklog.put("originalId", comment.getId());
-                        commentBacklog.put("data", comment);
-                        commentBacklog.put("deletedBy", user.getUid());
-                        commentBacklog.put("deletedAt", FieldValue.serverTimestamp());
-                        batch.set(db.collection("deleted_backlog").document(), commentBacklog);
+                        backlogByUserId(batch, user.getUid(), "comment", comment.getId(), comment);
 
                         batch.delete(db.collection("forumThreads").document(postId)
                                 .collection("comments").document(comment.getId()));
@@ -603,6 +599,16 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
                         });
                     });
         }
+    }
+
+    private void backlogByUserId(WriteBatch batch, String uid, String type, String originalId, Object data) {
+        Map<String, Object> backlog = new HashMap<>();
+        backlog.put("type", type);
+        backlog.put("originalId", originalId);
+        backlog.put("data", data);
+        backlog.put("deletedBy", uid);
+        backlog.put("deletedAt", FieldValue.serverTimestamp());
+        batch.set(db.collection("deleted_backlog").document(), backlog);
     }
 
     private void showCommentReportDialog(ForumComment comment) {

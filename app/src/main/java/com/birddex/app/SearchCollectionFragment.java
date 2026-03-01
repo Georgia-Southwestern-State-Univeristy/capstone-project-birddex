@@ -29,6 +29,7 @@ import com.google.firebase.auth.FirebaseUser;
 import com.google.firebase.firestore.FirebaseFirestore;
 import com.google.firebase.firestore.Query;
 import com.google.firebase.firestore.QueryDocumentSnapshot;
+import com.google.firebase.firestore.Source;
 
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
@@ -261,125 +262,147 @@ public class SearchCollectionFragment extends Fragment {
         FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
         if (user == null) return;
 
+        // Fetch from cache first for instant load
         FirebaseFirestore.getInstance()
                 .collection("users")
                 .document(user.getUid())
                 .collection("collectionSlot")
                 .orderBy("slotIndex", Query.Direction.ASCENDING)
-                .get()
+                .get(Source.CACHE)
                 .addOnSuccessListener(queryDocumentSnapshots -> {
-                    rawSlots.clear();
-
-                    for (QueryDocumentSnapshot document : queryDocumentSnapshots) {
-                        CollectionSlot slot = new CollectionSlot();
-                        slot.setId(document.getId());
-                        slot.setSlotIndex(document.getLong("slotIndex") != null
-                                ? document.getLong("slotIndex").intValue() : 0);
-                        slot.setUserBirdId(document.getString("userBirdId"));
-                        slot.setBirdId(document.getString("birdId"));
-                        slot.setImageUrl(document.getString("imageUrl"));
-                        slot.setTimestamp(document.getDate("timestamp"));
-                        slot.setCommonName(document.getString("commonName"));
-                        slot.setScientificName(document.getString("scientificName"));
-                        slot.setState(document.getString("state"));
-                        slot.setLocality(document.getString("locality"));
-                        slot.setRarity(document.getString("rarity"));
-
-                        rawSlots.add(slot);
-
-                        boolean missingBirdId = isBlank(slot.getBirdId());
-                        boolean missingNames = isBlank(slot.getCommonName()) && isBlank(slot.getScientificName());
-                        boolean missingLocation = isBlank(slot.getState()) && isBlank(slot.getLocality());
-                        boolean missingTimestamp = slot.getTimestamp() == null;
-
-                        String userBirdId = slot.getUserBirdId();
-                        if ((missingBirdId || missingNames || missingLocation || missingTimestamp)
-                                && !isBlank(userBirdId)) {
-                            backfillFromUserBird(user.getUid(), slot, missingBirdId, missingNames, missingLocation, missingTimestamp);
-                        }
+                    if (queryDocumentSnapshots != null && !queryDocumentSnapshots.isEmpty()) {
+                        processCollectionSnapshots(user.getUid(), queryDocumentSnapshots);
                     }
-
-                    rebuildSpeciesListAndFilter();
+                    // Then fetch from server to get updates
+                    fetchCollectionFromServer(user.getUid());
                 })
                 .addOnFailureListener(e -> {
-                    Log.e(TAG, "Error fetching collection", e);
-                    Toast.makeText(getContext(), "Failed to load collection.", Toast.LENGTH_SHORT).show();
+                    // Cache might be empty, just fetch from server
+                    fetchCollectionFromServer(user.getUid());
                 });
+    }
+
+    private void fetchCollectionFromServer(String uid) {
+        FirebaseFirestore.getInstance()
+                .collection("users")
+                .document(uid)
+                .collection("collectionSlot")
+                .orderBy("slotIndex", Query.Direction.ASCENDING)
+                .get(Source.SERVER)
+                .addOnSuccessListener(queryDocumentSnapshots -> {
+                    processCollectionSnapshots(uid, queryDocumentSnapshots);
+                })
+                .addOnFailureListener(e -> Log.e(TAG, "Error fetching collection from server", e));
+    }
+
+    private void processCollectionSnapshots(String uid, com.google.firebase.firestore.QuerySnapshot queryDocumentSnapshots) {
+        rawSlots.clear();
+        for (QueryDocumentSnapshot document : queryDocumentSnapshots) {
+            CollectionSlot slot = new CollectionSlot();
+            slot.setId(document.getId());
+            slot.setSlotIndex(document.getLong("slotIndex") != null
+                    ? document.getLong("slotIndex").intValue() : 0);
+            slot.setUserBirdId(document.getString("userBirdId"));
+            slot.setBirdId(document.getString("birdId"));
+            slot.setImageUrl(document.getString("imageUrl"));
+            slot.setTimestamp(document.getDate("timestamp"));
+            slot.setCommonName(document.getString("commonName"));
+            slot.setScientificName(document.getString("scientificName"));
+            slot.setState(document.getString("state"));
+            slot.setLocality(document.getString("locality"));
+            slot.setRarity(document.getString("rarity"));
+
+            rawSlots.add(slot);
+
+            boolean missingBirdId = isBlank(slot.getBirdId());
+            boolean missingNames = isBlank(slot.getCommonName()) && isBlank(slot.getScientificName());
+            boolean missingLocation = isBlank(slot.getState()) && isBlank(slot.getLocality());
+            boolean missingTimestamp = slot.getTimestamp() == null;
+
+            String userBirdId = slot.getUserBirdId();
+            if ((missingBirdId || missingNames || missingLocation || missingTimestamp)
+                    && !isBlank(userBirdId)) {
+                backfillFromUserBird(uid, slot, missingBirdId, missingNames, missingLocation, missingTimestamp);
+            }
+        }
+        rebuildSpeciesListAndFilter();
     }
 
     private void fetchRecentPhotos() {
         FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
         if (user == null) return;
 
+        // Fetch from cache first
+        FirebaseFirestore.getInstance()
+                .collection("users")
+                .document(user.getUid())
+                .collection("userBirdImage")
+                .orderBy("timestamp", Query.Direction.DESCENDING)
+                .get(Source.CACHE)
+                .addOnSuccessListener(queryDocumentSnapshots -> {
+                    if (queryDocumentSnapshots != null && !queryDocumentSnapshots.isEmpty()) {
+                        processRecentPhotoSnapshots(queryDocumentSnapshots);
+                    }
+                    fetchRecentPhotosFromServer(user.getUid());
+                })
+                .addOnFailureListener(e -> fetchRecentPhotosFromServer(user.getUid()));
+    }
+
+    private void fetchRecentPhotosFromServer(String uid) {
+        FirebaseFirestore.getInstance()
+                .collection("users")
+                .document(uid)
+                .collection("userBirdImage")
+                .orderBy("timestamp", Query.Direction.DESCENDING)
+                .get(Source.SERVER)
+                .addOnSuccessListener(this::processRecentPhotoSnapshots)
+                .addOnFailureListener(e -> Log.e(TAG, "Error fetching photos from server", e));
+    }
+
+    private void processRecentPhotoSnapshots(com.google.firebase.firestore.QuerySnapshot queryDocumentSnapshots) {
         // Build a lookup from birdId -> bird names using already-loaded collection data
         Map<String, String> commonNameByBirdId = new LinkedHashMap<>();
         Map<String, String> scientificNameByBirdId = new LinkedHashMap<>();
 
         for (CollectionSlot slot : rawSlots) {
             if (slot == null) continue;
-
             String birdId = slot.getBirdId();
             if (isBlank(birdId)) continue;
-
             if (!isBlank(slot.getCommonName()) && !commonNameByBirdId.containsKey(birdId)) {
                 commonNameByBirdId.put(birdId, slot.getCommonName());
             }
-
             if (!isBlank(slot.getScientificName()) && !scientificNameByBirdId.containsKey(birdId)) {
                 scientificNameByBirdId.put(birdId, slot.getScientificName());
             }
         }
 
-        FirebaseFirestore.getInstance()
-                .collection("users")
-                .document(user.getUid())
-                .collection("userBirdImage")
-                .orderBy("timestamp", Query.Direction.DESCENDING)
-                .get()
-                .addOnSuccessListener(queryDocumentSnapshots -> {
-                    recentPhotoEntries.clear();
+        recentPhotoEntries.clear();
+        for (QueryDocumentSnapshot document : queryDocumentSnapshots) {
+            String imageUrl = document.getString("imageUrl");
+            Date timestamp = document.getDate("timestamp");
+            Boolean hiddenFromUser = document.getBoolean("hiddenFromUser");
+            String birdId = document.getString("birdId");
+            String commonName = document.getString("commonName");
+            String scientificName = document.getString("scientificName");
 
-                    for (QueryDocumentSnapshot document : queryDocumentSnapshots) {
-                        String imageUrl = document.getString("imageUrl");
-                        Date timestamp = document.getDate("timestamp");
-                        Boolean hiddenFromUser = document.getBoolean("hiddenFromUser");
-                        String birdId = document.getString("birdId");
-                        String commonName = document.getString("commonName");
-                        String scientificName = document.getString("scientificName");
+            if (Boolean.TRUE.equals(hiddenFromUser)) continue;
+            if (isBlank(imageUrl)) continue;
 
-                        if (Boolean.TRUE.equals(hiddenFromUser)) {
-                            continue;
-                        }
+            RecentPhotoEntry entry = new RecentPhotoEntry();
+            entry.documentId = document.getId();
+            entry.imageUrl = imageUrl;
+            entry.timestamp = timestamp;
+            entry.birdId = birdId;
+            entry.commonName = !isBlank(commonName) ? commonName : commonNameByBirdId.get(birdId);
+            entry.scientificName = !isBlank(scientificName) ? scientificName : scientificNameByBirdId.get(birdId);
+            recentPhotoEntries.add(entry);
+        }
 
-                        if (isBlank(imageUrl)) continue;
-
-                        RecentPhotoEntry entry = new RecentPhotoEntry();
-                        entry.documentId = document.getId();
-                        entry.imageUrl = imageUrl;
-                        entry.timestamp = timestamp;
-                        entry.birdId = birdId;
-
-                        // Prefer names saved directly on the image doc, otherwise fall back to collection lookup
-                        entry.commonName = !isBlank(commonName)
-                                ? commonName
-                                : commonNameByBirdId.get(birdId);
-
-                        entry.scientificName = !isBlank(scientificName)
-                                ? scientificName
-                                : scientificNameByBirdId.get(birdId);
-
-                        recentPhotoEntries.add(entry);
-                    }
-
-                    if (currentViewMode == ViewMode.RECENT_PHOTOS) {
-                        filterRecentPhotos(etSearch != null && etSearch.getText() != null
-                                ? etSearch.getText().toString()
-                                : "");
-                    }
-                })
-                .addOnFailureListener(e ->
-                        Toast.makeText(getContext(), "Failed to load recent photos.", Toast.LENGTH_SHORT).show()
-                );
+        if (currentViewMode == ViewMode.RECENT_PHOTOS) {
+            filterRecentPhotos(etSearch != null && etSearch.getText() != null
+                    ? etSearch.getText().toString()
+                    : "");
+        }
     }
 
     private void backfillFromUserBird(String userId,

@@ -34,17 +34,15 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.Date; // Added import for Date
+import java.util.Date;
 
 /**
  * IdentifyingActivity orchestrates the bird identification process.
- * Order: Get Location -> Identify (Cloud) -> Verify (Cloud) -> Upload (Storage) ONLY if verified.
- * Now includes user location for identification logging.
  */
 public class IdentifyingActivity extends AppCompatActivity implements LocationHelper.LocationListener, NetworkMonitor.NetworkStatusListener {
 
     private static final String TAG = "IdentifyingActivity";
-    public static final String EXTRA_VERIFIED_BIRD_ID = "verifiedBirdId"; // kept
+    public static final String EXTRA_VERIFIED_BIRD_ID = "verifiedBirdId";
 
     private Uri localImageUri;
     private OpenAiApi openAiApi;
@@ -53,6 +51,7 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
     private ActivityResultLauncher<String[]> locationPermissionLauncher;
 
     private FirebaseManager firebaseManager;
+    private LoadingDialog loadingDialog;
 
     private Location currentLocation;
     private String currentLocalityName;
@@ -61,7 +60,7 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
 
     private Handler timeoutHandler;
     private Runnable timeoutRunnable;
-    private static final long IDENTIFICATION_TIMEOUT_MS = 30000; // 30 seconds for the entire process
+    private static final long IDENTIFICATION_TIMEOUT_MS = 30000;
     private AtomicBoolean identificationCompleted = new AtomicBoolean(false);
 
     @Override
@@ -69,9 +68,12 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_identifying);
 
+        Log.d(TAG, "onCreate: Activity started");
+
         ImageView identifyingImageView = findViewById(R.id.identifyingImageView);
         String uriStr = getIntent().getStringExtra("imageUri");
         if (uriStr == null) {
+            Log.e(TAG, "onCreate: No image URI provided in intent");
             finishActivityWithToast("No image provided for identification.");
             return;
         }
@@ -81,6 +83,7 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
 
         openAiApi = new OpenAiApi();
         firebaseManager = new FirebaseManager(this);
+        loadingDialog = new LoadingDialog(this);
 
         locationHelper = new LocationHelper(this, this);
         networkMonitor = new NetworkMonitor(this, this);
@@ -88,7 +91,8 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
         timeoutHandler = new Handler(Looper.getMainLooper());
         timeoutRunnable = () -> {
             if (identificationCompleted.compareAndSet(false, true)) {
-                Log.e(TAG, "Identification process timed out.");
+                Log.e(TAG, "Identification process timed out after " + IDENTIFICATION_TIMEOUT_MS + "ms");
+                if (loadingDialog.isShowing()) loadingDialog.dismiss();
                 finishActivityWithToast("Identification timed out. Please try again.");
             }
         };
@@ -101,14 +105,11 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
                     boolean coarseLocationGranted = Boolean.TRUE.equals(result.get(Manifest.permission.ACCESS_COARSE_LOCATION));
 
                     if (fineLocationGranted || coarseLocationGranted) {
-                        Log.d(TAG, "Location permissions granted, getting last known location.");
+                        Log.d(TAG, "Location permissions granted, requesting location...");
                         locationHelper.getLastKnownLocation();
                     } else {
-                        Log.e(TAG, "Location permissions denied. Cannot log identification location.");
-                        Toast.makeText(this,
-                                "Location permissions denied. Identification will proceed without location.",
-                                Toast.LENGTH_LONG).show();
-
+                        Log.w(TAG, "Location permissions denied, proceeding without location");
+                        Toast.makeText(this, "Location permissions denied. Proceeding without location.", Toast.LENGTH_LONG).show();
                         startIdentificationFlow(localImageUri, null, null, null, null, null);
                     }
                 });
@@ -126,281 +127,185 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
     protected void onPause() {
         super.onPause();
         networkMonitor.unregister();
+        if (loadingDialog != null && loadingDialog.isShowing()) {
+            Log.d(TAG, "onPause: Dismissing loading dialog");
+            loadingDialog.dismiss();
+        }
     }
 
     private void requestLocationPermissions() {
-        boolean fineLocationGranted =
-                ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED;
-        boolean coarseLocationGranted =
-                ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED;
+        boolean fineLocationGranted = ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED;
+        boolean coarseLocationGranted = ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED;
 
         if (fineLocationGranted || coarseLocationGranted) {
-            Log.d(TAG, "Location permissions already granted, getting last known location.");
+            Log.d(TAG, "requestLocationPermissions: Permissions already granted");
             locationHelper.getLastKnownLocation();
         } else {
-            Log.d(TAG, "Requesting location permissions.");
-            locationPermissionLauncher.launch(new String[]{
-                    Manifest.permission.ACCESS_FINE_LOCATION,
-                    Manifest.permission.ACCESS_COARSE_LOCATION
-            });
+            Log.d(TAG, "requestLocationPermissions: Requesting permissions");
+            locationPermissionLauncher.launch(new String[]{Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION});
         }
     }
 
     @Override
-    public void onLocationReceived(Location location,
-                                   @Nullable String localityName,
-                                   @Nullable String state,
-                                   @Nullable String country) {
+    public void onLocationReceived(Location location, @Nullable String localityName, @Nullable String state, @Nullable String country) {
+        Log.d(TAG, "onLocationReceived: Lat=" + location.getLatitude() + ", Lng=" + location.getLongitude() + ", Locality=" + localityName);
         this.currentLocation = location;
         this.currentLocalityName = localityName;
         this.currentState = state;
         this.currentCountry = country;
-
-        Log.d(TAG, "Location received: " + localityName + ", " + state + ", " + country
-                + " (" + location.getLatitude() + ", " + location.getLongitude() + ")");
-
-        startIdentificationFlow(localImageUri,
-                location.getLatitude(),
-                location.getLongitude(),
-                localityName,
-                state,
-                country);
-
+        startIdentificationFlow(localImageUri, location.getLatitude(), location.getLongitude(), localityName, state, country);
         locationHelper.stopLocationUpdates();
     }
 
     public void onLocationReceived(Location location, @Nullable String localityName) {
-        this.currentLocation = location;
-        this.currentLocalityName = localityName;
-        this.currentState = null;
-        this.currentCountry = null;
-
-        Log.d(TAG, "Location received: " + localityName
-                + " (" + location.getLatitude() + ", " + location.getLongitude() + ")");
-
-        startIdentificationFlow(localImageUri,
-                location.getLatitude(),
-                location.getLongitude(),
-                localityName,
-                null,
-                null);
-
-        locationHelper.stopLocationUpdates();
+        onLocationReceived(location, localityName, null, null);
     }
 
     @Override
     public void onLocationError(String errorMessage) {
-        Log.e(TAG, "Location error: " + errorMessage);
-        Toast.makeText(this,
-                "Location error: " + errorMessage + ". Identification will proceed without location.",
-                Toast.LENGTH_LONG).show();
-
+        Log.e(TAG, "onLocationError: " + errorMessage);
+        Toast.makeText(this, "Location error: " + errorMessage + ". Proceeding without location.", Toast.LENGTH_LONG).show();
         startIdentificationFlow(localImageUri, null, null, null, null, null);
-
         locationHelper.stopLocationUpdates();
     }
 
-    @Override
-    public void onNetworkAvailable() {
-        Log.d(TAG, "Network became available.");
-        if (!identificationCompleted.get() && localImageUri != null) {
-            Toast.makeText(this, "Internet connection restored.", Toast.LENGTH_SHORT).show();
-        }
+    @Override public void onNetworkAvailable() {
+        Log.d(TAG, "onNetworkAvailable: Connection restored");
     }
-
-    @Override
-    public void onNetworkLost() {
-        Log.e(TAG, "Network lost during identification.");
+    @Override public void onNetworkLost() {
+        Log.w(TAG, "onNetworkLost: Connection lost during process");
         if (!identificationCompleted.get()) {
+            if (loadingDialog.isShowing()) loadingDialog.dismiss();
             finishActivityWithToast("Internet connection lost. Please reconnect and try again.");
         }
     }
 
-    private void startIdentificationFlow(Uri imageUri,
-                                         @Nullable Double latitude,
-                                         @Nullable Double longitude,
-                                         @Nullable String localityName,
-                                         @Nullable String state,
-                                         @Nullable String country) {
-
-        if (identificationCompleted.get()) return; // Pre-check to prevent starting if already completed/timed out
-
-        // Initial network check via NetworkMonitor
-        if (!networkMonitor.isConnected()) {
-            Log.e(TAG, "No internet connection for identification at startup.");
-            finishActivityWithToast("No internet connection. Please connect and try again.");
+    private void startIdentificationFlow(Uri imageUri, @Nullable Double latitude, @Nullable Double longitude, @Nullable String localityName, @Nullable String state, @Nullable String country) {
+        if (identificationCompleted.get()) {
+            Log.d(TAG, "startIdentificationFlow: Already completed, ignoring");
             return;
         }
 
+        if (!networkMonitor.isConnected()) {
+            Log.e(TAG, "startIdentificationFlow: No internet connection");
+            finishActivityWithToast("No internet connection.");
+            return;
+        }
+
+        Log.d(TAG, "startIdentificationFlow: Encoding image...");
         String base64Image = encodeImage(imageUri);
         if (base64Image == null) {
-            finishActivityWithToast("Failed to process image for identification.");
+            Log.e(TAG, "startIdentificationFlow: Failed to encode image");
+            finishActivityWithToast("Failed to process image.");
             return;
         }
 
-        // First, check OpenAI request limits
+        Log.d(TAG, "startIdentificationFlow: Showing loading dialog and checking limits");
+        loadingDialog.show();
+
         firebaseManager.getOpenAiRequestsRemaining(new FirebaseManager.OpenAiRequestLimitListener() {
             @Override
-            public void onCheckComplete(boolean hasRequestsRemaining, int remaining, Date expirationDate) { // Modified signature
-                if (identificationCompleted.get()) return; // Already timed out or completed
+            public void onCheckComplete(boolean hasRequestsRemaining, int remaining, Date expirationDate) {
+                if (identificationCompleted.get()) return;
 
                 if (hasRequestsRemaining) {
-                    Log.d(TAG, "OpenAI requests remaining: " + remaining + ". Proceeding with identification.");
-                    // Proceed with OpenAI API call
-                    openAiApi.identifyBirdFromImage(base64Image, latitude, longitude, localityName,
-                            new OpenAiApi.OpenAiCallback() {
-                                @Override
-                                public void onSuccess(String response, boolean isVerified) {
-                                    if (identificationCompleted.get()) return; // Already timed out or completed
+                    Log.d(TAG, "onCheckComplete: " + remaining + " requests remaining. Calling OpenAI...");
+                    openAiApi.identifyBirdFromImage(base64Image, latitude, longitude, localityName, new OpenAiApi.OpenAiCallback() {
+                        @Override
+                        public void onSuccess(String response, boolean isVerified) {
+                            if (identificationCompleted.get()) return;
+                            Log.d(TAG, "OpenAI onSuccess: isVerified=" + isVerified);
+                            if (!isVerified) {
+                                Log.w(TAG, "Bird not recognized or not in regional data");
+                                loadingDialog.dismiss();
+                                finishActivityWithToast("Bird not recognized in Georgia regional data.");
+                                return;
+                            }
+                            Log.d(TAG, "Proceeding to upload verified image");
+                            uploadVerifiedImage(response, latitude, longitude, localityName, state, country);
+                        }
 
-                                    if (!isVerified) {
-                                        finishActivityWithToast("Bird not recognized in Georgia regional data. Image not saved.");
-                                        return;
-                                    }
-
-                                    // ONLY if verified, upload image to Firebase Storage
-                                    uploadVerifiedImage(response, latitude, longitude, localityName, state, country);
-                                }
-
-                                @Override
-                                public void onFailure(Exception e, String message) {
-                                    if (identificationCompleted.get()) return; // Already timed out or completed
-
-                                    Log.e(TAG, "Identification failed: " + message, e);
-
-                                    String displayMessage = "Identification failed. Please try again.";
-                                    if (e instanceof FirebaseFunctionsException) {
-                                        FirebaseFunctionsException ffe = (FirebaseFunctionsException) e;
-                                        if (ffe.getCode() == FirebaseFunctionsException.Code.RESOURCE_EXHAUSTED) {
-                                            displayMessage = "You have reached your daily limit for AI bird identification requests.";
-                                        } else if (ffe.getCode() == FirebaseFunctionsException.Code.UNAVAILABLE ||
-                                                ffe.getCode() == FirebaseFunctionsException.Code.DEADLINE_EXCEEDED ||
-                                                ffe.getCode() == FirebaseFunctionsException.Code.INTERNAL)
-                                        {
-                                            displayMessage = "Server error or timeout during identification. Please try again.";
-                                        } else if (ffe.getCode() == FirebaseFunctionsException.Code.NOT_FOUND ||
-                                                   ffe.getCode() == FirebaseFunctionsException.Code.INVALID_ARGUMENT) {
-                                            displayMessage = "There was an issue with the identification service. Please try again.";
-                                        }
-                                    } else if (e instanceof IOException) {
-                                        displayMessage = "Network error during identification. Check your internet connection.";
-                                    } else if (!networkMonitor.isConnected()) {
-                                        displayMessage = "Network connection lost during identification. Check your internet.";
-                                    }
-
-                                    finishActivityWithToast(displayMessage);
-                                }
-                            });
+                        @Override
+                        public void onFailure(Exception e, String message) {
+                            if (identificationCompleted.get()) return;
+                            Log.e(TAG, "OpenAI onFailure: " + message, e);
+                            loadingDialog.dismiss();
+                            finishActivityWithToast("Identification failed: " + message);
+                        }
+                    });
                 } else {
-                    // OpenAI request limit exceeded
-                    finishActivityWithToast("You have reached your daily limit of " + remaining + " AI bird identification requests.");
+                    Log.w(TAG, "onCheckComplete: Daily limit reached");
+                    loadingDialog.dismiss();
+                    finishActivityWithToast("Daily limit reached for AI requests.");
                 }
             }
 
             @Override
             public void onFailure(String errorMessage) {
-                if (identificationCompleted.get()) return; // Already timed out or completed
+                if (identificationCompleted.get()) return;
                 Log.e(TAG, "Failed to check OpenAI request limits: " + errorMessage);
-                finishActivityWithToast("Failed to check AI limits. Please try again.");
+                loadingDialog.dismiss();
+                finishActivityWithToast("Failed to check AI limits.");
             }
         });
     }
 
-    private void uploadVerifiedImage(String identificationResult,
-                                     @Nullable Double latitude,
-                                     @Nullable Double longitude,
-                                     @Nullable String localityName,
-                                     @Nullable String state,
-                                     @Nullable String country) {
-        if (identificationCompleted.get()) return; // Already timed out or completed
+    private void uploadVerifiedImage(String identificationResult, @Nullable Double latitude, @Nullable Double longitude, @Nullable String localityName, @Nullable String state, @Nullable String country) {
+        if (identificationCompleted.get()) return;
 
         FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
         if (user == null) {
-            finishActivityWithToast("User not logged in. Please log in again.");
+            Log.e(TAG, "uploadVerifiedImage: User null");
+            loadingDialog.dismiss();
+            finishActivityWithToast("User not logged in.");
             return;
         }
 
-        String userId = user.getUid();
-        // Changed the upload path from "images/" to "user_images/" to match storage rules
-        String fileName = "user_images/" + userId + "/" + UUID.randomUUID().toString() + ".jpg";
+        String fileName = "user_images/" + user.getUid() + "/" + UUID.randomUUID().toString() + ".jpg";
         StorageReference storageRef = FirebaseStorage.getInstance().getReference().child(fileName);
 
+        Log.d(TAG, "uploadVerifiedImage: Starting upload to " + fileName);
         storageRef.putFile(localImageUri)
                 .addOnSuccessListener(taskSnapshot -> {
-                    if (identificationCompleted.get()) return; // Already timed out or completed
-                    storageRef.getDownloadUrl()
-                        .addOnSuccessListener(downloadUri -> {
-                            if (identificationCompleted.get()) return; // Already timed out or completed
-                            if (downloadUri == null) {
-                                Log.e(TAG, "Download URI is null.");
-                                Toast.makeText(this, "Upload succeeded but URL missing.", Toast.LENGTH_SHORT).show();
-                                proceedToInfoActivity(identificationResult, null,
-                                        latitude, longitude, localityName, state, country);
-                                return;
-                            }
-                            proceedToInfoActivity(identificationResult, downloadUri.toString(),
-                                    latitude, longitude, localityName, state, country);
-                        })
-                        .addOnFailureListener(e -> {
-                            if (identificationCompleted.get()) return; // Already timed out or completed
-                            Log.e(TAG, "Failed to get download URL", e);
-                            String displayMessage = "Image upload failed: Could not get download link.";
-                            if (!networkMonitor.isConnected()) {
-                                displayMessage = "Network connection lost during upload. Check your internet.";
-                            }
-                            finishActivityWithToast(displayMessage);
-                        });
+                    if (identificationCompleted.get()) return;
+                    Log.d(TAG, "uploadVerifiedImage: Upload successful, getting download URL");
+                    storageRef.getDownloadUrl().addOnSuccessListener(downloadUri -> {
+                        if (identificationCompleted.get()) return;
+                        Log.d(TAG, "uploadVerifiedImage: Download URL obtained: " + downloadUri);
+                        loadingDialog.dismiss();
+                        proceedToInfoActivity(identificationResult, downloadUri.toString(), latitude, longitude, localityName, state, country);
+                    }).addOnFailureListener(e -> {
+                        if (identificationCompleted.get()) return;
+                        Log.e(TAG, "uploadVerifiedImage: Failed to get download URL", e);
+                        loadingDialog.dismiss();
+                        finishActivityWithToast("Failed to get image link.");
+                    });
                 })
                 .addOnFailureListener(e -> {
-                    if (identificationCompleted.get()) return; // Already timed out or completed
-                    Log.e(TAG, "Storage upload failed", e);
-                    String displayMessage = "Image upload failed. Check internet.";
-                    if (!networkMonitor.isConnected()) {
-                        displayMessage = "Network connection lost during upload. Check your internet.";
-                    }
-                    finishActivityWithToast(displayMessage);
+                    if (identificationCompleted.get()) return;
+                    Log.e(TAG, "uploadVerifiedImage: Upload failed", e);
+                    loadingDialog.dismiss();
+                    finishActivityWithToast("Image upload failed.");
                 });
     }
 
-    /**
-     * Combined result parsing + intent extras.
-     */
-    private void proceedToInfoActivity(String contentStr,
-                                       @Nullable String downloadUrl,
-                                       @Nullable Double latitude,
-                                       @Nullable Double longitude,
-                                       @Nullable String localityName,
-                                       @Nullable String state,
-                                       @Nullable String country) {
-        if (identificationCompleted.compareAndSet(false, true)) { // Mark as completed and prevent multiple calls
-            timeoutHandler.removeCallbacks(timeoutRunnable); // Cancel the timeout
-            Log.d(TAG, "Content String received: " + contentStr);
-
+    private void proceedToInfoActivity(String contentStr, @Nullable String downloadUrl, @Nullable Double latitude, @Nullable Double longitude, @Nullable String localityName, @Nullable String state, @Nullable String country) {
+        if (identificationCompleted.compareAndSet(false, true)) {
+            timeoutHandler.removeCallbacks(timeoutRunnable);
+            
+            Log.d(TAG, "proceedToInfoActivity: Parsing results...");
+            String birdId = "Unknown", commonName = "Unknown", scientificName = "Unknown", species = "Unknown", family = "Unknown";
             String[] lines = contentStr.split("\r?\n");
-            String birdId = "Unknown";
-            String commonName = "Unknown";
-            String scientificName = "Unknown";
-            String species = "Unknown";
-            String family = "Unknown";
-
             for (String line : lines) {
-                String trimmedLine = line.trim();
-                Log.d(TAG, "Parsing line: " + trimmedLine);
-
-                if (trimmedLine.startsWith("ID: ")) {
-                    birdId = trimmedLine.substring("ID: ".length()).trim();
-                } else if (trimmedLine.startsWith("Common Name: ")) {
-                    commonName = trimmedLine.substring("Common Name: ".length()).trim();
-                } else if (trimmedLine.startsWith("Scientific Name: ")) {
-                    scientificName = trimmedLine.substring("Scientific Name: ".length()).trim();
-                } else if (trimmedLine.startsWith("Species: ")) {
-                    species = trimmedLine.substring("Species: ".length()).trim();
-                } else if (trimmedLine.startsWith("Family: ")) {
-                    family = trimmedLine.substring("Family: ".length()).trim();
-                }
+                String trimmed = line.trim();
+                if (trimmed.startsWith("ID: ")) birdId = trimmed.substring(4).trim();
+                else if (trimmed.startsWith("Common Name: ")) commonName = trimmed.substring(13).trim();
+                else if (trimmed.startsWith("Scientific Name: ")) scientificName = trimmed.substring(17).trim();
+                else if (trimmed.startsWith("Species: ")) species = trimmed.substring(9).trim();
+                else if (trimmed.startsWith("Family: ")) family = trimmed.substring(8).trim();
             }
 
-            Log.d(TAG, "Extracted Bird ID: " + birdId);
+            Log.d(TAG, "proceedToInfoActivity: Extracted birdId=" + birdId + ", name=" + commonName);
 
             Intent intent = new Intent(IdentifyingActivity.this, BirdInfoActivity.class);
             intent.putExtra("imageUri", localImageUri.toString());
@@ -411,21 +316,15 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
             intent.putExtra("family", family);
             intent.putExtra("imageUrl", downloadUrl);
 
-            // Pass location data forward (superset)
-            if (latitude != null && longitude != null) {
+            if (latitude != null) {
                 intent.putExtra("latitude", latitude);
                 intent.putExtra("longitude", longitude);
                 intent.putExtra("localityName", localityName);
                 intent.putExtra("state", state);
                 intent.putExtra("country", country);
-            } else if (currentLocation != null) {
-                intent.putExtra("latitude", currentLocation.getLatitude());
-                intent.putExtra("longitude", currentLocation.getLongitude());
-                intent.putExtra("localityName", currentLocalityName);
-                intent.putExtra("state", currentState);
-                intent.putExtra("country", currentCountry);
             }
 
+            Log.d(TAG, "proceedToInfoActivity: Starting BirdInfoActivity");
             startActivity(intent);
             finish();
         }
@@ -433,62 +332,28 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
 
     private String encodeImage(Uri imageUri) {
         try {
-            Bitmap bitmap;
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                bitmap = ImageDecoder.decodeBitmap(
-                        ImageDecoder.createSource(this.getContentResolver(), imageUri));
-            } else {
-                bitmap = MediaStore.Images.Media.getBitmap(this.getContentResolver(), imageUri);
-            }
-
-            int maxWidth = 512;
-            int maxHeight = 512;
-            float ratio = Math.min((float) maxWidth / bitmap.getWidth(),
-                    (float) maxHeight / bitmap.getHeight());
-
-            if (ratio < 1.0f) {
-                bitmap = Bitmap.createScaledBitmap(bitmap,
-                        Math.round(ratio * bitmap.getWidth()),
-                        Math.round(ratio * bitmap.getHeight()),
-                        true);
-            }
-
-            ByteArrayOutputStream byteArrayOutputStream = new ByteArrayOutputStream();
-            bitmap.compress(Bitmap.CompressFormat.JPEG, 75, byteArrayOutputStream);
-            return Base64.encodeToString(byteArrayOutputStream.toByteArray(), Base64.NO_WRAP);
-
-        } catch (IOException e) {
-            Log.e(TAG, "Error encoding image", e);
-            return null;
+            Bitmap bitmap = (Build.VERSION.SDK_INT >= 28) ? ImageDecoder.decodeBitmap(ImageDecoder.createSource(this.getContentResolver(), imageUri)) : MediaStore.Images.Media.getBitmap(this.getContentResolver(), imageUri);
+            int maxWidth = 512, maxHeight = 512;
+            float ratio = Math.min((float) maxWidth / bitmap.getWidth(), (float) maxHeight / bitmap.getHeight());
+            if (ratio < 1.0f) bitmap = Bitmap.createScaledBitmap(bitmap, Math.round(ratio * bitmap.getWidth()), Math.round(ratio * bitmap.getHeight()), true);
+            ByteArrayOutputStream baos = new ByteArrayOutputStream();
+            bitmap.compress(Bitmap.CompressFormat.JPEG, 75, baos);
+            return Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP);
+        } catch (IOException e) { 
+            Log.e(TAG, "encodeImage: Error", e);
+            return null; 
         }
     }
 
     private void finishActivityWithToast(String message) {
         if (identificationCompleted.compareAndSet(false, true)) {
-            if (timeoutHandler != null && timeoutRunnable != null) {
-                timeoutHandler.removeCallbacks(timeoutRunnable);
-            }
+            Log.d(TAG, "finishActivityWithToast: " + message);
+            if (timeoutHandler != null) timeoutHandler.removeCallbacks(timeoutRunnable);
             Toast.makeText(this, message, Toast.LENGTH_LONG).show();
             finish();
         }
     }
 
-    @Override
-    protected void onStop() {
-        super.onStop();
-        if (locationHelper != null) {
-            locationHelper.stopLocationUpdates();
-        }
-    }
-
-    @Override
-    protected void onDestroy() {
-        super.onDestroy();
-        if (locationHelper != null) {
-            locationHelper.shutdown();
-        }
-        if (timeoutHandler != null && timeoutRunnable != null) {
-            timeoutHandler.removeCallbacks(timeoutRunnable);
-        }
-    }
+    @Override protected void onStop() { super.onStop(); if (locationHelper != null) locationHelper.stopLocationUpdates(); }
+    @Override protected void onDestroy() { super.onDestroy(); if (locationHelper != null) locationHelper.shutdown(); if (timeoutHandler != null) timeoutHandler.removeCallbacks(timeoutRunnable); }
 }

@@ -14,7 +14,7 @@ import android.widget.Toast;
 import android.graphics.Bitmap;
 import android.graphics.ImageDecoder;
 import android.util.Base64;
-import android.provider.MediaStore; // Added this import
+import android.provider.MediaStore;
 
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
@@ -27,8 +27,6 @@ import com.google.android.material.textfield.TextInputEditText;
 import com.google.firebase.auth.FirebaseAuth;
 import com.google.firebase.auth.FirebaseUser;
 import com.google.firebase.firestore.FirebaseFirestore;
-import com.google.firebase.firestore.Query;
-import com.google.firebase.firestore.QuerySnapshot;
 import com.google.firebase.storage.FirebaseStorage;
 import com.google.firebase.storage.StorageReference;
 import com.bumptech.glide.Glide;
@@ -39,14 +37,12 @@ import com.canhub.cropper.CropImageOptions;
 import com.canhub.cropper.CropImageView;
 
 import java.io.ByteArrayOutputStream;
-import java.io.File;
-import java.io.FileOutputStream;
 import java.io.IOException;
 import java.util.HashMap;
 import java.util.Map;
-import java.util.Date; // Import Date
+import java.util.Date;
 
-public class EditProfileActivity extends AppCompatActivity {
+public class EditProfileActivity extends AppCompatActivity implements NetworkMonitor.NetworkStatusListener {
 
     private static final String TAG = "EditProfileActivity";
     private static final int REQUEST_READ_EXTERNAL_STORAGE = 100;
@@ -63,13 +59,14 @@ public class EditProfileActivity extends AppCompatActivity {
     private FirebaseFirestore db;
     private FirebaseStorage storage;
     private StorageReference storageRef;
-    private FirebaseManager firebaseManager; // Added FirebaseManager
+    private FirebaseManager firebaseManager;
+    private LoadingDialog loadingDialog;
+    private NetworkMonitor networkMonitor;
 
     // UI elements
     private ImageView ivPfpPreview;
     private MaterialButton btnChangePhoto;
 
-    // Image handling
     private Uri imageUri;
     private String uploadedProfilePictureDownloadUrl = null; // To store the URL after successful upload
 
@@ -87,14 +84,16 @@ public class EditProfileActivity extends AppCompatActivity {
         db = FirebaseFirestore.getInstance();
         storage = FirebaseStorage.getInstance();
         storageRef = storage.getReference();
-        firebaseManager = new FirebaseManager(this); // Initialize FirebaseManager
+        firebaseManager = new FirebaseManager(this);
+        loadingDialog = new LoadingDialog(this);
+        networkMonitor = new NetworkMonitor(this, this);
 
         // Initialize UI
         ivPfpPreview = findViewById(R.id.ivPfpPreview);
         btnChangePhoto = findViewById(R.id.btnChangePhoto);
         etUsername = findViewById(R.id.etUsername);
         etBio = findViewById(R.id.etBio);
-        tvPfpChangesRemaining = findViewById(R.id.tvPfpChangesRemaining); // Assuming you add this TextView to activity_edit_profile.xml
+        tvPfpChangesRemaining = findViewById(R.id.tvPfpChangesRemaining);
 
         // Get initial data from intent (only bio and profile picture URL are passed via intent now)
         // Username will be fetched from Firebase
@@ -159,6 +158,11 @@ public class EditProfileActivity extends AppCompatActivity {
         });
 
         btnSave.setOnClickListener(v -> {
+            if (!networkMonitor.isConnected()) {
+                Toast.makeText(this, "No internet connection. Please check your network and try again.", Toast.LENGTH_LONG).show();
+                return;
+            }
+
             String newUsername = etUsername.getText().toString().trim();
             String newBio = etBio.getText().toString();
 
@@ -171,7 +175,8 @@ public class EditProfileActivity extends AppCompatActivity {
             boolean pfpChanged = (imageUri != null) || (uploadedProfilePictureDownloadUrl != null && !uploadedProfilePictureDownloadUrl.equals(initialProfilePictureUrl));
 
             if (pfpChanged) {
-                Log.d(TAG, "PFP changed, calling recordPfpChange Cloud Function.");
+                Log.d(TAG, "PFP changed, showing loading dialog and calling recordPfpChange Cloud Function.");
+                loadingDialog.show();
                 firebaseManager.recordPfpChange(new FirebaseManager.PfpChangeLimitListener() {
                     @Override
                     public void onSuccess(int pfpChangesToday, Date pfpCooldownResetTimestamp) { // Updated signature
@@ -179,42 +184,44 @@ public class EditProfileActivity extends AppCompatActivity {
                         Log.d(TAG, "PFP change recorded. Remaining: " + pfpChangesToday);
                         tvPfpChangesRemaining.setText("PFP changes remaining today: " + pfpChangesToday);
                         // The pfpCooldownResetTimestamp can be used to display when the limit resets,
-                        // but for now, we\'ll just log it.
+                        // but for now, we'll just log it.
                         Log.d(TAG, "PFP Cooldown Reset Timestamp: " + pfpCooldownResetTimestamp);
-                        
+
                         // --- MODERATION INTEGRATION START ---
                         // Before uploading, call the moderation function
                         String base64Image = encodeImage(imageUri);
                         if (base64Image == null) {
+                            loadingDialog.dismiss();
                             Toast.makeText(EditProfileActivity.this, "Failed to encode image for moderation.", Toast.LENGTH_LONG).show();
                             return;
                         }
 
+                        Log.d(TAG, "Calling moderation CF...");
                         firebaseManager.callOpenAiImageModeration(base64Image, new FirebaseManager.OpenAiModerationListener() {
                             @Override
                             public void onSuccess(boolean isAppropriate, String moderationReason) {
                                 if (isFinishing() || isDestroyed()) return;
                                 if (isAppropriate) {
+                                    Log.d(TAG, "PFP appropriate, proceeding with uploadImageToFirebase.");
                                     uploadImageToFirebase(imageUri, newUsername, newBio); // Proceed with upload
                                 } else {
-                                    Toast.makeText(EditProfileActivity.this, "Profile picture rejected: " + moderationReason, Toast.LENGTH_LONG).show();
-                                    Log.w(TAG, "PFP moderation failed: " + moderationReason);
-                                    // Optionally, revert the PFP preview or clear the selected image
+                                    loadingDialog.dismiss();
+                                    Toast.makeText(EditProfileActivity.this, "PFP rejected: " + moderationReason, Toast.LENGTH_LONG).show();
                                     if (initialProfilePictureUrl != null && !initialProfilePictureUrl.isEmpty()) {
                                         Glide.with(EditProfileActivity.this).load(initialProfilePictureUrl).into(ivPfpPreview);
                                     } else {
                                         ivPfpPreview.setImageResource(R.drawable.ic_profile);
                                     }
-                                    imageUri = null; // Clear the temporary imageUri
-                                    uploadedProfilePictureDownloadUrl = null; // Clear any uploaded URL
+                                    imageUri = null;
                                 }
                             }
 
                             @Override
                             public void onFailure(String errorMessage) {
                                 if (isFinishing() || isDestroyed()) return;
-                                Toast.makeText(EditProfileActivity.this, "Image moderation failed: " + errorMessage, Toast.LENGTH_LONG).show();
-                                Log.e(TAG, "Error during PFP image moderation: " + errorMessage);
+                                loadingDialog.dismiss();
+                                Log.e(TAG, "Moderation failed: " + errorMessage);
+                                Toast.makeText(EditProfileActivity.this, "Moderation failed.", Toast.LENGTH_LONG).show();
                             }
                         });
                         // --- MODERATION INTEGRATION END ---
@@ -223,6 +230,7 @@ public class EditProfileActivity extends AppCompatActivity {
                     @Override
                     public void onFailure(String errorMessage) {
                         if (isFinishing() || isDestroyed()) return;
+                        loadingDialog.dismiss();
                         Log.e(TAG, "Failed to record PFP change: " + errorMessage);
                         Toast.makeText(EditProfileActivity.this, "Error: " + errorMessage, Toast.LENGTH_LONG).show();
                     }
@@ -230,12 +238,14 @@ public class EditProfileActivity extends AppCompatActivity {
                     @Override
                     public void onLimitExceeded() {
                         if (isFinishing() || isDestroyed()) return;
-                        Log.w(TAG, "PFP change limit exceeded.");
-                        Toast.makeText(EditProfileActivity.this, "You have reached your daily limit for profile picture changes.", Toast.LENGTH_LONG).show();
+                        loadingDialog.dismiss();
+                        Log.w(TAG, "PFP limit exceeded.");
+                        Toast.makeText(EditProfileActivity.this, "Daily limit reached.", Toast.LENGTH_LONG).show();
                     }
                 });
             } else {
-                Log.d(TAG, "PFP not changed. Skipping recordPfpChange and image upload.");
+                Log.d(TAG, "PFP not changed. Showing loading dialog and saving profile text changes.");
+                loadingDialog.show();
                 // If no new image, and username/bio changed, save those
                 saveProfileChanges(newUsername, newBio, initialProfilePictureUrl); // Pass current PFP URL
             }
@@ -250,23 +260,17 @@ public class EditProfileActivity extends AppCompatActivity {
             } else {
                 ivPfpPreview.setImageResource(R.drawable.ic_profile);
             }
-            imageUri = null; // Clear the temporary imageUri
-            uploadedProfilePictureDownloadUrl = null; // Clear any uploaded URL
-            setResult(RESULT_CANCELED); // Set result to canceled
+            imageUri = null;
+            setResult(RESULT_CANCELED);
             finish();
         });
     }
 
     private void fetchUserProfileData() {
         FirebaseUser currentUser = mAuth.getCurrentUser();
-        if (currentUser == null) {
-            Log.e(TAG, "User not logged in. Cannot fetch profile data.");
-            // Optionally, redirect to login or show an error
-            return;
-        }
+        if (currentUser == null) return;
 
-        String userId = currentUser.getUid();
-        firebaseManager.getUserProfile(userId, task -> {
+        firebaseManager.getUserProfile(currentUser.getUid(), task -> {
             if (isFinishing() || isDestroyed()) return;
             if (task.isSuccessful() && task.getResult() != null) {
                 User user = task.getResult().toObject(User.class);
@@ -297,81 +301,46 @@ public class EditProfileActivity extends AppCompatActivity {
 
     private void fetchPfpChangesRemaining() {
         String userId = mAuth.getCurrentUser() != null ? mAuth.getCurrentUser().getUid() : null;
-        if (userId == null) {
-            tvPfpChangesRemaining.setText("Not logged in.");
-            return;
-        }
+        if (userId == null) return;
 
         db.collection("users").document(userId).get().addOnSuccessListener(documentSnapshot -> {
             if (isFinishing() || isDestroyed()) return;
             if (documentSnapshot.exists()) {
-                // The Cloud Function \'checkUsernameAndEmailAvailability\' should ensure these fields exist and are up-to-date
+                // The Cloud Function 'checkUsernameAndEmailAvailability' should ensure these fields exist and are up-to-date
                 Long pfpChangesTodayLong = documentSnapshot.getLong("pfpChangesToday");
                 int pfpChangesToday = pfpChangesTodayLong != null ? pfpChangesTodayLong.intValue() : 0;
                 tvPfpChangesRemaining.setText("PFP changes remaining today: " + pfpChangesToday);
-                if (pfpChangesToday <= 0) {
-                    btnChangePhoto.setEnabled(false);
-                    Toast.makeText(this, "You have no PFP changes left today.", Toast.LENGTH_LONG).show();
-                }
-            } else {
-                tvPfpChangesRemaining.setText("User data not found.");
+                if (pfpChangesToday <= 0) btnChangePhoto.setEnabled(false);
             }
-        }).addOnFailureListener(e -> {
-            if (isFinishing() || isDestroyed()) return;
-            Log.e(TAG, "Error fetching pfpChangesToday: " + e.getMessage(), e);
-            tvPfpChangesRemaining.setText("Error loading PFP limits.");
         });
     }
 
     private void checkPermissionsAndPickImage() {
-        // Only allow picking if changes are remaining
         String userId = mAuth.getCurrentUser() != null ? mAuth.getCurrentUser().getUid() : null;
-        if (userId == null) {
-            Toast.makeText(this, "Please log in to change profile picture.", Toast.LENGTH_SHORT).show();
-            return;
-        }
+        if (userId == null) return;
         db.collection("users").document(userId).get().addOnSuccessListener(documentSnapshot -> {
             if (isFinishing() || isDestroyed()) return;
             if (documentSnapshot.exists()) {
                 Long pfpChangesTodayLong = documentSnapshot.getLong("pfpChangesToday");
-                int pfpChangesToday = pfpChangesTodayLong != null ? pfpChangesTodayLong.intValue() : 0;
-                if (pfpChangesToday <= 0) {
-                    Toast.makeText(this, "You have reached your daily limit for profile picture changes.", Toast.LENGTH_LONG).show();
+                if (pfpChangesTodayLong != null && pfpChangesTodayLong <= 0) {
+                    Toast.makeText(this, "Daily limit reached.", Toast.LENGTH_LONG).show();
                     return;
                 }
-                // Proceed if limit is not exceeded
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                     if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_MEDIA_IMAGES) != PackageManager.PERMISSION_GRANTED) {
                         ActivityCompat.requestPermissions(this, new String[]{Manifest.permission.READ_MEDIA_IMAGES}, REQUEST_READ_EXTERNAL_STORAGE);
-                    } else {
-                        pickImage();
-                    }
-                }
-                else if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
+                    } else pickImage();
+                } else if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
                     ActivityCompat.requestPermissions(this, new String[]{Manifest.permission.READ_EXTERNAL_STORAGE}, REQUEST_READ_EXTERNAL_STORAGE);
-                } else {
-                    pickImage();
-                }
-            } else {
-                Toast.makeText(this, "User data not found to check limits.", Toast.LENGTH_SHORT).show();
+                } else pickImage();
             }
-        }).addOnFailureListener(e -> {
-            if (isFinishing() || isDestroyed()) return;
-            Log.e(TAG, "Error checking PFP limits before picking image: " + e.getMessage(), e);
-            Toast.makeText(this, "Error checking PFP limits. Try again later.", Toast.LENGTH_LONG).show();
         });
     }
 
     @Override
     public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
-        if (requestCode == REQUEST_READ_EXTERNAL_STORAGE) {
-            if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-                pickImage();
-            } else {
-                Toast.makeText(this, "Permission denied to read external storage", Toast.LENGTH_SHORT).show();
-            }
-        }
+        if (requestCode == REQUEST_READ_EXTERNAL_STORAGE && grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) pickImage();
     }
 
     private void pickImage() {
@@ -386,203 +355,119 @@ public class EditProfileActivity extends AppCompatActivity {
         options.fixAspectRatio = true;
         options.aspectRatioX = 1;
         options.aspectRatioY = 1;
-
         cropImageLauncher.launch(new CropImageContractOptions(imageUriToCrop, options));
     }
 
 
     private void uploadImageToFirebase(Uri newImageUri, String newUsername, String newBio) {
-        Log.d(TAG, "Starting uploadImageToFirebase for new URI: " + newImageUri);
-        if (mAuth.getCurrentUser() == null) {
-            Log.e(TAG, "User not logged in. Cannot upload image.");
-            Toast.makeText(this, "User not logged in.", Toast.LENGTH_SHORT).show();
-            return;
-        }
-
-        // Only attempt to upload if newImageUri is not null. Otherwise, it means the PFP wasn\'t changed via image picker.
-        if (newImageUri == null) {
-            Log.d(TAG, "No new image URI to upload. Proceeding to save profile changes with existing PFP URL.");
+        if (mAuth.getCurrentUser() == null || newImageUri == null) {
             saveProfileChanges(newUsername, newBio, initialProfilePictureUrl);
             return;
         }
 
         String userId = mAuth.getCurrentUser().getUid();
-
-        // Step 1: Delete the old profile picture if it exists
-        // This needs to be done with care as it\'s separate from the limit.
-        // The old URL is `initialProfilePictureUrl`
-        if (initialProfilePictureUrl != null && !initialProfilePictureUrl.isEmpty() &&
-            (initialProfilePictureUrl.startsWith("gs://") || initialProfilePictureUrl.startsWith("https://firebasestorage.googleapis.com"))) {
+        if (initialProfilePictureUrl != null && !initialProfilePictureUrl.isEmpty() && initialProfilePictureUrl.contains("firebasestorage")) {
             try {
-                StorageReference oldImageRef = storage.getReferenceFromUrl(initialProfilePictureUrl);
-                Log.d(TAG, "Attempting to delete old image from: " + oldImageRef.getPath());
-                oldImageRef.delete().addOnSuccessListener(aVoid -> {
-                    Log.d(TAG, "Old profile picture deleted successfully from Storage.");
-                }).addOnFailureListener(e -> {
-                    Log.e(TAG, "Failed to delete old profile picture from Storage: " + e.getMessage(), e);
-                    // Continue with new upload even if old deletion fails
-                });
-            } catch (IllegalArgumentException e) {
-                Log.e(TAG, "Invalid Firebase Storage URL for old profile picture: " + initialProfilePictureUrl + ". Error: " + e.getMessage());
-            }
+                storage.getReferenceFromUrl(initialProfilePictureUrl).delete();
+            } catch (Exception ignored) {}
         }
 
-        // Step 2: Upload the new profile picture
         StorageReference newProfileImageRef = storageRef.child("profile_pictures/" + userId + ".jpg");
-        Log.d(TAG, "Uploading new image to path: " + newProfileImageRef.getPath());
-
         newProfileImageRef.putFile(newImageUri)
             .addOnSuccessListener(taskSnapshot -> {
                 if (isFinishing() || isDestroyed()) return;
-                Log.d(TAG, "New image uploaded successfully to Firebase Storage.");
                 newProfileImageRef.getDownloadUrl().addOnSuccessListener(uri -> {
                     if (isFinishing() || isDestroyed()) return;
-                    String downloadUrl = uri.toString();
-                    Log.d(TAG, "Download URL obtained for new image: " + downloadUrl);
-                    uploadedProfilePictureDownloadUrl = downloadUrl; // Store the uploaded URL
-                    saveProfileChanges(newUsername, newBio, uploadedProfilePictureDownloadUrl); // Save changes with new URL
-                    Toast.makeText(this, "Profile picture updated!", Toast.LENGTH_SHORT).show();
+                    saveProfileChanges(newUsername, newBio, uri.toString());
                 }).addOnFailureListener(e -> {
-                    if (isFinishing() || isDestroyed()) return;
-                    Log.e(TAG, "Failed to get download URL for new image: " + e.getMessage(), e);
-                    Toast.makeText(this, "Failed to get download URL: " + e.getMessage(), Toast.LENGTH_LONG).show();
+                    loadingDialog.dismiss();
+                    Toast.makeText(this, "Failed to get URL", Toast.LENGTH_SHORT).show();
                 });
             })
             .addOnFailureListener(e -> {
-                if (isFinishing() || isDestroyed()) return;
-                Log.e(TAG, "Failed to upload new image to Firebase Storage: " + e.getMessage(), e);
-                Toast.makeText(this, "Failed to upload image: " + e.getMessage(), Toast.LENGTH_LONG).show();
+                loadingDialog.dismiss();
+                Toast.makeText(this, "Upload failed", Toast.LENGTH_SHORT).show();
             });
     }
 
-    /**
-     * Encodes a given image URI to a Base64 string.
-     * @param imageUri The URI of the image to encode.
-     * @return A Base64 encoded string of the image, or null if an error occurs.
-     */
     private String encodeImage(Uri imageUri) {
         try {
-            Bitmap bitmap;
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                bitmap = ImageDecoder.decodeBitmap(
-                        ImageDecoder.createSource(this.getContentResolver(), imageUri));
-            } else {
-                bitmap = MediaStore.Images.Media.getBitmap(this.getContentResolver(), imageUri);
-            }
-
-            // Scale down bitmap to a reasonable size for moderation to save on bandwidth and processing time
-            // OpenAI Vision API has limits on image size and detail, smaller is usually faster.
-            int maxWidth = 512;
-            int maxHeight = 512;
-            float ratio = Math.min((float) maxWidth / bitmap.getWidth(),
-                    (float) maxHeight / bitmap.getHeight());
-
-            if (ratio < 1.0f) { // Only scale down if image is larger than max dimensions
-                bitmap = Bitmap.createScaledBitmap(bitmap,
-                        Math.round(ratio * bitmap.getWidth()),
-                        Math.round(ratio * bitmap.getHeight()),
-                        true);
-            }
-
-            ByteArrayOutputStream byteArrayOutputStream = new ByteArrayOutputStream();
-            bitmap.compress(Bitmap.CompressFormat.JPEG, 75, byteArrayOutputStream);
-            return Base64.encodeToString(byteArrayOutputStream.toByteArray(), Base64.NO_WRAP);
-
-        } catch (IOException e) {
-            Log.e(TAG, "Error encoding image for moderation", e);
-            return null;
-        }
+            Bitmap bitmap = (Build.VERSION.SDK_INT >= 28) ? ImageDecoder.decodeBitmap(ImageDecoder.createSource(this.getContentResolver(), imageUri)) : MediaStore.Images.Media.getBitmap(this.getContentResolver(), imageUri);
+            int maxWidth = 512, maxHeight = 512;
+            float ratio = Math.min((float) maxWidth / bitmap.getWidth(), (float) maxHeight / bitmap.getHeight());
+            if (ratio < 1.0f) bitmap = Bitmap.createScaledBitmap(bitmap, Math.round(ratio * bitmap.getWidth()), Math.round(ratio * bitmap.getHeight()), true);
+            ByteArrayOutputStream baos = new ByteArrayOutputStream();
+            bitmap.compress(Bitmap.CompressFormat.JPEG, 75, baos);
+            return Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP);
+        } catch (IOException e) { return null; }
     }
 
     private void saveProfileChanges(String newUsername, String newBio, String finalProfilePictureUrl) {
-        String userId = mAuth.getCurrentUser().getUid();
-        Log.d(TAG, "Saving profile changes for user: " + userId + ", PFP URL: " + finalProfilePictureUrl);
+        boolean hasChanges = !newUsername.equals(initialUsername) || !newBio.equals(initialBio) || (finalProfilePictureUrl != null && !finalProfilePictureUrl.equals(initialProfilePictureUrl));
 
-        Map<String, Object> updates = new HashMap<>();
-        boolean hasChanges = false;
-
-        // Check for username change
-        if (!newUsername.equals(initialUsername)) {
-            hasChanges = true;
-            // Perform username uniqueness check is done implicitly by the `checkUsernameAvailability` CF
-            // in `FirebaseManager.updateUserProfile` when the username changes.
-            updates.put("username", newUsername);
-        }
-
-        // Check for bio change
-        if (!newBio.equals(initialBio)) {
-            updates.put("bio", newBio);
-            hasChanges = true;
-        }
-
-        // Update profile picture URL only if it was genuinely changed (new image uploaded or existing cleared)
-        // Use `finalProfilePictureUrl` which would be the newly uploaded one or the original if no new upload happened
-        if (finalProfilePictureUrl != null && !finalProfilePictureUrl.equals(initialProfilePictureUrl)) {
-            updates.put("profilePictureUrl", finalProfilePictureUrl);
-            hasChanges = true;
-        } else if (initialProfilePictureUrl != null && finalProfilePictureUrl == null) {
-            // Scenario: user explicitly removed PFP (e.g., from EditProfileActivity, not yet implemented but for future)
-            updates.put("profilePictureUrl", null);
-            hasChanges = true;
-        }
-
-        // Use FirebaseManager to update user profile, which handles username uniqueness
         if (hasChanges) {
-            // Create a temporary User object with only the fields to be updated + userId
-            // FirebaseManager.updateUserProfile will handle merging
-            User userToUpdate = new User(userId, null, newUsername, null, null);
+            User userToUpdate = new User(mAuth.getCurrentUser().getUid(), null, newUsername, null, null);
             userToUpdate.setBio(newBio);
-            userToUpdate.setProfilePictureUrl(finalProfilePictureUrl); // This will be merged into Firestore
+            userToUpdate.setProfilePictureUrl(finalProfilePictureUrl);
 
             firebaseManager.updateUserProfile(userToUpdate, new FirebaseManager.AuthListener() {
                 @Override
                 public void onSuccess(com.google.firebase.auth.FirebaseUser user) {
                     if (isFinishing() || isDestroyed()) return;
-                    Log.d(TAG, "Firestore profile updated successfully via FirebaseManager.");
-                    // Update local \'initial\' values to reflect what\'s now in Firestore
-                    initialUsername = newUsername;
-                    initialBio = newBio;
-                    initialProfilePictureUrl = finalProfilePictureUrl; // Update with the final URL
-
-                    Intent resultIntent = new Intent();
-                    resultIntent.putExtra("newUsername", newUsername);
-                    resultIntent.putExtra("newBio", newBio);
-                    resultIntent.putExtra("newProfilePictureUrl", initialProfilePictureUrl); // Pass the now-current URL
-                    setResult(RESULT_OK, resultIntent);
+                    loadingDialog.dismiss();
+                    setResult(RESULT_OK, new Intent().putExtra("newUsername", newUsername).putExtra("newBio", newBio).putExtra("newProfilePictureUrl", finalProfilePictureUrl));
                     finish();
                 }
 
                 @Override
                 public void onFailure(String errorMessage) {
-                    if (isFinishing() || isDestroyed()) return;
-                    Log.e(TAG, "Failed to update profile in Firestore via FirebaseManager: " + errorMessage);
-                    Toast.makeText(EditProfileActivity.this, "Failed to update profile: " + errorMessage, Toast.LENGTH_LONG).show();
+                    loadingDialog.dismiss();
+                    Toast.makeText(EditProfileActivity.this, "Update failed: " + errorMessage, Toast.LENGTH_LONG).show();
                 }
 
                 @Override
                 public void onUsernameTaken() {
-                    if (isFinishing() || isDestroyed()) return;
-                    etUsername.setError("This username is already taken. Please choose a different one.");
-                    Toast.makeText(EditProfileActivity.this, "Username is already taken.", Toast.LENGTH_SHORT).show();
+                    loadingDialog.dismiss();
+                    etUsername.setError("Username taken.");
                 }
 
-                @Override
-                public void onEmailTaken() {
-                    if (isFinishing() || isDestroyed()) return;
-                    // This case should ideally not happen for updateUserProfile, as email is not updated via this path.
-                    // However, we must implement it due to the AuthListener interface contract.
-                    Log.w(TAG, "onEmailTaken called unexpectedly in EditProfileActivity. This typically means the email is being checked by the CF but not updated here.");
-                    Toast.makeText(EditProfileActivity.this, "Email is already in use by another account.", Toast.LENGTH_SHORT).show();
-                }
+                @Override public void onEmailTaken() { loadingDialog.dismiss(); }
             });
         } else {
-            Log.d(TAG, "No profile changes detected to save to Firestore. Finishing activity.");
-            Intent resultIntent = new Intent();
-            resultIntent.putExtra("newUsername", initialUsername);
-            resultIntent.putExtra("newBio", initialBio);
-            resultIntent.putExtra("newProfilePictureUrl", initialProfilePictureUrl); // Pass the original/current PFP URL
-            setResult(RESULT_OK, resultIntent);
+            loadingDialog.dismiss();
+            setResult(RESULT_OK, new Intent().putExtra("newUsername", initialUsername).putExtra("newBio", initialBio).putExtra("newProfilePictureUrl", initialProfilePictureUrl));
             finish();
         }
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        networkMonitor.register();
+    }
+
+    @Override
+    protected void onPause() {
+        super.onPause();
+        networkMonitor.unregister();
+        if (loadingDialog != null && loadingDialog.isShowing()) {
+            loadingDialog.dismiss();
+        }
+    }
+
+    @Override
+    public void onNetworkAvailable() {
+        Log.d(TAG, "Network available.");
+    }
+
+    @Override
+    public void onNetworkLost() {
+        Log.w(TAG, "Network lost.");
+        runOnUiThread(() -> {
+            if (loadingDialog != null && loadingDialog.isShowing()) {
+                loadingDialog.dismiss();
+                Toast.makeText(this, "Network connection lost. Please try again.", Toast.LENGTH_LONG).show();
+            }
+        });
     }
 }

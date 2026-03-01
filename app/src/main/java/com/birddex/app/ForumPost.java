@@ -18,10 +18,14 @@ public class ForumPost {
     private int commentCount;
     private int viewCount;
     private Map<String, Boolean> likedBy;
+    private Map<String, Boolean> viewedBy; // Added to track views
+    private boolean edited;
+    private Timestamp lastEditedAt;
 
     public ForumPost() {
         // Required for Firestore
         this.likedBy = new HashMap<>();
+        this.viewedBy = new HashMap<>();
     }
 
     public ForumPost(String userId, String username, String userProfilePictureUrl, String message, String birdImageUrl) {
@@ -34,6 +38,8 @@ public class ForumPost {
         this.commentCount = 0;
         this.viewCount = 0;
         this.likedBy = new HashMap<>();
+        this.viewedBy = new HashMap<>();
+        this.edited = false;
     }
 
     // Getters and Setters
@@ -59,4 +65,10 @@ public class ForumPost {
     public void setViewCount(int viewCount) { this.viewCount = viewCount; }
     public Map<String, Boolean> getLikedBy() { return likedBy; }
     public void setLikedBy(Map<String, Boolean> likedBy) { this.likedBy = likedBy; }
+    public Map<String, Boolean> getViewedBy() { return viewedBy; }
+    public void setViewedBy(Map<String, Boolean> viewedBy) { this.viewedBy = viewedBy; }
+    public boolean isEdited() { return edited; }
+    public void setEdited(boolean edited) { this.edited = edited; }
+    public Timestamp getLastEditedAt() { return lastEditedAt; }
+    public void setLastEditedAt(Timestamp lastEditedAt) { this.lastEditedAt = lastEditedAt; }
 }

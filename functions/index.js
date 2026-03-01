@@ -12,6 +12,7 @@ const axios = require("axios");
 admin.initializeApp();
 const db = admin.firestore();
 const storage = admin.storage();
+const messaging = admin.messaging();
 
 // Secrets
 const OPENAI_API_KEY = defineSecret("OPENAI_API_KEY");
@@ -373,6 +374,7 @@ exports.createUserDocument = auth.user().onCreate(async (user) => {
             totalBirds: 0,
             duplicateBirds: 0,
             totalPoints: 0,
+            notificationsEnabled: true // Default to true
             // 'username' field will need to be populated from the client or another function
             // For now, it's not set here as it's typically provided by the client during registration.
         };
@@ -490,7 +492,7 @@ exports.identifyBird = onCall({ secrets: [OPENAI_API_KEY], timeoutSeconds: 30 },
         }
 
         // Fallback verification by names if ID verification failed
-        if (!isVerified && aiCommonName && aiScientificName) {
+        if (!isVerified && aiCommonName && scientificName) {
             const birdsSnapshot = await db.collection("birds")
                                           .where("commonName", "==", aiCommonName)
                                           .where("scientificName", "==", aiScientificName)
@@ -1359,6 +1361,79 @@ exports.archiveOldForumPosts = onSchedule({
         return null;
     } catch (error) {
         console.error("❌ Error during forum post archiving:", error);
+        return null;
+    }
+});
+
+// ======================================================
+// NEW: NOTIFY ON REPLY
+// ======================================================
+exports.onCommentCreated = onDocumentCreated("forumThreads/{threadId}/comments/{commentId}", async (event) => {
+    const commentData = event.data.data();
+    const threadId = event.params.threadId;
+    const parentCommentId = commentData.parentCommentId;
+
+    if (!parentCommentId) {
+        console.log("Top-level comment. No notification needed.");
+        return null;
+    }
+
+    try {
+        // 1. Get the parent comment to find the userId
+        const parentCommentDoc = await db.collection("forumThreads").doc(threadId).collection("comments").doc(parentCommentId).get();
+        if (!parentCommentDoc.exists) {
+            console.log("Parent comment not found.");
+            return null;
+        }
+
+        const parentCommentData = parentCommentDoc.data();
+        const recipientUserId = parentCommentData.userId;
+
+        // Don't notify if the user is replying to themselves
+        if (recipientUserId === commentData.userId) {
+            console.log("User replied to themselves. No notification.");
+            return null;
+        }
+
+        // 2. Get the recipient's data from the 'users' collection
+        const recipientDoc = await db.collection("users").doc(recipientUserId).get();
+        if (!recipientDoc.exists) {
+            console.log("Recipient user not found.");
+            return null;
+        }
+
+        const recipientData = recipientDoc.data();
+        const fcmToken = recipientData.fcmToken;
+        const notificationsEnabled = recipientData.notificationsEnabled !== false; // Default true if missing
+
+        if (!fcmToken) {
+            console.log("No FCM token for user " + recipientUserId);
+            return null;
+        }
+
+        if (!notificationsEnabled) {
+            console.log("Notifications are disabled for user " + recipientUserId);
+            return null;
+        }
+
+        // 3. Send the notification
+        const message = {
+            token: fcmToken,
+            notification: {
+                title: "New Reply",
+                body: `${commentData.username} replied to your comment.`
+            },
+            data: {
+                postId: threadId
+            }
+        };
+
+        const response = await messaging.send(message);
+        console.log("Successfully sent notification:", response);
+        return null;
+
+    } catch (error) {
+        console.error("Error sending notification:", error);
         return null;
     }
 });

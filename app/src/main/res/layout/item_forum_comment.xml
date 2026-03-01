@@ -4,82 +4,136 @@
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
-    android:orientation="horizontal"
+    android:orientation="vertical"
     android:padding="12dp">
 
-    <com.google.android.material.imageview.ShapeableImageView
-        android:id="@+id/ivCommentUserPfp"
-        android:layout_width="32dp"
-        android:layout_height="32dp"
-        android:src="@drawable/ic_profile"
-        android:scaleType="centerCrop"
-        app:shapeAppearanceOverlay="@style/ShapeAppearanceOverlay.App.CornerSize50Percent" />
-
     <LinearLayout
-        android:layout_width="0dp"
+        android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginStart="12dp"
-        android:layout_weight="1"
-        android:background="@drawable/bg_image_placeholder"
-        android:padding="8dp"
-        android:orientation="vertical">
+        android:orientation="horizontal">
+
+        <com.google.android.material.imageview.ShapeableImageView
+            android:id="@+id/ivCommentUserPfp"
+            android:layout_width="32dp"
+            android:layout_height="32dp"
+            android:src="@drawable/ic_profile"
+            android:scaleType="centerCrop"
+            app:shapeAppearanceOverlay="@style/ShapeAppearanceOverlay.App.CornerSize50Percent" />
 
         <LinearLayout
-            android:layout_width="match_parent"
+            android:layout_width="0dp"
             android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:gravity="center_vertical">
+            android:layout_marginStart="12dp"
+            android:layout_weight="1"
+            android:background="@drawable/bg_image_placeholder"
+            android:padding="8dp"
+            android:orientation="vertical">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical">
+
+                <TextView
+                    android:id="@+id/tvCommentUsername"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:textStyle="bold"
+                    android:textSize="13sp"
+                    android:textColor="?attr/colorOnSurface"
+                    tools:text="Username" />
+
+                <TextView
+                    android:id="@+id/tvCommentTimestamp"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="8dp"
+                    android:textSize="11sp"
+                    android:textColor="?attr/colorOnSurfaceVariant"
+                    tools:text="1h" />
+
+                <ImageView
+                    android:id="@+id/btnCommentOptions"
+                    android:layout_width="24dp"
+                    android:layout_height="24dp"
+                    android:layout_marginStart="4dp"
+                    android:padding="4dp"
+                    android:src="@drawable/ic_more_vert"
+                    app:tint="?attr/colorOnSurfaceVariant" />
+            </LinearLayout>
 
             <TextView
-                android:id="@+id/tvCommentUsername"
+                android:id="@+id/tvReplyingTo"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:textStyle="bold"
-                android:textSize="13sp"
+                android:textSize="12sp"
+                android:textColor="?attr/colorPrimary"
+                android:textStyle="italic"
+                android:visibility="gone"
+                tools:text="replying to @user"
+                tools:visibility="visible" />
+
+            <TextView
+                android:id="@+id/tvCommentText"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="2dp"
+                android:textSize="14sp"
                 android:textColor="?attr/colorOnSurface"
-                tools:text="Username" />
+                tools:text="This is a great bird photo!" />
 
-            <TextView
-                android:id="@+id/tvCommentTimestamp"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginStart="8dp"
-                android:textSize="11sp"
-                android:textColor="?attr/colorOnSurfaceVariant"
-                tools:text="1h" />
         </LinearLayout>
 
-        <TextView
-            android:id="@+id/tvCommentText"
-            android:layout_width="match_parent"
+        <LinearLayout
+            android:id="@+id/btnLikeComment"
+            android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginTop="2dp"
-            android:textSize="14sp"
-            android:textColor="?attr/colorOnSurface"
-            tools:text="This is a great bird photo!" />
+            android:layout_marginStart="8dp"
+            android:gravity="center"
+            android:orientation="vertical">
 
+            <ImageView
+                android:id="@+id/ivCommentLikeIcon"
+                android:layout_width="16dp"
+                android:layout_height="16dp"
+                android:src="@drawable/ic_favorite_border" />
+
+            <TextView
+                android:id="@+id/tvCommentLikeCount"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textSize="10sp"
+                tools:text="2" />
+        </LinearLayout>
     </LinearLayout>
 
     <LinearLayout
-        android:id="@+id/btnLikeComment"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:layout_marginStart="8dp"
-        android:gravity="center"
-        android:orientation="vertical">
-
-        <ImageView
-            android:id="@+id/ivCommentLikeIcon"
-            android:layout_width="16dp"
-            android:layout_height="16dp"
-            android:src="@drawable/ic_favorite_border" />
+        android:layout_marginStart="44dp"
+        android:layout_marginTop="4dp"
+        android:orientation="horizontal">
 
         <TextView
-            android:id="@+id/tvCommentLikeCount"
+            android:id="@+id/btnReplyComment"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:textSize="10sp"
-            tools:text="2" />
+            android:padding="4dp"
+            android:text="Reply"
+            android:textSize="12sp"
+            android:textStyle="bold"
+            android:textColor="?attr/colorOnSurfaceVariant" />
+
     </LinearLayout>
+
+    <androidx.recyclerview.widget.RecyclerView
+        android:id="@+id/rvReplies"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="44dp"
+        android:layout_marginTop="4dp"
+        android:visibility="gone" />
 
 </LinearLayout>

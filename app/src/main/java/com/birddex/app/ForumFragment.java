@@ -71,6 +71,10 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
             Intent intent = new Intent(getActivity(), CreatePostActivity.class);
             startActivity(intent);
         });
+
+        binding.btnSocial.setOnClickListener(v -> {
+            startActivity(new Intent(getActivity(), SocialActivity.class));
+        });
     }
 
     private void loadUserProfilePicture() {
@@ -137,13 +141,21 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
 
     @Override
     public void onCommentClick(ForumPost post) {
-        openPostDetail(post);
+        onPostClick(post);
     }
 
     @Override
     public void onPostClick(ForumPost post) {
-        db.collection("forumThreads").document(post.getId())
-                .update("viewCount", FieldValue.increment(1));
+        FirebaseUser user = mAuth.getCurrentUser();
+        if (user != null) {
+            String userId = user.getUid();
+            // Check if user has already viewed this post
+            if (post.getViewedBy() == null || !post.getViewedBy().containsKey(userId)) {
+                db.collection("forumThreads").document(post.getId())
+                        .update("viewCount", FieldValue.increment(1),
+                                "viewedBy." + userId, true);
+            }
+        }
         openPostDetail(post);
     }
 
@@ -166,6 +178,11 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
             return true;
         });
         popup.show();
+    }
+
+    @Override
+    public void onUserClick(String userId) {
+        openUserProfile(userId);
     }
 
     private void showDeleteConfirmation(ForumPost post) {
@@ -205,7 +222,11 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
             if (task.isSuccessful()) {
                 Toast.makeText(getContext(), "Thank you for reporting. We will review this post.", Toast.LENGTH_LONG).show();
             } else {
-                Toast.makeText(getContext(), "Failed to submit report. Please try again.", Toast.LENGTH_SHORT).show();
+                String error = "Failed to submit report.";
+                if (task.getException() != null && task.getException().getMessage() != null) {
+                    error = task.getException().getMessage();
+                }
+                Toast.makeText(getContext(), error, Toast.LENGTH_SHORT).show();
             }
         });
     }
@@ -213,6 +234,12 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
     private void openPostDetail(ForumPost post) {
         Intent intent = new Intent(getActivity(), PostDetailActivity.class);
         intent.putExtra(PostDetailActivity.EXTRA_POST_ID, post.getId());
+        startActivity(intent);
+    }
+
+    private void openUserProfile(String userId) {
+        Intent intent = new Intent(getActivity(), UserSocialProfileActivity.class);
+        intent.putExtra(UserSocialProfileActivity.EXTRA_USER_ID, userId);
         startActivity(intent);
     }
 

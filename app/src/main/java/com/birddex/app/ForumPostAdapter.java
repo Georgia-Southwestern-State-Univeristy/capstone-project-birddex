@@ -28,6 +28,7 @@ public class ForumPostAdapter extends RecyclerView.Adapter<ForumPostAdapter.Post
         void onCommentClick(ForumPost post);
         void onPostClick(ForumPost post);
         void onOptionsClick(ForumPost post, View view);
+        void onUserClick(String userId); // New method
     }
 
     public ForumPostAdapter(OnPostClickListener listener) {
@@ -122,7 +123,6 @@ public class ForumPostAdapter extends RecyclerView.Adapter<ForumPostAdapter.Post
             // Like status
             String currentUserId = FirebaseAuth.getInstance().getUid();
             if (currentUserId != null && post.getLikedBy() != null && post.getLikedBy().containsKey(currentUserId)) {
-                // Should use a filled heart icon if available
                 // ivLikeIcon.setImageResource(R.drawable.ic_favorite); 
             } else {
                 ivLikeIcon.setImageResource(R.drawable.ic_favorite_border);
@@ -132,6 +132,10 @@ public class ForumPostAdapter extends RecyclerView.Adapter<ForumPostAdapter.Post
             btnComment.setOnClickListener(v -> listener.onCommentClick(post));
             itemView.setOnClickListener(v -> listener.onPostClick(post));
             btnOptions.setOnClickListener(v -> listener.onOptionsClick(post, v));
+            
+            // New: Click listeners for PFP and Username
+            ivUserProfile.setOnClickListener(v -> listener.onUserClick(post.getUserId()));
+            tvUsername.setOnClickListener(v -> listener.onUserClick(post.getUserId()));
         }
     }
 }

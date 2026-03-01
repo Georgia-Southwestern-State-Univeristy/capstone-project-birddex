@@ -160,6 +160,11 @@ public class CreatePostActivity extends AppCompatActivity {
             return;
         }
 
+        if (ContentFilter.containsInappropriateContent(message)) {
+            Toast.makeText(this, "Your message contains inappropriate language and cannot be posted.", Toast.LENGTH_LONG).show();
+            return;
+        }
+
         binding.btnPost.setEnabled(false);
         if (selectedImageUri != null) {
             uploadImageAndPost(message);

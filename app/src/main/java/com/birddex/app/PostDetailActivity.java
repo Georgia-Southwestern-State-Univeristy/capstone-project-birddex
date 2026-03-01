@@ -2,6 +2,7 @@ package com.birddex.app;
 
 import android.content.Intent;
 import android.os.Bundle;
+import android.text.InputFilter;
 import android.text.InputType;
 import android.text.format.DateUtils;
 import android.util.Log;
@@ -243,10 +244,7 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
     }
 
     private void updatePost(ForumPost post, String newText, boolean spotted, boolean hunted, boolean showLocation) {
-        if (ContentFilter.containsInappropriateContent(newText)) {
-            Toast.makeText(this, "Inappropriate language detected.", Toast.LENGTH_SHORT).show();
-            return;
-        }
+        if (!ContentFilter.isSafe(this, newText, "Post message")) return;
 
         Map<String, Object> updates = new HashMap<>();
         updates.put("message", newText);
@@ -304,9 +302,13 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
         String[] reasons = {"Inappropriate Language", "Inappropriate Image", "Spam", "Harassment", "Other"};
         new AlertDialog.Builder(this)
                 .setTitle("Report Post")
-                .setItems(reasons, (dialog, which) -> {
+                		.setItems(reasons, (dialog, which) -> {
                     String selectedReason = reasons[which];
-                    submitReport(post, selectedReason);
+                    if (selectedReason.equals("Other")) {
+                        showOtherReportDialog(reason -> submitReport(post, reason));
+                    } else {
+                        submitReport(post, selectedReason);
+                    }
                 })
                 .show();
     }
@@ -372,10 +374,7 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
         String text = binding.etComment.getText().toString().trim();
         if (text.isEmpty()) return;
 
-        if (ContentFilter.containsInappropriateContent(text)) {
-            Toast.makeText(this, "Your message contains inappropriate language and cannot be posted.", Toast.LENGTH_LONG).show();
-            return;
-        }
+        if (!ContentFilter.isSafe(this, text, "Comment")) return;
 
         FirebaseUser user = mAuth.getCurrentUser();
         if (user == null) return;
@@ -502,10 +501,7 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
     }
 
     private void updateComment(ForumComment comment, String newText) {
-        if (ContentFilter.containsInappropriateContent(newText)) {
-            Toast.makeText(this, "Inappropriate language detected.", Toast.LENGTH_SHORT).show();
-            return;
-        }
+        if (!ContentFilter.isSafe(this, newText, "Comment")) return;
 
         db.collection("forumThreads").document(postId).collection("comments").document(comment.getId())
                 .update("text", newText, 
@@ -597,7 +593,11 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
                 .setTitle("Report Comment")
                 .setItems(reasons, (dialog, which) -> {
                     String selectedReason = reasons[which];
-                    submitCommentReport(comment, selectedReason);
+                    if (selectedReason.equals("Other")) {
+                        showOtherReportDialog(reason -> submitCommentReport(comment, reason));
+                    } else {
+                        submitCommentReport(comment, selectedReason);
+                    }
                 })
                 .show();
     }
@@ -613,6 +613,41 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
                 Toast.makeText(this, "Comment reported.", Toast.LENGTH_LONG).show();
             }
         });
+    }
+
+    private void showOtherReportDialog(OnReasonEnteredListener listener) {
+        AlertDialog.Builder builder = new AlertDialog.Builder(this);
+        builder.setTitle("Report Reason");
+
+        final EditText input = new EditText(this);
+        input.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE);
+        input.setHint("Please specify the reason (max 200 chars)...");
+        input.setFilters(new InputFilter[]{new InputFilter.LengthFilter(200)});
+        input.setLines(5);
+        
+        FrameLayout container = new FrameLayout(this);
+        FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        params.leftMargin = params.rightMargin = 40;
+        input.setLayoutParams(params);
+        container.addView(input);
+        builder.setView(container);
+
+        builder.setPositiveButton("Submit", (dialog, which) -> {
+            String reason = input.getText().toString().trim();
+            if (reason.isEmpty()) {
+                Toast.makeText(this, "Please enter a reason", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            if (!ContentFilter.isSafe(this, reason, "Report reason")) return;
+            listener.onReasonEntered(reason);
+        });
+        builder.setNegativeButton("Cancel", (dialog, which) -> dialog.cancel());
+
+        builder.show();
+    }
+
+    private interface OnReasonEnteredListener {
+        void onReasonEntered(String reason);
     }
 
     private void openUserProfile(String userId) {

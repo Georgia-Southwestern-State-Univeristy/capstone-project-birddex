@@ -11,24 +11,27 @@ public class sign_IN_upValidator {
 
     /**
      * Validates the fields for the Sign Up form.
-     * @param fullName EditText for user's full name.
+     * @param username EditText for user's username.
      * @param email EditText for user's email.
      * @param password EditText for user's password.
      * @return true if all fields are valid, false otherwise.
      */
-    public boolean validateSignUpForm(EditText fullName, EditText email, EditText password) {
+    public boolean validateSignUpForm(EditText username, EditText email, EditText password) {
         boolean valid = true;
 
-        String fullNameStr = fullName.getText().toString();
-        String emailStr = email.getText().toString();
+        String usernameStr = username.getText().toString().trim();
+        String emailStr = email.getText().toString().trim();
         String passwordStr = password.getText().toString();
 
-        // Check if full name is empty.
-        if (fullNameStr.isEmpty()) {
-            fullName.setError("Required.");
+        // Check if username is empty.
+        if (usernameStr.isEmpty()) {
+            username.setError("Required.");
+            valid = false;
+        } else if (ContentFilter.containsInappropriateContent(usernameStr)) {
+            username.setError("Inappropriate username.");
             valid = false;
         } else {
-            fullName.setError(null);
+            username.setError(null);
         }
 
         // Check if email is empty or incorrectly formatted.

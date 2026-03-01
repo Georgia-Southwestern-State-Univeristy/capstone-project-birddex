@@ -2,10 +2,14 @@ package com.birddex.app;
 
 import android.content.Intent;
 import android.os.Bundle;
+import android.text.InputFilter;
+import android.text.InputType;
 import android.util.Log;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.EditText;
+import android.widget.FrameLayout;
 import android.widget.PopupMenu;
 import android.widget.Toast;
 
@@ -207,9 +211,53 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
                 .setTitle("Report Post")
                 .setItems(reasons, (dialog, which) -> {
                     String selectedReason = reasons[which];
-                    submitReport(post, selectedReason);
+                    if (selectedReason.equals("Other")) {
+                        showOtherReportDialog(reason -> submitReport(post, reason));
+                    } else {
+                        submitReport(post, selectedReason);
+                    }
                 })
                 .show();
+    }
+
+    private void showOtherReportDialog(OnReasonEnteredListener listener) {
+        AlertDialog.Builder builder = new AlertDialog.Builder(requireContext());
+        builder.setTitle("Report Reason");
+
+        final EditText input = new EditText(requireContext());
+        input.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE);
+        input.setHint("Please specify the reason (max 200 chars)...");
+        input.setFilters(new InputFilter[]{new InputFilter.LengthFilter(200)});
+        input.setSingleLine(false);
+        input.setHorizontallyScrolling(false);
+        input.setLines(5);
+
+        FrameLayout container = new FrameLayout(requireContext());
+        FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        params.leftMargin = params.rightMargin = 40;
+        input.setLayoutParams(params);
+        container.addView(input);
+        builder.setView(container);
+
+        builder.setPositiveButton("Submit", (dialog, which) -> {
+            String reason = input.getText().toString().trim();
+            if (reason.isEmpty()) {
+                Toast.makeText(getContext(), "Please enter a reason", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            if (ContentFilter.containsInappropriateContent(reason)) {
+                Toast.makeText(getContext(), "Inappropriate language detected in your report.", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            listener.onReasonEntered(reason);
+        });
+        builder.setNegativeButton("Cancel", (dialog, which) -> dialog.cancel());
+
+        builder.show();
+    }
+
+    private interface OnReasonEnteredListener {
+        void onReasonEntered(String reason);
     }
 
     private void submitReport(ForumPost post, String reason) {

@@ -8,6 +8,7 @@ import android.content.Intent;
 import android.os.Bundle;
 import android.text.InputType;
 import android.util.Log;
+import android.view.View;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.LinearLayout;
@@ -15,7 +16,6 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import androidx.appcompat.app.AppCompatActivity;
-import androidx.appcompat.widget.SwitchCompat;
 
 import com.google.android.gms.tasks.OnCompleteListener;
 import com.google.android.gms.tasks.Task;
@@ -28,10 +28,8 @@ import com.google.firebase.auth.FirebaseUser;
 public class SettingsActivity extends AppCompatActivity {
 
     private TextView tvUserEmail, tvUserName;
-    private SwitchCompat switchNotifications;
-    private Button btnLogout, btnUpdateEmail, btnChangePassword;
+    private Button btnLogout, btnUpdateEmail, btnChangePassword, btnNotifications;
 
-    private final SettingsApi settingsApi = new SettingsApi();
     private FirebaseManager firebaseManager;
 
     private static final String TAG = "SettingsActivity";
@@ -45,7 +43,7 @@ public class SettingsActivity extends AppCompatActivity {
         // Initialize UI components
         tvUserEmail = findViewById(R.id.tvUserEmail);
         tvUserName = findViewById(R.id.tvUserName);
-        switchNotifications = findViewById(R.id.switchNotifications);
+        btnNotifications = findViewById(R.id.btnNotifications);
         btnLogout = findViewById(R.id.btnLogout);
         btnUpdateEmail = findViewById(R.id.btnUpdateEmail);
         btnChangePassword = findViewById(R.id.btnChangePassword);
@@ -63,25 +61,8 @@ public class SettingsActivity extends AppCompatActivity {
             loadUserProfile(user);
         });
 
-        // Initialize settings from API
-        settingsApi.getSettings(user.getUid(), new SettingsApi.SettingsCallback() {
-            @Override
-            public void onSuccess(UserSettings settings) {
-                switchNotifications.setOnCheckedChangeListener(null);
-                switchNotifications.setChecked(settings.notificationsEnabled);
-
-                switchNotifications.setOnCheckedChangeListener((buttonView, isChecked) -> {
-                    settingsApi.setNotificationsEnabled(user.getUid(), isChecked, new SettingsApi.SettingsCallback() {
-                        @Override public void onSuccess(UserSettings s) { /* ok */ }
-                        @Override public void onFailure(Exception e, String message) { /* optional: toast */ }
-                    });
-                });
-            }
-
-            @Override
-            public void onFailure(Exception e, String message) {
-                switchNotifications.setChecked(false);
-            }
+        btnNotifications.setOnClickListener(v -> {
+            startActivity(new Intent(this, NotificationsSettingsActivity.class));
         });
 
         // Set up click listeners for all buttons

@@ -374,7 +374,9 @@ exports.createUserDocument = auth.user().onCreate(async (user) => {
             totalBirds: 0,
             duplicateBirds: 0,
             totalPoints: 0,
-            notificationsEnabled: true // Default to true
+            notificationsEnabled: true, // Default to true
+            repliesEnabled: true, // Default to true
+            notificationCooldownHours: 2 // Default to 2 hours
             // 'username' field will need to be populated from the client or another function
             // For now, it's not set here as it's typically provided by the client during registration.
         };
@@ -1366,32 +1368,55 @@ exports.archiveOldForumPosts = onSchedule({
 });
 
 // ======================================================
-// NEW: NOTIFY ON REPLY
+// NEW: NOTIFY ON REPLY OR POST ACTIVITY
 // ======================================================
 exports.onCommentCreated = onDocumentCreated("forumThreads/{threadId}/comments/{commentId}", async (event) => {
     const commentData = event.data.data();
     const threadId = event.params.threadId;
     const parentCommentId = commentData.parentCommentId;
 
-    if (!parentCommentId) {
-        console.log("Top-level comment. No notification needed.");
-        return null;
-    }
-
     try {
-        // 1. Get the parent comment to find the userId
-        const parentCommentDoc = await db.collection("forumThreads").doc(threadId).collection("comments").doc(parentCommentId).get();
-        if (!parentCommentDoc.exists) {
-            console.log("Parent comment not found.");
-            return null;
+        let recipientUserId;
+        let title, body;
+        let postDoc;
+
+        if (parentCommentId) {
+            // Case 1: Reply to a comment
+            const parentCommentDoc = await db.collection("forumThreads").doc(threadId).collection("comments").doc(parentCommentId).get();
+            if (!parentCommentDoc.exists) {
+                console.log("Parent comment not found.");
+                return null;
+            }
+            recipientUserId = parentCommentDoc.data().userId;
+            title = "New Reply";
+            body = `${commentData.username} replied to your comment.`;
+
+            // We still need the post doc to check for cooldown based on the post's lastViewedAt
+            postDoc = await db.collection("forumThreads").doc(threadId).get();
+        } else {
+            // Case 2: Top-level comment on a post
+            postDoc = await db.collection("forumThreads").doc(threadId).get();
+            if (!postDoc.exists) {
+                console.log("Post not found.");
+                return null;
+            }
+
+            const postData = postDoc.data();
+            recipientUserId = postData.userId;
+
+            // Check if post author has already been notified and hasn't checked yet
+            if (postData.notificationSent === true) {
+                console.log("Notification already sent for this post activity. Skipping to avoid constant bothering.");
+                return null;
+            }
+
+            title = "New Comment";
+            body = `${commentData.username} commented on your post.`;
         }
 
-        const parentCommentData = parentCommentDoc.data();
-        const recipientUserId = parentCommentData.userId;
-
-        // Don't notify if the user is replying to themselves
+        // Don't notify if the user is interacting with their own content
         if (recipientUserId === commentData.userId) {
-            console.log("User replied to themselves. No notification.");
+            console.log("User interacting with their own content. No notification.");
             return null;
         }
 
@@ -1405,14 +1430,36 @@ exports.onCommentCreated = onDocumentCreated("forumThreads/{threadId}/comments/{
         const recipientData = recipientDoc.data();
         const fcmToken = recipientData.fcmToken;
         const notificationsEnabled = recipientData.notificationsEnabled !== false; // Default true if missing
+        const repliesEnabled = recipientData.repliesEnabled !== false; // Default true if missing
 
-        if (!fcmToken) {
-            console.log("No FCM token for user " + recipientUserId);
+        // Master switch
+        if (!notificationsEnabled) {
+            console.log("Notifications are disabled for user " + recipientUserId);
             return null;
         }
 
-        if (!notificationsEnabled) {
-            console.log("Notifications are disabled for user " + recipientUserId);
+        // Reply switch
+        if (parentCommentId && !repliesEnabled) {
+            console.log("Reply notifications are disabled for user " + recipientUserId);
+            return null;
+        }
+
+        // Cooldown Check
+        const cooldownHours = recipientData.notificationCooldownHours !== undefined ? recipientData.notificationCooldownHours : 2;
+        if (cooldownHours > 0 && postDoc && postDoc.exists) {
+            const lastViewedAt = postDoc.data().lastViewedAt;
+            if (lastViewedAt) {
+                const cooldownMs = cooldownHours * 60 * 60 * 1000;
+                const timeSinceView = Date.now() - lastViewedAt.toDate().getTime();
+                if (timeSinceView < cooldownMs) {
+                    console.log(`Notification suppressed: User viewed post ${timeSinceView / 60000} mins ago, cooldown is ${cooldownHours} hours.`);
+                    return null;
+                }
+            }
+        }
+
+        if (!fcmToken) {
+            console.log("No FCM token for user " + recipientUserId);
             return null;
         }
 
@@ -1420,8 +1467,8 @@ exports.onCommentCreated = onDocumentCreated("forumThreads/{threadId}/comments/{
         const message = {
             token: fcmToken,
             notification: {
-                title: "New Reply",
-                body: `${commentData.username} replied to your comment.`
+                title: title,
+                body: body
             },
             data: {
                 postId: threadId
@@ -1430,10 +1477,138 @@ exports.onCommentCreated = onDocumentCreated("forumThreads/{threadId}/comments/{
 
         const response = await messaging.send(message);
         console.log("Successfully sent notification:", response);
+
+        // Mark notification as sent for this post if it was a top-level comment
+        if (!parentCommentId) {
+            await db.collection("forumThreads").doc(threadId).update({ notificationSent: true });
+        }
+
         return null;
 
     } catch (error) {
         console.error("Error sending notification:", error);
         return null;
     }
+});
+
+// ======================================================
+// NEW: NOTIFY ON POST LIKE
+// ======================================================
+exports.onPostLiked = onDocumentUpdated("forumThreads/{threadId}", async (event) => {
+    const beforeData = event.data.before.data();
+    const afterData = event.data.after.data();
+
+    const beforeLikes = beforeData.likeCount || 0;
+    const afterLikes = afterData.likeCount || 0;
+
+    // Only proceed if likes increased and author hasn't been notified yet
+    if (afterLikes <= beforeLikes || afterData.likeNotificationSent === true) {
+        return null;
+    }
+
+    const recipientUserId = afterData.userId;
+
+    try {
+        const recipientDoc = await db.collection("users").doc(recipientUserId).get();
+        if (!recipientDoc.exists) return null;
+
+        const recipientData = recipientDoc.data();
+        const fcmToken = recipientData.fcmToken;
+        const notificationsEnabled = recipientData.notificationsEnabled !== false;
+
+        if (!fcmToken || !notificationsEnabled) return null;
+
+        // Cooldown Check
+        const cooldownHours = recipientData.notificationCooldownHours !== undefined ? recipientData.notificationCooldownHours : 2;
+        if (cooldownHours > 0) {
+            const lastViewedAt = afterData.lastViewedAt;
+            if (lastViewedAt) {
+                const cooldownMs = cooldownHours * 60 * 60 * 1000;
+                if (Date.now() - lastViewedAt.toDate().getTime() < cooldownMs) {
+                    console.log("Like notification suppressed due to cooldown.");
+                    return null;
+                }
+            }
+        }
+
+        const message = {
+            token: fcmToken,
+            notification: {
+                title: "Post Liked!",
+                body: `Someone liked your post.`
+            },
+            data: {
+                postId: event.params.threadId,
+                type: "like"
+            }
+        };
+
+        await messaging.send(message);
+        await event.data.after.ref.update({ likeNotificationSent: true });
+        console.log(`Like notification sent for post ${event.params.threadId}`);
+    } catch (error) {
+        console.error("Error sending like notification:", error);
+    }
+    return null;
+});
+
+// ======================================================
+// NEW: NOTIFY ON COMMENT LIKE
+// ======================================================
+exports.onCommentLiked = onDocumentUpdated("forumThreads/{threadId}/comments/{commentId}", async (event) => {
+    const beforeData = event.data.before.data();
+    const afterData = event.data.after.data();
+
+    const beforeLikes = beforeData.likeCount || 0;
+    const afterLikes = afterData.likeCount || 0;
+
+    if (afterLikes <= beforeLikes || afterData.likeNotificationSent === true) {
+        return null;
+    }
+
+    const recipientUserId = afterData.userId;
+
+    try {
+        const recipientDoc = await db.collection("users").doc(recipientUserId).get();
+        if (!recipientDoc.exists) return null;
+
+        const recipientData = recipientDoc.data();
+        const fcmToken = recipientData.fcmToken;
+        const notificationsEnabled = recipientData.notificationsEnabled !== false;
+
+        if (!fcmToken || !notificationsEnabled) return null;
+
+        // Cooldown Check (using post's lastViewedAt as proxy)
+        const postDoc = await db.collection("forumThreads").doc(event.params.threadId).get();
+        const cooldownHours = recipientData.notificationCooldownHours !== undefined ? recipientData.notificationCooldownHours : 2;
+        if (cooldownHours > 0 && postDoc.exists) {
+            const lastViewedAt = postDoc.data().lastViewedAt;
+            if (lastViewedAt) {
+                const cooldownMs = cooldownHours * 60 * 60 * 1000;
+                if (Date.now() - lastViewedAt.toDate().getTime() < cooldownMs) {
+                    console.log("Comment like notification suppressed due to cooldown.");
+                    return null;
+                }
+            }
+        }
+
+        const message = {
+            token: fcmToken,
+            notification: {
+                title: "Comment Liked!",
+                body: `Someone liked your comment.`
+            },
+            data: {
+                postId: event.params.threadId,
+                type: "comment_like"
+            }
+        };
+
+        await messaging.send(message);
+        await event.data.after.ref.update({ likeNotificationSent: true });
+        console.log(`Like notification sent for comment ${event.params.commentId}`);
+    } catch (error) {
+        console.error("Error sending comment like notification:", error);
+    }
+    return null;
 });

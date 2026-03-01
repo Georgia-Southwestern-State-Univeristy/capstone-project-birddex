@@ -4,6 +4,7 @@ import android.Manifest;
 import android.app.Activity;
 import android.content.Intent;
 import android.content.pm.PackageManager;
+import android.location.Location;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
@@ -13,6 +14,7 @@ import android.widget.Toast;
 
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
+import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
@@ -23,6 +25,9 @@ import com.canhub.cropper.CropImageContract;
 import com.canhub.cropper.CropImageContractOptions;
 import com.canhub.cropper.CropImageOptions;
 import com.canhub.cropper.CropImageView;
+import com.google.android.gms.location.FusedLocationProviderClient;
+import com.google.android.gms.location.LocationServices;
+import com.google.android.gms.tasks.OnSuccessListener;
 import com.google.firebase.auth.FirebaseAuth;
 import com.google.firebase.auth.FirebaseUser;
 import com.google.firebase.firestore.DocumentReference;
@@ -36,6 +41,7 @@ public class CreatePostActivity extends AppCompatActivity {
 
     private static final String TAG = "CreatePostActivity";
     private static final int REQUEST_READ_EXTERNAL_STORAGE = 101;
+    private static final int REQUEST_LOCATION_PERMISSION = 102;
 
     private ActivityCreatePostBinding binding;
     private FirebaseAuth mAuth;
@@ -45,6 +51,10 @@ public class CreatePostActivity extends AppCompatActivity {
     private Uri selectedImageUri;
     private String currentUsername;
     private String currentUserProfilePicUrl;
+
+    private FusedLocationProviderClient fusedLocationClient;
+    private Double currentLatitude = null;
+    private Double currentLongitude = null;
 
     private ActivityResultLauncher<Intent> pickImageLauncher;
     private ActivityResultLauncher<CropImageContractOptions> cropImageLauncher;
@@ -59,10 +69,16 @@ public class CreatePostActivity extends AppCompatActivity {
         db = FirebaseFirestore.getInstance();
         storage = FirebaseStorage.getInstance();
         firebaseManager = new FirebaseManager(this);
+        fusedLocationClient = LocationServices.getFusedLocationProviderClient(this);
 
         setupUI();
         loadUserInfo();
         setupImageLaunchers();
+        
+        // Pre-fetch location if switch is on or when activity starts
+        if (hasLocationPermission()) {
+            fetchLocation();
+        }
     }
 
     private void setupUI() {
@@ -77,7 +93,50 @@ public class CreatePostActivity extends AppCompatActivity {
             binding.tvImagePlaceholder.setVisibility(View.VISIBLE);
         });
 
+        binding.swShowLocation.setOnCheckedChangeListener((buttonView, isChecked) -> {
+            if (isChecked && !hasLocationPermission()) {
+                requestLocationPermission();
+            } else if (isChecked) {
+                fetchLocation();
+            }
+        });
+
         binding.btnPost.setOnClickListener(v -> attemptPost());
+    }
+
+    private boolean hasLocationPermission() {
+        return ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED;
+    }
+
+    private void requestLocationPermission() {
+        ActivityCompat.requestPermissions(this, new String[]{Manifest.permission.ACCESS_FINE_LOCATION}, REQUEST_LOCATION_PERMISSION);
+    }
+
+    private void fetchLocation() {
+        try {
+            fusedLocationClient.getLastLocation().addOnSuccessListener(this, location -> {
+                if (location != null) {
+                    currentLatitude = location.getLatitude();
+                    currentLongitude = location.getLongitude();
+                    Log.d(TAG, "Location fetched: " + currentLatitude + ", " + currentLongitude);
+                }
+            });
+        } catch (SecurityException e) {
+            Log.e(TAG, "Location permission not granted", e);
+        }
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == REQUEST_LOCATION_PERMISSION) {
+            if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                fetchLocation();
+            } else {
+                binding.swShowLocation.setChecked(false);
+                Toast.makeText(this, "Location permission denied", Toast.LENGTH_SHORT).show();
+            }
+        }
     }
 
     private void loadUserInfo() {
@@ -192,29 +251,30 @@ public class CreatePostActivity extends AppCompatActivity {
 
     private void createFirestorePost(String message, String imageUrl) {
         FirebaseUser user = mAuth.getCurrentUser();
-        if (user == null) {
-            Log.e(TAG, "createFirestorePost: User is null");
-            return;
-        }
+        if (user == null) return;
 
-        Log.d(TAG, "Attempting to create Firestore post. User: " + user.getUid());
-
-        // Generate a new ID for the post
         DocumentReference newPostRef = db.collection("forumThreads").document();
         ForumPost post = new ForumPost(user.getUid(), currentUsername, currentUserProfilePicUrl, message, imageUrl);
         post.setId(newPostRef.getId());
+        
+        // Add location and status data
+        post.setSpotted(binding.cbSpotted.isChecked());
+        post.setHunted(binding.cbHunted.isChecked());
+        post.setShowLocation(binding.swShowLocation.isChecked());
+        
+        if (post.isShowLocation()) {
+            post.setLatitude(currentLatitude);
+            post.setLongitude(currentLongitude);
+        }
 
         firebaseManager.addForumPost(post, task -> {
             if (isFinishing() || isDestroyed()) return;
             if (task.isSuccessful()) {
-                Log.d(TAG, "Post saved successfully to Firestore: " + post.getId());
                 Toast.makeText(this, "Post shared!", Toast.LENGTH_SHORT).show();
                 finish();
             } else {
-                Exception e = task.getException();
-                Log.e(TAG, "Failed to share post to Firestore: " + (e != null ? e.getMessage() : "Unknown error"), e);
                 binding.btnPost.setEnabled(true);
-                Toast.makeText(this, "Failed to share post: " + (e != null ? e.getMessage() : "Unknown error"), Toast.LENGTH_SHORT).show();
+                Toast.makeText(this, "Failed to share post", Toast.LENGTH_SHORT).show();
             }
         });
     }

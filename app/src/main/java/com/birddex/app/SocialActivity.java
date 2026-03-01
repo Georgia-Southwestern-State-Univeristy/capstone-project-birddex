@@ -21,18 +21,28 @@ import java.util.List;
 
 public class SocialActivity extends AppCompatActivity implements UserAdapter.OnUserClickListener {
 
+    public static final String EXTRA_USER_ID = "extra_user_id";
+    public static final String EXTRA_SHOW_FOLLOWING = "extra_show_following";
+
     private TabLayout tabLayout;
     private RecyclerView rvUserList;
     private ProgressBar progressBar;
     private TextView tvEmpty;
     private UserAdapter adapter;
     private FirebaseFirestore db;
-    private String currentUserId;
+    private String targetUserId;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_social);
+
+        targetUserId = getIntent().getStringExtra(EXTRA_USER_ID);
+        if (targetUserId == null) {
+            targetUserId = FirebaseAuth.getInstance().getUid();
+        }
+
+        boolean showFollowingInitially = getIntent().getBooleanExtra(EXTRA_SHOW_FOLLOWING, false);
 
         Toolbar toolbar = findViewById(R.id.toolbar);
         setSupportActionBar(toolbar);
@@ -44,7 +54,6 @@ public class SocialActivity extends AppCompatActivity implements UserAdapter.OnU
         tvEmpty = findViewById(R.id.tvEmpty);
 
         db = FirebaseFirestore.getInstance();
-        currentUserId = FirebaseAuth.getInstance().getUid();
 
         adapter = new UserAdapter(this);
         rvUserList.setLayoutManager(new LinearLayoutManager(this));
@@ -63,12 +72,16 @@ public class SocialActivity extends AppCompatActivity implements UserAdapter.OnU
             public void onTabReselected(TabLayout.Tab tab) {}
         });
 
-        // Initial load (Followers)
-        loadUsers(true);
+        if (showFollowingInitially) {
+            tabLayout.getTabAt(1).select();
+            loadUsers(false);
+        } else {
+            loadUsers(true);
+        }
     }
 
     private void loadUsers(boolean isFollowers) {
-        if (currentUserId == null) return;
+        if (targetUserId == null) return;
 
         progressBar.setVisibility(View.VISIBLE);
         rvUserList.setVisibility(View.GONE);
@@ -76,7 +89,7 @@ public class SocialActivity extends AppCompatActivity implements UserAdapter.OnU
 
         String subCollection = isFollowers ? "followers" : "following";
 
-        db.collection("users").document(currentUserId).collection(subCollection)
+        db.collection("users").document(targetUserId).collection(subCollection)
                 .get()
                 .addOnSuccessListener(queryDocumentSnapshots -> {
                     List<String> userIds = new ArrayList<>();
@@ -87,7 +100,7 @@ public class SocialActivity extends AppCompatActivity implements UserAdapter.OnU
                     if (userIds.isEmpty()) {
                         progressBar.setVisibility(View.GONE);
                         tvEmpty.setVisibility(View.VISIBLE);
-                        tvEmpty.setText(isFollowers ? "You have no followers yet." : "You aren't following anyone yet.");
+                        tvEmpty.setText(isFollowers ? "No followers found." : "Not following anyone yet.");
                         return;
                     }
 
@@ -139,19 +152,8 @@ public class SocialActivity extends AppCompatActivity implements UserAdapter.OnU
 
     @Override
     public void onUserClick(User user) {
-        // Navigate to the user's profile
-        // We can reuse the ProfileFragment in a way, or if we are in an activity, 
-        // maybe we should have a ProfileActivity. 
-        // For now, let's assume we can launch HomeActivity with an intent to show a specific profile.
-        // Actually, it's better to just open a new activity or replace fragment if possible.
-        // Since ProfileFragment has a newInstance(userId), let's use that if we were in fragments.
-        // From an Activity, the easiest is to just show a Toast or start a simple detail activity.
-        
-        // Since we want Instagram style, clicking a user should definitely show their profile.
-        // I'll assume you have a way to show a profile from userId.
-        Intent intent = new Intent(this, HomeActivity.class);
-        intent.putExtra("target_user_id", user.getId());
-        intent.setFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+        Intent intent = new Intent(this, UserSocialProfileActivity.class);
+        intent.putExtra(UserSocialProfileActivity.EXTRA_USER_ID, user.getId());
         startActivity(intent);
     }
 }

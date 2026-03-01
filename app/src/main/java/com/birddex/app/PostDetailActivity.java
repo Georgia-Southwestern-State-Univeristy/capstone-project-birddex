@@ -7,9 +7,11 @@ import android.text.format.DateUtils;
 import android.util.Log;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.CheckBox;
 import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.ImageView;
+import android.widget.LinearLayout;
 import android.widget.PopupMenu;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -20,6 +22,7 @@ import androidx.recyclerview.widget.LinearLayoutManager;
 
 import com.birddex.app.databinding.ActivityPostDetailBinding;
 import com.bumptech.glide.Glide;
+import com.google.android.material.switchmaterial.SwitchMaterial;
 import com.google.firebase.Timestamp;
 import com.google.firebase.auth.FirebaseAuth;
 import com.google.firebase.auth.FirebaseUser;
@@ -167,7 +170,6 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
         btnLike.setOnClickListener(v -> toggleLike());
         btnOptions.setOnClickListener(v -> showPostOptions(post, v));
         
-        // New: Click listeners for PFP and Username in Post Detail
         ivPfp.setOnClickListener(v -> openUserProfile(post.getUserId()));
         tvUsername.setOnClickListener(v -> openUserProfile(post.getUserId()));
     }
@@ -177,7 +179,6 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
         FirebaseUser user = mAuth.getCurrentUser();
         
         if (user != null && post.getUserId().equals(user.getUid())) {
-            // Check if within 5 minute edit window
             if (post.getTimestamp() != null) {
                 long postTime = post.getTimestamp().toDate().getTime();
                 if (System.currentTimeMillis() - postTime <= EDIT_WINDOW_MS) {
@@ -205,38 +206,58 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
         AlertDialog.Builder builder = new AlertDialog.Builder(this);
         builder.setTitle("Edit Post");
 
+        LinearLayout layout = new LinearLayout(this);
+        layout.setOrientation(LinearLayout.VERTICAL);
+        layout.setPadding(40, 20, 40, 20);
+
         final EditText input = new EditText(this);
         input.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE);
         input.setText(post.getMessage());
-        
-        FrameLayout container = new FrameLayout(this);
-        FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        params.leftMargin = params.rightMargin = 40;
-        input.setLayoutParams(params);
-        container.addView(input);
-        builder.setView(container);
+        input.setHint("Message");
+        layout.addView(input);
+
+        final CheckBox cbSpotted = new CheckBox(this);
+        cbSpotted.setText("Spotted");
+        cbSpotted.setChecked(post.isSpotted());
+        layout.addView(cbSpotted);
+
+        final CheckBox cbHunted = new CheckBox(this);
+        cbHunted.setText("Hunted");
+        cbHunted.setChecked(post.isHunted());
+        layout.addView(cbHunted);
+
+        final SwitchMaterial swLocation = new SwitchMaterial(this);
+        swLocation.setText("Show location on map");
+        swLocation.setChecked(post.isShowLocation());
+        layout.addView(swLocation);
+
+        builder.setView(layout);
 
         builder.setPositiveButton("Save", (dialog, which) -> {
             String newText = input.getText().toString().trim();
-            if (!newText.isEmpty() && !newText.equals(post.getMessage())) {
-                updatePost(post, newText);
-            }
+            updatePost(post, newText, cbSpotted.isChecked(), cbHunted.isChecked(), swLocation.isChecked());
         });
         builder.setNegativeButton("Cancel", (dialog, which) -> dialog.cancel());
 
         builder.show();
     }
 
-    private void updatePost(ForumPost post, String newText) {
+    private void updatePost(ForumPost post, String newText, boolean spotted, boolean hunted, boolean showLocation) {
         if (ContentFilter.containsInappropriateContent(newText)) {
             Toast.makeText(this, "Inappropriate language detected.", Toast.LENGTH_SHORT).show();
             return;
         }
 
+        Map<String, Object> updates = new HashMap<>();
+        updates.put("message", newText);
+        updates.put("spotted", spotted);
+        updates.put("hunted", hunted);
+        updates.put("showLocation", showLocation);
+        updates.put("edited", true);
+        updates.put("lastEditedAt", FieldValue.serverTimestamp());
+
         db.collection("forumThreads").document(post.getId())
-                .update("message", newText, 
-                        "edited", true, 
-                        "lastEditedAt", FieldValue.serverTimestamp())
+                .update(updates)
                 .addOnSuccessListener(aVoid -> Toast.makeText(this, "Post updated", Toast.LENGTH_SHORT).show())
                 .addOnFailureListener(e -> Toast.makeText(this, "Update failed", Toast.LENGTH_SHORT).show());
     }
@@ -428,7 +449,6 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
         boolean isPostAuthor = user != null && originalPost != null && originalPost.getUserId().equals(user.getUid());
 
         if (isCommentAuthor) {
-            // Check if within 5 minute edit window
             if (comment.getTimestamp() != null) {
                 long commentTime = comment.getTimestamp().toDate().getTime();
                 if (System.currentTimeMillis() - commentTime <= EDIT_WINDOW_MS) {
@@ -511,7 +531,6 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
         if (user == null) return;
 
         if (comment.getParentCommentId() == null) {
-            // It's a top-level comment: delete it and all its replies
             db.collection("forumThreads").document(postId).collection("comments")
                     .whereEqualTo("parentCommentId", comment.getId())
                     .get()
@@ -519,7 +538,6 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
                         WriteBatch batch = db.batch();
                         int totalToDelete = queryDocumentSnapshots.size() + 1;
 
-                        // Archive all replies
                         for (DocumentSnapshot doc : queryDocumentSnapshots) {
                             Map<String, Object> backlogData = new HashMap<>();
                             backlogData.put("type", "comment_reply");
@@ -532,7 +550,6 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
                             batch.delete(doc.getReference());
                         }
                         
-                        // Archive top-level comment
                         Map<String, Object> commentBacklog = new HashMap<>();
                         commentBacklog.put("type", "comment");
                         commentBacklog.put("originalId", comment.getId());
@@ -553,7 +570,6 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
                         });
                     });
         } else {
-            // It's a single reply
             Map<String, Object> replyBacklog = new HashMap<>();
             replyBacklog.put("type", "reply");
             replyBacklog.put("originalId", comment.getId());

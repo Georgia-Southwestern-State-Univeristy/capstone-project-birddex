@@ -96,8 +96,7 @@
             android:layout_width="40dp"
             android:layout_height="40dp"
             android:background="?attr/selectableItemBackgroundBorderless"
-            android:src="@drawable/ic_search"
-            android:rotation="90"
+            android:src="@drawable/ic_chat"
             app:tint="?attr/colorPrimary" />
 
     </LinearLayout>

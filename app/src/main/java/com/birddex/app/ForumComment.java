@@ -15,6 +15,10 @@ public class ForumComment {
     private Timestamp timestamp;
     private int likeCount;
     private Map<String, Boolean> likedBy;
+    private String parentCommentId; 
+    private String parentUsername; 
+    private boolean edited;
+    private Timestamp lastEditedAt;
 
     public ForumComment() {
         // Required for Firestore
@@ -27,6 +31,7 @@ public class ForumComment {
         this.userProfilePictureUrl = userProfilePictureUrl;
         this.text = text;
         this.likeCount = 0;
+        this.edited = false;
     }
 
     // Getters and Setters
@@ -48,4 +53,12 @@ public class ForumComment {
     public void setLikeCount(int likeCount) { this.likeCount = likeCount; }
     public Map<String, Boolean> getLikedBy() { return likedBy; }
     public void setLikedBy(Map<String, Boolean> likedBy) { this.likedBy = likedBy; }
+    public String getParentCommentId() { return parentCommentId; }
+    public void setParentCommentId(String parentCommentId) { this.parentCommentId = parentCommentId; }
+    public String getParentUsername() { return parentUsername; }
+    public void setParentUsername(String parentUsername) { this.parentUsername = parentUsername; }
+    public boolean isEdited() { return edited; }
+    public void setEdited(boolean edited) { this.edited = edited; }
+    public Timestamp getLastEditedAt() { return lastEditedAt; }
+    public void setLastEditedAt(Timestamp lastEditedAt) { this.lastEditedAt = lastEditedAt; }
 }

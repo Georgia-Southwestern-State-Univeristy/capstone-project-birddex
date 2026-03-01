@@ -50,8 +50,11 @@ public class HomeActivity extends AppCompatActivity implements NetworkMonitor.Ne
         // Load the core Georgia bird list in the background
         fetchCoreGeorgiaBirdList();
 
-        // Default start fragment is the Forum (middle item).
-        if (savedInstanceState == null) {
+        // Check for deep links or specific navigation requests
+        handleIntent(getIntent());
+
+        // Default start fragment if not already set by handleIntent
+        if (getSupportFragmentManager().findFragmentById(R.id.fragmentContainer) == null) {
             lastNonCameraTabId = R.id.nav_forum;
             bottomNav.setSelectedItemId(R.id.nav_forum);
             switchFragment(new ForumFragment());
@@ -90,6 +93,21 @@ public class HomeActivity extends AppCompatActivity implements NetworkMonitor.Ne
 
             return false;
         });
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        handleIntent(intent);
+    }
+
+    private void handleIntent(Intent intent) {
+        if (intent != null && intent.hasExtra("target_user_id")) {
+            String targetUserId = intent.getStringExtra("target_user_id");
+            lastNonCameraTabId = R.id.nav_profile;
+            bottomNav.setSelectedItemId(R.id.nav_profile);
+            switchFragment(ProfileFragment.newInstance(targetUserId));
+        }
     }
 
     @Override

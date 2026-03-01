@@ -73,6 +73,7 @@ dependencies {
     implementation("com.google.firebase:firebase-appcheck-playintegrity") // Added for App Check Play Integrity
     implementation("com.google.firebase:firebase-appcheck-debug")
     implementation("com.google.firebase:firebase-crashlytics") // Added Crashlytics SDK
+    implementation("com.google.firebase:firebase-messaging") // Added Firebase Cloud Messaging
 
 
     // Networking and Image Libraries

@@ -20,6 +20,8 @@ public class User {
     private Date pfpCooldownResetTimestamp; // Renamed for rolling 24-hour cooldown
     private int openAiRequestsRemaining; // New field for OpenAI request limit
     private Date openAiCooldownResetTimestamp; // Renamed for rolling 24-hour cooldown
+    private int followerCount; // New field for followers
+    private int followingCount; // New field for following
 
     public User() {
         // Default constructor required for calls to DataSnapshot.getValue(User.class)
@@ -41,10 +43,12 @@ public class User {
         this.pfpCooldownResetTimestamp = null; // Will be set by Cloud Function
         this.openAiRequestsRemaining = 100; // Default value
         this.openAiCooldownResetTimestamp = null; // Will be set by Cloud Function
+        this.followerCount = 0;
+        this.followingCount = 0;
     }
 
     // Full constructor including all fields for completeness
-    public User(String id, String email, String username, String bio, Date createdAt, String defaultLocationId, int totalBirds, int duplicateBirds, int totalPoints, String profilePictureUrl, int pfpChangesToday, Date pfpCooldownResetTimestamp, int openAiRequestsRemaining, Date openAiCooldownResetTimestamp) {
+    public User(String id, String email, String username, String bio, Date createdAt, String defaultLocationId, int totalBirds, int duplicateBirds, int totalPoints, String profilePictureUrl, int pfpChangesToday, Date pfpCooldownResetTimestamp, int openAiRequestsRemaining, Date openAiCooldownResetTimestamp, int followerCount, int followingCount) {
         this.id = id;
         this.email = email;
         this.username = username;
@@ -59,6 +63,8 @@ public class User {
         this.pfpCooldownResetTimestamp = pfpCooldownResetTimestamp;
         this.openAiRequestsRemaining = openAiRequestsRemaining;
         this.openAiCooldownResetTimestamp = openAiCooldownResetTimestamp;
+        this.followerCount = followerCount;
+        this.followingCount = followingCount;
     }
 
     @Exclude
@@ -169,5 +175,21 @@ public class User {
 
     public void setOpenAiCooldownResetTimestamp(Date openAiCooldownResetTimestamp) {
         this.openAiCooldownResetTimestamp = openAiCooldownResetTimestamp;
+    }
+
+    public int getFollowerCount() {
+        return followerCount;
+    }
+
+    public void setFollowerCount(int followerCount) {
+        this.followerCount = followerCount;
+    }
+
+    public int getFollowingCount() {
+        return followingCount;
+    }
+
+    public void setFollowingCount(int followingCount) {
+        this.followingCount = followingCount;
     }
 }

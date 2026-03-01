@@ -11,8 +11,10 @@ import com.google.firebase.auth.FirebaseAuth;
 import com.google.firebase.auth.FirebaseUser;
 import com.google.firebase.firestore.DocumentReference;
 import com.google.firebase.firestore.DocumentSnapshot;
+import com.google.firebase.firestore.FieldValue;
 import com.google.firebase.firestore.FirebaseFirestore;
 import com.google.firebase.firestore.QuerySnapshot;
+import com.google.firebase.firestore.WriteBatch;
 import com.google.firebase.functions.FirebaseFunctions;
 import com.google.firebase.functions.FirebaseFunctionsException; // Added for specific error handling
 import com.google.firebase.functions.HttpsCallableResult;
@@ -799,7 +801,24 @@ public class FirebaseManager {
 
     // Reports Collection
     public void addReport(Report report, OnCompleteListener<DocumentReference> listener) {
-        db.collection("reports").add(report).addOnCompleteListener(listener);
+        // Check if a report already exists from this reporter for this target and type
+        db.collection("reports")
+                .whereEqualTo("reporterId", report.getReporterId())
+                .whereEqualTo("targetId", report.getTargetId())
+                .whereEqualTo("targetType", report.getTargetType())
+                .get()
+                .addOnCompleteListener(task -> {
+                    if (task.isSuccessful() && task.getResult() != null && !task.getResult().isEmpty()) {
+                        // Already reported by this user
+                        Log.d(TAG, "User " + report.getReporterId() + " already reported " + report.getTargetType() + " " + report.getTargetId());
+                        if (listener != null) {
+                            listener.onComplete(Tasks.forException(new IllegalStateException("You have already reported this.")));
+                        }
+                    } else {
+                        // Not reported yet, proceed
+                        db.collection("reports").add(report).addOnCompleteListener(listener);
+                    }
+                });
     }
 
     public void getReportById(String reportId, OnCompleteListener<DocumentSnapshot> listener) {
@@ -812,6 +831,85 @@ public class FirebaseManager {
 
     public void deleteReport(String reportId, OnCompleteListener<Void> listener) {
         db.collection("reports").document(reportId).delete().addOnCompleteListener(listener);
+    }
+
+    // --- FOLLOW METHODS ---
+
+    public void followUser(String targetUserId, OnCompleteListener<Void> listener) {
+        FirebaseUser currentUser = mAuth.getCurrentUser();
+        if (currentUser == null) {
+            if (listener != null) listener.onComplete(Tasks.forException(new IllegalStateException("User not authenticated.")));
+            return;
+        }
+
+        String currentUserId = currentUser.getUid();
+        if (currentUserId.equals(targetUserId)) {
+            if (listener != null) listener.onComplete(Tasks.forException(new IllegalArgumentException("Cannot follow yourself.")));
+            return;
+        }
+
+        WriteBatch batch = db.batch();
+
+        // 1. Add followedId to current user's 'following' subcollection
+        DocumentReference followingRef = db.collection("users").document(currentUserId).collection("following").document(targetUserId);
+        Map<String, Object> followingData = new HashMap<>();
+        followingData.put("timestamp", FieldValue.serverTimestamp());
+        batch.set(followingRef, followingData);
+
+        // 2. Add followerId to target user's 'followers' subcollection
+        DocumentReference followersRef = db.collection("users").document(targetUserId).collection("followers").document(currentUserId);
+        Map<String, Object> followersData = new HashMap<>();
+        followersData.put("timestamp", FieldValue.serverTimestamp());
+        batch.set(followersRef, followersData);
+
+        // 3. Increment counts
+        batch.update(db.collection("users").document(currentUserId), "followingCount", FieldValue.increment(1));
+        batch.update(db.collection("users").document(targetUserId), "followerCount", FieldValue.increment(1));
+
+        batch.commit().addOnCompleteListener(listener);
+    }
+
+    public void unfollowUser(String targetUserId, OnCompleteListener<Void> listener) {
+        FirebaseUser currentUser = mAuth.getCurrentUser();
+        if (currentUser == null) {
+            if (listener != null) listener.onComplete(Tasks.forException(new IllegalStateException("User not authenticated.")));
+            return;
+        }
+
+        String currentUserId = currentUser.getUid();
+
+        WriteBatch batch = db.batch();
+
+        // 1. Remove from 'following'
+        DocumentReference followingRef = db.collection("users").document(currentUserId).collection("following").document(targetUserId);
+        batch.delete(followingRef);
+
+        // 2. Remove from 'followers'
+        DocumentReference followersRef = db.collection("users").document(targetUserId).collection("followers").document(currentUserId);
+        batch.delete(followersRef);
+
+        // 3. Decrement counts
+        batch.update(db.collection("users").document(currentUserId), "followingCount", FieldValue.increment(-1));
+        batch.update(db.collection("users").document(targetUserId), "followerCount", FieldValue.increment(-1));
+
+        batch.commit().addOnCompleteListener(listener);
+    }
+
+    public void isFollowing(String targetUserId, OnCompleteListener<Boolean> listener) {
+        FirebaseUser currentUser = mAuth.getCurrentUser();
+        if (currentUser == null) {
+            if (listener != null) listener.onComplete(Tasks.forResult(false));
+            return;
+        }
+
+        db.collection("users").document(currentUser.getUid()).collection("following").document(targetUserId).get()
+                .addOnCompleteListener(task -> {
+                    if (task.isSuccessful()) {
+                        listener.onComplete(Tasks.forResult(task.getResult() != null && task.getResult().exists()));
+                    } else {
+                        listener.onComplete(Tasks.forResult(false));
+                    }
+                });
     }
 
     /**

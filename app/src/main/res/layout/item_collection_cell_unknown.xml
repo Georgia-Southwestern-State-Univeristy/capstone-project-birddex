@@ -12,10 +12,9 @@
         android:layout_width="0dp"
         android:layout_height="wrap_content"
         android:layout_margin="4dp"
-        android:minHeight="210dp"
         app:cardBackgroundColor="@android:color/white"
-        app:cardCornerRadius="16dp"
-        app:cardElevation="3dp"
+        app:cardCornerRadius="18dp"
+        app:cardElevation="4dp"
         app:cardUseCompatPadding="true"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
@@ -26,10 +25,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:background="@android:color/white"
-            android:paddingStart="8dp"
-            android:paddingTop="8dp"
-            android:paddingEnd="8dp"
-            android:paddingBottom="10dp">
+            android:padding="12dp">
 
             <TextView
                 android:id="@+id/txtBirdName"
@@ -42,17 +38,17 @@
                 android:text="UNKNOWN"
                 android:textAlignment="center"
                 android:textColor="#111111"
-                android:textSize="11sp"
+                android:textSize="14sp"
                 android:textStyle="bold"
                 app:layout_constraintEnd_toEndOf="parent"
                 app:layout_constraintStart_toStartOf="parent"
                 app:layout_constraintTop_toTopOf="parent" />
 
             <ImageView
-                android:id="@+id/imageView3"
+                android:id="@+id/imgBird"
                 android:layout_width="0dp"
                 android:layout_height="0dp"
-                android:layout_marginTop="6dp"
+                android:layout_marginTop="8dp"
                 android:background="#F7F7F7"
                 android:padding="3dp"
                 android:scaleType="centerCrop"
@@ -66,18 +62,18 @@
                 android:id="@+id/txtScientific"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="6dp"
+                android:layout_marginTop="8dp"
                 android:ellipsize="end"
                 android:gravity="center"
                 android:maxLines="2"
                 android:minLines="2"
                 android:text="--"
                 android:textAlignment="center"
-                android:textColor="#111111"
-                android:textSize="10sp"
+                android:textColor="#555555"
+                android:textSize="12sp"
                 app:layout_constraintEnd_toEndOf="parent"
                 app:layout_constraintStart_toStartOf="parent"
-                app:layout_constraintTop_toBottomOf="@id/imageView3" />
+                app:layout_constraintTop_toBottomOf="@id/imgBird" />
 
             <TextView
                 android:id="@+id/txtRarity"
@@ -87,10 +83,10 @@
                 android:ellipsize="end"
                 android:gravity="center"
                 android:maxLines="1"
-                android:text="Rarity: Unknown"
+                android:text="--"
                 android:textAlignment="center"
                 android:textColor="#111111"
-                android:textSize="10sp"
+                android:textSize="12sp"
                 android:textStyle="bold"
                 app:layout_constraintBottom_toBottomOf="parent"
                 app:layout_constraintEnd_toEndOf="parent"

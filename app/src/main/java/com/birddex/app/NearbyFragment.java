@@ -62,8 +62,7 @@ public class NearbyFragment extends Fragment {
     private ImageButton btnRefresh;
     private ImageButton btnSearch;
     private ImageButton btnMap;
-    private LoadingDialog loadingDialog;
-
+    private NearbyPreloadManager nearbyPreloadManager;
     private FusedLocationProviderClient fusedLocationClient;
     private ActivityResultLauncher<String[]> locationPermissionLauncher;
 
@@ -104,14 +103,13 @@ public class NearbyFragment extends Fragment {
         btnSearch = v.findViewById(R.id.btnSearch);
         btnMap = v.findViewById(R.id.btnMap);
 
-        loadingDialog = new LoadingDialog(requireContext());
-
         rvNearby.setLayoutManager(new LinearLayoutManager(requireContext()));
         adapter = new NearbyAdapter(new ArrayList<>());
         rvNearby.setAdapter(adapter);
 
         firebaseManager = new FirebaseManager(requireContext());
         ebirdApi = new EbirdApi();
+        nearbyPreloadManager = NearbyPreloadManager.getInstance();
 
         fusedLocationClient = LocationServices.getFusedLocationProviderClient(requireActivity());
 
@@ -162,6 +160,8 @@ public class NearbyFragment extends Fragment {
         btnMap.setOnClickListener(view -> openHeatmapScreen());
 
         primeSearchableBirds();
+        applyPreloadedState();
+        primeSearchableBirds();
 
         return v;
     }
@@ -174,17 +174,46 @@ public class NearbyFragment extends Fragment {
             geoExecutor = Executors.newSingleThreadExecutor();
         }
 
-        requestLocationOrLoad();
+        applyPreloadedState();
         primeSearchableBirds();
+
+        if (isHidden()) {
+            return;
+        }
+
+        if (currentLocation == null) {
+            requestLocationOrLoad();
+        } else {
+            startLocationUpdates();
+        }
     }
 
     @Override
     public void onPause() {
         super.onPause();
         stopLocationUpdates();
+    }
 
-        if (loadingDialog != null && loadingDialog.isShowing()) {
-            loadingDialog.dismiss();
+    @Override
+    public void onHiddenChanged(boolean hidden) {
+        super.onHiddenChanged(hidden);
+
+        if (hidden) {
+            stopLocationUpdates();
+            return;
+        }
+
+        if (geoExecutor == null || geoExecutor.isShutdown()) {
+            geoExecutor = Executors.newSingleThreadExecutor();
+        }
+
+        applyPreloadedState();
+        primeSearchableBirds();
+
+        if (currentLocation == null) {
+            requestLocationOrLoad();
+        } else {
+            startLocationUpdates();
         }
     }
 
@@ -192,6 +221,35 @@ public class NearbyFragment extends Fragment {
     public void onDestroyView() {
         super.onDestroyView();
         if (geoExecutor != null) geoExecutor.shutdownNow();
+    }
+
+    private void applyPreloadedState() {
+        if (nearbyPreloadManager == null) {
+            return;
+        }
+
+        List<Bird> cachedNearbyBirds = nearbyPreloadManager.getCachedNearbyBirds();
+        if (!cachedNearbyBirds.isEmpty()) {
+            adapter.updateList(cachedNearbyBirds);
+        }
+
+        List<Bird> cachedSearchBirds = nearbyPreloadManager.getCachedSearchableBirds();
+        if (!cachedSearchBirds.isEmpty() && searchableBirds.isEmpty()) {
+            searchableBirds.clear();
+            searchableBirds.addAll(cachedSearchBirds);
+        }
+
+        String cachedPlace = nearbyPreloadManager.getCachedPlace();
+        if (!isBlank(cachedPlace)) {
+            txtLocation.setText("Location: " + cachedPlace);
+            lastPlaceShown = cachedPlace;
+        }
+
+        Location cachedLocation = nearbyPreloadManager.getCachedLocation();
+        if (cachedLocation != null) {
+            currentLocation = cachedLocation;
+            lastFetchLocation = cachedLocation;
+        }
     }
 
     private void handleNewLocation(Location location, boolean forceDataFetch) {
@@ -286,11 +344,6 @@ public class NearbyFragment extends Fragment {
         fetchCount = 0;
         Log.d(TAG, "Starting dual-fetch from Firestore and eBird...");
 
-        if (isAdded() && getActivity() != null) {
-            getActivity().runOnUiThread(() -> {
-                if (!loadingDialog.isShowing()) loadingDialog.show();
-            });
-        }
 
         firestoreBirds.clear();
         ebirdBirds.clear();
@@ -389,18 +442,35 @@ public class NearbyFragment extends Fragment {
             if (!isDup) combined.add(eb);
         }
 
-        Collections.sort(combined, (b1, b2) ->
-                b2.getLastSeenTimestampGeorgia().compareTo(b1.getLastSeenTimestampGeorgia()));
+        Collections.sort(combined, (b1, b2) -> {
+            Long t1 = b1.getLastSeenTimestampGeorgia();
+            Long t2 = b2.getLastSeenTimestampGeorgia();
+            if (t1 == null && t2 == null) return 0;
+            if (t1 == null) return 1;
+            if (t2 == null) return -1;
+            return t2.compareTo(t1);
+        });
+
+        if (nearbyPreloadManager != null) {
+            nearbyPreloadManager.updateNearbyCache(currentLocation, lastPlaceShown, combined);
+            nearbyPreloadManager.updateSearchableBirds(searchableBirds);
+        }
 
         if (isAdded() && getActivity() != null) {
-            getActivity().runOnUiThread(() -> {
-                adapter.updateList(combined);
-                if (loadingDialog.isShowing()) loadingDialog.dismiss();
-            });
+            getActivity().runOnUiThread(() -> adapter.updateList(combined));
         }
     }
 
     private void primeSearchableBirds() {
+        if (nearbyPreloadManager != null) {
+            List<Bird> cachedBirds = nearbyPreloadManager.getCachedSearchableBirds();
+            if (!cachedBirds.isEmpty()) {
+                searchableBirds.clear();
+                searchableBirds.addAll(cachedBirds);
+                return;
+            }
+        }
+
         if (isSearchDataLoading || !searchableBirds.isEmpty()) return;
 
         isSearchDataLoading = true;
@@ -430,6 +500,10 @@ public class NearbyFragment extends Fragment {
 
             searchableBirds.clear();
             searchableBirds.addAll(loadedBirds);
+
+            if (nearbyPreloadManager != null) {
+                nearbyPreloadManager.updateSearchableBirds(loadedBirds);
+            }
         });
     }
 

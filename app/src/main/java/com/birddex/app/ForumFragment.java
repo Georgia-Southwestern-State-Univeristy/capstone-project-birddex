@@ -97,10 +97,16 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
     }
 
     private void listenForPosts() {
+        List<ForumPost> cachedPosts = ForumPreloadManager.getInstance().getCachedPosts();
+        if (!cachedPosts.isEmpty()) {
+            adapter.setPosts(cachedPosts);
+        }
+
         db.collection("forumThreads")
                 .orderBy("timestamp", Query.Direction.DESCENDING)
                 .addSnapshotListener((value, error) -> {
                     if (!isAdded() || binding == null) return;
+
                     if (error != null) {
                         Log.e(TAG, "Listen failed.", error);
                         return;
@@ -108,6 +114,7 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
 
                     if (value != null) {
                         List<ForumPost> posts = new ArrayList<>();
+
                         for (DocumentSnapshot doc : value.getDocuments()) {
                             ForumPost post = doc.toObject(ForumPost.class);
                             if (post != null) {
@@ -115,6 +122,8 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
                                 posts.add(post);
                             }
                         }
+
+                        ForumPreloadManager.getInstance().updateCache(posts);
                         adapter.setPosts(posts);
                     }
                 });

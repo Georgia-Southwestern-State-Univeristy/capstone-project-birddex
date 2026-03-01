@@ -105,6 +105,10 @@
             tools:replace="android:exported" />
 
         <activity
+            android:name=".LoadingActivity"
+            android:exported="false" />
+
+        <activity
             android:name=".WelcomeActivity"
             android:exported="true">
             <intent-filter>

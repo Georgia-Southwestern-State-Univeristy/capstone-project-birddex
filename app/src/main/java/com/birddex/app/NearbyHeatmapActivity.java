@@ -8,6 +8,8 @@ import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
 import android.os.Bundle;
+import android.text.InputFilter;
+import android.text.InputType;
 import android.text.format.DateUtils;
 import android.util.Log;
 import android.util.TypedValue;
@@ -15,6 +17,7 @@ import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.EditText;
+import android.widget.FrameLayout;
 import android.widget.ImageButton;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
@@ -400,6 +403,11 @@ public class NearbyHeatmapActivity extends AppCompatActivity
             if (text.isEmpty()) return;
             if (user == null) return;
 
+            if (ContentFilter.containsInappropriateContent(text)) {
+                Toast.makeText(this, "Comment contains inappropriate language.", Toast.LENGTH_SHORT).show();
+                return;
+            }
+
             db.collection("users").document(user.getUid()).get().addOnSuccessListener(userDoc -> {
                 String name = userDoc.getString("username");
                 String pfp = userDoc.getString("profilePictureUrl");
@@ -470,7 +478,11 @@ public class NearbyHeatmapActivity extends AppCompatActivity
                 .setTitle("Report " + type)
                 .setItems(reasons, (dialog, which) -> {
                     String selectedReason = reasons[which];
-                    submitReport(type, targetId, selectedReason);
+                    if (selectedReason.equals("Other")) {
+                        showOtherReportDialog(reason -> submitReport(type, targetId, reason));
+                    } else {
+                        submitReport(type, targetId, selectedReason);
+                    }
                 })
                 .show();
     }
@@ -488,6 +500,46 @@ public class NearbyHeatmapActivity extends AppCompatActivity
                 Toast.makeText(this, error, Toast.LENGTH_SHORT).show();
             }
         });
+    }
+
+    private void showOtherReportDialog(OnReasonEnteredListener listener) {
+        AlertDialog.Builder builder = new AlertDialog.Builder(this);
+        builder.setTitle("Report Reason");
+
+        final EditText input = new EditText(this);
+        input.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE);
+        input.setHint("Please specify the reason (max 200 chars)...");
+        input.setFilters(new InputFilter[]{new InputFilter.LengthFilter(200)});
+        input.setSingleLine(false);
+        input.setHorizontallyScrolling(false);
+        input.setLines(5);
+
+        FrameLayout container = new FrameLayout(this);
+        FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        params.leftMargin = params.rightMargin = 40;
+        input.setLayoutParams(params);
+        container.addView(input);
+        builder.setView(container);
+
+        builder.setPositiveButton("Submit", (dialog, which) -> {
+            String reason = input.getText().toString().trim();
+            if (reason.isEmpty()) {
+                Toast.makeText(this, "Please enter a reason", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            if (ContentFilter.containsInappropriateContent(reason)) {
+                Toast.makeText(this, "Inappropriate language detected in your report.", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            listener.onReasonEntered(reason);
+        });
+        builder.setNegativeButton("Cancel", (dialog, which) -> dialog.cancel());
+
+        builder.show();
+    }
+
+    private interface OnReasonEnteredListener {
+        void onReasonEntered(String reason);
     }
 
     @Override

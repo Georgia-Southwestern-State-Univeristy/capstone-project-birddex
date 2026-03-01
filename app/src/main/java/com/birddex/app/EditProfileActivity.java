@@ -171,17 +171,8 @@ public class EditProfileActivity extends AppCompatActivity implements NetworkMon
                 return;
             }
 
-            if (ContentFilter.containsInappropriateContent(newUsername)) {
-                etUsername.setError("Inappropriate username");
-                Toast.makeText(this, "Username contains inappropriate language", Toast.LENGTH_SHORT).show();
-                return;
-            }
-
-            if (ContentFilter.containsInappropriateContent(newBio)) {
-                etBio.setError("Inappropriate bio");
-                Toast.makeText(this, "Bio contains inappropriate language", Toast.LENGTH_SHORT).show();
-                return;
-            }
+            if (!ContentFilter.isSafe(this, newUsername, "Username")) return;
+            if (!ContentFilter.isSafe(this, newBio, "Bio")) return;
 
             // Check if a new image was cropped OR if the old URL is different from current imageUri
             boolean pfpChanged = (imageUri != null) || (uploadedProfilePictureDownloadUrl != null && !uploadedProfilePictureDownloadUrl.equals(initialProfilePictureUrl));

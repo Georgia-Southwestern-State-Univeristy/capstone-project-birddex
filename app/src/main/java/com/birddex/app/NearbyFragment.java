@@ -61,6 +61,7 @@ public class NearbyFragment extends Fragment {
     private NearbyAdapter adapter;
     private ImageButton btnRefresh;
     private ImageButton btnSearch;
+    private ImageButton btnMap;
     private LoadingDialog loadingDialog;
 
     private FusedLocationProviderClient fusedLocationClient;
@@ -101,6 +102,7 @@ public class NearbyFragment extends Fragment {
         rvNearby = v.findViewById(R.id.rvNearby);
         btnRefresh = v.findViewById(R.id.btnRefresh);
         btnSearch = v.findViewById(R.id.btnSearch);
+        btnMap = v.findViewById(R.id.btnMap);
 
         loadingDialog = new LoadingDialog(requireContext());
 
@@ -157,6 +159,7 @@ public class NearbyFragment extends Fragment {
         });
 
         btnSearch.setOnClickListener(view -> openBirdSearchDialog());
+        btnMap.setOnClickListener(view -> openHeatmapScreen());
 
         primeSearchableBirds();
 
@@ -571,6 +574,19 @@ public class NearbyFragment extends Fragment {
 
         Intent intent = new Intent(requireContext(), BirdWikiActivity.class);
         intent.putExtra(BirdWikiActivity.EXTRA_BIRD_ID, birdId);
+        startActivity(intent);
+    }
+
+    private void openHeatmapScreen() {
+        if (!isAdded()) return;
+
+        Intent intent = new Intent(requireContext(), NearbyHeatmapActivity.class);
+
+        if (currentLocation != null) {
+            intent.putExtra(NearbyHeatmapActivity.EXTRA_CENTER_LAT, currentLocation.getLatitude());
+            intent.putExtra(NearbyHeatmapActivity.EXTRA_CENTER_LNG, currentLocation.getLongitude());
+        }
+
         startActivity(intent);
     }
 

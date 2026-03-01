@@ -1,14 +1,19 @@
 <resources>
     <string name="app_name">BirdDex</string>
     <string name="bird_image">Bird image</string>
-    <!--
-      TODO: Add your Google Maps API key here.
-      You can get one from the Google Cloud Console.
-      See: https://developers.google.com/maps/documentation/android-sdk/get-api-key
-    -->
-    <string name="google_maps_key" translatable="false">YOUR_API_KEY</string>
-    <string name="verification_email_sent_message">A verification email has been sent. Please check your inbox or spam folder to verify. Link expires in 72 hours.</string>
+    <string name="verification_email_sent_message">A verification email has been sent to your registered email address.
+        Please check your inbox (and spam folder) to verify your account before logging in. The email verification link will expire in 72 hours.</string>
     <string name="go_to_login">Go to Login</string>
     <string name="email_verification_expiration_message">The link will expire in 72 hours.</string>
     <string name="hint_bio_empty">No bio yet.</string>
+    <string name="loading_heatmap">Loading heatmap...</string>
+    <string name="map_failed_to_load">Map failed to load.</string>
+    <string name="failed_to_load_user_sightings">Failed to load user sightings.</string>
+    <string name="failed_to_load_ebird_sightings">Failed to load eBird sightings.</string>
+    <string name="no_heatmap_data_found">No heatmap data found for this area.</string>
+    <string name="no_nearby_sightings">No sightings found in the last 72 hours within 50km.</string>
+    <string name="no_recent_sightings">No recent sightings found.</string>
+    <string name="heatmap_scope_72h_50km">72h / 50km</string>
+    <string name="heatmap_scope_72h">last 72h</string>
+    <string name="heatmap_stats">%1$s • User: %2$d • eBird: %3$d</string>
 </resources>

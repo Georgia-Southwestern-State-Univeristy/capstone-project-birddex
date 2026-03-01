@@ -8,14 +8,16 @@
 
     <TextView
         android:id="@+id/tvNearbyTitle"
-        android:layout_width="wrap_content"
+        android:layout_width="0dp"
         android:layout_height="wrap_content"
         android:layout_marginStart="20dp"
         android:layout_marginTop="20dp"
+        android:layout_marginEnd="8dp"
         android:text="Nearby Sightings"
         android:textColor="?attr/colorOnSurface"
         android:textSize="24sp"
         android:textStyle="bold"
+        app:layout_constraintEnd_toStartOf="@id/btnSearch"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintTop_toTopOf="parent" />
 
@@ -33,6 +35,19 @@
         app:tint="?attr/colorOnSurface" />
 
     <androidx.appcompat.widget.AppCompatImageButton
+        android:id="@+id/btnMap"
+        android:layout_width="48dp"
+        android:layout_height="48dp"
+        android:layout_marginEnd="6dp"
+        android:background="?attr/selectableItemBackgroundBorderless"
+        android:contentDescription="Open heatmap"
+        android:src="@drawable/ic_nearby"
+        app:layout_constraintBottom_toBottomOf="@id/btnRefresh"
+        app:layout_constraintEnd_toStartOf="@id/btnRefresh"
+        app:layout_constraintTop_toTopOf="@id/btnRefresh"
+        app:tint="?attr/colorOnSurface" />
+
+    <androidx.appcompat.widget.AppCompatImageButton
         android:id="@+id/btnSearch"
         android:layout_width="48dp"
         android:layout_height="48dp"
@@ -40,9 +55,9 @@
         android:background="?attr/selectableItemBackgroundBorderless"
         android:contentDescription="Search birds"
         android:src="@drawable/ic_search"
-        app:layout_constraintBottom_toBottomOf="@id/btnRefresh"
-        app:layout_constraintEnd_toStartOf="@id/btnRefresh"
-        app:layout_constraintTop_toTopOf="@id/btnRefresh"
+        app:layout_constraintBottom_toBottomOf="@id/btnMap"
+        app:layout_constraintEnd_toStartOf="@id/btnMap"
+        app:layout_constraintTop_toTopOf="@id/btnMap"
         app:tint="?attr/colorOnSurface" />
 
     <TextView

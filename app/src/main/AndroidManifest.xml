@@ -34,7 +34,7 @@
             android:value="@integer/google_play_services_version" />
         <meta-data
             android:name="com.google.android.geo.API_KEY"
-            android:value="@string/google_maps_key" />
+            android:value="AIzaSyAUwDX_C_xnJG3Q88nkFjG3aa4ZUosoysQ" />
 
         <!-- Forum Activities -->
         <activity
@@ -77,6 +77,9 @@
             android:exported="false" />
         <activity
             android:name=".EditProfileActivity"
+            android:exported="false" />
+        <activity
+            android:name=".NearbyHeatmapActivity"
             android:exported="false" />
 
         <!-- Crop Image Activity Declaration for com.canhub.cropper -->

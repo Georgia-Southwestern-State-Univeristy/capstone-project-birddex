@@ -19,6 +19,7 @@ public class ForumComment {
     private String parentUsername; 
     private boolean edited;
     private Timestamp lastEditedAt;
+    private boolean likeNotificationSent;
 
     public ForumComment() {
         // Required for Firestore
@@ -32,6 +33,7 @@ public class ForumComment {
         this.text = text;
         this.likeCount = 0;
         this.edited = false;
+        this.likeNotificationSent = false;
     }
 
     // Getters and Setters
@@ -61,4 +63,6 @@ public class ForumComment {
     public void setEdited(boolean edited) { this.edited = edited; }
     public Timestamp getLastEditedAt() { return lastEditedAt; }
     public void setLastEditedAt(Timestamp lastEditedAt) { this.lastEditedAt = lastEditedAt; }
+    public boolean isLikeNotificationSent() { return likeNotificationSent; }
+    public void setLikeNotificationSent(boolean likeNotificationSent) { this.likeNotificationSent = likeNotificationSent; }
 }

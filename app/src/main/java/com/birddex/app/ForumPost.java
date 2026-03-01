@@ -18,7 +18,7 @@ public class ForumPost {
     private int commentCount;
     private int viewCount;
     private Map<String, Boolean> likedBy;
-    private Map<String, Boolean> viewedBy;
+    private Map<String, Object> viewedBy; // Changed to Object to handle Timestamps
     private boolean edited;
     private Timestamp lastEditedAt;
 
@@ -28,6 +28,10 @@ public class ForumPost {
     private boolean showLocation;
     private boolean hunted;
     private boolean spotted;
+
+    private boolean notificationSent;
+    private boolean likeNotificationSent;
+    private Timestamp lastViewedAt;
 
     public ForumPost() {
         // Required for Firestore
@@ -50,6 +54,8 @@ public class ForumPost {
         this.showLocation = false;
         this.hunted = false;
         this.spotted = false;
+        this.notificationSent = false;
+        this.likeNotificationSent = false;
     }
 
     // Getters and Setters
@@ -75,8 +81,8 @@ public class ForumPost {
     public void setViewCount(int viewCount) { this.viewCount = viewCount; }
     public Map<String, Boolean> getLikedBy() { return likedBy; }
     public void setLikedBy(Map<String, Boolean> likedBy) { this.likedBy = likedBy; }
-    public Map<String, Boolean> getViewedBy() { return viewedBy; }
-    public void setViewedBy(Map<String, Boolean> viewedBy) { this.viewedBy = viewedBy; }
+    public Map<String, Object> getViewedBy() { return viewedBy; }
+    public void setViewedBy(Map<String, Object> viewedBy) { this.viewedBy = viewedBy; }
     public boolean isEdited() { return edited; }
     public void setEdited(boolean edited) { this.edited = edited; }
     public Timestamp getLastEditedAt() { return lastEditedAt; }
@@ -92,4 +98,11 @@ public class ForumPost {
     public void setHunted(boolean hunted) { this.hunted = hunted; }
     public boolean isSpotted() { return spotted; }
     public void setSpotted(boolean spotted) { this.spotted = spotted; }
+
+    public boolean isNotificationSent() { return notificationSent; }
+    public void setNotificationSent(boolean notificationSent) { this.notificationSent = notificationSent; }
+    public boolean isLikeNotificationSent() { return likeNotificationSent; }
+    public void setLikeNotificationSent(boolean likeNotificationSent) { this.likeNotificationSent = likeNotificationSent; }
+    public Timestamp getLastViewedAt() { return lastViewedAt; }
+    public void setLastViewedAt(Timestamp lastViewedAt) { this.lastViewedAt = lastViewedAt; }
 }

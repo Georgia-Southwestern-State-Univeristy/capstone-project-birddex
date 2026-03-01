@@ -112,14 +112,32 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
                         if (originalPost != null) {
                             originalPost.setId(doc.getId());
 
-                            // Check for unique view
                             FirebaseUser user = mAuth.getCurrentUser();
                             if (user != null) {
                                 String userId = user.getUid();
+                                
+                                // Check for unique view
                                 if (originalPost.getViewedBy() == null || !originalPost.getViewedBy().containsKey(userId)) {
                                     db.collection("forumThreads").document(postId)
                                             .update("viewCount", FieldValue.increment(1),
                                                     "viewedBy." + userId, true);
+                                }
+
+                                // Reset notification flags if the author is viewing the post
+                                if (userId.equals(originalPost.getUserId())) {
+                                    Map<String, Object> updates = new HashMap<>();
+                                    if (originalPost.isNotificationSent()) {
+                                        updates.put("notificationSent", false);
+                                    }
+                                    if (originalPost.isLikeNotificationSent()) {
+                                        updates.put("likeNotificationSent", false);
+                                    }
+                                    // Set lastViewedAt to now
+                                    updates.put("lastViewedAt", FieldValue.serverTimestamp());
+                                    
+                                    if (!updates.isEmpty()) {
+                                        db.collection("forumThreads").document(postId).update(updates);
+                                    }
                                 }
                             }
 

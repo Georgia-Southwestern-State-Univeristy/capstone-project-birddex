@@ -313,6 +313,16 @@ public class NearbyHeatmapActivity extends AppCompatActivity
         View view = getLayoutInflater().inflate(R.layout.bottom_sheet_post_view, null);
         dialog.setContentView(view);
 
+        FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
+        if (user != null) {
+            String userId = user.getUid();
+            // Reset notification flag if author is viewing the post
+            if (userId.equals(post.getUserId()) && post.isNotificationSent()) {
+                db.collection("forumThreads").document(post.getId())
+                        .update("notificationSent", false);
+            }
+        }
+
         // Bind Post Data
         View postContent = view.findViewById(R.id.postContent);
         TextView tvUsername = postContent.findViewById(R.id.tvPostUsername);
@@ -387,7 +397,6 @@ public class NearbyHeatmapActivity extends AppCompatActivity
 
         // Setup Current User PFP in comment input
         ImageView ivCurrentUser = view.findViewById(R.id.ivCurrentUserPfp);
-        FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
         if (user != null) {
             db.collection("users").document(user.getUid()).get().addOnSuccessListener(doc -> {
                 String pfp = doc.getString("profilePictureUrl");

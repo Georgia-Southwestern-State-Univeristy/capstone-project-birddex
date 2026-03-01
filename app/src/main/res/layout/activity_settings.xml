@@ -5,6 +5,7 @@
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
+    android:background="#FFF5FF"
     android:padding="16dp">
 
     <TextView
@@ -82,15 +83,16 @@
             <TextView
                 android:id="@+id/tvChangePasswordLabel"
                 android:layout_width="match_parent"
-                android:layout_height="31dp"
+                android:layout_height="wrap_content"
                 android:paddingStart="1dp"
                 android:paddingTop="4dp"
+                android:paddingBottom="8dp"
                 android:text="Change Password"
                 android:textStyle="bold" />
 
             <Button
                 android:id="@+id/btnChangePassword"
-                android:layout_width="347dp"
+                android:layout_width="match_parent"
                 android:layout_height="44dp"
                 android:insetLeft="90dp"
                 android:insetTop="5dp"
@@ -102,22 +104,32 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:paddingStart="1dp"
-                android:paddingTop="4dp"
+                android:paddingTop="16dp"
                 android:paddingBottom="8dp"
                 android:text="Notifications"
                 android:textStyle="bold" />
 
-            <androidx.appcompat.widget.SwitchCompat
-                android:id="@+id/switchNotifications"
+            <Button
+                android:id="@+id/btnNotifications"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:paddingBottom="0dp"
-                android:text="Enable notifications" />
+                android:insetLeft="90dp"
+                android:insetTop="5dp"
+                android:insetRight="85dp"
+                android:insetBottom="5dp"
+                android:text="Notifications" />
+
+            <View
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                android:layout_weight="1" />
 
             <Button
                 android:id="@+id/btnLogout"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
+                android:insetLeft="20dp"
+                android:insetRight="20dp"
                 android:text="Log Out" />
 
         </LinearLayout>

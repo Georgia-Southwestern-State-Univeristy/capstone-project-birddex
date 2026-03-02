@@ -28,6 +28,9 @@ import com.bumptech.glide.request.transition.Transition;
 import com.google.firebase.auth.FirebaseAuth;
 import com.google.firebase.auth.FirebaseUser;
 import com.google.firebase.firestore.FirebaseFirestore;
+import com.google.firebase.storage.FirebaseStorage;
+import com.google.firebase.storage.StorageReference;
+
 
 import java.io.OutputStream;
 import java.util.ArrayList;
@@ -114,9 +117,7 @@ public class RecentPhotoMemoriesAdapter extends RecyclerView.Adapter<RecyclerVie
                 .into(ivPreview);
 
         btnSaveToCameraRoll.setOnClickListener(v -> saveImageToCameraRoll(item.imageUrl));
-        btnDeleteImage.setOnClickListener(v -> {
-            Toast.makeText(context, "Delete button is not wired up yet.", Toast.LENGTH_SHORT).show();
-        });
+        btnDeleteImage.setOnClickListener(v -> deleteImage(item, dialog));
 
         ivPreview.setOnClickListener(v -> dialog.dismiss());
 
@@ -125,6 +126,55 @@ public class RecentPhotoMemoriesAdapter extends RecyclerView.Adapter<RecyclerVie
         }
 
         dialog.show();
+    }
+
+    private void deleteImage(MemoryItem item, Dialog dialog) {
+        FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
+        if (user == null || item.documentId == null) {
+            Toast.makeText(context, "Cannot delete: user not logged in or invalid image.", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        new AlertDialog.Builder(context)
+                .setTitle("Delete Image")
+                .setMessage("Are you sure you want to delete this image? This will remove the photo from your gallery, but you will keep any points earned.")
+                .setPositiveButton("Delete", (d, which) -> {
+                    FirebaseFirestore db = FirebaseFirestore.getInstance();
+
+                    // 1. Delete the Firestore Document
+                    db.collection("users")
+                            .document(user.getUid())
+                            .collection("userBirdImage")
+                            .document(item.documentId)
+                            .delete()
+                            .addOnSuccessListener(aVoid -> {
+                                // 2. Attempt to delete the file from Firebase Storage if it's a firebase URL
+                                if (item.imageUrl != null && item.imageUrl.contains("firebasestorage")) {
+                                    try {
+                                        StorageReference photoRef = FirebaseStorage.getInstance().getReferenceFromUrl(item.imageUrl);
+                                        photoRef.delete().addOnFailureListener(e -> {
+                                            // We don't necessarily need to block the UI if storage delete fails
+                                            android.util.Log.e("DeleteImage", "Failed to delete storage file", e);
+                                        });
+                                    } catch (Exception e) {
+                                        android.util.Log.e("DeleteImage", "Invalid storage URL", e);
+                                    }
+                                }
+
+                                Toast.makeText(context, "Image removed from gallery.", Toast.LENGTH_SHORT).show();
+
+                                // Refresh the UI
+                                if (onPhotosChanged != null) {
+                                    onPhotosChanged.run();
+                                }
+                                dialog.dismiss();
+                            })
+                            .addOnFailureListener(e -> {
+                                Toast.makeText(context, "Failed to delete: " + e.getMessage(), Toast.LENGTH_SHORT).show();
+                            });
+                })
+                .setNegativeButton("Cancel", null)
+                .show();
     }
 
     private void saveImageToCameraRoll(String imageUrl) {

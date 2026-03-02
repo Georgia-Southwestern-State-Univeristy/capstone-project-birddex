@@ -8,7 +8,6 @@ import android.content.Intent;
 import android.os.Bundle;
 import android.text.InputType;
 import android.util.Log;
-import android.view.View;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.LinearLayout;
@@ -16,6 +15,7 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.appcompat.widget.SwitchCompat;
 
 import com.google.android.gms.tasks.OnCompleteListener;
 import com.google.android.gms.tasks.Task;
@@ -25,14 +25,21 @@ import com.google.firebase.auth.FirebaseAuth;
 import com.google.firebase.auth.FirebaseAuthRecentLoginRequiredException;
 import com.google.firebase.auth.FirebaseUser;
 
+import java.util.Date;
+import java.util.Locale;
+import java.util.concurrent.TimeUnit;
+
 public class SettingsActivity extends AppCompatActivity {
 
-    private TextView tvUserEmail, tvUserName;
-    private Button btnLogout, btnUpdateEmail, btnChangePassword, btnNotifications;
+    private TextView tvUserEmail, tvUserName, tvOpenAiRequestsRemaining, tvPfpChangesRemaining;
+    private SwitchCompat switchNotifications;
+    private Button btnLogout, btnUpdateEmail, btnChangePassword, btnChangePfp;
 
+    private final SettingsApi settingsApi = new SettingsApi();
     private FirebaseManager firebaseManager;
 
     private static final String TAG = "SettingsActivity";
+    private static final long COOLDOWN_PERIOD_MS = 24 * 60 * 60 * 1000;
 
     @SuppressLint("MissingInflatedId")
     @Override
@@ -43,10 +50,13 @@ public class SettingsActivity extends AppCompatActivity {
         // Initialize UI components
         tvUserEmail = findViewById(R.id.tvUserEmail);
         tvUserName = findViewById(R.id.tvUserName);
-        btnNotifications = findViewById(R.id.btnNotifications);
+        switchNotifications = findViewById(R.id.switchNotifications);
         btnLogout = findViewById(R.id.btnLogout);
         btnUpdateEmail = findViewById(R.id.btnUpdateEmail);
         btnChangePassword = findViewById(R.id.btnChangePassword);
+        btnChangePfp = findViewById(R.id.btnChangePfp);
+        tvOpenAiRequestsRemaining = findViewById(R.id.tvOpenAiRequestsRemaining);
+        tvPfpChangesRemaining = findViewById(R.id.tvPfpChangesRemaining);
 
         firebaseManager = new FirebaseManager(this);
 
@@ -61,8 +71,25 @@ public class SettingsActivity extends AppCompatActivity {
             loadUserProfile(user);
         });
 
-        btnNotifications.setOnClickListener(v -> {
-            startActivity(new Intent(this, NotificationsSettingsActivity.class));
+        // Initialize settings from API
+        settingsApi.getSettings(user.getUid(), new SettingsApi.SettingsCallback() {
+            @Override
+            public void onSuccess(UserSettings settings) {
+                switchNotifications.setOnCheckedChangeListener(null);
+                switchNotifications.setChecked(settings.notificationsEnabled);
+
+                switchNotifications.setOnCheckedChangeListener((buttonView, isChecked) -> {
+                    settingsApi.setNotificationsEnabled(user.getUid(), isChecked, new SettingsApi.SettingsCallback() {
+                        @Override public void onSuccess(UserSettings s) { /* ok */ }
+                        @Override public void onFailure(Exception e, String message) { /* optional: toast */ }
+                    });
+                });
+            }
+
+            @Override
+            public void onFailure(Exception e, String message) {
+                switchNotifications.setChecked(false);
+            }
         });
 
         // Set up click listeners for all buttons
@@ -84,6 +111,17 @@ public class SettingsActivity extends AppCompatActivity {
             initiatePasswordReset();
             Toast.makeText(SettingsActivity.this, "Please check your email to update your password.", Toast.LENGTH_LONG).show();
         });
+
+        btnChangePfp.setOnClickListener(v -> {
+            // TODO: Handle profile picture change
+        });
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        fetchOpenAiRequestsRemaining();
+        fetchPfpChangesRemaining();
     }
 
     /**
@@ -247,5 +285,55 @@ public class SettingsActivity extends AppCompatActivity {
                 }
             });
         }
+    }
+
+    private void fetchOpenAiRequestsRemaining() {
+        firebaseManager.getOpenAiRequestsRemaining(new FirebaseManager.OpenAiRequestLimitListener() {
+            @Override
+            public void onCheckComplete(boolean hasRequestsRemaining, int remaining, Date cooldownResetTimestamp) {
+                updateOpenAiRequestsRemainingUI(remaining, cooldownResetTimestamp);
+            }
+            @Override
+            public void onFailure(String errorMessage) {}
+        });
+    }
+
+    private void fetchPfpChangesRemaining() {
+        firebaseManager.getPfpChangesRemaining(new FirebaseManager.PfpChangeLimitListener() {
+            @Override
+            public void onSuccess(int pfpChangesToday, Date cooldownResetTimestamp) {
+                updatePfpChangesRemainingUI(pfpChangesToday, cooldownResetTimestamp);
+            }
+            @Override
+            public void onFailure(String errorMessage) {}
+            @Override
+            public void onLimitExceeded() {}
+        });
+    }
+
+    private void updateOpenAiRequestsRemainingUI(int remaining, Date cooldownResetTimestamp) {
+        if (remaining <= 0 && cooldownResetTimestamp != null) {
+            long timeLeftMs = (cooldownResetTimestamp.getTime() + COOLDOWN_PERIOD_MS) - System.currentTimeMillis();
+            if (timeLeftMs > 0) {
+                long hours = TimeUnit.MILLISECONDS.toHours(timeLeftMs);
+                long minutes = TimeUnit.MILLISECONDS.toMinutes(timeLeftMs) % 60;
+                tvOpenAiRequestsRemaining.setText(String.format(Locale.getDefault(), "AI Requests: Refreshes in %dh %dm", hours, minutes));
+                return;
+            }
+        }
+        tvOpenAiRequestsRemaining.setText("AI Requests: " + remaining);
+    }
+
+    private void updatePfpChangesRemainingUI(int remaining, Date cooldownResetTimestamp) {
+        if (remaining <= 0 && cooldownResetTimestamp != null) {
+            long timeLeftMs = (cooldownResetTimestamp.getTime() + COOLDOWN_PERIOD_MS) - System.currentTimeMillis();
+            if (timeLeftMs > 0) {
+                long hours = TimeUnit.MILLISECONDS.toHours(timeLeftMs);
+                long minutes = TimeUnit.MILLISECONDS.toMinutes(timeLeftMs) % 60;
+                tvPfpChangesRemaining.setText(String.format(Locale.getDefault(), "PFP Changes: Refreshes in %dh %dm", hours, minutes));
+                return;
+            }
+        }
+        tvPfpChangesRemaining.setText("PFP Changes: " + remaining);
     }
 }

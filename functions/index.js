@@ -400,7 +400,7 @@ exports.identifyBird = onCall({ secrets: [OPENAI_API_KEY], timeoutSeconds: 30 },
     const userId = request.auth.uid;
     const userRef = db.collection("users").doc(userId);
 
-    const { image, latitude, longitude, localityName } = request.data;
+    const { image, imageUrl, latitude, longitude, localityName } = request.data; // Added imageUrl
 
     if (typeof latitude !== 'number' || typeof longitude !== 'number') {
         throw new HttpsError("invalid-argument", "Latitude and longitude are required and must be numbers.");
@@ -494,7 +494,7 @@ exports.identifyBird = onCall({ secrets: [OPENAI_API_KEY], timeoutSeconds: 30 },
         }
 
         // Fallback verification by names if ID verification failed
-        if (!isVerified && aiCommonName && scientificName) {
+        if (!isVerified && aiCommonName && aiScientificName) {
             const birdsSnapshot = await db.collection("birds")
                                           .where("commonName", "==", aiCommonName)
                                           .where("scientificName", "==", aiScientificName)
@@ -520,7 +520,7 @@ exports.identifyBird = onCall({ secrets: [OPENAI_API_KEY], timeoutSeconds: 30 },
                 species: verifiedBirdData.species || aiSpecies,
                 locationId: locationId,
                 verified: true,
-                imageUrl: `data:image/jpeg;base64,${image.substring(0, 100)}...` || "",
+                imageUrl: imageUrl || "", // CHANGED: Now uses the actual storage URL
                 timestamp: admin.firestore.FieldValue.serverTimestamp()
             };
             await db.collection("identifications").add(identificationData);
@@ -845,16 +845,14 @@ exports.cleanupUserData = auth.user().onDelete(async (user) => {
         slotSnap.forEach(doc => batch.delete(doc.ref));
 
         // 3. Delete from related global collections
-        const collections = ["userBirds", "media", "birdCards", "userBirdSightings"]; // Added userBirdSightings
+        const collections = ["userBirds", "media", "birdCards", "userBirdSightings"]; // Removed identifications
         for (const col of collections) {
             const snap = await db.collection(col).where("userId", "==", uid).get();
             snap.forEach(doc => batch.delete(doc.ref));
         }
 
         // Additional cleanup for specific relationships (if not handled by generic collections array)
-        // Delete Identification documents related to the user
-        const identificationsSnap = await db.collection("identifications").where("userId", "==", uid).get();
-        identificationsSnap.forEach(doc => batch.delete(doc.ref));
+        // REMOVED cleanup for Identification documents related to the user
 
         // Delete Threads and their Posts (assuming userId in Thread and Post)
         const threadsSnap = await db.collection("threads").where("userId", "==", uid).get();
@@ -1180,49 +1178,120 @@ exports.onDeleteUserBirdImage = onDocumentDeleted("users/{userId}/userBirdImage/
     const deletedImage = event.data.data(); // This is the data *before* deletion
     const userId = event.params.userId;
     const userBirdRefId = deletedImage.userBirdRefId; // The ID of the associated UserBird
+    const imageUrl = deletedImage.imageUrl; // The URL of the image being deleted
+    const birdId = deletedImage.birdId; // The species ID
 
     if (!userBirdRefId) {
         console.log('onDeleteUserBirdImage: No userBirdRefId found on deleted UserBirdImage, skipping update.');
         return null;
     }
 
-    const userBirdRef = db.collection('userBirds').doc(userBirdRefId);
+    try {
+        const batch = db.batch();
 
-    // Check if this was the last image associated with this UserBird
-    const remainingImagesSnapshot = await db.collection('users').doc(userId)
-        .collection('userBirdImage')
-        .where('userBirdRefId', '==', userBirdRefId)
-        .get();
+        // 1. Delete the image from Firebase Storage if it's in userCollectionImages
+        if (imageUrl && imageUrl.includes("userCollectionImages")) {
+            try {
+                // Extract file path from download URL
+                // Format: https://firebasestorage.googleapis.com/v0/b/[bucket]/o/userCollectionImages%2F[uid]%2F[filename]?alt=media
+                const decodedUrl = decodeURIComponent(imageUrl);
+                const pathStart = decodedUrl.indexOf("/o/") + 3;
+                const pathEnd = decodedUrl.indexOf("?alt=media");
+                const filePath = decodedUrl.substring(pathStart, pathEnd);
 
-    if (remainingImagesSnapshot.empty) {
-        // This means the deleted image was the LAST image for this userBirdRefId.
-        // Therefore, we need to revert the counts associated with the UserBird and delete the UserBird.
-
-        // Get the UserBird data to know its points and duplicate status
-        const userBirdDoc = await userBirdRef.get();
-
-        if (userBirdDoc.exists) {
-            const userBirdData = userBirdDoc.data();
-            const pointsEarnedByBird = userBirdData.pointsEarned || 0;
-            const isDuplicate = userBirdData.isDuplicate || false;
-
-            console.log(`⬇️ onDeleteUserBirdImage: Last image deleted for UserBird ${userBirdRefId}. Reverting user totals.`);
-
-            // Deduct points and counts from the user's aggregate totals
-            await _updateUserTotals(userId, -1, isDuplicate ? -1 : 0, -pointsEarnedByBird);
-
-            // Delete the UserBird document itself, as it no longer has associated images.
-            await userBirdRef.delete();
-            console.log(`🗑️ Deleted UserBird document ${userBirdRefId} for user ${userId} as no images remain.`);
-        } else {
-            console.log(`onDeleteUserBirdImage: UserBird document ${userBirdRefId} not found, but last image deleted. User totals already consistent?`);
+                console.log(`🗑️ Deleting file from storage: ${filePath}`);
+                await admin.storage().bucket().file(filePath).delete();
+                console.log(`✅ Successfully deleted storage file: ${filePath}`);
+            } catch (storageErr) {
+                console.error(`⚠️ Failed to delete image from storage: ${imageUrl}`, storageErr);
+                // Continue with DB cleanup even if storage deletion fails
+            }
         }
-    } else {
-        console.log(`onDeleteUserBirdImage: UserBird document ${userBirdRefId} still has ${remainingImagesSnapshot.size} images. No changes to user totals.`);
-    }
 
-    return null;
+        // 2. Handle collectionSlot cleanup/replacement
+        if (birdId) {
+            const collectionSlotSnap = await db.collection("users").doc(userId).collection("collectionSlot")
+                .where("birdId", "==", birdId)
+                .get();
+
+            for (const slotDoc of collectionSlotSnap.docs) {
+                if (slotDoc.data().imageUrl === imageUrl) {
+                    // The card was using the deleted image. Look for a replacement.
+                    const otherImagesSnap = await db.collection("users").doc(userId).collection("userBirdImage")
+                        .where("birdId", "==", birdId)
+                        .limit(1)
+                        .get();
+
+                    if (!otherImagesSnap.empty) {
+                        const replacement = otherImagesSnap.docs[0].data();
+                        console.log(`🔄 Updating collectionSlot ${slotDoc.id} with replacement image.`);
+                        batch.update(slotDoc.ref, {
+                            imageUrl: replacement.imageUrl,
+                            userBirdId: replacement.userBirdRefId
+                        });
+                    } else {
+                        console.log(`🗑️ Deleting collectionSlot ${slotDoc.id} as no images remain for this species.`);
+                        batch.delete(slotDoc.ref);
+                    }
+                }
+            }
+        }
+
+        // 3. Delete associated sightings that used this specific image URL
+        // Sightings are linked via userId and the imageUrl itself.
+        const sightingsSnap = await db.collection("userBirdSightings")
+            .where("userId", "==", userId)
+            .where("imageUrl", "==", imageUrl)
+            .get();
+
+        sightingsSnap.forEach(doc => {
+            batch.delete(doc.ref);
+            console.log(`🗑️ onDeleteUserBirdImage: Deleting userBirdSighting document ${doc.id}`);
+        });
+
+        // 4. Check if this was the last image associated with this UserBird
+        const remainingImagesSnapshot = await db.collection('users').doc(userId)
+            .collection('userBirdImage')
+            .where('userBirdRefId', '==', userBirdRefId)
+            .get();
+
+        if (remainingImagesSnapshot.empty) {
+            // This means the deleted image was the LAST image for this userBirdRefId.
+            // Therefore, we need to revert the counts associated with the UserBird and delete the UserBird.
+
+            const userBirdRef = db.collection('userBirds').doc(userBirdRefId);
+            const userBirdDoc = await userBirdRef.get();
+
+            if (userBirdDoc.exists) {
+                const userBirdData = userBirdDoc.data();
+                const pointsEarnedByBird = userBirdData.pointsEarned || 0;
+                const isDuplicate = userBirdData.isDuplicate || false;
+
+                console.log(`⬇️ onDeleteUserBirdImage: Last image deleted for UserBird ${userBirdRefId}. Reverting user totals.`);
+
+                // Deduct points and counts from the user's aggregate totals
+                await _updateUserTotals(userId, -1, isDuplicate ? -1 : 0, -pointsEarnedByBird);
+
+                // Delete the UserBird document itself, as it no longer has associated images.
+                batch.delete(userBirdRef);
+                console.log(`🗑️ onDeleteUserBirdImage: Deleting UserBird document ${userBirdRefId} for user ${userId} as no images remain.`);
+            } else {
+                console.log(`onDeleteUserBirdImage: UserBird document ${userBirdRefId} not found, but last image deleted. User totals already consistent?`);
+            }
+        } else {
+            console.log(`onDeleteUserBirdImage: UserBird document ${userBirdRefId} still has ${remainingImagesSnapshot.size} images. No changes to user totals.`);
+        }
+
+        // Commit all deletions
+        await batch.commit();
+        return null;
+
+    } catch (err) {
+        console.error(`❌ onDeleteUserBirdImage: Cleanup failed for user ${userId}:`, err);
+        return null;
+    }
 });
+
 // ======================================================
 // NEW: Callable function to moderate profile picture images using OpenAI Vision
 // ======================================================

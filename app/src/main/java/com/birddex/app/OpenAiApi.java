@@ -32,18 +32,21 @@ public class OpenAiApi {
     /**
      * Sends a Base64 encoded image to the OpenAI GPT-4o model via Cloud Functions for bird identification.
      * @param base64Image The image data encoded as a Base64 string.
+     * @param imageUrl The Firebase Storage URL where the image is stored (for logging).
      * @param latitude The latitude where the image was taken (can be null if not available).
      * @param longitude The longitude where the image was taken (can be null if not available).
      * @param localityName The locality name where the image was taken (can be null if not available).
      * @param callback The callback to handle the response.
      */
     public void identifyBirdFromImage(String base64Image,
+                                      String imageUrl,
                                       @Nullable Double latitude,
                                       @Nullable Double longitude,
                                       @Nullable String localityName,
                                       OpenAiCallback callback) {
         Map<String, Object> data = new HashMap<>();
         data.put("image", base64Image);
+        data.put("imageUrl", imageUrl); // New parameter for storage link
         if (latitude != null) {
             data.put("latitude", latitude);
         }

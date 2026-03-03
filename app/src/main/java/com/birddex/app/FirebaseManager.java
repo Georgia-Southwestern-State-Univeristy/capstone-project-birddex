@@ -697,21 +697,21 @@ public class FirebaseManager {
         db.collection("birdFacts").document(birdFactsId).delete().addOnCompleteListener(listener);
     }
 
-    // Identifications Collection
+    // IdentificationImages Collection
     public void addIdentification(Identification identification, OnCompleteListener<Void> listener) {
-        db.collection("identifications").document(identification.getId()).set(identification).addOnCompleteListener(listener);
+        db.collection("identificationImages").document(identification.getId()).set(identification).addOnCompleteListener(listener);
     }
 
     public void getIdentificationById(String identificationId, OnCompleteListener<DocumentSnapshot> listener) {
-        db.collection("identifications").document(identificationId).get().addOnCompleteListener(listener);
+        db.collection("identificationImages").document(identificationId).get().addOnCompleteListener(listener);
     }
 
     public void updateIdentification(Identification identification, OnCompleteListener<Void> listener) {
-        db.collection("identifications").document(identification.getId()).set(identification).addOnCompleteListener(listener);
+        db.collection("identificationImages").document(identification.getId()).set(identification).addOnCompleteListener(listener);
     }
 
     public void deleteIdentification(String identificationId, OnCompleteListener<Void> listener) {
-        db.collection("identifications").document(identificationId).delete().addOnCompleteListener(listener);
+        db.collection("identificationImages").document(identificationId).delete().addOnCompleteListener(listener);
     }
 
     // Media Collection

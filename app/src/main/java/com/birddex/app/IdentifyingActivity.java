@@ -60,7 +60,7 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
 
     private Handler timeoutHandler;
     private Runnable timeoutRunnable;
-    private static final long IDENTIFICATION_TIMEOUT_MS = 30000;
+    private static final long IDENTIFICATION_TIMEOUT_MS = 45000; // Increased timeout for upload + AI
     private AtomicBoolean identificationCompleted = new AtomicBoolean(false);
 
     @Override
@@ -192,14 +192,6 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
             return;
         }
 
-        Log.d(TAG, "startIdentificationFlow: Encoding image...");
-        String base64Image = encodeImage(imageUri);
-        if (base64Image == null) {
-            Log.e(TAG, "startIdentificationFlow: Failed to encode image");
-            finishActivityWithToast("Failed to process image.");
-            return;
-        }
-
         Log.d(TAG, "startIdentificationFlow: Showing loading dialog and checking limits");
         loadingDialog.show();
 
@@ -209,30 +201,9 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
                 if (identificationCompleted.get()) return;
 
                 if (hasRequestsRemaining) {
-                    Log.d(TAG, "onCheckComplete: " + remaining + " requests remaining. Calling OpenAI...");
-                    openAiApi.identifyBirdFromImage(base64Image, latitude, longitude, localityName, new OpenAiApi.OpenAiCallback() {
-                        @Override
-                        public void onSuccess(String response, boolean isVerified) {
-                            if (identificationCompleted.get()) return;
-                            Log.d(TAG, "OpenAI onSuccess: isVerified=" + isVerified);
-                            if (!isVerified) {
-                                Log.w(TAG, "Bird not recognized or not in regional data");
-                                loadingDialog.dismiss();
-                                finishActivityWithToast("Bird not recognized in Georgia regional data.");
-                                return;
-                            }
-                            Log.d(TAG, "Proceeding to upload verified image");
-                            uploadVerifiedImage(response, latitude, longitude, localityName, state, country);
-                        }
-
-                        @Override
-                        public void onFailure(Exception e, String message) {
-                            if (identificationCompleted.get()) return;
-                            Log.e(TAG, "OpenAI onFailure: " + message, e);
-                            loadingDialog.dismiss();
-                            finishActivityWithToast("Identification failed: " + message);
-                        }
-                    });
+                    Log.d(TAG, "onCheckComplete: " + remaining + " requests remaining. Uploading image to identificationImages first...");
+                    // Reverted: Upload to identificationImages FIRST, then identify
+                    uploadImageToIdentificationStorage(imageUri, latitude, longitude, localityName, state, country);
                 } else {
                     Log.w(TAG, "onCheckComplete: Daily limit reached");
                     loadingDialog.dismiss();
@@ -250,43 +221,71 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
         });
     }
 
-    private void uploadVerifiedImage(String identificationResult, @Nullable Double latitude, @Nullable Double longitude, @Nullable String localityName, @Nullable String state, @Nullable String country) {
-        if (identificationCompleted.get()) return;
-
+    private void uploadImageToIdentificationStorage(Uri imageUri, @Nullable Double latitude, @Nullable Double longitude, @Nullable String localityName, @Nullable String state, @Nullable String country) {
         FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
         if (user == null) {
-            Log.e(TAG, "uploadVerifiedImage: User null");
             loadingDialog.dismiss();
             finishActivityWithToast("User not logged in.");
             return;
         }
 
-        String fileName = "user_images/" + user.getUid() + "/" + UUID.randomUUID().toString() + ".jpg";
+        // Reverted: Folder changed to identificationImages
+        String fileName = "identificationImages/" + user.getUid() + "/" + UUID.randomUUID().toString() + ".jpg";
         StorageReference storageRef = FirebaseStorage.getInstance().getReference().child(fileName);
 
-        Log.d(TAG, "uploadVerifiedImage: Starting upload to " + fileName);
-        storageRef.putFile(localImageUri)
+        Log.d(TAG, "uploadImageToIdentificationStorage: Uploading to " + fileName);
+        storageRef.putFile(imageUri)
                 .addOnSuccessListener(taskSnapshot -> {
                     if (identificationCompleted.get()) return;
-                    Log.d(TAG, "uploadVerifiedImage: Upload successful, getting download URL");
                     storageRef.getDownloadUrl().addOnSuccessListener(downloadUri -> {
                         if (identificationCompleted.get()) return;
-                        Log.d(TAG, "uploadVerifiedImage: Download URL obtained: " + downloadUri);
-                        loadingDialog.dismiss();
-                        proceedToInfoActivity(identificationResult, downloadUri.toString(), latitude, longitude, localityName, state, country);
+                        Log.d(TAG, "Image uploaded. Download URL: " + downloadUri);
+                        identifyBirdWithUrl(downloadUri.toString(), latitude, longitude, localityName, state, country);
                     }).addOnFailureListener(e -> {
-                        if (identificationCompleted.get()) return;
-                        Log.e(TAG, "uploadVerifiedImage: Failed to get download URL", e);
+                        Log.e(TAG, "Failed to get download URL", e);
                         loadingDialog.dismiss();
-                        finishActivityWithToast("Failed to get image link.");
+                        finishActivityWithToast("Failed to process identification image link.");
                     });
                 })
                 .addOnFailureListener(e -> {
-                    if (identificationCompleted.get()) return;
-                    Log.e(TAG, "uploadVerifiedImage: Upload failed", e);
+                    Log.e(TAG, "Upload failed", e);
                     loadingDialog.dismiss();
-                    finishActivityWithToast("Image upload failed.");
+                    finishActivityWithToast("Image upload for identification failed.");
                 });
+    }
+
+    private void identifyBirdWithUrl(String downloadUrl, @Nullable Double latitude, @Nullable Double longitude, @Nullable String localityName, @Nullable String state, @Nullable String country) {
+        Log.d(TAG, "identifyBirdWithUrl: Encoding image for AI analysis...");
+        String base64Image = encodeImage(localImageUri); // Still need base64 for the Vision API call
+        if (base64Image == null) {
+            loadingDialog.dismiss();
+            finishActivityWithToast("Failed to encode image for analysis.");
+            return;
+        }
+
+        // We pass the base64 for analysis AND the storage URL for logging
+        openAiApi.identifyBirdFromImage(base64Image, downloadUrl, latitude, longitude, localityName, new OpenAiApi.OpenAiCallback() {
+            @Override
+            public void onSuccess(String response, boolean isVerified) {
+                if (identificationCompleted.get()) return;
+                Log.d(TAG, "OpenAI onSuccess: isVerified=" + isVerified);
+                if (!isVerified) {
+                    loadingDialog.dismiss();
+                    finishActivityWithToast("Bird not recognized in Georgia regional data.");
+                    return;
+                }
+                loadingDialog.dismiss();
+                proceedToInfoActivity(response, downloadUrl, latitude, longitude, localityName, state, country);
+            }
+
+            @Override
+            public void onFailure(Exception e, String message) {
+                if (identificationCompleted.get()) return;
+                Log.e(TAG, "OpenAI onFailure: " + message, e);
+                loadingDialog.dismiss();
+                finishActivityWithToast("Identification failed: " + message);
+            }
+        });
     }
 
     private void proceedToInfoActivity(String contentStr, @Nullable String downloadUrl, @Nullable Double latitude, @Nullable Double longitude, @Nullable String localityName, @Nullable String state, @Nullable String country) {
@@ -305,8 +304,6 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
                 else if (trimmed.startsWith("Family: ")) family = trimmed.substring(8).trim();
             }
 
-            Log.d(TAG, "proceedToInfoActivity: Extracted birdId=" + birdId + ", name=" + commonName);
-
             Intent intent = new Intent(IdentifyingActivity.this, BirdInfoActivity.class);
             intent.putExtra("imageUri", localImageUri.toString());
             intent.putExtra("birdId", birdId);
@@ -324,7 +321,6 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
                 intent.putExtra("country", country);
             }
 
-            Log.d(TAG, "proceedToInfoActivity: Starting BirdInfoActivity");
             startActivity(intent);
             finish();
         }

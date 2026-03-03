@@ -9,7 +9,7 @@ public class UserBirdSighting {
     private Location location; // Denormalized location data
     private String birdId; // Denormalized bird ID
     private String commonName; // Denormalized common name
-    private String imageUrl; // Denormalized image URL
+    private String howMany; // How many birds were seen
     private Date timestamp; // Sighting timestamp
 
     public UserBirdSighting() {
@@ -17,13 +17,13 @@ public class UserBirdSighting {
     }
 
     // Constructor for creating a new user bird sighting
-    public UserBirdSighting(String id, Map<String, Object> user_sighting, Location location, String birdId, String commonName, String imageUrl, Date timestamp) {
+    public UserBirdSighting(String id, Map<String, Object> user_sighting, Location location, String birdId, String commonName, String howMany, Date timestamp) {
         this.id = id;
         this.user_sighting = user_sighting;
         this.location = location;
         this.birdId = birdId;
         this.commonName = commonName;
-        this.imageUrl = imageUrl;
+        this.howMany = howMany;
         this.timestamp = timestamp;
     }
 
@@ -68,12 +68,12 @@ public class UserBirdSighting {
         this.commonName = commonName;
     }
 
-    public String getImageUrl() {
-        return imageUrl;
+    public String getHowMany() {
+        return howMany;
     }
 
-    public void setImageUrl(String imageUrl) {
-        this.imageUrl = imageUrl;
+    public void setHowMany(String howMany) {
+        this.howMany = howMany;
     }
 
     public Date getTimestamp() {

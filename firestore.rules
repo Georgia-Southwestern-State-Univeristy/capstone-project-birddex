@@ -12,7 +12,6 @@ service cloud.firestore {
 
 
       // RESTORED: Owner can only update profile fields. Others can only update social counts.
-      // Removed 'notificationsEnabled' as it is now in a sub-collection.
       allow update: if request.auth != null && (
                       (request.auth.uid == userId &&
                        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
@@ -90,8 +89,11 @@ service cloud.firestore {
 
     match /userBirdSightings/{userBirdSightingId} {
         allow read: if request.auth != null;
-        allow create: if request.auth != null && request.resource.data.userId == request.auth.uid;
-        allow update: if request.auth != null && resource.data.userId == request.auth.uid;
+        // userId is nested inside user_sighting map
+        allow create: if request.auth != null && request.resource.data.user_sighting.userId == request.auth.uid;
+        allow update: if request.auth != null && resource.data.user_sighting.userId == request.auth.uid;
+        // Deny deletion to keep records permanent as requested
+        allow delete: if false;
     }
 
     match /eBirdApiSightings/{ebirdSightingId} {
@@ -120,10 +122,9 @@ service cloud.firestore {
     }
 
     // Reports: Allow any authenticated user to create a report.
-    // Reading/Managing reports should be restricted (e.g., to an admin role, not yet implemented here).
     match /reports/{reportId} {
         allow create: if request.auth != null;
-        allow read, update, delete: if false; // Only manageable through the Firebase Console or an admin dashboard
+        allow read, update, delete: if false;
     }
 
     // eBird cache is read-only for clients (written by Cloud Function).

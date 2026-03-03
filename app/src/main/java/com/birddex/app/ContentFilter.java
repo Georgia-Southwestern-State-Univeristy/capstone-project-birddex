@@ -17,6 +17,7 @@ public class ContentFilter {
             "slut", "whore", "sex", "porn", "pornography", "xxx", "nsfw", "erotic",
             "hardcore", "softcore", "adult content", "motherfucker", "cocksucker",
             "cockfucker", "jackass", "dipshit", "dumbass", "dumbshit", "goddamn", "piss",
+            "ahole", "biotch", "cunt",
 
             // --- Anatomy & Sexual Terms ---
             "penis", "vagina", "clitoris", "testicles", "scrotum", "boobs", "tits",
@@ -24,6 +25,7 @@ public class ContentFilter {
             "erection", "masturbate", "masturbation", "orgasm", "cum", "cumming",
             "ejaculate", "penetrate", "penetration", "intercourse", "coitus",
             "blowjob", "handjob", "deepthroat", "rimjob", "rimming", "anal",
+            "cummin", "coom", "blowie", "his member", "wet cunt",
 
             // --- Fetishes & Adult Services ---
             "onlyfans", "camgirl", "camsite", "stripper", "escort", "brothel",
@@ -35,7 +37,7 @@ public class ContentFilter {
             "nude", "nudes", "naked", "topless", "lewd", "explicit", "send nudes",
             "milf", "dilf", "sugar daddy", "sugar baby", "creampie", "facial",
             "spitroast", "threesome", "foursome", "gangbang", "orgy", "hentai",
-            "doujinshi", "adult video", "sex tape",
+            "doujinshi", "adult video", "sex tape", "gilf",
 
             // --- Dating & Hookups ---
             "hookup", "one night stand", "booty call", "smash", "get laid",
@@ -43,18 +45,34 @@ public class ContentFilter {
 
             // --- Slurs & Hate Speech ---
             "nigger", "kike", "faggot", "dyke", "retard", "tranny", "spic", "chink",
-            "wetback", "coon", "nazi", "hitler", "negro", "beaner", "gook", "gypo",
+            "wetback", "coon", "nazi", "hitler", "negro", "beaner", "gook", "gypo", "fag",
+            "cracker", "zipperhead", "sand nigger", "turban head", "darkie", "chud", "transvestite",
+            "troon", "nigga",
 
             // --- Violence & Harm ---
             "kill yourself", "suicide", "murder", "rape", "molest", "pedophile",
-            "underage", "terrorist", "massacre", "genocide", "kys",
+            "underage", "terrorist", "massacre", "genocide", "kys", "rapist",
+
+            // --- Organizations
+            "al qaeda", "ISIS", "KKK", "Klu Klux Klan", "Kool Kids Klub", "cia", "fbi",
 
             // --- Illegal Substances ---
             "cocaine", "heroin", "meth", "fentanyl", "oxycodone", "xanax", "percocet",
             "crack cocaine", "mdma", "ecstasy",
 
             // --- Controversial / Political ---
-            "9-11", "epstein", "white power", "black lives matter", "magam", "maga",
+            "9-11", "white power", "black lives matter", "magam", "maga",
+            "magat", "libtard", "glowie", "ice agent", "Israel", "Palestine",
+            "jet fuel can't melt steel beams", "jet fuel cant melt steel beams",
+            "black excellence", "white superiority", "IDF", "Ukraine",
+            "From the river to the sea", "From the river, to the sea",
+            "Russia", "Free Palestine",
+
+
+            // --- People ---
+            "trump", "biden", "obama", "bill clinton", "hillary clinton", "nick fuentes",
+            "osama", "bin laden", "JD Vance", "Andrew Tate", "Tristan Tate", "Sneako",
+            "epstein", "Ghislaine Maxwell", "Jeffery Epstein",
 
             // --- Miscellaneous Clothing ---
             "g string", "lingerie", "thong"

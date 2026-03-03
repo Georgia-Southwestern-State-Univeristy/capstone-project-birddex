@@ -1,11 +1,7 @@
 package com.birddex.app;
 
-import android.graphics.Bitmap;
-import android.graphics.BitmapFactory;
 import android.net.Uri;
-import android.os.Build;
 import android.os.Bundle;
-import android.provider.MediaStore;
 import android.util.Log;
 import android.widget.Button;
 import android.widget.ImageView;
@@ -20,7 +16,6 @@ import androidx.appcompat.app.AppCompatActivity;
 import com.bumptech.glide.Glide;
 import com.bumptech.glide.load.engine.DiskCacheStrategy;
 import com.bumptech.glide.signature.ObjectKey;
-import com.google.android.gms.tasks.Continuation;
 import com.google.android.gms.tasks.Task;
 import com.google.android.gms.tasks.TaskCompletionSource;
 import com.google.android.gms.tasks.Tasks;
@@ -30,24 +25,15 @@ import com.google.firebase.firestore.FirebaseFirestore;
 import com.google.firebase.firestore.Query;
 import com.google.firebase.storage.FirebaseStorage;
 import com.google.firebase.storage.StorageReference;
-import com.google.firebase.storage.UploadTask;
 
-import java.io.ByteArrayOutputStream;
-import java.io.IOException;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
 
 /**
- * CardMakerActivity acts as a PREVIEW screen only.
- * It shows the styled bird card preview using view_bird_card.xml,
- * but saves ONLY the original bird photo to Firebase / collection.
- *
- * IMPORTANT behavior:
- * - First time a species is captured -> create its collection card
- * - Later captures of the same species -> save the sighting + image only
- *   and DO NOT auto-overwrite the visible collection card
+ * CardMakerActivity handles saving the bird to the user's permanent collection.
+ * It uploads a separate copy of the image to 'userCollectionImages'.
  */
 public class CardMakerActivity extends AppCompatActivity {
 
@@ -64,6 +50,11 @@ public class CardMakerActivity extends AppCompatActivity {
     public static final String EXTRA_LOCALITY = "localityName";
     public static final String EXTRA_STATE = "state";
     public static final String EXTRA_CAUGHT_TIME = "caughtTime";
+    public static final String EXTRA_QUANTITY = "quantity";
+    public static final String EXTRA_RECORD_SIGHTING = "recordSighting";
+    public static final String EXTRA_LATITUDE = "latitude";
+    public static final String EXTRA_LONGITUDE = "longitude";
+    public static final String EXTRA_COUNTRY = "country";
 
     private FirebaseManager firebaseManager;
     private LoadingDialog loadingDialog;
@@ -79,6 +70,12 @@ public class CardMakerActivity extends AppCompatActivity {
     private String currentLocality;
     private String currentState;
     private long currentCaughtTime;
+    
+    private String currentQuantity;
+    private boolean shouldRecordSighting;
+    private Double currentLatitude;
+    private Double currentLongitude;
+    private String currentCountry;
 
     @Override
     protected void onCreate(@Nullable Bundle savedInstanceState) {
@@ -113,6 +110,12 @@ public class CardMakerActivity extends AppCompatActivity {
         currentLocality = getIntent().getStringExtra(EXTRA_LOCALITY);
         currentState = getIntent().getStringExtra(EXTRA_STATE);
         currentCaughtTime = getIntent().getLongExtra(EXTRA_CAUGHT_TIME, System.currentTimeMillis());
+        
+        currentQuantity = getIntent().getStringExtra(EXTRA_QUANTITY);
+        shouldRecordSighting = getIntent().getBooleanExtra(EXTRA_RECORD_SIGHTING, false);
+        currentLatitude = getIntent().hasExtra(EXTRA_LATITUDE) ? getIntent().getDoubleExtra(EXTRA_LATITUDE, 0.0) : null;
+        currentLongitude = getIntent().hasExtra(EXTRA_LONGITUDE) ? getIntent().getDoubleExtra(EXTRA_LONGITUDE, 0.0) : null;
+        currentCountry = getIntent().getStringExtra(EXTRA_COUNTRY);
 
         if (originalImageUri == null) {
             Toast.makeText(this, "No image passed.", Toast.LENGTH_SHORT).show();
@@ -152,22 +155,6 @@ public class CardMakerActivity extends AppCompatActivity {
         btnSave.setOnClickListener(v -> processAndSaveBirdDiscovery(originalImageUri));
     }
 
-    private Bitmap loadBitmapSafe(Uri uri) throws IOException {
-        String scheme = uri.getScheme();
-
-        if ("file".equalsIgnoreCase(scheme)) {
-            return BitmapFactory.decodeFile(uri.getPath());
-        }
-
-        if (Build.VERSION.SDK_INT >= 28) {
-            android.graphics.ImageDecoder.Source src =
-                    android.graphics.ImageDecoder.createSource(getContentResolver(), uri);
-            return android.graphics.ImageDecoder.decodeBitmap(src);
-        } else {
-            return MediaStore.Images.Media.getBitmap(getContentResolver(), uri);
-        }
-    }
-
     private void processAndSaveBirdDiscovery(Uri originalImageUri) {
         FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
         if (user == null) {
@@ -179,54 +166,33 @@ public class CardMakerActivity extends AppCompatActivity {
         loadingDialog.show();
 
         String userId = user.getUid();
-        String originalImageFileName = "user_images/" + userId + "/" + UUID.randomUUID() + ".jpg";
+        String originalImageFileName = "userCollectionImages/" + userId + "/" + UUID.randomUUID() + ".jpg";
+        StorageReference storageRef = FirebaseStorage.getInstance().getReference().child(originalImageFileName);
 
-        byte[] originalImageData;
-        try {
-            Bitmap originalBitmap = loadBitmapSafe(originalImageUri);
-            ByteArrayOutputStream originalBaos = new ByteArrayOutputStream();
-            originalBitmap.compress(Bitmap.CompressFormat.JPEG, 90, originalBaos);
-            originalImageData = originalBaos.toByteArray();
-        } catch (IOException e) {
-            Log.e(TAG, "Error converting original image to byte array", e);
-            loadingDialog.dismiss();
-            Toast.makeText(this, "Error processing original image.", Toast.LENGTH_LONG).show();
-            return;
-        }
-
-        uploadImageAndGetUrl(originalImageData, originalImageFileName)
-                .addOnSuccessListener(originalDownloadUri -> {
-                    Log.d(TAG, "Original image uploaded: " + originalDownloadUri);
-                    storeBirdDiscovery(originalDownloadUri.toString());
+        Log.d(TAG, "processAndSaveBirdDiscovery: Uploading to " + originalImageFileName);
+        
+        storageRef.putFile(originalImageUri)
+                .addOnSuccessListener(taskSnapshot -> {
+                    storageRef.getDownloadUrl().addOnSuccessListener(originalDownloadUri -> {
+                        Log.d(TAG, "Original image uploaded to collection: " + originalDownloadUri);
+                        storeBirdDiscovery(originalDownloadUri.toString());
+                    }).addOnFailureListener(e -> {
+                        Log.e(TAG, "Failed to get download URL", e);
+                        loadingDialog.dismiss();
+                        Toast.makeText(CardMakerActivity.this, "Failed to save collection image link.", Toast.LENGTH_LONG).show();
+                    });
                 })
                 .addOnFailureListener(e -> {
                     Log.e(TAG, "Original image upload failed: " + e.getMessage(), e);
                     loadingDialog.dismiss();
-                    Toast.makeText(CardMakerActivity.this, "Failed to upload image. Please try again.", Toast.LENGTH_LONG).show();
+                    Toast.makeText(CardMakerActivity.this, "Failed to upload image to your collection.", Toast.LENGTH_LONG).show();
                 });
-    }
-
-    private Task<Uri> uploadImageAndGetUrl(byte[] imageData, String storagePath) {
-        StorageReference storageRef = FirebaseStorage.getInstance().getReference().child(storagePath);
-        UploadTask uploadTask = storageRef.putBytes(imageData);
-
-        return uploadTask.continueWithTask(new Continuation<UploadTask.TaskSnapshot, Task<Uri>>() {
-            @Override
-            public Task<Uri> then(@NonNull Task<UploadTask.TaskSnapshot> task) throws Exception {
-                if (!task.isSuccessful()) {
-                    throw task.getException();
-                }
-                return storageRef.getDownloadUrl();
-            }
-        });
     }
 
     private void storeBirdDiscovery(String originalImageUrl) {
         FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
         if (user == null) {
-            Log.e(TAG, "Store failed: User is not authenticated.");
             loadingDialog.dismiss();
-            Toast.makeText(this, "Error: No user logged in. Please log in again.", Toast.LENGTH_LONG).show();
             return;
         }
 
@@ -241,6 +207,9 @@ public class CardMakerActivity extends AppCompatActivity {
         locationData.put("id", locationId);
         locationData.put("state", currentState);
         locationData.put("locality", currentLocality);
+        if (currentLatitude != null) locationData.put("latitude", currentLatitude);
+        if (currentLongitude != null) locationData.put("longitude", currentLongitude);
+        if (currentCountry != null) locationData.put("country", currentCountry);
 
         UserBird userBird = new UserBird();
         userBird.setId(userBirdId);
@@ -248,6 +217,7 @@ public class CardMakerActivity extends AppCompatActivity {
         userBird.setBirdSpeciesId(currentBirdId);
         userBird.setTimeSpotted(now);
         userBird.setLocationId(locationId);
+        userBird.setImageUrl(originalImageUrl);
 
         UserBirdImage userBirdImage = new UserBirdImage();
         userBirdImage.setId(userBirdImageId);
@@ -293,13 +263,11 @@ public class CardMakerActivity extends AppCompatActivity {
                 .limit(1)
                 .get()
                 .addOnSuccessListener(existingSlotQuery -> {
-                    // Species already has a visible card -> do NOT auto-update it
                     if (!existingSlotQuery.isEmpty()) {
                         addCollectionSlotMaybeTcs.setResult(null);
                         return;
                     }
 
-                    // First time this species is captured -> create its visible card
                     FirebaseFirestore.getInstance()
                             .collection("users")
                             .document(userId)
@@ -343,11 +311,19 @@ public class CardMakerActivity extends AppCompatActivity {
                 })
                 .addOnFailureListener(addCollectionSlotMaybeTcs::setException);
 
+        final TaskCompletionSource<Void> addSightingTcs = new TaskCompletionSource<>();
+        if (shouldRecordSighting) {
+            saveUserBirdSighting(userId, userBirdId, now, currentQuantity, addSightingTcs);
+        } else {
+            addSightingTcs.setResult(null);
+        }
+
         Tasks.whenAll(
                         addLocationTcs.getTask(),
                         addUserBirdTcs.getTask(),
                         addUserBirdImageTcs.getTask(),
-                        addCollectionSlotMaybeTcs.getTask()
+                        addCollectionSlotMaybeTcs.getTask(),
+                        addSightingTcs.getTask()
                 )
                 .addOnSuccessListener(unused -> {
                     Log.d(TAG, "SUCCESS: All Firestore writes succeeded.");
@@ -365,6 +341,44 @@ public class CardMakerActivity extends AppCompatActivity {
                     loadingDialog.dismiss();
                     Toast.makeText(CardMakerActivity.this, "Error saving to collection. Please try again.", Toast.LENGTH_LONG).show();
                 });
+    }
+
+    private void saveUserBirdSighting(String userId, String userBirdId, Date timestamp, String quantity, TaskCompletionSource<Void> tcs) {
+        Map<String, Object> userSightingData = new HashMap<>();
+        userSightingData.put("userBirdId", userBirdId);
+        userSightingData.put("userId", userId);
+        userSightingData.put("quantity", quantity);
+
+        Location sightingLocation = new Location(
+                UUID.randomUUID().toString(),
+                new HashMap<>(),
+                currentLatitude != null ? currentLatitude : 0.0,
+                currentLongitude != null ? currentLongitude : 0.0,
+                currentCountry != null ? currentCountry : "US",
+                currentState != null ? currentState : "Georgia",
+                currentLocality != null ? currentLocality : "Unknown"
+        );
+
+        String userBirdSightId = UUID.randomUUID().toString();
+        UserBirdSighting userBirdSighting = new UserBirdSighting(
+                userBirdSightId,
+                userSightingData,
+                sightingLocation,
+                currentBirdId,
+                currentCommonName,
+                quantity,
+                timestamp
+        );
+
+        firebaseManager.addUserBirdSighting(userBirdSighting, task -> {
+            if (task.isSuccessful()) {
+                Log.d(TAG, "SUCCESS: Saved UserBirdSighting: " + userBirdSightId);
+                tcs.setResult(null);
+            } else {
+                Log.e(TAG, "FAILURE: Could not save UserBirdSighting", task.getException());
+                tcs.setException(task.getException());
+            }
+        });
     }
 
     @Override

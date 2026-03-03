@@ -115,7 +115,12 @@ public class RecentPhotoMemoriesAdapter extends RecyclerView.Adapter<RecyclerVie
 
         btnSaveToCameraRoll.setOnClickListener(v -> saveImageToCameraRoll(item.imageUrl));
         btnDeleteImage.setOnClickListener(v -> {
-            Toast.makeText(context, "Delete button is not wired up yet.", Toast.LENGTH_SHORT).show();
+            new AlertDialog.Builder(context)
+                    .setTitle("Delete Photo")
+                    .setMessage("Are you sure you want to delete this photo? This will also remove the associated sighting if it's the last photo.")
+                    .setPositiveButton("Delete", (d, which) -> deletePhoto(item, dialog))
+                    .setNegativeButton("Cancel", null)
+                    .show();
         });
 
         ivPreview.setOnClickListener(v -> dialog.dismiss());
@@ -125,6 +130,31 @@ public class RecentPhotoMemoriesAdapter extends RecyclerView.Adapter<RecyclerVie
         }
 
         dialog.show();
+    }
+
+    private void deletePhoto(MemoryItem item, Dialog dialog) {
+        FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
+        if (user == null) {
+            Toast.makeText(context, "Error: User not logged in.", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        FirebaseFirestore.getInstance()
+                .collection("users")
+                .document(user.getUid())
+                .collection("userBirdImage")
+                .document(item.documentId)
+                .delete()
+                .addOnSuccessListener(aVoid -> {
+                    Toast.makeText(context, "Photo deleted successfully.", Toast.LENGTH_SHORT).show();
+                    dialog.dismiss();
+                    if (onPhotosChanged != null) {
+                        onPhotosChanged.run();
+                    }
+                })
+                .addOnFailureListener(e -> {
+                    Toast.makeText(context, "Failed to delete photo: " + e.getMessage(), Toast.LENGTH_SHORT).show();
+                });
     }
 
     private void saveImageToCameraRoll(String imageUrl) {

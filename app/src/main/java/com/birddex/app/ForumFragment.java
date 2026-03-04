@@ -463,8 +463,9 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
                     });
                 })
                 .addOnFailureListener(e -> {
+                    if (!isAdded()) return;
                     Log.e(TAG, "Failed to backlog post", e);
-                    Toast.makeText(this, "Failed to delete post. Try again.", Toast.LENGTH_SHORT).show();
+                    Toast.makeText(getContext(), "Failed to delete post. Try again.", Toast.LENGTH_SHORT).show();
                 });
     }
 

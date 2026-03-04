@@ -1,6 +1,8 @@
 package com.birddex.app;
 
+import android.content.Context;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.os.Bundle;
 import android.text.InputFilter;
 import android.text.InputType;
@@ -28,6 +30,7 @@ import com.google.firebase.auth.FirebaseUser;
 import com.google.firebase.firestore.DocumentSnapshot;
 import com.google.firebase.firestore.FieldValue;
 import com.google.firebase.firestore.FirebaseFirestore;
+import com.google.firebase.firestore.ListenerRegistration;
 import com.google.firebase.firestore.MetadataChanges;
 import com.google.firebase.firestore.Query;
 
@@ -43,6 +46,9 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
     private static final String TAG = "ForumFragment";
     private static final int PAGE_SIZE = 20;
 
+    private static final String PREFS_NAME = "ForumPrefs";
+    private static final String KEY_FILTER = "current_filter";
+    
     private FragmentForumBinding binding;
     private FirebaseAuth mAuth;
     private FirebaseFirestore db;
@@ -53,6 +59,8 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
     private DocumentSnapshot lastVisible;
     private boolean isFetching = false;
     private boolean isLastPage = false;
+    private ListenerRegistration postsListener;
+    private String currentFilter = "Recent";
 
     @Nullable
     @Override
@@ -66,12 +74,17 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
         db = FirebaseFirestore.getInstance();
         firebaseManager = new FirebaseManager(requireContext());
 
+        // Load saved filter preference
+        SharedPreferences prefs = requireContext().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+        currentFilter = prefs.getString(KEY_FILTER, "Recent");
+
         setupRecyclerView();
         setupClickListeners();
         loadUserProfilePicture();
         setupSwipeRefresh();
         
         refreshPosts();
+        applyFilter(); // Load initial data based on saved filter
 
         return view;
     }
@@ -116,6 +129,41 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
         binding.btnSocial.setOnClickListener(v -> {
             startActivity(new Intent(getActivity(), SocialActivity.class));
         });
+
+        binding.btnFilter.setOnClickListener(this::showFilterMenu);
+    }
+
+    private void showFilterMenu(View v) {
+        PopupMenu popup = new PopupMenu(getContext(), v);
+        popup.getMenu().add("Recent");
+        popup.getMenu().add("Following");
+
+        popup.setOnMenuItemClickListener(item -> {
+            String selectedFilter = item.getTitle().toString();
+            if (!selectedFilter.equals(currentFilter)) {
+                currentFilter = selectedFilter;
+                
+                // Save filter preference
+                SharedPreferences prefs = requireContext().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+                prefs.edit().putString(KEY_FILTER, currentFilter).apply();
+                
+                applyFilter();
+            }
+            return true;
+        });
+        popup.show();
+    }
+
+    private void applyFilter() {
+        if (postsListener != null) {
+            postsListener.remove();
+        }
+        
+        if ("Following".equals(currentFilter)) {
+            listenForFollowingPosts();
+        } else {
+            listenForPosts();
+        }
     }
 
     private void loadUserProfilePicture() {
@@ -188,6 +236,69 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
             if (binding != null) binding.swipeRefreshLayout.setRefreshing(false);
             Log.e(TAG, "Error fetching posts", e);
         });
+    }
+
+    private void listenForFollowingPosts() {
+        FirebaseUser currentUser = mAuth.getCurrentUser();
+        if (currentUser == null) return;
+
+        db.collection("users").document(currentUser.getUid()).collection("following")
+                .get()
+                .addOnSuccessListener(queryDocumentSnapshots -> {
+                    if (!isAdded() || binding == null) return;
+                    
+                    List<String> followedIds = new ArrayList<>();
+                    for (DocumentSnapshot doc : queryDocumentSnapshots.getDocuments()) {
+                        followedIds.add(doc.getId());
+                    }
+
+                    if (followedIds.isEmpty()) {
+                        adapter.setPosts(new ArrayList<>());
+                        Toast.makeText(getContext(), "You are not following anyone yet.", Toast.LENGTH_SHORT).show();
+                        return;
+                    }
+
+                    // Firestore whereIn limit is 30. For simplicity, we use the first 30.
+                    if (followedIds.size() > 30) {
+                        followedIds = followedIds.subList(0, 30);
+                    }
+
+                    postsListener = db.collection("forumThreads")
+                            .whereIn("userId", followedIds)
+                            .orderBy("timestamp", Query.Direction.DESCENDING)
+                            .addSnapshotListener(MetadataChanges.INCLUDE, (value, error) -> {
+                                if (!isAdded() || binding == null) return;
+                                if (error != null) {
+                                    Log.e(TAG, "Following listen failed.", error);
+                                    return;
+                                }
+
+                                if (value != null) {
+                                    processSnapshot(value.getDocuments(), value.getMetadata().isFromCache());
+                                }
+                            });
+                })
+                .addOnFailureListener(e -> {
+                    Log.e(TAG, "Error fetching following list", e);
+                });
+    }
+
+    private void processSnapshot(List<DocumentSnapshot> documents, boolean isFromCache) {
+        List<ForumPost> posts = new ArrayList<>();
+        for (DocumentSnapshot doc : documents) {
+            ForumPost post = doc.toObject(ForumPost.class);
+            if (post != null) {
+                post.setId(doc.getId());
+                posts.add(post);
+            }
+        }
+        adapter.setPosts(posts);
+
+        if (isFromCache) {
+            Log.d(TAG, "Forum data loaded from local cache");
+        } else {
+            Log.d(TAG, "Forum data synchronized with server");
+        }
     }
 
     @Override
@@ -360,6 +471,9 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
     @Override
     public void onDestroyView() {
         super.onDestroyView();
+        if (postsListener != null) {
+            postsListener.remove();
+        }
         binding = null;
     }
 }

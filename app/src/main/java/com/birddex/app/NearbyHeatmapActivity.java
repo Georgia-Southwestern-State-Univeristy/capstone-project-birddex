@@ -595,7 +595,7 @@ public class NearbyHeatmapActivity extends AppCompatActivity
                         commentBacklog.put("deletedBy", userId);
                         commentBacklog.put("deletedAt", FieldValue.serverTimestamp());
                         
-                        batch.set(db.collection("deleted_backlog").document(), commentBacklog);
+                        batch.set(db.collection("deletedforum_backlog").document(), commentBacklog);
                         batch.delete(doc.getReference());
                     }
                     
@@ -606,7 +606,7 @@ public class NearbyHeatmapActivity extends AppCompatActivity
                     postBacklog.put("deletedBy", userId);
                     postBacklog.put("deletedAt", FieldValue.serverTimestamp());
                     
-                    batch.set(db.collection("deleted_backlog").document(), postBacklog);
+                    batch.set(db.collection("deletedforum_backlog").document(), postBacklog);
                     batch.delete(db.collection("forumThreads").document(post.getId()));
                     
                     batch.commit().addOnSuccessListener(aVoid -> {
@@ -658,7 +658,7 @@ public class NearbyHeatmapActivity extends AppCompatActivity
         backlogData.put("deletedBy", userId);
         backlogData.put("deletedAt", FieldValue.serverTimestamp());
 
-        db.collection("deleted_backlog").add(backlogData)
+        db.collection("deletedforum_backlog").add(backlogData)
                 .addOnSuccessListener(docRef -> {
                     firebaseManager.deleteForumPost(post.getId(), task -> {
                         if (task.isSuccessful()) {
@@ -842,7 +842,7 @@ public class NearbyHeatmapActivity extends AppCompatActivity
             replyBacklog.put("deletedBy", user.getUid());
             replyBacklog.put("deletedAt", FieldValue.serverTimestamp());
 
-            db.collection("deleted_backlog").add(replyBacklog)
+            db.collection("deletedforum_backlog").add(replyBacklog)
                     .addOnSuccessListener(docRef -> {
                         firebaseManager.deleteForumComment(activePost.getId(), comment.getId(), task -> {
                             if (task.isSuccessful()) {
@@ -863,7 +863,7 @@ public class NearbyHeatmapActivity extends AppCompatActivity
         backlog.put("data", data);
         backlog.put("deletedBy", uid);
         backlog.put("deletedAt", FieldValue.serverTimestamp());
-        batch.set(db.collection("deleted_backlog").document(), backlog);
+        batch.set(db.collection("deletedforum_backlog").document(), backlog);
     }
 
     @Override

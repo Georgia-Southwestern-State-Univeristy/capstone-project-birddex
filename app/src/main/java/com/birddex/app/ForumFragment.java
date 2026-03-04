@@ -385,7 +385,7 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
                         commentBacklog.put("deletedBy", userId);
                         commentBacklog.put("deletedAt", FieldValue.serverTimestamp());
                         
-                        batch.set(db.collection("deleted_backlog").document(), commentBacklog);
+                        batch.set(db.collection("deletedforum_backlog").document(), commentBacklog);
                         batch.delete(doc.getReference());
                     }
                     
@@ -397,7 +397,7 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
                     postBacklog.put("deletedBy", userId);
                     postBacklog.put("deletedAt", FieldValue.serverTimestamp());
                     
-                    batch.set(db.collection("deleted_backlog").document(), postBacklog);
+                    batch.set(db.collection("deletedforum_backlog").document(), postBacklog);
                     
                     // Delete the post document itself
                     batch.delete(db.collection("forumThreads").document(post.getId()));
@@ -452,7 +452,7 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
         backlogData.put("deletedBy", userId);
         backlogData.put("deletedAt", FieldValue.serverTimestamp());
 
-        db.collection("deleted_backlog").add(backlogData)
+        db.collection("deletedforum_backlog").add(backlogData)
                 .addOnSuccessListener(docRef -> {
                     firebaseManager.deleteForumPost(post.getId(), task -> {
                         if (!isAdded()) return;
@@ -464,7 +464,7 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
                 })
                 .addOnFailureListener(e -> {
                     Log.e(TAG, "Failed to backlog post", e);
-                    Toast.makeText(getContext(), "Failed to delete post. Try again.", Toast.LENGTH_SHORT).show();
+                    Toast.makeText(this, "Failed to delete post. Try again.", Toast.LENGTH_SHORT).show();
                 });
     }
 

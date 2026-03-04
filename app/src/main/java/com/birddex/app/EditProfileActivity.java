@@ -363,22 +363,26 @@ public class EditProfileActivity extends AppCompatActivity implements NetworkMon
 
 
     private void uploadImageToFirebase(Uri newImageUri, String newUsername, String newBio) {
-        if (mAuth.getCurrentUser() == null || newImageUri == null) {
+        FirebaseUser user = mAuth.getCurrentUser();
+        if (user == null || newImageUri == null) {
             saveProfileChanges(newUsername, newBio, initialProfilePictureUrl);
             return;
         }
 
-        String userId = mAuth.getCurrentUser().getUid();
-        if (initialProfilePictureUrl != null && !initialProfilePictureUrl.isEmpty() && initialProfilePictureUrl.contains("firebasestorage")) {
-            try {
-                storage.getReferenceFromUrl(initialProfilePictureUrl).delete();
-            } catch (Exception ignored) {}
-        }
+        String userId = user.getUid();
 
-        StorageReference newProfileImageRef = storageRef.child("profile_pictures/" + userId + ".jpg");
+        // Use a timestamp in the filename so the new file doesn't overwrite the old one immediately.
+        // This allows the Cloud Function to see the change and delete the 'unused' file.
+        String fileName = userId + "_" + System.currentTimeMillis() + ".jpg";
+        StorageReference newProfileImageRef = storageRef.child("profile_pictures/" + fileName);
+
         newProfileImageRef.putFile(newImageUri)
             .addOnSuccessListener(taskSnapshot -> {
                 if (isFinishing() || isDestroyed()) return;
+
+                // We no longer need to manually delete the old file here in the app!
+                // The Cloud Function in index.js will handle it once saveProfileChanges updates Firestore.
+
                 newProfileImageRef.getDownloadUrl().addOnSuccessListener(uri -> {
                     if (isFinishing() || isDestroyed()) return;
                     saveProfileChanges(newUsername, newBio, uri.toString());

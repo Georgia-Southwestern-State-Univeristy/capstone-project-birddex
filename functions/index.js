@@ -650,7 +650,7 @@ exports.getGeorgiaBirds = onCall({ secrets: [EBIRD_API_KEY], timeoutSeconds: 60 
             ]);
 
             const gaCodes = codesRes.data;
-            const recentObservations = observationsRes.data;
+            const recent observations = observationsRes.data;
 
             const lastSeenMap = new Map();
             for (const obs of recentObservations) {
@@ -827,58 +827,138 @@ exports.searchBirdImage = onCall({ secrets: [NUTHATCH_API_KEY], timeoutSeconds: 
 });
 
 // ======================================================
-// 4. AUTOMATIC USER DATA CLEANUP (ENTIRE ACCOUNT)
-//=======================================================
-// Using the v1 auth module directly ensures 'user' is never undefined.
+// 4. IMPROVED: AUTOMATIC USER DATA CLEANUP & ANONYMIZATION
+// ======================================================
 exports.cleanupUserData = auth.user().onDelete(async (user) => {
     const uid = user.uid;
-    console.log(`🧹 Starting cleanup for user account: ${uid}`);
+    console.log(`🧹 Starting comprehensive cleanup for user: ${uid}`);
 
-    const batch = db.batch();
+    const userRef = db.collection("users").doc(uid);
 
     try {
-        // 1. Delete user profile
-        batch.delete(db.collection("users").doc(uid));
+        // 1. Data Integrity & Privacy: Anonymize the user document
+        const userDoc = await userRef.get();
+        const batch = db.batch();
 
-        // 2. Delete collectionSlot subcollection
-        const slotSnap = await db.collection("users").doc(uid).collection("collectionSlot").get();
-        slotSnap.forEach(doc => batch.delete(doc.ref));
+        if (userDoc.exists) {
+            const userData = userDoc.data();
+            const pfpUrl = userData.profilePictureUrl;
 
-        // 3. Delete from related global collections
-        const collections = ["userBirds", "media", "birdCards", "userBirdSightings"]; // Removed identifications
-        for (const col of collections) {
+            // Wipe Storage PFP if it exists
+            if (pfpUrl && pfpUrl.includes('firebasestorage.googleapis.com')) {
+                try {
+                    const decodedUrl = decodeURIComponent(pfpUrl);
+                    const filePath = decodedUrl.substring(decodedUrl.indexOf('/o/') + 3, decodedUrl.indexOf('?'));
+                    await admin.storage().bucket().file(filePath).delete();
+                    console.log(`🗑️ Deleted PFP from storage for anonymized user ${uid}`);
+                } catch (e) { console.error("PFP storage deletion failed", e); }
+            }
+
+            batch.set(userRef, {
+                username: "Deleted User",
+                email: "deleted@user.com",
+                profilePictureUrl: "",
+                isDeleted: true,
+                followerCount: 0,
+                followingCount: 0,
+                deletedAt: admin.firestore.FieldValue.serverTimestamp()
+            }, { merge: false });
+        }
+
+        // 2. SOCIAL RELATIONSHIPS (Followers/Following)
+        const followingSnap = await userRef.collection("following").get();
+        followingSnap.forEach(doc => {
+            const targetId = doc.id;
+            batch.delete(db.collection("users").doc(targetId).collection("followers").doc(uid));
+            batch.update(db.collection("users").doc(targetId), { followerCount: admin.firestore.FieldValue.increment(-1) });
+            batch.delete(doc.ref);
+        });
+
+        const followersSnap = await userRef.collection("followers").get();
+        followersSnap.forEach(doc => {
+            const followerId = doc.id;
+            batch.delete(db.collection("users").doc(followerId).collection("following").doc(uid));
+            batch.update(db.collection("users").doc(followerId), { followingCount: admin.firestore.FieldValue.increment(-1) });
+            batch.delete(doc.ref);
+        });
+
+        // 3. Resource Management: Clear personal bird data (Keeping sightings for heat map)
+        const personalCollections = ["userBirds", "media", "birdCards"];
+        for (const col of personalCollections) {
             const snap = await db.collection(col).where("userId", "==", uid).get();
             snap.forEach(doc => batch.delete(doc.ref));
         }
 
-        // Additional cleanup for specific relationships (if not handled by generic collections array)
-        // REMOVED cleanup for Identification documents related to the user
-
-        // Delete Threads and their Posts (assuming userId in Thread and Post)
-        const threadsSnap = await db.collection("threads").where("userId", "==", uid).get();
-        const threadIdsToDelete = [];
-        threadsSnap.forEach(doc => {
-            threadIdsToDelete.push(doc.id);
-            batch.delete(doc.ref);
-        });
-
-        for (const threadId of threadIdsToDelete) {
-            const postsSnap = await db.collection("threads").doc(threadId).collection("posts").get();
-            postsSnap.forEach(doc => batch.delete(doc.ref));
+        // 4. Storage Management: Wipe all user images from userCollectionImages/{uid}
+        try {
+            console.log(`🗑️ Deleting all collection images for user: ${uid}`);
+            await admin.storage().bucket().deleteFiles({ prefix: `userCollectionImages/${uid}/` });
+            console.log(`✅ Successfully deleted storage folder: userCollectionImages/${uid}/`);
+        } catch (e) {
+            console.error(`⚠️ Failed to wipe userCollectionImages for ${uid}`, e);
         }
 
-        // Delete Reports (if they have a userId field and are owned by the user) -
-        const reportsSnap = await db.collection("reports").where("userId", "==", uid).get();
-        reportsSnap.forEach(doc => batch.delete(doc.ref));
+        // 5. Comprehensive Social Cleanup:
+        // A. Delete user's own Forum Threads and their nested comments + Storage Images
+        const threadsSnap = await db.collection("forumThreads").where("userId", "==", uid).get();
+        for (const threadDoc of threadsSnap.docs) {
+            const threadData = threadDoc.data();
+            const postImageUrl = threadData.imageUrl;
 
-        // Locations are shared, so we don't delete them here unless completely unreferenced (more complex logic).
+            // Delete Post Image from Storage
+            if (postImageUrl && postImageUrl.includes("forum_post_images")) {
+                try {
+                    const decodedUrl = decodeURIComponent(postImageUrl);
+                    const filePath = decodedUrl.substring(decodedUrl.indexOf('/o/') + 3, decodedUrl.indexOf('?'));
+                    await admin.storage().bucket().file(filePath).delete();
+                } catch (e) { console.error("Post image deletion failed during account cleanup", e); }
+            }
+
+            const comments = await threadDoc.ref.collection("comments").get();
+            comments.forEach(c => batch.delete(c.ref));
+            batch.delete(threadDoc.ref);
+        }
+
+        // B. Delete "Stray" comments on OTHER people's threads using collectionGroup
+        const strayCommentsSnap = await db.collectionGroup("comments").where("userId", "==", uid).get();
+        strayCommentsSnap.forEach(doc => batch.delete(doc.ref));
+
+        // 6. Anonymize userBirdSightings for global heat maps
+        const sightingsSnap = await db.collection("userBirdSightings").where("userId", "==", uid).get();
+        sightingsSnap.forEach(doc => {
+            batch.update(doc.ref, {
+                username: "Deleted User",
+                imageUrl: "",
+                isAnonymized: true
+            });
+        });
 
         await batch.commit();
-        console.log(`✅ Successfully deleted all data for user account ${uid}`);
+        console.log(`✅ Successfully anonymized user and cleaned social data for ${uid}`);
         return null;
     } catch (err) {
-        console.error(`❌ Cleanup failed for user account ${uid}:`, err);
+        console.error(`❌ Cleanup failed for user ${uid}:`, err);
         return null;
+    }
+});
+
+// Trigger to delete post image from storage when a single post is deleted
+exports.onForumPostDeleted = onDocumentDeleted("forumThreads/{postId}", async (event) => {
+    const deletedPost = event.data.data();
+    const imageUrl = deletedPost.imageUrl;
+
+    if (imageUrl && imageUrl.includes("forum_post_images")) {
+        try {
+            const decodedUrl = decodeURIComponent(imageUrl);
+            const pathStart = decodedUrl.indexOf("/o/") + 3;
+            const pathEnd = decodedUrl.indexOf("?");
+            const filePath = decodedUrl.substring(pathStart, pathEnd);
+
+            await admin.storage().bucket().file(filePath).delete();
+            console.log(`✅ Deleted forum post image from storage: ${filePath}`);
+        } catch (err) {
+            console.error("❌ Failed to delete forum post image from storage", err);
+        }
     }
 });
 
@@ -1264,7 +1344,7 @@ exports.onDeleteUserBirdImage = onDocumentDeleted("users/{userId}/userBirdImage/
 
             if (userBirdDoc.exists) {
                 const userBirdData = userBirdDoc.data();
-                const pointsEarnedByBird = userBirdData.pointsEarned || 0;
+                const points earnedByBird = userBirdData.pointsEarned || 0;
                 const isDuplicate = userBirdData.isDuplicate || false;
 
                 console.log(`⬇️ onDeleteUserBirdImage: Last image deleted for UserBird ${userBirdRefId}. Reverting user totals.`);
@@ -1385,7 +1465,7 @@ exports.archiveOldForumPosts = onSchedule({
     const storageBucket = admin.storage().bucket();
 
     try {
-        const postsToArchive = await db.collection("threads")
+        const postsToArchive = await db.collection("forumThreads")
             .where("timestamp", "<", archiveThreshold)
             .limit(500)
             .get();
@@ -1401,8 +1481,8 @@ exports.archiveOldForumPosts = onSchedule({
             const postData = postDoc.data();
             const postId = postDoc.id;
 
-            // Fetch comments (sub-collection "posts")
-            const commentsSnap = await postDoc.ref.collection("posts").get();
+            // Fetch comments (sub-collection "comments" - updated from "posts")
+            const commentsSnap = await postDoc.ref.collection("comments").get();
             const comments = commentsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
 
             const archiveData = {
@@ -1680,4 +1760,58 @@ exports.onCommentLiked = onDocumentUpdated("forumThreads/{threadId}/comments/{co
         console.error("Error sending comment like notification:", error);
     }
     return null;
+});
+
+// ======================================================
+// NEW: AUTOMATIC STORAGE CLEANUP ON PFP CHANGE
+// ======================================================
+exports.deleteOldPfpOnChange = onDocumentUpdated("users/{userId}", async (event) => {
+    const newData = event.data.after.data();
+    const oldData = event.data.before.data();
+
+    const newPfp = newData.profilePictureUrl;
+    const oldPfp = oldData.profilePictureUrl;
+
+    // If the URL has changed and the old one existed
+    if (oldPfp && oldPfp !== newPfp) {
+        console.log(`PFP changed for ${event.params.userId}. Cleaning up old file...`);
+
+        // Only attempt deletion if it's a Firebase Storage link
+        if (oldPfp.includes('firebasestorage.googleapis.com')) {
+            try {
+                // Extract file path from URL
+                const decodedUrl = decodeURIComponent(oldPfp);
+                const startIndex = decodedUrl.indexOf('/o/') + 3;
+                const endIndex = decodedUrl.indexOf('?');
+                const filePath = decodedUrl.substring(startIndex, endIndex);
+
+                const bucket = admin.storage().bucket();
+                const file = bucket.file(filePath);
+
+                const [exists] = await file.exists();
+                if (exists) {
+                    await file.delete();
+                    console.log(`Deleted: ${filePath}`);
+                }
+            } catch (error) {
+                console.error('Error deleting old PFP:', error);
+            }
+        }
+    }
+    return null;
+});
+exports.deletePfpOnUserDelete = onDocumentDeleted("users/{userId}", async (event) => {
+    const data = event.data.data();
+    const pfpUrl = data.profilePictureUrl;
+
+    if (pfpUrl && pfpUrl.includes('firebasestorage.googleapis.com')) {
+        try {
+            const decodedUrl = decodeURIComponent(pfpUrl);
+            const filePath = decodedUrl.substring(decodedUrl.indexOf('/o/') + 3, decodedUrl.indexOf('?'));
+            await admin.storage().bucket().file(filePath).delete();
+            console.log(`Deleted PFP for deleted user ${event.params.userId}`);
+        } catch (error) {
+            console.error('Error deleting PFP on user deletion:', error);
+        }
+    }
 });

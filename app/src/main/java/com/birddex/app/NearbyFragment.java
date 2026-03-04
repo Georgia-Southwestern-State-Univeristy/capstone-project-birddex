@@ -18,6 +18,7 @@ import android.widget.ArrayAdapter;
 import android.widget.AutoCompleteTextView;
 import android.widget.ImageButton;
 import android.widget.LinearLayout;
+import android.widget.ProgressBar;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -62,7 +63,8 @@ public class NearbyFragment extends Fragment {
     private ImageButton btnRefresh;
     private ImageButton btnSearch;
     private ImageButton btnMap;
-    private LoadingDialog loadingDialog;
+    private ProgressBar pbLoading;
+    private TextView tvNoBirds;
 
     private FusedLocationProviderClient fusedLocationClient;
     private ActivityResultLauncher<String[]> locationPermissionLauncher;
@@ -104,8 +106,8 @@ public class NearbyFragment extends Fragment {
         btnRefresh = v.findViewById(R.id.btnRefresh);
         btnSearch = v.findViewById(R.id.btnSearch);
         btnMap = v.findViewById(R.id.btnMap);
-
-        loadingDialog = new LoadingDialog(requireContext());
+        pbLoading = v.findViewById(R.id.pbLoading);
+        tvNoBirds = v.findViewById(R.id.tvNoBirds);
 
         rvNearby.setLayoutManager(new LinearLayoutManager(requireContext()));
         adapter = new NearbyAdapter(new ArrayList<>());
@@ -141,6 +143,7 @@ public class NearbyFragment extends Fragment {
                         startLocationUpdates();
                     } else {
                         txtLocation.setText("Location: Permission denied");
+                        pbLoading.setVisibility(View.GONE);
                     }
                 });
 
@@ -173,6 +176,9 @@ public class NearbyFragment extends Fragment {
         List<Bird> cached = cacheManager.getCachedNearbyBirds();
         if (!cached.isEmpty()) {
             adapter.updateList(cached);
+            rvNearby.setVisibility(View.VISIBLE);
+            pbLoading.setVisibility(View.GONE);
+            tvNoBirds.setVisibility(View.GONE);
         }
     }
 
@@ -192,10 +198,6 @@ public class NearbyFragment extends Fragment {
     public void onPause() {
         super.onPause();
         stopLocationUpdates();
-
-        if (loadingDialog != null && loadingDialog.isShowing()) {
-            loadingDialog.dismiss();
-        }
     }
 
     @Override
@@ -296,10 +298,13 @@ public class NearbyFragment extends Fragment {
         fetchCount = 0;
         Log.d(TAG, "Starting dual-fetch from Firestore and eBird...");
 
-        // Only show loading dialog if there's no cached data or it's a manual refresh
-        if (isAdded() && getActivity() != null && (adapter.getItemCount() == 0)) {
+        // Show inline progress bar and clear current list
+        if (isAdded() && getActivity() != null) {
             getActivity().runOnUiThread(() -> {
-                if (!loadingDialog.isShowing()) loadingDialog.show();
+                pbLoading.setVisibility(View.VISIBLE);
+                rvNearby.setVisibility(View.GONE);
+                tvNoBirds.setVisibility(View.GONE);
+                adapter.updateList(new ArrayList<>());
             });
         }
 
@@ -408,8 +413,15 @@ public class NearbyFragment extends Fragment {
 
         if (isAdded() && getActivity() != null) {
             getActivity().runOnUiThread(() -> {
-                adapter.updateList(combined);
-                if (loadingDialog.isShowing()) loadingDialog.dismiss();
+                pbLoading.setVisibility(View.GONE);
+                if (combined.isEmpty()) {
+                    rvNearby.setVisibility(View.GONE);
+                    tvNoBirds.setVisibility(View.VISIBLE);
+                } else {
+                    adapter.updateList(combined);
+                    tvNoBirds.setVisibility(View.GONE);
+                    rvNearby.setVisibility(View.VISIBLE);
+                }
             });
         }
     }

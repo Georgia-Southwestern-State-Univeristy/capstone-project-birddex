@@ -56,9 +56,7 @@ public class LoginActivity extends AppCompatActivity {
                         if (user != null && user.isEmailVerified()) {
                             // On successful login and email verified, navigate to the HomeActivity.
                             Toast.makeText(LoginActivity.this, "Login successful.", Toast.LENGTH_SHORT).show();
-                            Intent intent = new Intent(LoginActivity.this, HomeActivity.class);
-                            intent.putExtra(HomeActivity.EXTRA_SHOW_STARTUP_LOADING, true);
-                            startActivity(intent);
+                            startActivity(new Intent(LoginActivity.this, HomeActivity.class));
                             finish(); // Finish current activity to prevent returning on back press.
                         } else if (user != null && !user.isEmailVerified()) {
                             // User logged in, but email is not verified.

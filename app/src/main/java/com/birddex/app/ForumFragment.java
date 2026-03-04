@@ -30,7 +30,6 @@ import com.google.firebase.auth.FirebaseUser;
 import com.google.firebase.firestore.DocumentSnapshot;
 import com.google.firebase.firestore.FieldValue;
 import com.google.firebase.firestore.FirebaseFirestore;
-import com.google.firebase.firestore.ListenerRegistration;
 import com.google.firebase.firestore.MetadataChanges;
 import com.google.firebase.firestore.Query;
 
@@ -59,8 +58,8 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
     private DocumentSnapshot lastVisible;
     private boolean isFetching = false;
     private boolean isLastPage = false;
-    private ListenerRegistration postsListener;
     private String currentFilter = "Recent";
+    private List<String> followedIds = new ArrayList<>();
 
     @Nullable
     @Override
@@ -83,8 +82,8 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
         loadUserProfilePicture();
         setupSwipeRefresh();
         
+        // Initial load
         refreshPosts();
-        applyFilter(); // Load initial data based on saved filter
 
         return view;
     }
@@ -147,23 +146,11 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
                 SharedPreferences prefs = requireContext().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
                 prefs.edit().putString(KEY_FILTER, currentFilter).apply();
                 
-                applyFilter();
+                refreshPosts();
             }
             return true;
         });
         popup.show();
-    }
-
-    private void applyFilter() {
-        if (postsListener != null) {
-            postsListener.remove();
-        }
-        
-        if ("Following".equals(currentFilter)) {
-            listenForFollowingPosts();
-        } else {
-            listenForPosts();
-        }
     }
 
     private void loadUserProfilePicture() {
@@ -189,7 +176,34 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
         lastVisible = null;
         isLastPage = false;
         postList.clear();
-        fetchPosts();
+        adapter.setPosts(new ArrayList<>());
+        
+        if ("Following".equals(currentFilter)) {
+            fetchFollowedIdsAndLoad();
+        } else {
+            fetchPosts();
+        }
+    }
+
+    private void fetchFollowedIdsAndLoad() {
+        FirebaseUser user = mAuth.getCurrentUser();
+        if (user == null) return;
+
+        isFetching = true;
+        db.collection("users").document(user.getUid()).collection("following")
+                .get()
+                .addOnSuccessListener(querySnapshot -> {
+                    followedIds.clear();
+                    for (DocumentSnapshot doc : querySnapshot.getDocuments()) {
+                        followedIds.add(doc.getId());
+                    }
+                    isFetching = false;
+                    fetchPosts();
+                })
+                .addOnFailureListener(e -> {
+                    isFetching = false;
+                    if (binding != null) binding.swipeRefreshLayout.setRefreshing(false);
+                });
     }
 
     private void fetchPosts() {
@@ -197,11 +211,25 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
             if (binding != null) binding.swipeRefreshLayout.setRefreshing(false);
             return;
         }
+        
+        if ("Following".equals(currentFilter) && followedIds.isEmpty()) {
+            if (binding != null) binding.swipeRefreshLayout.setRefreshing(false);
+            Toast.makeText(getContext(), "You aren't following anyone yet.", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
         isFetching = true;
 
         Query query = db.collection("forumThreads")
-                .orderBy("timestamp", Query.Direction.DESCENDING)
-                .limit(PAGE_SIZE);
+                .orderBy("timestamp", Query.Direction.DESCENDING);
+
+        if ("Following".equals(currentFilter)) {
+            // Firestore whereIn limit is 30.
+            List<String> limitedIds = followedIds.size() > 30 ? followedIds.subList(0, 30) : followedIds;
+            query = query.whereIn("userId", limitedIds);
+        }
+
+        query = query.limit(PAGE_SIZE);
 
         if (lastVisible != null) {
             query = query.startAfter(lastVisible);
@@ -236,69 +264,6 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
             if (binding != null) binding.swipeRefreshLayout.setRefreshing(false);
             Log.e(TAG, "Error fetching posts", e);
         });
-    }
-
-    private void listenForFollowingPosts() {
-        FirebaseUser currentUser = mAuth.getCurrentUser();
-        if (currentUser == null) return;
-
-        db.collection("users").document(currentUser.getUid()).collection("following")
-                .get()
-                .addOnSuccessListener(queryDocumentSnapshots -> {
-                    if (!isAdded() || binding == null) return;
-                    
-                    List<String> followedIds = new ArrayList<>();
-                    for (DocumentSnapshot doc : queryDocumentSnapshots.getDocuments()) {
-                        followedIds.add(doc.getId());
-                    }
-
-                    if (followedIds.isEmpty()) {
-                        adapter.setPosts(new ArrayList<>());
-                        Toast.makeText(getContext(), "You are not following anyone yet.", Toast.LENGTH_SHORT).show();
-                        return;
-                    }
-
-                    // Firestore whereIn limit is 30. For simplicity, we use the first 30.
-                    if (followedIds.size() > 30) {
-                        followedIds = followedIds.subList(0, 30);
-                    }
-
-                    postsListener = db.collection("forumThreads")
-                            .whereIn("userId", followedIds)
-                            .orderBy("timestamp", Query.Direction.DESCENDING)
-                            .addSnapshotListener(MetadataChanges.INCLUDE, (value, error) -> {
-                                if (!isAdded() || binding == null) return;
-                                if (error != null) {
-                                    Log.e(TAG, "Following listen failed.", error);
-                                    return;
-                                }
-
-                                if (value != null) {
-                                    processSnapshot(value.getDocuments(), value.getMetadata().isFromCache());
-                                }
-                            });
-                })
-                .addOnFailureListener(e -> {
-                    Log.e(TAG, "Error fetching following list", e);
-                });
-    }
-
-    private void processSnapshot(List<DocumentSnapshot> documents, boolean isFromCache) {
-        List<ForumPost> posts = new ArrayList<>();
-        for (DocumentSnapshot doc : documents) {
-            ForumPost post = doc.toObject(ForumPost.class);
-            if (post != null) {
-                post.setId(doc.getId());
-                posts.add(post);
-            }
-        }
-        adapter.setPosts(posts);
-
-        if (isFromCache) {
-            Log.d(TAG, "Forum data loaded from local cache");
-        } else {
-            Log.d(TAG, "Forum data synchronized with server");
-        }
     }
 
     @Override
@@ -471,9 +436,6 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
     @Override
     public void onDestroyView() {
         super.onDestroyView();
-        if (postsListener != null) {
-            postsListener.remove();
-        }
         binding = null;
     }
 }

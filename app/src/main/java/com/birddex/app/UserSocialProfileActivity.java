@@ -39,6 +39,7 @@ public class UserSocialProfileActivity extends AppCompatActivity implements
 
     private static final String TAG = "UserSocialProfile";
     public static final String EXTRA_USER_ID = "extra_user_id";
+    private static final int PAGE_SIZE = 20;
     private static final int FAVORITE_SLOT_COUNT = 3;
 
     private ShapeableImageView ivPfp;
@@ -59,11 +60,14 @@ public class UserSocialProfileActivity extends AppCompatActivity implements
     
     private String targetUserId;
     private boolean isFollowing = false;
-    private ListenerRegistration postsListener;
+    
+    private List<ForumPost> postList = new ArrayList<>();
+    private DocumentSnapshot lastVisible;
+    private boolean isFetching = false;
+    private boolean isLastPage = false;
 
     private final List<String> favoriteCardKeys = new ArrayList<>();
     private final List<CollectionSlot> allCollectionSlots = new ArrayList<>();
-    private final List<ForumPost> currentPosts = new ArrayList<>();
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -84,7 +88,8 @@ public class UserSocialProfileActivity extends AppCompatActivity implements
         loadUserDetails();
         checkFollowingStatus();
         setupRecyclerViews();
-        listenForUserPosts();
+        
+        fetchUserPosts();
     }
 
     private void initUI() {
@@ -115,7 +120,6 @@ public class UserSocialProfileActivity extends AppCompatActivity implements
 
         btnFollow.setOnClickListener(v -> toggleFollow());
 
-        // Click listeners for counts
         btnUserFollowers.setOnClickListener(v -> {
             Intent intent = new Intent(this, SocialActivity.class);
             intent.putExtra(SocialActivity.EXTRA_USER_ID, targetUserId);
@@ -161,7 +165,7 @@ public class UserSocialProfileActivity extends AppCompatActivity implements
             appBarLayout.setExpanded(true, true);
         } else {
             rvFavoriteCards.setVisibility(View.GONE);
-            if (currentPosts.isEmpty()) {
+            if (postList.isEmpty()) {
                 tvProfileTabEmpty.setVisibility(View.VISIBLE);
                 rvPosts.setVisibility(View.GONE);
             } else {
@@ -286,39 +290,72 @@ public class UserSocialProfileActivity extends AppCompatActivity implements
 
     private void setupRecyclerViews() {
         adapter = new ForumPostAdapter(this);
-        rvPosts.setLayoutManager(new LinearLayoutManager(this));
+        LinearLayoutManager layoutManager = new LinearLayoutManager(this);
+        rvPosts.setLayoutManager(layoutManager);
         rvPosts.setAdapter(adapter);
+
+        rvPosts.addOnScrollListener(new RecyclerView.OnScrollListener() {
+            @Override
+            public void onScrolled(@NonNull RecyclerView recyclerView, int dx, int dy) {
+                if (dy > 0) {
+                    int visibleItemCount = layoutManager.getChildCount();
+                    int totalItemCount = layoutManager.getItemCount();
+                    int pastVisibleItems = layoutManager.findFirstVisibleItemPosition();
+
+                    if (!isFetching && !isLastPage) {
+                        if ((visibleItemCount + pastVisibleItems) >= totalItemCount) {
+                            fetchUserPosts();
+                        }
+                    }
+                }
+            }
+        });
 
         favoritesAdapter = new FavoritesAdapter(false, this);
         rvFavoriteCards.setLayoutManager(new GridLayoutManager(this, 3));
         rvFavoriteCards.setAdapter(favoritesAdapter);
     }
 
-    private void listenForUserPosts() {
-        postsListener = db.collection("forumThreads")
+    private void fetchUserPosts() {
+        if (isFetching || isLastPage) return;
+        isFetching = true;
+
+        Query query = db.collection("forumThreads")
                 .whereEqualTo("userId", targetUserId)
                 .orderBy("timestamp", Query.Direction.DESCENDING)
-                .addSnapshotListener((value, error) -> {
-                    if (error != null) {
-                        return;
-                    }
+                .limit(PAGE_SIZE);
 
-                    if (value != null) {
-                        List<ForumPost> posts = new ArrayList<>();
-                        for (DocumentSnapshot doc : value.getDocuments()) {
-                            ForumPost post = doc.toObject(ForumPost.class);
-                            if (post != null) {
-                                post.setId(doc.getId());
-                                posts.add(post);
-                            }
-                        }
-                        tvPostCount.setText(String.valueOf(posts.size()));
-                        currentPosts.clear();
-                        currentPosts.addAll(posts);
-                        adapter.setPosts(posts);
-                        applyTabState(tabLayout.getSelectedTabPosition());
+        if (lastVisible != null) {
+            query = query.startAfter(lastVisible);
+        }
+
+        query.get().addOnSuccessListener(value -> {
+            if (value != null && !value.isEmpty()) {
+                lastVisible = value.getDocuments().get(value.size() - 1);
+                
+                for (DocumentSnapshot doc : value.getDocuments()) {
+                    ForumPost post = doc.toObject(ForumPost.class);
+                    if (post != null) {
+                        post.setId(doc.getId());
+                        postList.add(post);
                     }
-                });
+                }
+                
+                tvPostCount.setText(String.valueOf(postList.size()));
+                adapter.setPosts(new ArrayList<>(postList));
+                applyTabState(tabLayout.getSelectedTabPosition());
+
+                if (value.size() < PAGE_SIZE) {
+                    isLastPage = true;
+                }
+            } else {
+                isLastPage = true;
+            }
+            isFetching = false;
+        }).addOnFailureListener(e -> {
+            isFetching = false;
+            Log.e(TAG, "Error fetching user posts", e);
+        });
     }
 
     @Override
@@ -384,13 +421,5 @@ public class UserSocialProfileActivity extends AppCompatActivity implements
     @Override
     public boolean onFavoriteLongPressed(int position, @Nullable CollectionSlot slot) {
         return false;
-    }
-
-    @Override
-    protected void onDestroy() {
-        super.onDestroy();
-        if (postsListener != null) {
-            postsListener.remove();
-        }
     }
 }

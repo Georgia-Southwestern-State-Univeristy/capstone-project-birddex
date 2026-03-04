@@ -2,10 +2,12 @@ package com.birddex.app;
 
 import android.content.Intent;
 import android.os.Bundle;
+import android.util.Log;
 import android.view.View;
 import android.widget.ProgressBar;
 import android.widget.TextView;
 
+import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.appcompat.widget.Toolbar;
 import androidx.recyclerview.widget.LinearLayoutManager;
@@ -15,6 +17,7 @@ import com.google.android.material.tabs.TabLayout;
 import com.google.firebase.auth.FirebaseAuth;
 import com.google.firebase.firestore.DocumentSnapshot;
 import com.google.firebase.firestore.FirebaseFirestore;
+import com.google.firebase.firestore.Query;
 import com.google.firebase.firestore.Source;
 
 import java.util.ArrayList;
@@ -22,8 +25,10 @@ import java.util.List;
 
 public class SocialActivity extends AppCompatActivity implements UserAdapter.OnUserClickListener {
 
+    private static final String TAG = "SocialActivity";
     public static final String EXTRA_USER_ID = "extra_user_id";
     public static final String EXTRA_SHOW_FOLLOWING = "extra_show_following";
+    private static final int PAGE_SIZE = 30;
 
     private TabLayout tabLayout;
     private RecyclerView rvUserList;
@@ -32,6 +37,11 @@ public class SocialActivity extends AppCompatActivity implements UserAdapter.OnU
     private UserAdapter adapter;
     private FirebaseFirestore db;
     private String targetUserId;
+
+    private List<User> userList = new ArrayList<>();
+    private DocumentSnapshot lastVisible;
+    private boolean isFetching = false;
+    private boolean isLastPage = false;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -57,13 +67,31 @@ public class SocialActivity extends AppCompatActivity implements UserAdapter.OnU
         db = FirebaseFirestore.getInstance();
 
         adapter = new UserAdapter(this);
-        rvUserList.setLayoutManager(new LinearLayoutManager(this));
+        LinearLayoutManager layoutManager = new LinearLayoutManager(this);
+        rvUserList.setLayoutManager(layoutManager);
         rvUserList.setAdapter(adapter);
+
+        rvUserList.addOnScrollListener(new RecyclerView.OnScrollListener() {
+            @Override
+            public void onScrolled(@NonNull RecyclerView recyclerView, int dx, int dy) {
+                if (dy > 0) {
+                    int visibleItemCount = layoutManager.getChildCount();
+                    int totalItemCount = layoutManager.getItemCount();
+                    int pastVisibleItems = layoutManager.findFirstVisibleItemPosition();
+
+                    if (!isFetching && !isLastPage) {
+                        if ((visibleItemCount + pastVisibleItems) >= totalItemCount) {
+                            loadUsers(tabLayout.getSelectedTabPosition() == 0);
+                        }
+                    }
+                }
+            }
+        });
 
         tabLayout.addOnTabSelectedListener(new TabLayout.OnTabSelectedListener() {
             @Override
             public void onTabSelected(TabLayout.Tab tab) {
-                loadUsers(tab.getPosition() == 0);
+                refreshList(tab.getPosition() == 0);
             }
 
             @Override
@@ -75,126 +103,109 @@ public class SocialActivity extends AppCompatActivity implements UserAdapter.OnU
 
         if (showFollowingInitially) {
             tabLayout.getTabAt(1).select();
-            loadUsers(false);
+            refreshList(false);
         } else {
-            loadUsers(true);
+            refreshList(true);
         }
     }
 
-    private void loadUsers(boolean isFollowers) {
-        if (targetUserId == null) return;
+    private void refreshList(boolean isFollowers) {
+        userList.clear();
+        adapter.setUsers(new ArrayList<>());
+        lastVisible = null;
+        isLastPage = false;
+        loadUsers(isFollowers);
+    }
 
-        // Don't show progress bar if we likely have cached data
-        if (adapter.getItemCount() == 0) {
+    private void loadUsers(boolean isFollowers) {
+        if (targetUserId == null || isFetching || isLastPage) return;
+        isFetching = true;
+
+        if (userList.isEmpty()) {
             progressBar.setVisibility(View.VISIBLE);
         }
-        
         tvEmpty.setVisibility(View.GONE);
 
         String subCollection = isFollowers ? "followers" : "following";
 
-        // Try to get IDs from CACHE first
-        db.collection("users").document(targetUserId).collection(subCollection)
-                .get(Source.CACHE)
-                .addOnSuccessListener(queryDocumentSnapshots -> {
-                    if (queryDocumentSnapshots != null && !queryDocumentSnapshots.isEmpty()) {
-                        processIds(queryDocumentSnapshots.getDocuments(), isFollowers);
-                    }
-                    // Sync with server in background
-                    fetchIdsFromServer(subCollection, isFollowers);
-                })
-                .addOnFailureListener(e -> fetchIdsFromServer(subCollection, isFollowers));
-    }
+        // Query the subcollection for IDs with pagination
+        Query query = db.collection("users").document(targetUserId).collection(subCollection)
+                .limit(PAGE_SIZE);
 
-    private void fetchIdsFromServer(String subCollection, boolean isFollowers) {
-        db.collection("users").document(targetUserId).collection(subCollection)
-                .get(Source.SERVER)
-                .addOnSuccessListener(queryDocumentSnapshots -> processIds(queryDocumentSnapshots.getDocuments(), isFollowers));
-    }
-
-    private void processIds(List<DocumentSnapshot> docs, boolean isFollowers) {
-        List<String> userIds = new ArrayList<>();
-        for (DocumentSnapshot doc : docs) {
-            userIds.add(doc.getId());
+        if (lastVisible != null) {
+            query = query.startAfter(lastVisible);
         }
 
-        if (userIds.isEmpty()) {
-            progressBar.setVisibility(View.GONE);
-            if (adapter.getItemCount() == 0) {
-                tvEmpty.setVisibility(View.VISIBLE);
-                tvEmpty.setText(isFollowers ? "No followers found." : "Not following anyone yet.");
+        query.get().addOnSuccessListener(queryDocumentSnapshots -> {
+            if (queryDocumentSnapshots == null || queryDocumentSnapshots.isEmpty()) {
+                isLastPage = true;
+                finishLoad();
+                return;
             }
-            return;
-        }
 
-        fetchUserDetails(userIds);
+            lastVisible = queryDocumentSnapshots.getDocuments().get(queryDocumentSnapshots.size() - 1);
+            if (queryDocumentSnapshots.size() < PAGE_SIZE) {
+                isLastPage = true;
+            }
+
+            List<String> userIds = new ArrayList<>();
+            for (DocumentSnapshot doc : queryDocumentSnapshots) {
+                userIds.add(doc.getId());
+            }
+
+            fetchUserDetails(userIds);
+        }).addOnFailureListener(e -> {
+            Log.e(TAG, "Error fetching user IDs", e);
+            finishLoad();
+        });
     }
 
     private void fetchUserDetails(List<String> userIds) {
-        List<User> users = new ArrayList<>();
-        final int total = userIds.size();
-        final int[] count = {0};
+        final int totalToFetch = userIds.size();
+        final int[] fetchedCount = {0};
+        final List<User> fetchedUsers = new ArrayList<>();
 
         for (String id : userIds) {
-            // Try cache for each user profile
-            db.collection("users").document(id).get(Source.CACHE)
+            db.collection("users").document(id).get()
                     .addOnSuccessListener(doc -> {
                         User user = doc.toObject(User.class);
                         if (user != null) {
                             user.setId(doc.getId());
-                            addUserToList(user, users, count, total);
-                        } else {
-                            fetchUserFromServer(id, users, count, total);
+                            synchronized (fetchedUsers) {
+                                fetchedUsers.add(user);
+                            }
                         }
+                        checkIfDone(fetchedCount, totalToFetch, fetchedUsers);
                     })
-                    .addOnFailureListener(e -> fetchUserFromServer(id, users, count, total));
+                    .addOnFailureListener(e -> {
+                        checkIfDone(fetchedCount, totalToFetch, fetchedUsers);
+                    });
         }
     }
 
-    private void fetchUserFromServer(String id, List<User> users, int[] count, int total) {
-        db.collection("users").document(id).get(Source.SERVER)
-                .addOnSuccessListener(doc -> {
-                    User user = doc.toObject(User.class);
-                    if (user != null) {
-                        user.setId(doc.getId());
-                        addUserToList(user, users, count, total);
-                    } else {
-                        incrementAndCheck(users, count, total);
-                    }
-                })
-                .addOnFailureListener(e -> incrementAndCheck(users, count, total));
-    }
-
-    private synchronized void addUserToList(User user, List<User> users, int[] count, int total) {
-        // Prevent duplicates in the temporary list
-        boolean exists = false;
-        for (User u : users) {
-            if (u.getId().equals(user.getId())) {
-                exists = true;
-                break;
-            }
-        }
-        if (!exists) users.add(user);
-        incrementAndCheck(users, count, total);
-    }
-
-    private void incrementAndCheck(List<User> users, int[] count, int total) {
+    private void checkIfDone(int[] count, int total, List<User> fetchedUsers) {
         count[0]++;
         if (count[0] >= total) {
-            displayUsers(users);
+            // Sort fetched users to match original ID order if needed, or just append
+            userList.addAll(fetchedUsers);
+            displayUsers();
+            finishLoad();
         }
     }
 
-    private void displayUsers(List<User> users) {
-        progressBar.setVisibility(View.GONE);
-        if (users.isEmpty() && adapter.getItemCount() == 0) {
+    private void displayUsers() {
+        adapter.setUsers(new ArrayList<>(userList));
+        if (userList.isEmpty()) {
             tvEmpty.setVisibility(View.VISIBLE);
-            rvUserList.setVisibility(View.GONE);
+            tvEmpty.setText(tabLayout.getSelectedTabPosition() == 0 ? "No followers found." : "Not following anyone yet.");
         } else {
             tvEmpty.setVisibility(View.GONE);
-            rvUserList.setVisibility(View.VISIBLE);
-            adapter.setUsers(users);
         }
+    }
+
+    private void finishLoad() {
+        isFetching = false;
+        progressBar.setVisibility(View.GONE);
     }
 
     @Override

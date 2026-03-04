@@ -17,9 +17,11 @@ import android.widget.PopupMenu;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import androidx.annotation.NonNull;
 import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.recyclerview.widget.LinearLayoutManager;
+import androidx.recyclerview.widget.RecyclerView;
 
 import com.birddex.app.databinding.ActivityPostDetailBinding;
 import com.bumptech.glide.Glide;
@@ -44,6 +46,7 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
     private static final String TAG = "PostDetailActivity";
     public static final String EXTRA_POST_ID = "extra_post_id";
     private static final long EDIT_WINDOW_MS = 5 * 60 * 1000; // 5 minutes
+    private static final int COMMENTS_PAGE_SIZE = 25;
 
     private ActivityPostDetailBinding binding;
     private FirebaseFirestore db;
@@ -54,6 +57,11 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
     private ForumCommentAdapter adapter;
     private String currentUsername;
     private String currentUserPfpUrl;
+    
+    private List<ForumComment> commentList = new ArrayList<>();
+    private DocumentSnapshot lastCommentVisible;
+    private boolean isFetchingComments = false;
+    private boolean isLastCommentsPage = false;
     
     private ForumComment replyingToComment = null;
 
@@ -77,7 +85,7 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
         loadCurrentUser();
         loadPostDetails();
         setupCommentsRecyclerView();
-        listenForComments();
+        fetchComments();
     }
 
     private void setupUI() {
@@ -104,7 +112,6 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
     }
 
     private void loadPostDetails() {
-        // addSnapshotListener with MetadataChanges.INCLUDE automatically handles caching
         db.collection("forumThreads").document(postId)
                 .addSnapshotListener(MetadataChanges.INCLUDE, (doc, error) -> {
                     if (isFinishing() || isDestroyed()) return;
@@ -117,17 +124,13 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
                             FirebaseUser user = mAuth.getCurrentUser();
                             if (user != null) {
                                 String userId = user.getUid();
-                                
-                                // Only increment views if this is fresh data from the server, not just a cache load
                                 if (!doc.getMetadata().isFromCache()) {
-                                    // Check for unique view
                                     if (originalPost.getViewedBy() == null || !originalPost.getViewedBy().containsKey(userId)) {
                                         db.collection("forumThreads").document(postId)
                                                 .update("viewCount", FieldValue.increment(1),
                                                         "viewedBy." + userId, true);
                                     }
 
-                                    // Reset notification flags if the author is viewing the post
                                     if (userId.equals(originalPost.getUserId())) {
                                         Map<String, Object> updates = new HashMap<>();
                                         if (originalPost.isNotificationSent()) {
@@ -144,7 +147,6 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
                                     }
                                 }
                             }
-
                             bindPostToLayout(originalPost);
                         }
                     }
@@ -368,28 +370,66 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
 
     private void setupCommentsRecyclerView() {
         adapter = new ForumCommentAdapter(this);
-        binding.rvComments.setLayoutManager(new LinearLayoutManager(this));
+        LinearLayoutManager layoutManager = new LinearLayoutManager(this);
+        binding.rvComments.setLayoutManager(layoutManager);
         binding.rvComments.setAdapter(adapter);
+        
+        binding.rvComments.addOnScrollListener(new RecyclerView.OnScrollListener() {
+            @Override
+            public void onScrolled(@NonNull RecyclerView recyclerView, int dx, int dy) {
+                if (dy > 0) {
+                    int visibleItemCount = layoutManager.getChildCount();
+                    int totalItemCount = layoutManager.getItemCount();
+                    int pastVisibleItems = layoutManager.findFirstVisibleItemPosition();
+
+                    if (!isFetchingComments && !isLastCommentsPage) {
+                        if ((visibleItemCount + pastVisibleItems) >= totalItemCount) {
+                            fetchComments();
+                        }
+                    }
+                }
+            }
+        });
     }
 
-    private void listenForComments() {
-        db.collection("forumThreads").document(postId).collection("comments")
+    private void fetchComments() {
+        if (isFetchingComments || isLastCommentsPage) return;
+        isFetchingComments = true;
+
+        Query query = db.collection("forumThreads").document(postId).collection("comments")
                 .orderBy("timestamp", Query.Direction.ASCENDING)
-                .addSnapshotListener(MetadataChanges.INCLUDE, (value, error) -> {
-                    if (isFinishing() || isDestroyed()) return;
-                    if (error != null) return;
-                    if (value != null) {
-                        List<ForumComment> comments = new ArrayList<>();
-                        for (DocumentSnapshot doc : value.getDocuments()) {
-                            ForumComment comment = doc.toObject(ForumComment.class);
-                            if (comment != null) {
-                                comment.setId(doc.getId());
-                                comments.add(comment);
-                            }
-                        }
-                        adapter.setComments(comments);
+                .limit(COMMENTS_PAGE_SIZE);
+
+        if (lastCommentVisible != null) {
+            query = query.startAfter(lastCommentVisible);
+        }
+
+        query.get().addOnSuccessListener(value -> {
+            if (isFinishing() || isDestroyed()) return;
+            
+            if (value != null && !value.isEmpty()) {
+                lastCommentVisible = value.getDocuments().get(value.size() - 1);
+                
+                for (DocumentSnapshot doc : value.getDocuments()) {
+                    ForumComment comment = doc.toObject(ForumComment.class);
+                    if (comment != null) {
+                        comment.setId(doc.getId());
+                        commentList.add(comment);
                     }
-                });
+                }
+                adapter.setComments(new ArrayList<>(commentList));
+                
+                if (value.size() < COMMENTS_PAGE_SIZE) {
+                    isLastCommentsPage = true;
+                }
+            } else {
+                isLastCommentsPage = true;
+            }
+            isFetchingComments = false;
+        }).addOnFailureListener(e -> {
+            isFetchingComments = false;
+            Log.e(TAG, "Error fetching comments", e);
+        });
     }
 
     private void postComment() {
@@ -418,6 +458,12 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
                     binding.btnSendComment.setEnabled(true);
                     db.collection("forumThreads").document(postId)
                             .update("commentCount", FieldValue.increment(1));
+                    
+                    // Simple logic to show the new comment: refresh list
+                    lastCommentVisible = null;
+                    isLastCommentsPage = false;
+                    commentList.clear();
+                    fetchComments();
                 })
                 .addOnFailureListener(e -> {
                     if (isFinishing() || isDestroyed()) return;
@@ -557,12 +603,7 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
                         int totalToDelete = queryDocumentSnapshots.size() + 1;
 
                         for (DocumentSnapshot doc : queryDocumentSnapshots) {
-                            Map<String, Object> backlogData = new HashMap<>();
-                            backlogData.put("type", "comment_reply");
-                            backlogData.put("originalId", doc.getId());
-                            backlogData.put("data", doc.getData());
                             backlogByUserId(batch, user.getUid(), "comment_reply", doc.getId(), doc.getData());
-                            
                             batch.delete(doc.getReference());
                         }
                         
@@ -577,6 +618,11 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
                         batch.commit().addOnSuccessListener(aVoid -> {
                             if (isFinishing() || isDestroyed()) return;
                             Toast.makeText(this, "Comment deleted", Toast.LENGTH_SHORT).show();
+                            // Refresh
+                            lastCommentVisible = null;
+                            isLastCommentsPage = false;
+                            commentList.clear();
+                            fetchComments();
                         });
                     });
         } else {
@@ -595,6 +641,11 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
                                 Toast.makeText(this, "Reply deleted", Toast.LENGTH_SHORT).show();
                                 db.collection("forumThreads").document(postId)
                                         .update("commentCount", FieldValue.increment(-1));
+                                // Refresh
+                                lastCommentVisible = null;
+                                isLastCommentsPage = false;
+                                commentList.clear();
+                                fetchComments();
                             }
                         });
                     });

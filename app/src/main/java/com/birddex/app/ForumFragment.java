@@ -18,6 +18,8 @@ import androidx.annotation.Nullable;
 import androidx.appcompat.app.AlertDialog;
 import androidx.fragment.app.Fragment;
 import androidx.recyclerview.widget.LinearLayoutManager;
+import androidx.recyclerview.widget.RecyclerView;
+import androidx.swiperefreshlayout.widget.SwipeRefreshLayout;
 
 import com.birddex.app.databinding.FragmentForumBinding;
 import com.bumptech.glide.Glide;
@@ -39,11 +41,18 @@ import java.util.List;
 public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostClickListener {
 
     private static final String TAG = "ForumFragment";
+    private static final int PAGE_SIZE = 20;
+
     private FragmentForumBinding binding;
     private FirebaseAuth mAuth;
     private FirebaseFirestore db;
     private FirebaseManager firebaseManager;
     private ForumPostAdapter adapter;
+    
+    private List<ForumPost> postList = new ArrayList<>();
+    private DocumentSnapshot lastVisible;
+    private boolean isFetching = false;
+    private boolean isLastPage = false;
 
     @Nullable
     @Override
@@ -60,15 +69,42 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
         setupRecyclerView();
         setupClickListeners();
         loadUserProfilePicture();
-        listenForPosts();
+        setupSwipeRefresh();
+        
+        refreshPosts();
 
         return view;
     }
 
     private void setupRecyclerView() {
         adapter = new ForumPostAdapter(this);
-        binding.rvForumPosts.setLayoutManager(new LinearLayoutManager(getContext()));
+        LinearLayoutManager layoutManager = new LinearLayoutManager(getContext());
+        binding.rvForumPosts.setLayoutManager(layoutManager);
         binding.rvForumPosts.setAdapter(adapter);
+
+        binding.rvForumPosts.addOnScrollListener(new RecyclerView.OnScrollListener() {
+            @Override
+            public void onScrolled(@NonNull RecyclerView recyclerView, int dx, int dy) {
+                super.onScrolled(recyclerView, dx, dy);
+                if (dy > 0) { // Scrolling down
+                    int visibleItemCount = layoutManager.getChildCount();
+                    int totalItemCount = layoutManager.getItemCount();
+                    int pastVisibleItems = layoutManager.findFirstVisibleItemPosition();
+
+                    if (!isFetching && !isLastPage) {
+                        if ((visibleItemCount + pastVisibleItems) >= totalItemCount) {
+                            fetchPosts();
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    private void setupSwipeRefresh() {
+        binding.swipeRefreshLayout.setOnRefreshListener(() -> {
+            refreshPosts();
+        });
     }
 
     private void setupClickListeners() {
@@ -86,7 +122,6 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
         FirebaseUser currentUser = mAuth.getCurrentUser();
         if (currentUser == null) return;
 
-        // Use standard get() which automatically checks cache first
         db.collection("users").document(currentUser.getUid()).get()
                 .addOnSuccessListener(documentSnapshot -> {
                     if (!isAdded() || binding == null) return;
@@ -102,38 +137,57 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
                 });
     }
 
-    private void listenForPosts() {
-        // addSnapshotListener with MetadataChanges.INCLUDE allows us to see when data 
-        // is coming from the local cache vs the server.
-        db.collection("forumThreads")
-                .orderBy("timestamp", Query.Direction.DESCENDING)
-                .addSnapshotListener(MetadataChanges.INCLUDE, (value, error) -> {
-                    if (!isAdded() || binding == null) return;
-                    if (error != null) {
-                        Log.e(TAG, "Listen failed.", error);
-                        return;
-                    }
+    private void refreshPosts() {
+        lastVisible = null;
+        isLastPage = false;
+        postList.clear();
+        fetchPosts();
+    }
 
-                    if (value != null) {
-                        List<ForumPost> posts = new ArrayList<>();
-                        for (DocumentSnapshot doc : value.getDocuments()) {
-                            ForumPost post = doc.toObject(ForumPost.class);
-                            if (post != null) {
-                                post.setId(doc.getId());
-                                posts.add(post);
-                            }
-                        }
-                        adapter.setPosts(posts);
-                        
-                        // If data is from cache, it's already shown! 
-                        // If it's from server, the list will update smoothly.
-                        if (value.getMetadata().isFromCache()) {
-                            Log.d(TAG, "Forum data loaded from local cache");
-                        } else {
-                            Log.d(TAG, "Forum data synchronized with server");
-                        }
+    private void fetchPosts() {
+        if (isFetching || isLastPage) {
+            if (binding != null) binding.swipeRefreshLayout.setRefreshing(false);
+            return;
+        }
+        isFetching = true;
+
+        Query query = db.collection("forumThreads")
+                .orderBy("timestamp", Query.Direction.DESCENDING)
+                .limit(PAGE_SIZE);
+
+        if (lastVisible != null) {
+            query = query.startAfter(lastVisible);
+        }
+
+        query.get().addOnSuccessListener(value -> {
+            if (!isAdded() || binding == null) return;
+            binding.swipeRefreshLayout.setRefreshing(false);
+            
+            if (value != null && !value.isEmpty()) {
+                lastVisible = value.getDocuments().get(value.size() - 1);
+                
+                for (DocumentSnapshot doc : value.getDocuments()) {
+                    ForumPost post = doc.toObject(ForumPost.class);
+                    if (post != null) {
+                        post.setId(doc.getId());
+                        postList.add(post);
                     }
-                });
+                }
+                
+                adapter.setPosts(new ArrayList<>(postList));
+                
+                if (value.size() < PAGE_SIZE) {
+                    isLastPage = true;
+                }
+            } else {
+                isLastPage = true;
+            }
+            isFetching = false;
+        }).addOnFailureListener(e -> {
+            isFetching = false;
+            if (binding != null) binding.swipeRefreshLayout.setRefreshing(false);
+            Log.e(TAG, "Error fetching posts", e);
+        });
     }
 
     @Override
@@ -209,6 +263,7 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
                         if (!isAdded()) return;
                         if (task.isSuccessful()) {
                             Toast.makeText(getContext(), "Post deleted", Toast.LENGTH_SHORT).show();
+                            refreshPosts(); // Refresh after deletion
                         }
                     });
                 })

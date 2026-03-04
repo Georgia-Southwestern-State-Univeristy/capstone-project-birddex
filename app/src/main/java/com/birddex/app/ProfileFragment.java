@@ -31,6 +31,7 @@ import androidx.fragment.app.Fragment;
 import androidx.recyclerview.widget.GridLayoutManager;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
+import androidx.swiperefreshlayout.widget.SwipeRefreshLayout;
 
 import com.bumptech.glide.Glide;
 import com.google.android.material.button.MaterialButton;
@@ -61,6 +62,7 @@ public class ProfileFragment extends Fragment implements
 
     private static final String TAG = "ProfileFragment";
     private static final String ARG_USER_ID = "arg_user_id";
+    private static final int PAGE_SIZE = 20;
     private static final int FAVORITE_SLOT_COUNT = 3;
     private static final String FAVORITES_PREFS = "profile_favorite_cards";
 
@@ -80,6 +82,7 @@ public class ProfileFragment extends Fragment implements
     private TextView tvProfileTabEmpty;
     private RecyclerView rvFavoriteCards;
     private RecyclerView rvProfilePosts;
+    private SwipeRefreshLayout swipeRefreshLayout;
 
     private FirebaseAuth mAuth;
     private FirebaseFirestore db;
@@ -87,7 +90,11 @@ public class ProfileFragment extends Fragment implements
 
     private FavoritesAdapter favoritesAdapter;
     private ForumPostAdapter postsAdapter;
-    private ListenerRegistration postsListener;
+    
+    private List<ForumPost> postList = new ArrayList<>();
+    private DocumentSnapshot lastVisible;
+    private boolean isFetching = false;
+    private boolean isLastPage = false;
 
     private String profileUserId;
     private String currentUsername;
@@ -98,7 +105,6 @@ public class ProfileFragment extends Fragment implements
 
     private final List<String> favoriteCardKeys = new ArrayList<>();
     private final List<CollectionSlot> allCollectionSlots = new ArrayList<>();
-    private final List<ForumPost> currentPosts = new ArrayList<>();
 
     private ActivityResultLauncher<Intent> editProfileLauncher;
 
@@ -164,11 +170,13 @@ public class ProfileFragment extends Fragment implements
         tvProfileTabEmpty = v.findViewById(R.id.tvProfileTabEmpty);
         rvFavoriteCards = v.findViewById(R.id.rvFavoriteCards);
         rvProfilePosts = v.findViewById(R.id.rvProfilePosts);
+        swipeRefreshLayout = v.findViewById(R.id.swipeRefreshLayout);
 
         setupRecyclerViews();
         setupTabs();
         setupUI();
         setupSocialCountClicks();
+        setupSwipeRefresh();
 
         return v;
     }
@@ -189,8 +197,26 @@ public class ProfileFragment extends Fragment implements
         rvFavoriteCards.setAdapter(favoritesAdapter);
 
         postsAdapter = new ForumPostAdapter(this);
-        rvProfilePosts.setLayoutManager(new LinearLayoutManager(requireContext()));
+        LinearLayoutManager layoutManager = new LinearLayoutManager(requireContext());
+        rvProfilePosts.setLayoutManager(layoutManager);
         rvProfilePosts.setAdapter(postsAdapter);
+        
+        rvProfilePosts.addOnScrollListener(new RecyclerView.OnScrollListener() {
+            @Override
+            public void onScrolled(@NonNull RecyclerView recyclerView, int dx, int dy) {
+                if (dy > 0) {
+                    int visibleItemCount = layoutManager.getChildCount();
+                    int totalItemCount = layoutManager.getItemCount();
+                    int pastVisibleItems = layoutManager.findFirstVisibleItemPosition();
+
+                    if (!isFetching && !isLastPage) {
+                        if ((visibleItemCount + pastVisibleItems) >= totalItemCount) {
+                            fetchPosts();
+                        }
+                    }
+                }
+            }
+        });
     }
 
     private void setupTabs() {
@@ -222,7 +248,7 @@ public class ProfileFragment extends Fragment implements
         } else {
             rvFavoriteCards.setVisibility(View.GONE);
 
-            if (currentPosts.isEmpty()) {
+            if (postList.isEmpty()) {
                 tvProfileTabEmpty.setText("No posts yet.");
                 tvProfileTabEmpty.setVisibility(View.VISIBLE);
                 rvProfilePosts.setVisibility(View.GONE);
@@ -319,20 +345,18 @@ public class ProfileFragment extends Fragment implements
         }
     }
 
+    private void setupSwipeRefresh() {
+        swipeRefreshLayout.setOnRefreshListener(() -> {
+            fetchUserProfile();
+            refreshPosts();
+        });
+    }
+
     @Override
     public void onResume() {
         super.onResume();
         fetchUserProfile();
-        startPostsListener();
-    }
-
-    @Override
-    public void onDestroyView() {
-        super.onDestroyView();
-        if (postsListener != null) {
-            postsListener.remove();
-            postsListener = null;
-        }
+        refreshPosts();
     }
 
     private void fetchUserProfile() {
@@ -456,67 +480,131 @@ public class ProfileFragment extends Fragment implements
         return null;
     }
 
-    private void startPostsListener() {
-        if (profileUserId == null || !isAdded()) return;
+    private void refreshPosts() {
+        lastVisible = null;
+        isLastPage = false;
+        postList.clear();
+        fetchPosts();
+    }
 
-        if (postsListener != null) {
-            postsListener.remove();
+    private void fetchPosts() {
+        if (profileUserId == null || isFetching || isLastPage || !isAdded()) {
+            if (swipeRefreshLayout != null) swipeRefreshLayout.setRefreshing(false);
+            return;
         }
+        isFetching = true;
 
-        postsListener = db.collection("forumThreads")
+        Query query = db.collection("forumThreads")
                 .whereEqualTo("userId", profileUserId)
                 .orderBy("timestamp", Query.Direction.DESCENDING)
-                .addSnapshotListener((value, error) -> {
-                    if (!isAdded()) return;
+                .limit(PAGE_SIZE);
 
-                    if (error != null) {
-                        loadPostsFallback();
-                        return;
-                    }
+        if (lastVisible != null) {
+            query = query.startAfter(lastVisible);
+        }
 
-                    List<ForumPost> posts = new ArrayList<>();
-                    if (value != null) {
-                        for (DocumentSnapshot doc : value.getDocuments()) {
-                            ForumPost post = doc.toObject(ForumPost.class);
-                            if (post == null) continue;
-                            post.setId(doc.getId());
-                            posts.add(post);
-                        }
-                    }
-
-                    applyPosts(posts);
-                });
-    }
-
-    private void loadPostsFallback() {
-        db.collection("forumThreads")
-                .whereEqualTo("userId", profileUserId)
-                .get()
-                .addOnSuccessListener(queryDocumentSnapshots -> {
-                    List<ForumPost> posts = new ArrayList<>();
-
-                    for (DocumentSnapshot doc : queryDocumentSnapshots.getDocuments()) {
-                        ForumPost post = doc.toObject(ForumPost.class);
-                        if (post == null) continue;
+        query.get().addOnSuccessListener(value -> {
+            if (!isAdded()) return;
+            if (swipeRefreshLayout != null) swipeRefreshLayout.setRefreshing(false);
+            
+            if (value != null && !value.isEmpty()) {
+                lastVisible = value.getDocuments().get(value.size() - 1);
+                for (DocumentSnapshot doc : value.getDocuments()) {
+                    ForumPost post = doc.toObject(ForumPost.class);
+                    if (post != null) {
                         post.setId(doc.getId());
-                        posts.add(post);
+                        postList.add(post);
                     }
-
-                    Collections.sort(posts, (a, b) -> {
-                        long aTime = a.getTimestamp() != null ? a.getTimestamp().toDate().getTime() : 0L;
-                        long bTime = b.getTimestamp() != null ? b.getTimestamp().toDate().getTime() : 0L;
-                        return Long.compare(bTime, aTime);
-                    });
-
-                    applyPosts(posts);
-                });
+                }
+                postsAdapter.setPosts(new ArrayList<>(postList));
+                applyTabState(profileTabLayout.getSelectedTabPosition());
+                
+                if (value.size() < PAGE_SIZE) isLastPage = true;
+            } else {
+                isLastPage = true;
+            }
+            isFetching = false;
+        }).addOnFailureListener(e -> {
+            isFetching = false;
+            if (swipeRefreshLayout != null) swipeRefreshLayout.setRefreshing(false);
+            Log.e(TAG, "Error fetching posts", e);
+        });
     }
 
-    private void applyPosts(@NonNull List<ForumPost> posts) {
-        currentPosts.clear();
-        currentPosts.addAll(posts);
-        postsAdapter.setPosts(posts);
-        applyTabState(profileTabLayout.getSelectedTabPosition());
+    @Override
+    public void onLikeClick(ForumPost post) {
+        FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
+        if (user == null || post.getId() == null) return;
+
+        String userId = user.getUid();
+        boolean currentlyLiked = post.getLikedBy() != null && post.getLikedBy().containsKey(userId);
+
+        if (currentlyLiked) {
+            db.collection("forumThreads")
+                    .document(post.getId())
+                    .update(
+                            "likeCount", FieldValue.increment(-1),
+                            "likedBy." + userId, FieldValue.delete()
+                    );
+        } else {
+            db.collection("forumThreads")
+                    .document(post.getId())
+                    .update(
+                            "likeCount", FieldValue.increment(1),
+                            "likedBy." + userId, true
+                    );
+        }
+    }
+
+    @Override
+    public void onCommentClick(ForumPost post) {
+        onPostClick(post);
+    }
+
+    @Override
+    public void onPostClick(ForumPost post) {
+        Intent intent = new Intent(requireContext(), PostDetailActivity.class);
+        intent.putExtra(PostDetailActivity.EXTRA_POST_ID, post.getId());
+        startActivity(intent);
+    }
+
+    @Override
+    public void onOptionsClick(ForumPost post, View view) {
+        PopupMenu popup = new PopupMenu(requireContext(), view);
+        FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
+
+        if (user != null && post.getUserId() != null && post.getUserId().equals(user.getUid())) {
+            popup.getMenu().add("Delete");
+        }
+        popup.getMenu().add("Report");
+
+        popup.setOnMenuItemClickListener(item -> {
+            String title = String.valueOf(item.getTitle());
+
+            if ("Delete".equals(title)) {
+                showDeleteConfirmation(post);
+                return true;
+            } else if ("Report".equals(title)) {
+                showReportDialog(post);
+                return true;
+            }
+
+            return false;
+        });
+
+        popup.show();
+    }
+
+    @Override
+    public void onUserClick(String userId) {
+        FirebaseUser currentUser = FirebaseAuth.getInstance().getCurrentUser();
+        if (currentUser != null && userId.equals(currentUser.getUid())) {
+            return;
+        }
+
+        Intent intent = new Intent(requireContext(), UserSocialProfileActivity.class);
+        intent.putExtra(UserSocialProfileActivity.EXTRA_USER_ID, userId);
+        startActivity(intent);
     }
 
     @Override
@@ -710,82 +798,6 @@ public class ProfileFragment extends Fragment implements
         return value == null || value.trim().isEmpty();
     }
 
-    @Override
-    public void onLikeClick(ForumPost post) {
-        FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
-        if (user == null || post.getId() == null) return;
-
-        String userId = user.getUid();
-        boolean currentlyLiked = post.getLikedBy() != null && post.getLikedBy().containsKey(userId);
-
-        if (currentlyLiked) {
-            db.collection("forumThreads")
-                    .document(post.getId())
-                    .update(
-                            "likeCount", FieldValue.increment(-1),
-                            "likedBy." + userId, FieldValue.delete()
-                    );
-        } else {
-            db.collection("forumThreads")
-                    .document(post.getId())
-                    .update(
-                            "likeCount", FieldValue.increment(1),
-                            "likedBy." + userId, true
-                    );
-        }
-    }
-
-    @Override
-    public void onCommentClick(ForumPost post) {
-        onPostClick(post);
-    }
-
-    @Override
-    public void onPostClick(ForumPost post) {
-        Intent intent = new Intent(requireContext(), PostDetailActivity.class);
-        intent.putExtra(PostDetailActivity.EXTRA_POST_ID, post.getId());
-        startActivity(intent);
-    }
-
-    @Override
-    public void onOptionsClick(ForumPost post, View view) {
-        PopupMenu popup = new PopupMenu(requireContext(), view);
-        FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
-
-        if (user != null && post.getUserId() != null && post.getUserId().equals(user.getUid())) {
-            popup.getMenu().add("Delete");
-        }
-        popup.getMenu().add("Report");
-
-        popup.setOnMenuItemClickListener(item -> {
-            String title = String.valueOf(item.getTitle());
-
-            if ("Delete".equals(title)) {
-                showDeleteConfirmation(post);
-                return true;
-            } else if ("Report".equals(title)) {
-                showReportDialog(post);
-                return true;
-            }
-
-            return false;
-        });
-
-        popup.show();
-    }
-
-    @Override
-    public void onUserClick(String userId) {
-        FirebaseUser currentUser = FirebaseAuth.getInstance().getCurrentUser();
-        if (currentUser != null && userId.equals(currentUser.getUid())) {
-            return;
-        }
-
-        Intent intent = new Intent(requireContext(), UserSocialProfileActivity.class);
-        intent.putExtra(UserSocialProfileActivity.EXTRA_USER_ID, userId);
-        startActivity(intent);
-    }
-
     private static class FavoriteChoice {
         final CollectionSlot slot;
         final String label;
@@ -830,6 +842,7 @@ public class ProfileFragment extends Fragment implements
 
                         if (task.isSuccessful()) {
                             Toast.makeText(requireContext(), "Post deleted", Toast.LENGTH_SHORT).show();
+                            refreshPosts();
                         } else {
                             Toast.makeText(requireContext(), "Failed to delete post.", Toast.LENGTH_SHORT).show();
                         }
@@ -864,8 +877,6 @@ public class ProfileFragment extends Fragment implements
         input.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE);
         input.setHint("Please specify the reason (max 200 chars)...");
         input.setFilters(new InputFilter[]{new InputFilter.LengthFilter(200)});
-        input.setSingleLine(false);
-        input.setHorizontallyScrolling(false);
         input.setLines(5);
 
         FrameLayout container = new FrameLayout(requireContext());

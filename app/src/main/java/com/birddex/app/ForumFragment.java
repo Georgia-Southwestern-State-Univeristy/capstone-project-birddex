@@ -20,6 +20,8 @@ import androidx.annotation.Nullable;
 import androidx.appcompat.app.AlertDialog;
 import androidx.fragment.app.Fragment;
 import androidx.recyclerview.widget.LinearLayoutManager;
+import androidx.recyclerview.widget.RecyclerView;
+import androidx.swiperefreshlayout.widget.SwipeRefreshLayout;
 
 import com.birddex.app.databinding.FragmentForumBinding;
 import com.bumptech.glide.Glide;
@@ -42,6 +44,8 @@ import java.util.List;
 public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostClickListener {
 
     private static final String TAG = "ForumFragment";
+    private static final int PAGE_SIZE = 20;
+
     private static final String PREFS_NAME = "ForumPrefs";
     private static final String KEY_FILTER = "current_filter";
     
@@ -50,6 +54,11 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
     private FirebaseFirestore db;
     private FirebaseManager firebaseManager;
     private ForumPostAdapter adapter;
+    
+    private List<ForumPost> postList = new ArrayList<>();
+    private DocumentSnapshot lastVisible;
+    private boolean isFetching = false;
+    private boolean isLastPage = false;
     private ListenerRegistration postsListener;
     private String currentFilter = "Recent";
 
@@ -72,6 +81,9 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
         setupRecyclerView();
         setupClickListeners();
         loadUserProfilePicture();
+        setupSwipeRefresh();
+        
+        refreshPosts();
         applyFilter(); // Load initial data based on saved filter
 
         return view;
@@ -79,8 +91,33 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
 
     private void setupRecyclerView() {
         adapter = new ForumPostAdapter(this);
-        binding.rvForumPosts.setLayoutManager(new LinearLayoutManager(getContext()));
+        LinearLayoutManager layoutManager = new LinearLayoutManager(getContext());
+        binding.rvForumPosts.setLayoutManager(layoutManager);
         binding.rvForumPosts.setAdapter(adapter);
+
+        binding.rvForumPosts.addOnScrollListener(new RecyclerView.OnScrollListener() {
+            @Override
+            public void onScrolled(@NonNull RecyclerView recyclerView, int dx, int dy) {
+                super.onScrolled(recyclerView, dx, dy);
+                if (dy > 0) { // Scrolling down
+                    int visibleItemCount = layoutManager.getChildCount();
+                    int totalItemCount = layoutManager.getItemCount();
+                    int pastVisibleItems = layoutManager.findFirstVisibleItemPosition();
+
+                    if (!isFetching && !isLastPage) {
+                        if ((visibleItemCount + pastVisibleItems) >= totalItemCount) {
+                            fetchPosts();
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    private void setupSwipeRefresh() {
+        binding.swipeRefreshLayout.setOnRefreshListener(() -> {
+            refreshPosts();
+        });
     }
 
     private void setupClickListeners() {
@@ -133,7 +170,6 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
         FirebaseUser currentUser = mAuth.getCurrentUser();
         if (currentUser == null) return;
 
-        // Use standard get() which automatically checks cache first
         db.collection("users").document(currentUser.getUid()).get()
                 .addOnSuccessListener(documentSnapshot -> {
                     if (!isAdded() || binding == null) return;
@@ -149,20 +185,57 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
                 });
     }
 
-    private void listenForPosts() {
-        postsListener = db.collection("forumThreads")
-                .orderBy("timestamp", Query.Direction.DESCENDING)
-                .addSnapshotListener(MetadataChanges.INCLUDE, (value, error) -> {
-                    if (!isAdded() || binding == null) return;
-                    if (error != null) {
-                        Log.e(TAG, "Listen failed.", error);
-                        return;
-                    }
+    private void refreshPosts() {
+        lastVisible = null;
+        isLastPage = false;
+        postList.clear();
+        fetchPosts();
+    }
 
-                    if (value != null) {
-                        processSnapshot(value.getDocuments(), value.getMetadata().isFromCache());
+    private void fetchPosts() {
+        if (isFetching || isLastPage) {
+            if (binding != null) binding.swipeRefreshLayout.setRefreshing(false);
+            return;
+        }
+        isFetching = true;
+
+        Query query = db.collection("forumThreads")
+                .orderBy("timestamp", Query.Direction.DESCENDING)
+                .limit(PAGE_SIZE);
+
+        if (lastVisible != null) {
+            query = query.startAfter(lastVisible);
+        }
+
+        query.get().addOnSuccessListener(value -> {
+            if (!isAdded() || binding == null) return;
+            binding.swipeRefreshLayout.setRefreshing(false);
+            
+            if (value != null && !value.isEmpty()) {
+                lastVisible = value.getDocuments().get(value.size() - 1);
+                
+                for (DocumentSnapshot doc : value.getDocuments()) {
+                    ForumPost post = doc.toObject(ForumPost.class);
+                    if (post != null) {
+                        post.setId(doc.getId());
+                        postList.add(post);
                     }
-                });
+                }
+                
+                adapter.setPosts(new ArrayList<>(postList));
+                
+                if (value.size() < PAGE_SIZE) {
+                    isLastPage = true;
+                }
+            } else {
+                isLastPage = true;
+            }
+            isFetching = false;
+        }).addOnFailureListener(e -> {
+            isFetching = false;
+            if (binding != null) binding.swipeRefreshLayout.setRefreshing(false);
+            Log.e(TAG, "Error fetching posts", e);
+        });
     }
 
     private void listenForFollowingPosts() {
@@ -301,6 +374,7 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
                         if (!isAdded()) return;
                         if (task.isSuccessful()) {
                             Toast.makeText(getContext(), "Post deleted", Toast.LENGTH_SHORT).show();
+                            refreshPosts(); // Refresh after deletion
                         }
                     });
                 })

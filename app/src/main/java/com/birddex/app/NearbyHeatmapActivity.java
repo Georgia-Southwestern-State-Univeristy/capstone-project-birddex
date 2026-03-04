@@ -130,10 +130,16 @@ public class NearbyHeatmapActivity extends AppCompatActivity
     private int pendingLoads = 0;
     
     private ForumComment replyingToComment = null;
-    private ListenerRegistration popupCommentsListener;
     private EditText currentPopupEditText;
     private ForumPost activePost;
     private FirebaseManager firebaseManager;
+
+    // Pagination for popup comments
+    private List<ForumComment> popupCommentList = new ArrayList<>();
+    private DocumentSnapshot lastPopupCommentVisible;
+    private boolean isFetchingPopupComments = false;
+    private boolean isLastPopupCommentsPage = false;
+    private static final int POPUP_COMMENTS_PAGE_SIZE = 25;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -209,7 +215,7 @@ public class NearbyHeatmapActivity extends AppCompatActivity
     }
 
     private void loadForumPins() {
-        // Fetch pins from CACHE first for instant display
+        // We removed the hard limit here to show all pins
         db.collection("forumThreads")
                 .whereEqualTo("showLocation", true)
                 .get(Source.CACHE)
@@ -388,29 +394,34 @@ public class NearbyHeatmapActivity extends AppCompatActivity
 
         btnPostOptions.setOnClickListener(v -> showPostOptions(post, v));
 
-        // Setup Comments with CACHE support
+        // Setup Comments with Pagination
         RecyclerView rvComments = view.findViewById(R.id.rvComments);
         ForumCommentAdapter adapter = new ForumCommentAdapter(this);
-        rvComments.setLayoutManager(new LinearLayoutManager(this));
+        LinearLayoutManager layoutManager = new LinearLayoutManager(this);
+        rvComments.setLayoutManager(layoutManager);
         rvComments.setAdapter(adapter);
 
-        if (popupCommentsListener != null) popupCommentsListener.remove();
-        popupCommentsListener = db.collection("forumThreads").document(post.getId()).collection("comments")
-                .orderBy("timestamp", Query.Direction.ASCENDING)
-                .addSnapshotListener(MetadataChanges.INCLUDE, (value, error) -> {
-                    if (error != null) return;
-                    if (value != null) {
-                        List<ForumComment> comments = new ArrayList<>();
-                        for (DocumentSnapshot doc : value.getDocuments()) {
-                            ForumComment comment = doc.toObject(ForumComment.class);
-                            if (comment != null) {
-                                comment.setId(doc.getId());
-                                comments.add(comment);
-                            }
+        popupCommentList.clear();
+        lastPopupCommentVisible = null;
+        isLastPopupCommentsPage = false;
+        fetchPopupComments(post.getId(), adapter);
+
+        rvComments.addOnScrollListener(new RecyclerView.OnScrollListener() {
+            @Override
+            public void onScrolled(@NonNull RecyclerView recyclerView, int dx, int dy) {
+                if (dy > 0) {
+                    int visibleItemCount = layoutManager.getChildCount();
+                    int totalItemCount = layoutManager.getItemCount();
+                    int pastVisibleItems = layoutManager.findFirstVisibleItemPosition();
+
+                    if (!isFetchingPopupComments && !isLastPopupCommentsPage) {
+                        if ((visibleItemCount + pastVisibleItems) >= totalItemCount) {
+                            fetchPopupComments(post.getId(), adapter);
                         }
-                        adapter.setComments(comments);
                     }
-                });
+                }
+            }
+        });
 
         ImageView ivCurrentUser = view.findViewById(R.id.ivCurrentUserPfp);
         if (user != null) {
@@ -446,6 +457,12 @@ public class NearbyHeatmapActivity extends AppCompatActivity
                             currentPopupEditText.setHint("Write a comment...");
                             replyingToComment = null;
                             db.collection("forumThreads").document(post.getId()).update("commentCount", FieldValue.increment(1));
+                            
+                            // Simple refresh
+                            popupCommentList.clear();
+                            lastPopupCommentVisible = null;
+                            isLastPopupCommentsPage = false;
+                            fetchPopupComments(post.getId(), adapter);
                         });
             });
         });
@@ -458,6 +475,39 @@ public class NearbyHeatmapActivity extends AppCompatActivity
             behavior.setState(BottomSheetBehavior.STATE_EXPANDED);
             behavior.setSkipCollapsed(true);
         }
+    }
+
+    private void fetchPopupComments(String postId, ForumCommentAdapter adapter) {
+        if (isFetchingPopupComments || isLastPopupCommentsPage) return;
+        isFetchingPopupComments = true;
+
+        Query query = db.collection("forumThreads").document(postId).collection("comments")
+                .orderBy("timestamp", Query.Direction.ASCENDING)
+                .limit(POPUP_COMMENTS_PAGE_SIZE);
+
+        if (lastPopupCommentVisible != null) {
+            query = query.startAfter(lastPopupCommentVisible);
+        }
+
+        query.get().addOnSuccessListener(value -> {
+            if (value != null && !value.isEmpty()) {
+                lastPopupCommentVisible = value.getDocuments().get(value.size() - 1);
+                for (DocumentSnapshot doc : value.getDocuments()) {
+                    ForumComment comment = doc.toObject(ForumComment.class);
+                    if (comment != null) {
+                        comment.setId(doc.getId());
+                        popupCommentList.add(comment);
+                    }
+                }
+                adapter.setComments(new ArrayList<>(popupCommentList));
+                if (value.size() < POPUP_COMMENTS_PAGE_SIZE) isLastPopupCommentsPage = true;
+            } else {
+                isLastPopupCommentsPage = true;
+            }
+            isFetchingPopupComments = false;
+        }).addOnFailureListener(e -> {
+            isFetchingPopupComments = false;
+        });
     }
 
     private void showPostOptions(ForumPost post, View view) {
@@ -632,6 +682,7 @@ public class NearbyHeatmapActivity extends AppCompatActivity
     private void loadUserBirdSightings() {
         // Fetch sightings from CACHE first
         db.collection("userBirdSightings")
+                .limit(500)
                 .get(Source.CACHE)
                 .addOnSuccessListener(querySnapshot -> {
                     if (querySnapshot != null && !querySnapshot.isEmpty()) {
@@ -644,6 +695,7 @@ public class NearbyHeatmapActivity extends AppCompatActivity
 
     private void fetchUserBirdSightingsFromServer() {
         db.collection("userBirdSightings")
+                .limit(500)
                 .get(Source.SERVER)
                 .addOnSuccessListener(querySnapshot -> processSightings(querySnapshot, true))
                 .addOnFailureListener(e -> onCollectionFinished());
@@ -651,6 +703,7 @@ public class NearbyHeatmapActivity extends AppCompatActivity
 
     private void loadEbirdApiSightings() {
         db.collection("eBirdApiSightings")
+                .limit(1000)
                 .get(Source.CACHE)
                 .addOnSuccessListener(querySnapshot -> {
                     if (querySnapshot != null && !querySnapshot.isEmpty()) {
@@ -663,6 +716,7 @@ public class NearbyHeatmapActivity extends AppCompatActivity
 
     private void fetchEbirdApiSightingsFromServer() {
         db.collection("eBirdApiSightings")
+                .limit(1000)
                 .get(Source.SERVER)
                 .addOnSuccessListener(querySnapshot -> processSightings(querySnapshot, false))
                 .addOnFailureListener(e -> onCollectionFinished());
@@ -1039,6 +1093,5 @@ public class NearbyHeatmapActivity extends AppCompatActivity
     @Override
     protected void onDestroy() {
         super.onDestroy();
-        if (popupCommentsListener != null) popupCommentsListener.remove();
     }
 }

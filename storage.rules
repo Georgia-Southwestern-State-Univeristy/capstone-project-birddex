@@ -1,7 +1,7 @@
 rules_version = '2';
 service firebase.storage {
   match /b/{bucket}/o {
-    // Rule for user-uploaded identification history images (New)
+    // Rule for user-uploaded identification history images
     match /identificationImages/{userId}/{allPaths=**} {
       allow read: if true;
       allow write: if request.auth != null && request.auth.uid == userId;
@@ -12,15 +12,15 @@ service firebase.storage {
       allow read, write: if request.auth != null && request.auth.uid == userId;
     }
 
-    // Rule for user collection images (New)
+    // Rule for user collection images
     match /userCollectionImages/{userId}/{allPaths=**} {
       allow read, write: if request.auth != null && request.auth.uid == userId;
     }
 
-    // Rule for profile pictures - updated to match filename correctly
+    // Rule for profile pictures - simplified to debug 403
     match /profile_pictures/{imageName} {
-      allow write: if request.auth != null && imageName == request.auth.uid + ".jpg";
-      allow read: if request.auth != null;
+      allow read: if true;
+      allow write: if request.auth != null;
     }
 
     // Rule for forum post images
@@ -29,8 +29,8 @@ service firebase.storage {
       allow write: if request.auth != null;
     }
 
-    // NEW RULE for ebird_birds_export - ONLY YOU CAN ACCESS
-    match /ebirdId's/{fileName} {
+    // Rule for ebird_birds_export
+    match /ebirdIds/{fileName} {
       allow read: if request.auth != null && request.auth.token.email == 'dominique.solomon21@gmail.com';
       allow write: if request.auth != null && request.auth.token.email == 'dominique.solomon21@gmail.com';
     }

@@ -123,7 +123,9 @@ public class WelcomeActivity extends AppCompatActivity implements NetworkMonitor
                 mAuth.signOut();
                 showWelcomeScreenLayout();
             } else {
-                startActivity(new Intent(WelcomeActivity.this, HomeActivity.class));
+                Intent intent = new Intent(WelcomeActivity.this, HomeActivity.class);
+                intent.putExtra(HomeActivity.EXTRA_SHOW_STARTUP_LOADING, true);
+                startActivity(intent);
                 finish();
             }
         } else {

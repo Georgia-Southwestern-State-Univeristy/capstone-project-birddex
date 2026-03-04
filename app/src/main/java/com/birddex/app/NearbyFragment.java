@@ -79,6 +79,7 @@ public class NearbyFragment extends Fragment {
 
     private boolean isUpdating = false;
     private boolean isSearchDataLoading = false;
+    private boolean showLoadingOnNextFetch = false;
     private ExecutorService geoExecutor;
     private int fetchCount = 0;
 
@@ -146,6 +147,8 @@ public class NearbyFragment extends Fragment {
 
         btnRefresh.setOnClickListener(view -> {
             Log.d(TAG, "Manual refresh clicked");
+            showLoadingOnNextFetch = true;
+
             if (ContextCompat.checkSelfPermission(requireContext(), Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
                 fusedLocationClient.getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, null)
                         .addOnSuccessListener(location -> {
@@ -297,7 +300,7 @@ public class NearbyFragment extends Fragment {
         Log.d(TAG, "Starting dual-fetch from Firestore and eBird...");
 
         // Only show loading dialog if there's no cached data or it's a manual refresh
-        if (isAdded() && getActivity() != null && (adapter.getItemCount() == 0)) {
+        if (showLoadingOnNextFetch && isAdded() && getActivity() != null) {
             getActivity().runOnUiThread(() -> {
                 if (!loadingDialog.isShowing()) loadingDialog.show();
             });
@@ -410,6 +413,7 @@ public class NearbyFragment extends Fragment {
             getActivity().runOnUiThread(() -> {
                 adapter.updateList(combined);
                 if (loadingDialog.isShowing()) loadingDialog.dismiss();
+                showLoadingOnNextFetch = false;
             });
         }
     }

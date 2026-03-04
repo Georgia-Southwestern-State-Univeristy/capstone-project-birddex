@@ -4,26 +4,31 @@
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="?attr/colorSurface">
+    android:background="@color/page_cream">
 
     <com.google.android.material.appbar.AppBarLayout
+        android:id="@+id/appBarLayout"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:background="?attr/colorSurface"
-        app:elevation="0dp">
+        android:background="@color/page_cream"
+        app:elevation="0dp"
+        app:liftOnScroll="false">
 
         <androidx.appcompat.widget.Toolbar
             android:id="@+id/toolbar"
             android:layout_width="match_parent"
             android:layout_height="?attr/actionBarSize"
+            app:layout_scrollFlags="scroll"
             app:navigationIcon="@drawable/ic_back"
             app:title="Profile"
             app:titleTextColor="?attr/colorOnSurface" />
 
         <androidx.constraintlayout.widget.ConstraintLayout
+            android:id="@+id/profileHeader"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:padding="16dp">
+            android:padding="16dp"
+            app:layout_scrollFlags="scroll">
 
             <com.google.android.material.imageview.ShapeableImageView
                 android:id="@+id/ivUserProfilePfp"
@@ -161,27 +166,67 @@
             android:id="@+id/profileTabLayout"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
+            android:background="@color/page_cream"
+            app:tabGravity="fill"
+            app:tabIconTint="?attr/colorOnSurface"
             app:tabIndicatorColor="?attr/colorPrimary"
+            app:tabIndicatorFullWidth="false"
+            app:tabMode="fixed"
+            app:tabRippleColor="@android:color/transparent"
             app:tabSelectedTextColor="?attr/colorPrimary">
 
             <com.google.android.material.tabs.TabItem
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:icon="@drawable/ic_forum" />
+                android:icon="@drawable/ic_collection" />
 
             <com.google.android.material.tabs.TabItem
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:icon="@drawable/ic_collection" />
+                android:icon="@drawable/ic_forum" />
         </com.google.android.material.tabs.TabLayout>
 
     </com.google.android.material.appbar.AppBarLayout>
 
-    <androidx.recyclerview.widget.RecyclerView
-        android:id="@+id/rvUserProfilePosts"
+    <FrameLayout
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        app:layout_behavior="@string/appbar_scrolling_view_behavior"
-        tools:listitem="@layout/item_forum_post" />
+        app:layout_behavior="@string/appbar_scrolling_view_behavior">
+
+        <TextView
+            android:id="@+id/tvProfileTabEmpty"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:gravity="center"
+            android:text="No posts yet."
+            android:textColor="?attr/colorOnSurfaceVariant"
+            android:textSize="14sp"
+            android:visibility="gone" />
+
+        <androidx.recyclerview.widget.RecyclerView
+            android:id="@+id/rvFavoriteCards"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:clipToPadding="false"
+            android:paddingStart="12dp"
+            android:paddingTop="12dp"
+            android:paddingEnd="12dp"
+            android:paddingBottom="24dp"
+            tools:listitem="@layout/view_bird_card" />
+
+        <androidx.recyclerview.widget.RecyclerView
+            android:id="@+id/rvUserProfilePosts"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:clipToPadding="false"
+            android:paddingStart="12dp"
+            android:paddingTop="12dp"
+            android:paddingEnd="12dp"
+            android:paddingBottom="24dp"
+            android:visibility="gone"
+            tools:listitem="@layout/item_forum_post" />
+
+    </FrameLayout>
 
 </androidx.coordinatorlayout.widget.CoordinatorLayout>

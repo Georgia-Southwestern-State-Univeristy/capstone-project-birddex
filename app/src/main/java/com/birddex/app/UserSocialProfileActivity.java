@@ -8,12 +8,16 @@ import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.appcompat.widget.Toolbar;
+import androidx.recyclerview.widget.GridLayoutManager;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
 import com.bumptech.glide.Glide;
+import com.google.android.material.appbar.AppBarLayout;
 import com.google.android.material.button.MaterialButton;
 import com.google.android.material.imageview.ShapeableImageView;
 import com.google.android.material.tabs.TabLayout;
@@ -26,28 +30,40 @@ import com.google.firebase.firestore.ListenerRegistration;
 import com.google.firebase.firestore.Query;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 
-public class UserSocialProfileActivity extends AppCompatActivity implements ForumPostAdapter.OnPostClickListener {
+public class UserSocialProfileActivity extends AppCompatActivity implements 
+        ForumPostAdapter.OnPostClickListener,
+        FavoritesAdapter.OnFavoriteInteractionListener {
 
     private static final String TAG = "UserSocialProfile";
     public static final String EXTRA_USER_ID = "extra_user_id";
+    private static final int FAVORITE_SLOT_COUNT = 3;
 
     private ShapeableImageView ivPfp;
     private TextView tvUsername, tvBio;
     private TextView tvPostCount, tvFollowerCount, tvFollowingCount;
     private LinearLayout btnUserFollowers, btnUserFollowing;
     private MaterialButton btnFollow;
-    private RecyclerView rvPosts;
+    private RecyclerView rvPosts, rvFavoriteCards;
     private TabLayout tabLayout;
+    private TextView tvProfileTabEmpty;
+    private AppBarLayout appBarLayout;
+    private View profileHeader;
 
     private FirebaseFirestore db;
     private FirebaseManager firebaseManager;
     private ForumPostAdapter adapter;
+    private FavoritesAdapter favoritesAdapter;
     
     private String targetUserId;
     private boolean isFollowing = false;
     private ListenerRegistration postsListener;
+
+    private final List<String> favoriteCardKeys = new ArrayList<>();
+    private final List<CollectionSlot> allCollectionSlots = new ArrayList<>();
+    private final List<ForumPost> currentPosts = new ArrayList<>();
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -67,7 +83,7 @@ public class UserSocialProfileActivity extends AppCompatActivity implements Foru
         initUI();
         loadUserDetails();
         checkFollowingStatus();
-        setupRecyclerView();
+        setupRecyclerViews();
         listenForUserPosts();
     }
 
@@ -86,7 +102,11 @@ public class UserSocialProfileActivity extends AppCompatActivity implements Foru
         btnUserFollowing = findViewById(R.id.btnUserFollowing);
         btnFollow = findViewById(R.id.btnUserFollow);
         rvPosts = findViewById(R.id.rvUserProfilePosts);
+        rvFavoriteCards = findViewById(R.id.rvFavoriteCards);
         tabLayout = findViewById(R.id.profileTabLayout);
+        tvProfileTabEmpty = findViewById(R.id.tvProfileTabEmpty);
+        appBarLayout = findViewById(R.id.appBarLayout);
+        profileHeader = findViewById(R.id.profileHeader);
 
         FirebaseUser currentUser = FirebaseAuth.getInstance().getCurrentUser();
         if (currentUser != null && currentUser.getUid().equals(targetUserId)) {
@@ -113,11 +133,7 @@ public class UserSocialProfileActivity extends AppCompatActivity implements Foru
         tabLayout.addOnTabSelectedListener(new TabLayout.OnTabSelectedListener() {
             @Override
             public void onTabSelected(TabLayout.Tab tab) {
-                if (tab.getPosition() == 0) {
-                    rvPosts.setVisibility(View.VISIBLE);
-                } else {
-                    rvPosts.setVisibility(View.GONE);
-                }
+                applyTabState(tab.getPosition());
             }
 
             @Override
@@ -126,6 +142,39 @@ public class UserSocialProfileActivity extends AppCompatActivity implements Foru
             @Override
             public void onTabReselected(TabLayout.Tab tab) {}
         });
+        
+        applyTabState(0);
+    }
+
+    private void applyTabState(int position) {
+        Toolbar toolbar = findViewById(R.id.toolbar);
+        AppBarLayout.LayoutParams toolbarParams = (AppBarLayout.LayoutParams) toolbar.getLayoutParams();
+        AppBarLayout.LayoutParams headerParams = (AppBarLayout.LayoutParams) profileHeader.getLayoutParams();
+
+        if (position == 0) {
+            rvFavoriteCards.setVisibility(View.VISIBLE);
+            rvPosts.setVisibility(View.GONE);
+            tvProfileTabEmpty.setVisibility(View.GONE);
+
+            toolbarParams.setScrollFlags(0);
+            headerParams.setScrollFlags(0);
+            appBarLayout.setExpanded(true, true);
+        } else {
+            rvFavoriteCards.setVisibility(View.GONE);
+            if (currentPosts.isEmpty()) {
+                tvProfileTabEmpty.setVisibility(View.VISIBLE);
+                rvPosts.setVisibility(View.GONE);
+            } else {
+                tvProfileTabEmpty.setVisibility(View.GONE);
+                rvPosts.setVisibility(View.VISIBLE);
+            }
+
+            toolbarParams.setScrollFlags(AppBarLayout.LayoutParams.SCROLL_FLAG_SCROLL);
+            headerParams.setScrollFlags(AppBarLayout.LayoutParams.SCROLL_FLAG_SCROLL);
+        }
+        
+        toolbar.setLayoutParams(toolbarParams);
+        profileHeader.setLayoutParams(headerParams);
     }
 
     private void loadUserDetails() {
@@ -143,9 +192,56 @@ public class UserSocialProfileActivity extends AppCompatActivity implements Foru
                                     .load(user.getProfilePictureUrl())
                                     .placeholder(R.drawable.ic_profile)
                                     .into(ivPfp);
+
+                            favoriteCardKeys.clear();
+                            List<String> savedKeys = (List<String>) doc.get("favoriteCardKeys");
+                            if (savedKeys != null) {
+                                favoriteCardKeys.addAll(savedKeys);
+                            }
+                            loadFavoriteCards();
                         }
                     }
                 });
+    }
+
+    private void loadFavoriteCards() {
+        db.collection("users")
+                .document(targetUserId)
+                .collection("collectionSlot")
+                .get()
+                .addOnSuccessListener(queryDocumentSnapshots -> {
+                    allCollectionSlots.clear();
+                    for (DocumentSnapshot doc : queryDocumentSnapshots.getDocuments()) {
+                        CollectionSlot slot = doc.toObject(CollectionSlot.class);
+                        if (slot == null) continue;
+                        slot.setId(doc.getId());
+                        allCollectionSlots.add(slot);
+                    }
+                    refreshFavoritesDisplay();
+                });
+    }
+
+    private void refreshFavoritesDisplay() {
+        while (favoriteCardKeys.size() < FAVORITE_SLOT_COUNT) {
+            favoriteCardKeys.add("");
+        }
+
+        List<CollectionSlot> favoriteSlots = new ArrayList<>();
+        for (int i = 0; i < FAVORITE_SLOT_COUNT; i++) {
+            favoriteSlots.add(findSlotById(favoriteCardKeys.get(i)));
+        }
+        favoritesAdapter.submitList(favoriteSlots);
+    }
+
+    @Nullable
+    private CollectionSlot findSlotById(@Nullable String id) {
+        if (id == null || id.trim().isEmpty()) return null;
+        for (CollectionSlot slot : allCollectionSlots) {
+            if (slot != null && id.equals(slot.getId())) {
+                return slot;
+            }
+        }
+        return null;
     }
 
     private void checkFollowingStatus() {
@@ -160,10 +256,8 @@ public class UserSocialProfileActivity extends AppCompatActivity implements Foru
     private void updateFollowButtonUI() {
         if (isFollowing) {
             btnFollow.setText("Following");
-            btnFollow.setIconResource(R.drawable.ic_bolt_24);
         } else {
             btnFollow.setText("Follow");
-            btnFollow.setIcon(null);
         }
     }
 
@@ -190,10 +284,14 @@ public class UserSocialProfileActivity extends AppCompatActivity implements Foru
         }
     }
 
-    private void setupRecyclerView() {
+    private void setupRecyclerViews() {
         adapter = new ForumPostAdapter(this);
         rvPosts.setLayoutManager(new LinearLayoutManager(this));
         rvPosts.setAdapter(adapter);
+
+        favoritesAdapter = new FavoritesAdapter(false, this);
+        rvFavoriteCards.setLayoutManager(new GridLayoutManager(this, 3));
+        rvFavoriteCards.setAdapter(favoritesAdapter);
     }
 
     private void listenForUserPosts() {
@@ -202,7 +300,6 @@ public class UserSocialProfileActivity extends AppCompatActivity implements Foru
                 .orderBy("timestamp", Query.Direction.DESCENDING)
                 .addSnapshotListener((value, error) -> {
                     if (error != null) {
-                        loadUserPostsFallback();
                         return;
                     }
 
@@ -216,26 +313,11 @@ public class UserSocialProfileActivity extends AppCompatActivity implements Foru
                             }
                         }
                         tvPostCount.setText(String.valueOf(posts.size()));
+                        currentPosts.clear();
+                        currentPosts.addAll(posts);
                         adapter.setPosts(posts);
+                        applyTabState(tabLayout.getSelectedTabPosition());
                     }
-                });
-    }
-
-    private void loadUserPostsFallback() {
-        db.collection("forumThreads")
-                .whereEqualTo("userId", targetUserId)
-                .get()
-                .addOnSuccessListener(queryDocumentSnapshots -> {
-                    List<ForumPost> posts = new ArrayList<>();
-                    for (DocumentSnapshot doc : queryDocumentSnapshots) {
-                        ForumPost post = doc.toObject(ForumPost.class);
-                        if (post != null) {
-                            post.setId(doc.getId());
-                            posts.add(post);
-                        }
-                    }
-                    tvPostCount.setText(String.valueOf(posts.size()));
-                    adapter.setPosts(posts);
                 });
     }
 
@@ -280,6 +362,28 @@ public class UserSocialProfileActivity extends AppCompatActivity implements Foru
             intent.putExtra(UserSocialProfileActivity.EXTRA_USER_ID, userId);
             startActivity(intent);
         }
+    }
+
+    @Override
+    public void onFavoriteClicked(int position, @Nullable CollectionSlot slot) {
+        if (slot != null) {
+            Intent intent = new Intent(this, ViewBirdCardActivity.class);
+            intent.putExtra(CollectionCardAdapter.EXTRA_IMAGE_URL, slot.getImageUrl());
+            intent.putExtra(CollectionCardAdapter.EXTRA_COMMON_NAME, slot.getCommonName());
+            intent.putExtra(CollectionCardAdapter.EXTRA_SCI_NAME, slot.getScientificName());
+            intent.putExtra(CollectionCardAdapter.EXTRA_STATE, slot.getState());
+            intent.putExtra(CollectionCardAdapter.EXTRA_LOCALITY, slot.getLocality());
+            intent.putExtra(CollectionCardAdapter.EXTRA_BIRD_ID, slot.getBirdId());
+            if (slot.getTimestamp() != null) {
+                intent.putExtra(CollectionCardAdapter.EXTRA_CAUGHT_TIME, slot.getTimestamp().getTime());
+            }
+            startActivity(intent);
+        }
+    }
+
+    @Override
+    public boolean onFavoriteLongPressed(int position, @Nullable CollectionSlot slot) {
+        return false;
     }
 
     @Override

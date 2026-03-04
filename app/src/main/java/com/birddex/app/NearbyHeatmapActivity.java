@@ -48,13 +48,16 @@ import com.google.android.gms.maps.model.TileOverlay;
 import com.google.android.gms.maps.model.TileOverlayOptions;
 import com.google.firebase.auth.FirebaseAuth;
 import com.google.firebase.auth.FirebaseUser;
+import com.google.firebase.firestore.DocumentReference;
 import com.google.firebase.firestore.DocumentSnapshot;
 import com.google.firebase.firestore.FieldValue;
 import com.google.firebase.firestore.FirebaseFirestore;
-import com.google.firebase.firestore.ListenerRegistration;
 import com.google.firebase.firestore.MetadataChanges;
 import com.google.firebase.firestore.Query;
 import com.google.firebase.firestore.Source;
+import com.google.firebase.firestore.WriteBatch;
+import com.google.firebase.storage.FirebaseStorage;
+import com.google.firebase.storage.StorageReference;
 import com.google.maps.android.heatmaps.Gradient;
 import com.google.maps.android.heatmaps.HeatmapTileProvider;
 import com.google.maps.android.heatmaps.WeightedLatLng;
@@ -110,6 +113,7 @@ public class NearbyHeatmapActivity extends AppCompatActivity
 
     private GoogleMap googleMap;
     private FirebaseFirestore db;
+    private FirebaseAuth mAuth;
     private TextView tvMapSubtitle;
 
     private TileOverlay userOverlay;
@@ -133,6 +137,7 @@ public class NearbyHeatmapActivity extends AppCompatActivity
     private EditText currentPopupEditText;
     private ForumPost activePost;
     private FirebaseManager firebaseManager;
+    private ForumCommentAdapter popupCommentAdapter;
 
     // Pagination for popup comments
     private List<ForumComment> popupCommentList = new ArrayList<>();
@@ -147,6 +152,7 @@ public class NearbyHeatmapActivity extends AppCompatActivity
         setContentView(R.layout.activity_nearby_heatmap);
 
         db = FirebaseFirestore.getInstance();
+        mAuth = FirebaseAuth.getInstance();
         firebaseManager = new FirebaseManager(this);
 
         ImageButton btnBack = findViewById(R.id.btnBack);
@@ -392,19 +398,19 @@ public class NearbyHeatmapActivity extends AppCompatActivity
             dialog.dismiss();
         });
 
-        btnPostOptions.setOnClickListener(v -> showPostOptions(post, v));
+        btnPostOptions.setOnClickListener(v -> showPostOptions(post, v, dialog));
 
         // Setup Comments with Pagination
         RecyclerView rvComments = view.findViewById(R.id.rvComments);
-        ForumCommentAdapter adapter = new ForumCommentAdapter(this);
+        popupCommentAdapter = new ForumCommentAdapter(this);
         LinearLayoutManager layoutManager = new LinearLayoutManager(this);
         rvComments.setLayoutManager(layoutManager);
-        rvComments.setAdapter(adapter);
+        rvComments.setAdapter(popupCommentAdapter);
 
         popupCommentList.clear();
         lastPopupCommentVisible = null;
         isLastPopupCommentsPage = false;
-        fetchPopupComments(post.getId(), adapter);
+        fetchPopupComments(post.getId(), popupCommentAdapter);
 
         rvComments.addOnScrollListener(new RecyclerView.OnScrollListener() {
             @Override
@@ -416,7 +422,7 @@ public class NearbyHeatmapActivity extends AppCompatActivity
 
                     if (!isFetchingPopupComments && !isLastPopupCommentsPage) {
                         if ((visibleItemCount + pastVisibleItems) >= totalItemCount) {
-                            fetchPopupComments(post.getId(), adapter);
+                            fetchPopupComments(post.getId(), popupCommentAdapter);
                         }
                     }
                 }
@@ -451,19 +457,20 @@ public class NearbyHeatmapActivity extends AppCompatActivity
                     comment.setParentCommentId(replyingToComment.getId());
                     comment.setParentUsername(replyingToComment.getUsername());
                 }
-                db.collection("forumThreads").document(post.getId()).collection("comments").add(comment)
-                        .addOnSuccessListener(ref -> {
-                            currentPopupEditText.setText("");
-                            currentPopupEditText.setHint("Write a comment...");
-                            replyingToComment = null;
-                            db.collection("forumThreads").document(post.getId()).update("commentCount", FieldValue.increment(1));
-                            
-                            // Simple refresh
-                            popupCommentList.clear();
-                            lastPopupCommentVisible = null;
-                            isLastPopupCommentsPage = false;
-                            fetchPopupComments(post.getId(), adapter);
-                        });
+                
+                WriteBatch batch = db.batch();
+                DocumentReference commentRef = db.collection("forumThreads").document(post.getId()).collection("comments").document();
+                batch.set(commentRef, comment);
+                batch.update(db.collection("forumThreads").document(post.getId()), "commentCount", FieldValue.increment(1));
+                
+                batch.commit().addOnSuccessListener(aVoid -> {
+                    currentPopupEditText.setText("");
+                    currentPopupEditText.setHint("Write a comment...");
+                    replyingToComment = null;
+                    
+                    // Simple refresh
+                    refreshPopupComments();
+                });
             });
         });
 
@@ -475,6 +482,14 @@ public class NearbyHeatmapActivity extends AppCompatActivity
             behavior.setState(BottomSheetBehavior.STATE_EXPANDED);
             behavior.setSkipCollapsed(true);
         }
+    }
+
+    private void refreshPopupComments() {
+        if (activePost == null || popupCommentAdapter == null) return;
+        popupCommentList.clear();
+        lastPopupCommentVisible = null;
+        isLastPopupCommentsPage = false;
+        fetchPopupComments(activePost.getId(), popupCommentAdapter);
     }
 
     private void fetchPopupComments(String postId, ForumCommentAdapter adapter) {
@@ -510,7 +525,7 @@ public class NearbyHeatmapActivity extends AppCompatActivity
         });
     }
 
-    private void showPostOptions(ForumPost post, View view) {
+    private void showPostOptions(ForumPost post, View view, BottomSheetDialog dialog) {
         PopupMenu popup = new PopupMenu(this, view);
         FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
         
@@ -521,7 +536,7 @@ public class NearbyHeatmapActivity extends AppCompatActivity
 
         popup.setOnMenuItemClickListener(item -> {
             if (item.getTitle().equals("Delete")) {
-                showDeleteConfirmation(post);
+                showDeleteConfirmation(post, dialog);
             } else if (item.getTitle().equals("Report")) {
                 showReportDialog("post", post.getId());
             }
@@ -530,20 +545,133 @@ public class NearbyHeatmapActivity extends AppCompatActivity
         popup.show();
     }
 
-    private void showDeleteConfirmation(ForumPost post) {
+    private void showDeleteConfirmation(ForumPost post, BottomSheetDialog bottomSheetDialog) {
         new AlertDialog.Builder(this)
                 .setTitle("Delete Post")
-                .setMessage("Are you sure you want to delete this post?")
+                .setMessage("Are you sure you want to delete this post? All comments and images will be archived.")
                 .setPositiveButton("Delete", (dialog, which) -> {
-                    firebaseManager.deleteForumPost(post.getId(), task -> {
-                        if (task.isSuccessful()) {
-                            Toast.makeText(this, "Post deleted", Toast.LENGTH_SHORT).show();
-                            loadForumPins(); // Refresh
-                        }
-                    });
+                    archiveAndDeletePost(post, bottomSheetDialog);
                 })
                 .setNegativeButton("Cancel", null)
                 .show();
+    }
+
+    private void archiveAndDeletePost(ForumPost post, BottomSheetDialog bottomSheetDialog) {
+        FirebaseUser user = mAuth.getCurrentUser();
+        if (user == null) return;
+
+        String imageUrl = post.getBirdImageUrl();
+        if (imageUrl != null && !imageUrl.isEmpty()) {
+            moveImageToArchive(user.getUid(), post.getId(), imageUrl, new OnImageArchivedListener() {
+                @Override
+                public void onSuccess(String archivedUrl) {
+                    post.setBirdImageUrl(archivedUrl);
+                    handleCommentsArchiveAndDeletion(user.getUid(), post, bottomSheetDialog);
+                }
+
+                @Override
+                public void onFailure(Exception e) {
+                    Log.e(TAG, "Failed to archive image, proceeding with original URL", e);
+                    handleCommentsArchiveAndDeletion(user.getUid(), post, bottomSheetDialog);
+                }
+            });
+        } else {
+            handleCommentsArchiveAndDeletion(user.getUid(), post, bottomSheetDialog);
+        }
+    }
+
+    private void handleCommentsArchiveAndDeletion(String userId, ForumPost post, BottomSheetDialog bottomSheetDialog) {
+        db.collection("forumThreads").document(post.getId()).collection("comments")
+                .get()
+                .addOnSuccessListener(queryDocumentSnapshots -> {
+                    WriteBatch batch = db.batch();
+                    
+                    for (DocumentSnapshot doc : queryDocumentSnapshots) {
+                        Map<String, Object> commentBacklog = new HashMap<>();
+                        commentBacklog.put("type", "comment_archived_with_post");
+                        commentBacklog.put("originalId", doc.getId());
+                        commentBacklog.put("postId", post.getId());
+                        commentBacklog.put("data", doc.getData());
+                        commentBacklog.put("deletedBy", userId);
+                        commentBacklog.put("deletedAt", FieldValue.serverTimestamp());
+                        
+                        batch.set(db.collection("deleted_backlog").document(), commentBacklog);
+                        batch.delete(doc.getReference());
+                    }
+                    
+                    Map<String, Object> postBacklog = new HashMap<>();
+                    postBacklog.put("type", "post");
+                    postBacklog.put("originalId", post.getId());
+                    postBacklog.put("data", post);
+                    postBacklog.put("deletedBy", userId);
+                    postBacklog.put("deletedAt", FieldValue.serverTimestamp());
+                    
+                    batch.set(db.collection("deleted_backlog").document(), postBacklog);
+                    batch.delete(db.collection("forumThreads").document(post.getId()));
+                    
+                    batch.commit().addOnSuccessListener(aVoid -> {
+                        Toast.makeText(this, "Post and comments deleted", Toast.LENGTH_SHORT).show();
+                        if (bottomSheetDialog != null) bottomSheetDialog.dismiss();
+                        loadForumPins();
+                    }).addOnFailureListener(e -> {
+                        Log.e(TAG, "Failed to execute deletion batch", e);
+                        Toast.makeText(this, "Error deleting post content", Toast.LENGTH_SHORT).show();
+                    });
+                })
+                .addOnFailureListener(e -> {
+                    Log.e(TAG, "Failed to fetch comments for deletion", e);
+                    savePostToBacklogAndFirestore(userId, post, bottomSheetDialog);
+                });
+    }
+
+    private interface OnImageArchivedListener {
+        void onSuccess(String archivedUrl);
+        void onFailure(Exception e);
+    }
+
+    private void moveImageToArchive(String userId, String postId, String originalUrl, OnImageArchivedListener listener) {
+        FirebaseStorage storage = FirebaseStorage.getInstance();
+        try {
+            StorageReference oldRef = storage.getReferenceFromUrl(originalUrl);
+            String fileName = oldRef.getName();
+            StorageReference newRef = storage.getReference().child("archive/forum_post_images/" + userId + "/" + postId + "_" + fileName);
+
+            oldRef.getBytes(10 * 1024 * 1024).addOnSuccessListener(bytes -> {
+                newRef.putBytes(bytes).addOnSuccessListener(taskSnapshot -> {
+                    newRef.getDownloadUrl().addOnSuccessListener(uri -> {
+                        oldRef.delete().addOnCompleteListener(task -> {
+                            listener.onSuccess(uri.toString());
+                        });
+                    }).addOnFailureListener(listener::onFailure);
+                }).addOnFailureListener(listener::onFailure);
+            }).addOnFailureListener(listener::onFailure);
+        } catch (Exception e) {
+            listener.onFailure(e);
+        }
+    }
+
+    private void savePostToBacklogAndFirestore(String userId, ForumPost post, BottomSheetDialog bottomSheetDialog) {
+        Map<String, Object> backlogData = new HashMap<>();
+        backlogData.put("type", "post");
+        backlogData.put("originalId", post.getId());
+        backlogData.put("data", post);
+        backlogData.put("deletedBy", userId);
+        backlogData.put("deletedAt", FieldValue.serverTimestamp());
+
+        db.collection("deleted_backlog").add(backlogData)
+                .addOnSuccessListener(docRef -> {
+                    firebaseManager.deleteForumPost(post.getId(), task -> {
+                        if (task.isSuccessful()) {
+                            Toast.makeText(this, "Post deleted", Toast.LENGTH_SHORT).show();
+                            if (bottomSheetDialog != null) bottomSheetDialog.dismiss();
+                            loadForumPins();
+                        }
+                    });
+                })
+                .addOnFailureListener(e -> {
+                    Log.e(TAG, "Failed to backlog post", e);
+                    Toast.makeText(this, "Failed to delete post. Try again.", Toast.LENGTH_SHORT).show();
+                });
     }
 
     private void showReportDialog(String type, String targetId) {
@@ -584,8 +712,6 @@ public class NearbyHeatmapActivity extends AppCompatActivity
         input.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE);
         input.setHint("Please specify the reason (max 200 chars)...");
         input.setFilters(new InputFilter[]{new InputFilter.LengthFilter(200)});
-        input.setSingleLine(false);
-        input.setHorizontallyScrolling(false);
         input.setLines(5);
 
         FrameLayout container = new FrameLayout(this);
@@ -650,26 +776,94 @@ public class NearbyHeatmapActivity extends AppCompatActivity
         FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
         
         boolean isCommentAuthor = user != null && comment.getUserId().equals(user.getUid());
-        boolean isPostAuthor = user != null && activePost != null && activePost.getUserId().equals(user.getUid());
 
-        if (isCommentAuthor || isPostAuthor) {
+        if (isCommentAuthor) {
             popup.getMenu().add("Delete");
         }
         popup.getMenu().add("Report");
 
         popup.setOnMenuItemClickListener(item -> {
             if (item.getTitle().equals("Delete")) {
-                db.collection("forumThreads").document(activePost.getId()).collection("comments").document(comment.getId())
-                        .delete().addOnSuccessListener(aVoid -> {
-                            Toast.makeText(this, "Comment deleted", Toast.LENGTH_SHORT).show();
-                            db.collection("forumThreads").document(activePost.getId()).update("commentCount", FieldValue.increment(-1));
-                        });
+                showCommentDeleteConfirmation(comment);
             } else if (item.getTitle().equals("Report")) {
                 showReportDialog("comment", comment.getId());
             }
             return true;
         });
         popup.show();
+    }
+
+    private void showCommentDeleteConfirmation(ForumComment comment) {
+        new AlertDialog.Builder(this)
+                .setTitle("Delete Comment")
+                .setMessage("Are you sure you want to delete this comment? " + (comment.getParentCommentId() == null ? "All replies will also be deleted." : ""))
+                .setPositiveButton("Delete", (dialog, which) -> {
+                    deleteCommentAndReplies(comment);
+                })
+                .setNegativeButton("Cancel", null)
+                .show();
+    }
+
+    private void deleteCommentAndReplies(ForumComment comment) {
+        FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
+        if (user == null || activePost == null) return;
+
+        if (comment.getParentCommentId() == null) {
+            db.collection("forumThreads").document(activePost.getId()).collection("comments")
+                    .whereEqualTo("parentCommentId", comment.getId())
+                    .get()
+                    .addOnSuccessListener(queryDocumentSnapshots -> {
+                        WriteBatch batch = db.batch();
+                        int totalToDelete = queryDocumentSnapshots.size() + 1;
+
+                        for (DocumentSnapshot doc : queryDocumentSnapshots) {
+                            backlogByUserId(batch, user.getUid(), "comment_reply", doc.getId(), doc.getData());
+                            batch.delete(doc.getReference());
+                        }
+                        
+                        backlogByUserId(batch, user.getUid(), "comment", comment.getId(), comment);
+
+                        batch.delete(db.collection("forumThreads").document(activePost.getId())
+                                .collection("comments").document(comment.getId()));
+                        
+                        batch.update(db.collection("forumThreads").document(activePost.getId()), 
+                                "commentCount", FieldValue.increment(-totalToDelete));
+                        
+                        batch.commit().addOnSuccessListener(aVoid -> {
+                            Toast.makeText(this, "Comment deleted", Toast.LENGTH_SHORT).show();
+                            refreshPopupComments();
+                        });
+                    });
+        } else {
+            Map<String, Object> replyBacklog = new HashMap<>();
+            replyBacklog.put("type", "reply");
+            replyBacklog.put("originalId", comment.getId());
+            replyBacklog.put("data", comment);
+            replyBacklog.put("deletedBy", user.getUid());
+            replyBacklog.put("deletedAt", FieldValue.serverTimestamp());
+
+            db.collection("deleted_backlog").add(replyBacklog)
+                    .addOnSuccessListener(docRef -> {
+                        firebaseManager.deleteForumComment(activePost.getId(), comment.getId(), task -> {
+                            if (task.isSuccessful()) {
+                                Toast.makeText(this, "Reply deleted", Toast.LENGTH_SHORT).show();
+                                db.collection("forumThreads").document(activePost.getId())
+                                        .update("commentCount", FieldValue.increment(-1));
+                                refreshPopupComments();
+                            }
+                        });
+                    });
+        }
+    }
+
+    private void backlogByUserId(WriteBatch batch, String uid, String type, String originalId, Object data) {
+        Map<String, Object> backlog = new HashMap<>();
+        backlog.put("type", type);
+        backlog.put("originalId", originalId);
+        backlog.put("data", data);
+        backlog.put("deletedBy", uid);
+        backlog.put("deletedAt", FieldValue.serverTimestamp());
+        batch.set(db.collection("deleted_backlog").document(), backlog);
     }
 
     @Override

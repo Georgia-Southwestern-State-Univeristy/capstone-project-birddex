@@ -27,6 +27,15 @@ service firebase.storage {
     match /forum_post_images/{imageId} {
       allow read: if request.auth != null;
       allow write: if request.auth != null;
+      // Allow deletion only if the user is authenticated (handled by app logic with backlog)
+      allow delete: if request.auth != null;
+    }
+
+    // Rule for ARCHIVED forum post images
+    match /archive/forum_post_images/{userId}/{imageId} {
+      // Only admins should ideally read this, but for app logic we allow write/create
+      allow read: if request.auth != null && request.auth.uid == userId;
+      allow write: if request.auth != null && request.auth.uid == userId;
     }
 
     // Rule for ebird_birds_export

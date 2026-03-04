@@ -15,7 +15,9 @@ import androidx.recyclerview.widget.RecyclerView;
 import com.bumptech.glide.Glide;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 public class ForumCommentAdapter extends RecyclerView.Adapter<ForumCommentAdapter.CommentViewHolder> {
@@ -23,12 +25,13 @@ public class ForumCommentAdapter extends RecyclerView.Adapter<ForumCommentAdapte
     private List<ForumComment> allComments = new ArrayList<>();
     private List<ForumComment> topLevelComments = new ArrayList<>();
     private OnCommentInteractionListener listener;
+    private Set<String> expandedCommentIds = new HashSet<>();
 
     public interface OnCommentInteractionListener {
         void onCommentLikeClick(ForumComment comment);
         void onCommentReplyClick(ForumComment comment);
         void onCommentOptionsClick(ForumComment comment, View view);
-        void onUserClick(String userId); // New method
+        void onUserClick(String userId);
     }
 
     public ForumCommentAdapter(OnCommentInteractionListener listener) {
@@ -56,12 +59,22 @@ public class ForumCommentAdapter extends RecyclerView.Adapter<ForumCommentAdapte
         List<ForumComment> replies = allComments.stream()
                 .filter(c -> comment.getId().equals(c.getParentCommentId()))
                 .collect(Collectors.toList());
-        holder.bind(comment, replies, listener);
+        
+        boolean isExpanded = expandedCommentIds.contains(comment.getId());
+        holder.bind(comment, replies, isExpanded, listener, (id, expand) -> {
+            if (expand) expandedCommentIds.add(id);
+            else expandedCommentIds.remove(id);
+            notifyItemChanged(position);
+        });
     }
 
     @Override
     public int getItemCount() {
         return topLevelComments.size();
+    }
+
+    interface OnExpandListener {
+        void onExpandToggle(String commentId, boolean expand);
     }
 
     static class CommentViewHolder extends RecyclerView.ViewHolder {
@@ -73,9 +86,11 @@ public class ForumCommentAdapter extends RecyclerView.Adapter<ForumCommentAdapte
         ImageView ivLikeIcon;
         TextView tvLikeCount;
         TextView btnReply;
+        TextView tvShowReplies;
         RecyclerView rvReplies;
         TextView tvReplyingTo;
         ImageView btnOptions;
+        View llActions;
 
         public CommentViewHolder(@NonNull View itemView) {
             super(itemView);
@@ -87,15 +102,18 @@ public class ForumCommentAdapter extends RecyclerView.Adapter<ForumCommentAdapte
             ivLikeIcon = itemView.findViewById(R.id.ivCommentLikeIcon);
             tvLikeCount = itemView.findViewById(R.id.tvCommentLikeCount);
             btnReply = itemView.findViewById(R.id.btnReplyComment);
+            tvShowReplies = itemView.findViewById(R.id.tvShowReplies);
             rvReplies = itemView.findViewById(R.id.rvReplies);
             tvReplyingTo = itemView.findViewById(R.id.tvReplyingTo);
             btnOptions = itemView.findViewById(R.id.btnCommentOptions);
+            llActions = itemView.findViewById(R.id.llActions);
         }
 
-        public void bind(ForumComment comment, List<ForumComment> replies, OnCommentInteractionListener listener) {
+        public void bind(ForumComment comment, List<ForumComment> replies, boolean isExpanded, OnCommentInteractionListener listener, OnExpandListener expandListener) {
             tvUsername.setText(comment.getUsername());
             tvText.setText(comment.getText());
             tvLikeCount.setText(String.valueOf(comment.getLikeCount()));
+            llActions.setVisibility(View.VISIBLE);
 
             if (comment.getParentUsername() != null && !comment.getParentUsername().isEmpty()) {
                 tvReplyingTo.setVisibility(View.VISIBLE);
@@ -117,16 +135,36 @@ public class ForumCommentAdapter extends RecyclerView.Adapter<ForumCommentAdapte
             btnLike.setOnClickListener(v -> listener.onCommentLikeClick(comment));
             btnReply.setOnClickListener(v -> listener.onCommentReplyClick(comment));
             btnOptions.setOnClickListener(v -> listener.onCommentOptionsClick(comment, v));
-            
-            // New click listeners for PFP and Username
             ivUserPfp.setOnClickListener(v -> listener.onUserClick(comment.getUserId()));
             tvUsername.setOnClickListener(v -> listener.onUserClick(comment.getUserId()));
 
             if (replies != null && !replies.isEmpty()) {
-                rvReplies.setVisibility(View.VISIBLE);
-                rvReplies.setLayoutManager(new LinearLayoutManager(itemView.getContext()));
-                rvReplies.setAdapter(new ReplyAdapter(replies, listener));
+                if (isExpanded) {
+                    tvShowReplies.setVisibility(View.VISIBLE);
+                    tvShowReplies.setText("Hide replies");
+                    tvShowReplies.setOnClickListener(v -> expandListener.onExpandToggle(comment.getId(), false));
+                    
+                    rvReplies.setVisibility(View.VISIBLE);
+                    rvReplies.setLayoutManager(new LinearLayoutManager(itemView.getContext()));
+                    rvReplies.setAdapter(new ReplyAdapter(replies, listener));
+                } else {
+                    tvShowReplies.setVisibility(View.VISIBLE);
+                    int remainingCount = replies.size() - 1;
+                    if (remainingCount > 0) {
+                        tvShowReplies.setText("Show " + remainingCount + " more " + (remainingCount == 1 ? "reply" : "replies"));
+                    } else {
+                        tvShowReplies.setVisibility(View.GONE);
+                    }
+                    tvShowReplies.setOnClickListener(v -> expandListener.onExpandToggle(comment.getId(), true));
+                    
+                    rvReplies.setVisibility(View.VISIBLE);
+                    rvReplies.setLayoutManager(new LinearLayoutManager(itemView.getContext()));
+                    List<ForumComment> firstReplyOnly = new ArrayList<>();
+                    firstReplyOnly.add(replies.get(0));
+                    rvReplies.setAdapter(new ReplyAdapter(firstReplyOnly, listener));
+                }
             } else {
+                tvShowReplies.setVisibility(View.GONE);
                 rvReplies.setVisibility(View.GONE);
             }
         }
@@ -165,10 +203,10 @@ public class ForumCommentAdapter extends RecyclerView.Adapter<ForumCommentAdapte
             TextView tvText;
             LinearLayout btnLike;
             TextView tvLikeCount;
-            TextView btnReply;
             RecyclerView rvReplies;
             TextView tvReplyingTo;
             ImageView btnOptions;
+            View llActions;
 
             ReplyViewHolder(@NonNull View itemView) {
                 super(itemView);
@@ -178,12 +216,13 @@ public class ForumCommentAdapter extends RecyclerView.Adapter<ForumCommentAdapte
                 tvText = itemView.findViewById(R.id.tvCommentText);
                 btnLike = itemView.findViewById(R.id.btnLikeComment);
                 tvLikeCount = itemView.findViewById(R.id.tvCommentLikeCount);
-                btnReply = itemView.findViewById(R.id.btnReplyComment);
                 rvReplies = itemView.findViewById(R.id.rvReplies);
                 tvReplyingTo = itemView.findViewById(R.id.tvReplyingTo);
                 btnOptions = itemView.findViewById(R.id.btnCommentOptions);
+                llActions = itemView.findViewById(R.id.llActions);
                 
-                btnReply.setVisibility(View.GONE);
+                // Replies don't have further nesting or their own reply buttons in this design
+                llActions.setVisibility(View.GONE);
                 rvReplies.setVisibility(View.GONE);
             }
 
@@ -211,8 +250,6 @@ public class ForumCommentAdapter extends RecyclerView.Adapter<ForumCommentAdapte
 
                 btnLike.setOnClickListener(v -> listener.onCommentLikeClick(reply));
                 btnOptions.setOnClickListener(v -> listener.onCommentOptionsClick(reply, v));
-                
-                // New click listeners for PFP and Username
                 ivUserPfp.setOnClickListener(v -> listener.onUserClick(reply.getUserId()));
                 tvUsername.setOnClickListener(v -> listener.onUserClick(reply.getUserId()));
             }

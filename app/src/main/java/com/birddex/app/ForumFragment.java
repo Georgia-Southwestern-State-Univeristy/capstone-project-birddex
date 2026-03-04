@@ -21,7 +21,6 @@ import androidx.appcompat.app.AlertDialog;
 import androidx.fragment.app.Fragment;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
-import androidx.swiperefreshlayout.widget.SwipeRefreshLayout;
 
 import com.birddex.app.databinding.FragmentForumBinding;
 import com.bumptech.glide.Glide;
@@ -30,11 +29,15 @@ import com.google.firebase.auth.FirebaseUser;
 import com.google.firebase.firestore.DocumentSnapshot;
 import com.google.firebase.firestore.FieldValue;
 import com.google.firebase.firestore.FirebaseFirestore;
-import com.google.firebase.firestore.MetadataChanges;
 import com.google.firebase.firestore.Query;
+import com.google.firebase.firestore.WriteBatch;
+import com.google.firebase.storage.FirebaseStorage;
+import com.google.firebase.storage.StorageReference;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * ForumFragment serves as the community hub for users to interact,
@@ -333,18 +336,136 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
     private void showDeleteConfirmation(ForumPost post) {
         new AlertDialog.Builder(requireContext())
                 .setTitle("Delete Post")
-                .setMessage("Are you sure you want to delete this post?")
+                .setMessage("Are you sure you want to delete this post? All comments and images will be archived.")
                 .setPositiveButton("Delete", (dialog, which) -> {
+                    archiveAndDeletePost(post);
+                })
+                .setNegativeButton("Cancel", null)
+                .show();
+    }
+
+    private void archiveAndDeletePost(ForumPost post) {
+        FirebaseUser user = mAuth.getCurrentUser();
+        if (user == null) return;
+
+        String imageUrl = post.getBirdImageUrl();
+        if (imageUrl != null && !imageUrl.isEmpty()) {
+            moveImageToArchive(user.getUid(), post.getId(), imageUrl, new OnImageArchivedListener() {
+                @Override
+                public void onSuccess(String archivedUrl) {
+                    post.setBirdImageUrl(archivedUrl);
+                    handleCommentsArchiveAndDeletion(user.getUid(), post);
+                }
+
+                @Override
+                public void onFailure(Exception e) {
+                    Log.e(TAG, "Failed to archive image, proceeding with original URL", e);
+                    handleCommentsArchiveAndDeletion(user.getUid(), post);
+                }
+            });
+        } else {
+            handleCommentsArchiveAndDeletion(user.getUid(), post);
+        }
+    }
+
+    private void handleCommentsArchiveAndDeletion(String userId, ForumPost post) {
+        // Fetch all comments to archive them before deleting the post
+        db.collection("forumThreads").document(post.getId()).collection("comments")
+                .get()
+                .addOnSuccessListener(queryDocumentSnapshots -> {
+                    WriteBatch batch = db.batch();
+                    
+                    // Archive and delete each comment
+                    for (DocumentSnapshot doc : queryDocumentSnapshots) {
+                        Map<String, Object> commentBacklog = new HashMap<>();
+                        commentBacklog.put("type", "comment_archived_with_post");
+                        commentBacklog.put("originalId", doc.getId());
+                        commentBacklog.put("postId", post.getId());
+                        commentBacklog.put("data", doc.getData());
+                        commentBacklog.put("deletedBy", userId);
+                        commentBacklog.put("deletedAt", FieldValue.serverTimestamp());
+                        
+                        batch.set(db.collection("deleted_backlog").document(), commentBacklog);
+                        batch.delete(doc.getReference());
+                    }
+                    
+                    // Final post archive
+                    Map<String, Object> postBacklog = new HashMap<>();
+                    postBacklog.put("type", "post");
+                    postBacklog.put("originalId", post.getId());
+                    postBacklog.put("data", post);
+                    postBacklog.put("deletedBy", userId);
+                    postBacklog.put("deletedAt", FieldValue.serverTimestamp());
+                    
+                    batch.set(db.collection("deleted_backlog").document(), postBacklog);
+                    
+                    // Delete the post document itself
+                    batch.delete(db.collection("forumThreads").document(post.getId()));
+                    
+                    batch.commit().addOnSuccessListener(aVoid -> {
+                        if (!isAdded()) return;
+                        Toast.makeText(getContext(), "Post and comments deleted", Toast.LENGTH_SHORT).show();
+                        refreshPosts();
+                    }).addOnFailureListener(e -> {
+                        Log.e(TAG, "Failed to execute deletion batch", e);
+                        Toast.makeText(getContext(), "Error deleting post content", Toast.LENGTH_SHORT).show();
+                    });
+                })
+                .addOnFailureListener(e -> {
+                    Log.e(TAG, "Failed to fetch comments for deletion", e);
+                    // Fallback: just delete the post
+                    savePostToBacklogAndFirestore(userId, post);
+                });
+    }
+
+    private interface OnImageArchivedListener {
+        void onSuccess(String archivedUrl);
+        void onFailure(Exception e);
+    }
+
+    private void moveImageToArchive(String userId, String postId, String originalUrl, OnImageArchivedListener listener) {
+        FirebaseStorage storage = FirebaseStorage.getInstance();
+        try {
+            StorageReference oldRef = storage.getReferenceFromUrl(originalUrl);
+            String fileName = oldRef.getName();
+            StorageReference newRef = storage.getReference().child("archive/forum_post_images/" + userId + "/" + postId + "_" + fileName);
+
+            oldRef.getBytes(10 * 1024 * 1024).addOnSuccessListener(bytes -> {
+                newRef.putBytes(bytes).addOnSuccessListener(taskSnapshot -> {
+                    newRef.getDownloadUrl().addOnSuccessListener(uri -> {
+                        oldRef.delete().addOnCompleteListener(task -> {
+                            listener.onSuccess(uri.toString());
+                        });
+                    }).addOnFailureListener(listener::onFailure);
+                }).addOnFailureListener(listener::onFailure);
+            }).addOnFailureListener(listener::onFailure);
+        } catch (Exception e) {
+            listener.onFailure(e);
+        }
+    }
+
+    private void savePostToBacklogAndFirestore(String userId, ForumPost post) {
+        Map<String, Object> backlogData = new HashMap<>();
+        backlogData.put("type", "post");
+        backlogData.put("originalId", post.getId());
+        backlogData.put("data", post);
+        backlogData.put("deletedBy", userId);
+        backlogData.put("deletedAt", FieldValue.serverTimestamp());
+
+        db.collection("deleted_backlog").add(backlogData)
+                .addOnSuccessListener(docRef -> {
                     firebaseManager.deleteForumPost(post.getId(), task -> {
                         if (!isAdded()) return;
                         if (task.isSuccessful()) {
                             Toast.makeText(getContext(), "Post deleted", Toast.LENGTH_SHORT).show();
-                            refreshPosts(); // Refresh after deletion
+                            refreshPosts();
                         }
                     });
                 })
-                .setNegativeButton("Cancel", null)
-                .show();
+                .addOnFailureListener(e -> {
+                    Log.e(TAG, "Failed to backlog post", e);
+                    Toast.makeText(getContext(), "Failed to delete post. Try again.", Toast.LENGTH_SHORT).show();
+                });
     }
 
     private void showReportDialog(ForumPost post) {

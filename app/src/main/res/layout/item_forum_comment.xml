@@ -110,10 +110,12 @@
     </LinearLayout>
 
     <LinearLayout
+        android:id="@+id/llActions"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_marginStart="44dp"
         android:layout_marginTop="4dp"
+        android:gravity="center_vertical"
         android:orientation="horizontal">
 
         <TextView
@@ -125,6 +127,18 @@
             android:textSize="12sp"
             android:textStyle="bold"
             android:textColor="?attr/colorOnSurfaceVariant" />
+
+        <TextView
+            android:id="@+id/tvShowReplies"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="8dp"
+            android:padding="4dp"
+            android:text="Show 2 more replies"
+            android:textSize="12sp"
+            android:textColor="?attr/colorPrimary"
+            android:visibility="gone"
+            tools:visibility="visible" />
 
     </LinearLayout>
 

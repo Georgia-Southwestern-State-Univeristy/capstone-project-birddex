@@ -29,12 +29,15 @@ import com.google.android.material.switchmaterial.SwitchMaterial;
 import com.google.firebase.Timestamp;
 import com.google.firebase.auth.FirebaseAuth;
 import com.google.firebase.auth.FirebaseUser;
+import com.google.firebase.firestore.DocumentReference;
 import com.google.firebase.firestore.DocumentSnapshot;
 import com.google.firebase.firestore.FieldValue;
 import com.google.firebase.firestore.FirebaseFirestore;
 import com.google.firebase.firestore.MetadataChanges;
 import com.google.firebase.firestore.Query;
 import com.google.firebase.firestore.WriteBatch;
+import com.google.firebase.storage.FirebaseStorage;
+import com.google.firebase.storage.StorageReference;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -64,6 +67,7 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
     private boolean isLastCommentsPage = false;
     
     private ForumComment replyingToComment = null;
+    private boolean hasMarkedAsViewed = false;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -122,35 +126,37 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
                             originalPost.setId(doc.getId());
 
                             FirebaseUser user = mAuth.getCurrentUser();
-                            if (user != null) {
+                            if (user != null && !hasMarkedAsViewed && !doc.getMetadata().hasPendingWrites()) {
                                 String userId = user.getUid();
-                                if (!doc.getMetadata().isFromCache()) {
-                                    if (originalPost.getViewedBy() == null || !originalPost.getViewedBy().containsKey(userId)) {
-                                        db.collection("forumThreads").document(postId)
-                                                .update("viewCount", FieldValue.increment(1),
-                                                        "viewedBy." + userId, true);
-                                    }
-
-                                    if (userId.equals(originalPost.getUserId())) {
-                                        Map<String, Object> updates = new HashMap<>();
-                                        if (originalPost.isNotificationSent()) {
-                                            updates.put("notificationSent", false);
-                                        }
-                                        if (originalPost.isLikeNotificationSent()) {
-                                            updates.put("likeNotificationSent", false);
-                                        }
-                                        updates.put("lastViewedAt", FieldValue.serverTimestamp());
-                                        
-                                        if (!updates.isEmpty()) {
-                                            db.collection("forumThreads").document(postId).update(updates);
-                                        }
-                                    }
-                                }
+                                handleViewTracking(userId, originalPost);
                             }
+                            
                             bindPostToLayout(originalPost);
                         }
                     }
                 });
+    }
+
+    private void handleViewTracking(String userId, ForumPost post) {
+        hasMarkedAsViewed = true; // Prevent loop
+        Map<String, Object> updates = new HashMap<>();
+
+        // Increment view count if user hasn't seen it yet
+        if (post.getViewedBy() == null || !post.getViewedBy().containsKey(userId)) {
+            updates.put("viewCount", FieldValue.increment(1));
+            updates.put("viewedBy." + userId, true);
+        }
+
+        // Clear notifications for the owner
+        if (userId.equals(post.getUserId())) {
+            if (post.isNotificationSent()) updates.put("notificationSent", false);
+            if (post.isLikeNotificationSent()) updates.put("likeNotificationSent", false);
+            updates.put("lastViewedAt", FieldValue.serverTimestamp());
+        }
+
+        if (!updates.isEmpty()) {
+            db.collection("forumThreads").document(postId).update(updates);
+        }
     }
 
     private void bindPostToLayout(ForumPost post) {
@@ -287,7 +293,7 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
     private void showDeleteConfirmation(ForumPost post) {
         new AlertDialog.Builder(this)
                 .setTitle("Delete Post")
-                .setMessage("Are you sure you want to delete this post?")
+                .setMessage("Are you sure you want to delete this post? All comments and images will be archived.")
                 .setPositiveButton("Delete", (dialog, which) -> {
                     archiveAndDeletePost(post);
                 })
@@ -299,11 +305,102 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
         FirebaseUser user = mAuth.getCurrentUser();
         if (user == null) return;
 
+        String imageUrl = post.getBirdImageUrl();
+        if (imageUrl != null && !imageUrl.isEmpty()) {
+            moveImageToArchive(user.getUid(), post.getId(), imageUrl, new OnImageArchivedListener() {
+                @Override
+                public void onSuccess(String archivedUrl) {
+                    post.setBirdImageUrl(archivedUrl);
+                    handleCommentsArchiveAndDeletion(user.getUid(), post);
+                }
+
+                @Override
+                public void onFailure(Exception e) {
+                    Log.e(TAG, "Failed to archive image, proceeding with original URL", e);
+                    handleCommentsArchiveAndDeletion(user.getUid(), post);
+                }
+            });
+        } else {
+            handleCommentsArchiveAndDeletion(user.getUid(), post);
+        }
+    }
+
+    private void handleCommentsArchiveAndDeletion(String userId, ForumPost post) {
+        db.collection("forumThreads").document(post.getId()).collection("comments")
+                .get()
+                .addOnSuccessListener(queryDocumentSnapshots -> {
+                    WriteBatch batch = db.batch();
+                    
+                    for (DocumentSnapshot doc : queryDocumentSnapshots) {
+                        Map<String, Object> commentBacklog = new HashMap<>();
+                        commentBacklog.put("type", "comment_archived_with_post");
+                        commentBacklog.put("originalId", doc.getId());
+                        commentBacklog.put("postId", post.getId());
+                        commentBacklog.put("data", doc.getData());
+                        commentBacklog.put("deletedBy", userId);
+                        commentBacklog.put("deletedAt", FieldValue.serverTimestamp());
+                        
+                        batch.set(db.collection("deleted_backlog").document(), commentBacklog);
+                        batch.delete(doc.getReference());
+                    }
+                    
+                    Map<String, Object> postBacklog = new HashMap<>();
+                    postBacklog.put("type", "post");
+                    postBacklog.put("originalId", post.getId());
+                    postBacklog.put("data", post);
+                    postBacklog.put("deletedBy", userId);
+                    postBacklog.put("deletedAt", FieldValue.serverTimestamp());
+                    
+                    batch.set(db.collection("deleted_backlog").document(), postBacklog);
+                    batch.delete(db.collection("forumThreads").document(post.getId()));
+                    
+                    batch.commit().addOnSuccessListener(aVoid -> {
+                        if (isFinishing() || isDestroyed()) return;
+                        Toast.makeText(this, "Post and comments deleted", Toast.LENGTH_SHORT).show();
+                        finish();
+                    }).addOnFailureListener(e -> {
+                        Log.e(TAG, "Failed to execute deletion batch", e);
+                        Toast.makeText(this, "Error deleting post content", Toast.LENGTH_SHORT).show();
+                    });
+                })
+                .addOnFailureListener(e -> {
+                    Log.e(TAG, "Failed to fetch comments for deletion", e);
+                    savePostToBacklogAndFirestore(userId, post);
+                });
+    }
+
+    private interface OnImageArchivedListener {
+        void onSuccess(String archivedUrl);
+        void onFailure(Exception e);
+    }
+
+    private void moveImageToArchive(String userId, String postId, String originalUrl, OnImageArchivedListener listener) {
+        FirebaseStorage storage = FirebaseStorage.getInstance();
+        try {
+            StorageReference oldRef = storage.getReferenceFromUrl(originalUrl);
+            String fileName = oldRef.getName();
+            StorageReference newRef = storage.getReference().child("archive/forum_post_images/" + userId + "/" + postId + "_" + fileName);
+
+            oldRef.getBytes(10 * 1024 * 1024).addOnSuccessListener(bytes -> {
+                newRef.putBytes(bytes).addOnSuccessListener(taskSnapshot -> {
+                    newRef.getDownloadUrl().addOnSuccessListener(uri -> {
+                        oldRef.delete().addOnCompleteListener(task -> {
+                            listener.onSuccess(uri.toString());
+                        });
+                    }).addOnFailureListener(listener::onFailure);
+                }).addOnFailureListener(listener::onFailure);
+            }).addOnFailureListener(listener::onFailure);
+        } catch (Exception e) {
+            listener.onFailure(e);
+        }
+    }
+
+    private void savePostToBacklogAndFirestore(String userId, ForumPost post) {
         Map<String, Object> backlogData = new HashMap<>();
         backlogData.put("type", "post");
         backlogData.put("originalId", post.getId());
         backlogData.put("data", post);
-        backlogData.put("deletedBy", user.getUid());
+        backlogData.put("deletedBy", userId);
         backlogData.put("deletedAt", FieldValue.serverTimestamp());
 
         db.collection("deleted_backlog").add(backlogData)
@@ -317,7 +414,7 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
                     });
                 })
                 .addOnFailureListener(e -> {
-                    Log.e(TAG, "Failed to backlog post before deletion", e);
+                    Log.e(TAG, "Failed to backlog post", e);
                     Toast.makeText(this, "Failed to delete post. Try again.", Toast.LENGTH_SHORT).show();
                 });
     }
@@ -449,17 +546,20 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
             comment.setParentUsername(replyingToComment.getUsername());
         }
         
-        db.collection("forumThreads").document(postId).collection("comments").add(comment)
-                .addOnSuccessListener(docRef -> {
+        WriteBatch batch = db.batch();
+        DocumentReference commentRef = db.collection("forumThreads").document(postId).collection("comments").document();
+        batch.set(commentRef, comment);
+        batch.update(db.collection("forumThreads").document(postId), "commentCount", FieldValue.increment(1));
+        
+        batch.commit()
+                .addOnSuccessListener(aVoid -> {
                     if (isFinishing() || isDestroyed()) return;
                     binding.etComment.setText("");
                     binding.etComment.setHint("Write a comment...");
                     replyingToComment = null;
                     binding.btnSendComment.setEnabled(true);
-                    db.collection("forumThreads").document(postId)
-                            .update("commentCount", FieldValue.increment(1));
                     
-                    // Simple logic to show the new comment: refresh list
+                    // Refresh list
                     lastCommentVisible = null;
                     isLastCommentsPage = false;
                     commentList.clear();
@@ -513,7 +613,6 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
         FirebaseUser user = mAuth.getCurrentUser();
         
         boolean isCommentAuthor = user != null && comment.getUserId().equals(user.getUid());
-        boolean isPostAuthor = user != null && originalPost != null && originalPost.getUserId().equals(user.getUid());
 
         if (isCommentAuthor) {
             if (comment.getTimestamp() != null) {
@@ -522,9 +621,6 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
                     popup.getMenu().add("Edit");
                 }
             }
-        }
-
-        if (isCommentAuthor || isPostAuthor) {
             popup.getMenu().add("Delete");
         }
         popup.getMenu().add("Report");

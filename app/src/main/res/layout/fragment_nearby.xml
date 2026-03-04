@@ -81,10 +81,34 @@
         android:clipToPadding="false"
         android:paddingHorizontal="12dp"
         android:paddingBottom="80dp"
+        android:visibility="gone"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintTop_toBottomOf="@id/txtLocation"
         tools:listitem="@layout/item_nearby_bird" />
+
+    <TextView
+        android:id="@+id/tvNoBirds"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="No Birds Nearby"
+        android:textColor="?attr/colorOnSurfaceVariant"
+        android:textSize="18sp"
+        android:visibility="gone"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toBottomOf="@+id/txtLocation" />
+
+    <ProgressBar
+        android:id="@+id/pbLoading"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:visibility="visible"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toBottomOf="@+id/txtLocation" />
 
 </androidx.constraintlayout.widget.ConstraintLayout>

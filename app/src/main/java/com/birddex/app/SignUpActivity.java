@@ -2,6 +2,7 @@ package com.birddex.app;
 
 import android.content.Intent;
 import android.os.Bundle;
+import android.view.View;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.TextView;
@@ -18,7 +19,7 @@ public class SignUpActivity extends AppCompatActivity {
 
     private FirebaseManager firebaseManager;
     private sign_IN_upValidator signINupValidator;
-    private LoadingDialog loadingDialog;
+    private View loadingOverlay;
 
     private EditText usernameEditText;
     private EditText emailEditText;
@@ -31,7 +32,7 @@ public class SignUpActivity extends AppCompatActivity {
 
         firebaseManager = new FirebaseManager(this);
         signINupValidator = new sign_IN_upValidator();
-        loadingDialog = new LoadingDialog(this);
+        loadingOverlay = findViewById(R.id.loadingOverlay);
 
         usernameEditText = findViewById(R.id.etUsername);
         emailEditText = findViewById(R.id.etEmail);
@@ -46,11 +47,11 @@ public class SignUpActivity extends AppCompatActivity {
                 String email = emailEditText.getText().toString();
                 String password = passwordEditText.getText().toString();
                 
-                loadingDialog.show();
+                loadingOverlay.setVisibility(View.VISIBLE);
                 firebaseManager.createAccount(username, email, password, new FirebaseManager.AuthListener() {
                     @Override
                     public void onSuccess(FirebaseUser user) {
-                        loadingDialog.dismiss();
+                        loadingOverlay.setVisibility(View.GONE);
                         Toast.makeText(SignUpActivity.this, "Sign up successful. Please verify your email. " + getString(R.string.email_verification_expiration_message), Toast.LENGTH_LONG).show();
                         startActivity(new Intent(SignUpActivity.this, SignUpCompleteActivity.class));
                         finish();
@@ -58,19 +59,19 @@ public class SignUpActivity extends AppCompatActivity {
 
                     @Override
                     public void onFailure(String errorMessage) {
-                        loadingDialog.dismiss();
+                        loadingOverlay.setVisibility(View.GONE);
                         Toast.makeText(SignUpActivity.this, errorMessage, Toast.LENGTH_SHORT).show();
                     }
 
                     @Override
                     public void onUsernameTaken() { 
-                        loadingDialog.dismiss();
+                        loadingOverlay.setVisibility(View.GONE);
                         usernameEditText.setError("Username already taken.");
                     }
 
                     @Override
                     public void onEmailTaken() {
-                        loadingDialog.dismiss();
+                        loadingOverlay.setVisibility(View.GONE);
                         emailEditText.setError("Email already taken.");
                         Toast.makeText(SignUpActivity.this, "Email is already taken.", Toast.LENGTH_SHORT).show();
                     }
@@ -87,8 +88,8 @@ public class SignUpActivity extends AppCompatActivity {
     @Override
     protected void onPause() {
         super.onPause();
-        if (loadingDialog != null && loadingDialog.isShowing()) {
-            loadingDialog.dismiss();
+        if (loadingOverlay != null && loadingOverlay.getVisibility() == View.VISIBLE) {
+            loadingOverlay.setVisibility(View.GONE);
         }
     }
 }

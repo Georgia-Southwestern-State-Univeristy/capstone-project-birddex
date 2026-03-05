@@ -8,6 +8,8 @@ import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.util.Log;
+import android.view.View;
+import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -60,7 +62,7 @@ public class EditProfileActivity extends AppCompatActivity implements NetworkMon
     private FirebaseStorage storage;
     private StorageReference storageRef;
     private FirebaseManager firebaseManager;
-    private LoadingDialog loadingDialog;
+    private FrameLayout loadingOverlay;
     private NetworkMonitor networkMonitor;
 
     // UI elements
@@ -85,7 +87,7 @@ public class EditProfileActivity extends AppCompatActivity implements NetworkMon
         storage = FirebaseStorage.getInstance();
         storageRef = storage.getReference();
         firebaseManager = new FirebaseManager(this);
-        loadingDialog = new LoadingDialog(this);
+        loadingOverlay = findViewById(R.id.loadingOverlay);
         networkMonitor = new NetworkMonitor(this, this);
 
         // Initialize UI
@@ -178,8 +180,8 @@ public class EditProfileActivity extends AppCompatActivity implements NetworkMon
             boolean pfpChanged = (imageUri != null) || (uploadedProfilePictureDownloadUrl != null && !uploadedProfilePictureDownloadUrl.equals(initialProfilePictureUrl));
 
             if (pfpChanged) {
-                Log.d(TAG, "PFP changed, showing loading dialog and calling recordPfpChange Cloud Function.");
-                loadingDialog.show();
+                Log.d(TAG, "PFP changed, showing loading overlay and calling recordPfpChange Cloud Function.");
+                loadingOverlay.setVisibility(View.VISIBLE);
                 firebaseManager.recordPfpChange(new FirebaseManager.PfpChangeLimitListener() {
                     @Override
                     public void onSuccess(int pfpChangesToday, Date pfpCooldownResetTimestamp) { // Updated signature
@@ -194,7 +196,7 @@ public class EditProfileActivity extends AppCompatActivity implements NetworkMon
                         // Before uploading, call the moderation function
                         String base64Image = encodeImage(imageUri);
                         if (base64Image == null) {
-                            loadingDialog.dismiss();
+                            loadingOverlay.setVisibility(View.GONE);
                             Toast.makeText(EditProfileActivity.this, "Failed to encode image for moderation.", Toast.LENGTH_LONG).show();
                             return;
                         }
@@ -208,7 +210,7 @@ public class EditProfileActivity extends AppCompatActivity implements NetworkMon
                                     Log.d(TAG, "PFP appropriate, proceeding with uploadImageToFirebase.");
                                     uploadImageToFirebase(imageUri, newUsername, newBio); // Proceed with upload
                                 } else {
-                                    loadingDialog.dismiss();
+                                    loadingOverlay.setVisibility(View.GONE);
                                     Toast.makeText(EditProfileActivity.this, "PFP rejected: " + moderationReason, Toast.LENGTH_LONG).show();
                                     if (initialProfilePictureUrl != null && !initialProfilePictureUrl.isEmpty()) {
                                         Glide.with(EditProfileActivity.this).load(initialProfilePictureUrl).into(ivPfpPreview);
@@ -222,7 +224,7 @@ public class EditProfileActivity extends AppCompatActivity implements NetworkMon
                             @Override
                             public void onFailure(String errorMessage) {
                                 if (isFinishing() || isDestroyed()) return;
-                                loadingDialog.dismiss();
+                                loadingOverlay.setVisibility(View.GONE);
                                 Log.e(TAG, "Moderation failed: " + errorMessage);
                                 Toast.makeText(EditProfileActivity.this, "Moderation failed.", Toast.LENGTH_LONG).show();
                             }
@@ -233,7 +235,7 @@ public class EditProfileActivity extends AppCompatActivity implements NetworkMon
                     @Override
                     public void onFailure(String errorMessage) {
                         if (isFinishing() || isDestroyed()) return;
-                        loadingDialog.dismiss();
+                        loadingOverlay.setVisibility(View.GONE);
                         Log.e(TAG, "Failed to record PFP change: " + errorMessage);
                         Toast.makeText(EditProfileActivity.this, "Error: " + errorMessage, Toast.LENGTH_LONG).show();
                     }
@@ -241,14 +243,14 @@ public class EditProfileActivity extends AppCompatActivity implements NetworkMon
                     @Override
                     public void onLimitExceeded() {
                         if (isFinishing() || isDestroyed()) return;
-                        loadingDialog.dismiss();
+                        loadingOverlay.setVisibility(View.GONE);
                         Log.w(TAG, "PFP limit exceeded.");
                         Toast.makeText(EditProfileActivity.this, "Daily limit reached.", Toast.LENGTH_LONG).show();
                     }
                 });
             } else {
-                Log.d(TAG, "PFP not changed. Showing loading dialog and saving profile text changes.");
-                loadingDialog.show();
+                Log.d(TAG, "PFP not changed. Showing loading overlay and saving profile text changes.");
+                loadingOverlay.setVisibility(View.VISIBLE);
                 // If no new image, and username/bio changed, save those
                 saveProfileChanges(newUsername, newBio, initialProfilePictureUrl); // Pass current PFP URL
             }
@@ -387,12 +389,12 @@ public class EditProfileActivity extends AppCompatActivity implements NetworkMon
                     if (isFinishing() || isDestroyed()) return;
                     saveProfileChanges(newUsername, newBio, uri.toString());
                 }).addOnFailureListener(e -> {
-                    loadingDialog.dismiss();
+                    loadingOverlay.setVisibility(View.GONE);
                     Toast.makeText(this, "Failed to get URL", Toast.LENGTH_SHORT).show();
                 });
             })
             .addOnFailureListener(e -> {
-                loadingDialog.dismiss();
+                loadingOverlay.setVisibility(View.GONE);
                 Toast.makeText(this, "Upload failed", Toast.LENGTH_SHORT).show();
             });
     }
@@ -421,27 +423,27 @@ public class EditProfileActivity extends AppCompatActivity implements NetworkMon
                 @Override
                 public void onSuccess(com.google.firebase.auth.FirebaseUser user) {
                     if (isFinishing() || isDestroyed()) return;
-                    loadingDialog.dismiss();
+                    loadingOverlay.setVisibility(View.GONE);
                     setResult(RESULT_OK, new Intent().putExtra("newUsername", newUsername).putExtra("newBio", newBio).putExtra("newProfilePictureUrl", finalProfilePictureUrl));
                     finish();
                 }
 
                 @Override
                 public void onFailure(String errorMessage) {
-                    loadingDialog.dismiss();
+                    loadingOverlay.setVisibility(View.GONE);
                     Toast.makeText(EditProfileActivity.this, "Update failed: " + errorMessage, Toast.LENGTH_LONG).show();
                 }
 
                 @Override
                 public void onUsernameTaken() {
-                    loadingDialog.dismiss();
+                    loadingOverlay.setVisibility(View.GONE);
                     etUsername.setError("Username taken.");
                 }
 
-                @Override public void onEmailTaken() { loadingDialog.dismiss(); }
+                @Override public void onEmailTaken() { loadingOverlay.setVisibility(View.GONE); }
             });
         } else {
-            loadingDialog.dismiss();
+            loadingOverlay.setVisibility(View.GONE);
             setResult(RESULT_OK, new Intent().putExtra("newUsername", initialUsername).putExtra("newBio", initialBio).putExtra("newProfilePictureUrl", initialProfilePictureUrl));
             finish();
         }
@@ -457,8 +459,8 @@ public class EditProfileActivity extends AppCompatActivity implements NetworkMon
     protected void onPause() {
         super.onPause();
         networkMonitor.unregister();
-        if (loadingDialog != null && loadingDialog.isShowing()) {
-            loadingDialog.dismiss();
+        if (loadingOverlay != null && loadingOverlay.getVisibility() == View.VISIBLE) {
+            loadingOverlay.setVisibility(View.GONE);
         }
     }
 
@@ -471,8 +473,8 @@ public class EditProfileActivity extends AppCompatActivity implements NetworkMon
     public void onNetworkLost() {
         Log.w(TAG, "Network lost.");
         runOnUiThread(() -> {
-            if (loadingDialog != null && loadingDialog.isShowing()) {
-                loadingDialog.dismiss();
+            if (loadingOverlay != null && loadingOverlay.getVisibility() == View.VISIBLE) {
+                loadingOverlay.setVisibility(View.GONE);
                 Toast.makeText(this, "Network connection lost. Please try again.", Toast.LENGTH_LONG).show();
             }
         });

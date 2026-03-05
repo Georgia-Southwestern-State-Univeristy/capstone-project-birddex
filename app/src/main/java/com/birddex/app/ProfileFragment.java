@@ -90,7 +90,7 @@ public class ProfileFragment extends Fragment implements
 
     private FavoritesAdapter favoritesAdapter;
     private ForumPostAdapter postsAdapter;
-    
+
     private List<ForumPost> postList = new ArrayList<>();
     private DocumentSnapshot lastVisible;
     private boolean isFetching = false;
@@ -200,7 +200,7 @@ public class ProfileFragment extends Fragment implements
         LinearLayoutManager layoutManager = new LinearLayoutManager(requireContext());
         rvProfilePosts.setLayoutManager(layoutManager);
         rvProfilePosts.setAdapter(postsAdapter);
-        
+
         rvProfilePosts.addOnScrollListener(new RecyclerView.OnScrollListener() {
             @Override
             public void onScrolled(@NonNull RecyclerView recyclerView, int dx, int dy) {
@@ -396,18 +396,25 @@ public class ProfileFragment extends Fragment implements
 
         favoriteCardKeys.clear();
 
-        if (isCurrentUser) {
+        //  ALWAYS prefer Firestore so we can immediately see if syncing works
+        List<String> cloudKeys = (List<String>) documentSnapshot.get("favoriteCardKeys");
+
+        if (cloudKeys != null && !cloudKeys.isEmpty()) {
+            favoriteCardKeys.addAll(cloudKeys);
+
+            // keep local cache in sync for faster load
+            if (isCurrentUser) saveFavoriteKeysLocally();
+        } else if (isCurrentUser) {
+            // fallback for old installs where favorites only existed locally
             favoriteCardKeys.addAll(loadFavoriteKeysFromPrefs());
-        } else {
-            List<String> savedKeys = (List<String>) documentSnapshot.get("favoriteCardKeys");
-            if (savedKeys != null) {
-                favoriteCardKeys.addAll(savedKeys);
-            }
+            ensureFavoriteSize();
+
+            // push the old local favorites up to Firestore so other users can see them
+            syncFavoriteKeysToFirestore();
         }
 
         loadFavoriteCards();
     }
-
     private void loadProfilePicture(String url) {
         if (url != null && !url.isEmpty()) {
             Glide.with(this)
@@ -506,7 +513,7 @@ public class ProfileFragment extends Fragment implements
         query.get().addOnSuccessListener(value -> {
             if (!isAdded()) return;
             if (swipeRefreshLayout != null) swipeRefreshLayout.setRefreshing(false);
-            
+
             if (value != null && !value.isEmpty()) {
                 lastVisible = value.getDocuments().get(value.size() - 1);
                 for (DocumentSnapshot doc : value.getDocuments()) {
@@ -518,7 +525,7 @@ public class ProfileFragment extends Fragment implements
                 }
                 postsAdapter.setPosts(new ArrayList<>(postList));
                 applyTabState(profileTabLayout.getSelectedTabPosition());
-                
+
                 if (value.size() < PAGE_SIZE) isLastPage = true;
             } else {
                 isLastPage = true;
@@ -812,7 +819,21 @@ public class ProfileFragment extends Fragment implements
 
         ensureFavoriteSize();
 
-        SharedPreferences prefs = requireContext().getSharedPreferences(FAVORITES_PREFS, android.content.Context.MODE_PRIVATE);
+        // still keep local (nice for instant UI)
+        saveFavoriteKeysLocally();
+
+        // this is the missing piece that makes social profiles work
+        syncFavoriteKeysToFirestore();
+    }
+
+    private void saveFavoriteKeysLocally() {
+        if (!isAdded() || profileUserId == null) return;
+
+        ensureFavoriteSize();
+
+        SharedPreferences prefs = requireContext()
+                .getSharedPreferences(FAVORITES_PREFS, android.content.Context.MODE_PRIVATE);
+
         prefs.edit()
                 .putString(profileUserId + "_fav_0", favoriteCardKeys.get(0))
                 .putString(profileUserId + "_fav_1", favoriteCardKeys.get(1))
@@ -820,6 +841,28 @@ public class ProfileFragment extends Fragment implements
                 .apply();
     }
 
+    private void syncFavoriteKeysToFirestore() {
+        if (profileUserId == null) return;
+
+        ensureFavoriteSize();
+
+        Map<String, Object> updates = new HashMap<>();
+        updates.put("favoriteCardKeys", new ArrayList<>(favoriteCardKeys));
+
+        db.collection("users")
+                .document(profileUserId)
+                .set(updates, SetOptions.merge())
+                .addOnSuccessListener(unused ->
+                        Log.d(TAG, "✅ Synced favoriteCardKeys to Firestore: " + favoriteCardKeys))
+                .addOnFailureListener(e -> {
+                    Log.e(TAG, "❌ Failed to sync favoriteCardKeys (rules?)", e);
+                    if (isAdded()) {
+                        Toast.makeText(requireContext(),
+                                "Failed to sync favorites (Firestore rules?)",
+                                Toast.LENGTH_LONG).show();
+                    }
+                });
+    }
     private List<String> loadFavoriteKeysFromPrefs() {
         List<String> keys = new ArrayList<>();
         if (!isAdded() || profileUserId == null) return keys;

@@ -249,7 +249,7 @@ async function getOrCreateAndSaveBirdFacts(birdId, commonName) {
 
     const [birdFactsDoc, hunterFactsDoc] = await Promise.all([
         birdFactsRef.get(),
-        hunterFactsRef.get()
+        hunterFactsDoc.get()
     ]);
 
     let generalFacts = {};
@@ -456,7 +456,7 @@ exports.identifyBird = onCall({ secrets: [OPENAI_API_KEY], timeoutSeconds: 30 },
                 messages: [{
                     role: "user",
                     content: [
-                        { type: "text", text: "Identify the bird in this image. Respond exactly as:\nID: [ebird_species_code]\nCommon Name: [name]\nScientific Name: [name]\nSpecies: [name]\nFamily: [name]" },
+                        { type: "text", text: "Identify the bird in this image. If the image contains a dead bird, gore, or graphic violence, respond ONLY with 'GORE'. Otherwise, respond exactly as:\nID: [ebird_species_code]\nCommon Name: [name]\nScientific Name: [name]\nSpecies: [name]\nFamily: [name]" },
                         { type: "image_url", image_url: { url: `data:image/jpeg;base64,${image}` } } // Use the image from request.data
                     ]
                 }],
@@ -469,6 +469,12 @@ exports.identifyBird = onCall({ secrets: [OPENAI_API_KEY], timeoutSeconds: 30 },
         );
 
         let identification = aiResponse.data.choices[0].message.content;
+
+        // Check for gore response
+        if (identification.includes("GORE")) {
+            console.log(`🚫 Gore detected in image from user ${userId}. Identification aborted.`);
+            return { result: "GORE", isVerified: false, isGore: true };
+        }
 
         const aiBirdId = identification.split("ID:")[1]?.split("\n")[0]?.trim(); // Extract ID from OpenAI response
         const aiCommonName = identification.split("Common Name:")[1]?.split("\n")[0]?.trim();
@@ -650,7 +656,7 @@ exports.getGeorgiaBirds = onCall({ secrets: [EBIRD_API_KEY], timeoutSeconds: 60 
             ]);
 
             const gaCodes = codesRes.data;
-            const recent observations = observationsRes.data;
+            const recentObservations = observationsRes.data;
 
             const lastSeenMap = new Map();
             for (const obs of recentObservations) {
@@ -1344,7 +1350,7 @@ exports.onDeleteUserBirdImage = onDocumentDeleted("users/{userId}/userBirdImage/
 
             if (userBirdDoc.exists) {
                 const userBirdData = userBirdDoc.data();
-                const points earnedByBird = userBirdData.pointsEarned || 0;
+                const pointsEarnedByBird = userBirdData.pointsEarned || 0;
                 const isDuplicate = userBirdData.isDuplicate || false;
 
                 console.log(`⬇️ onDeleteUserBirdImage: Last image deleted for UserBird ${userBirdRefId}. Reverting user totals.`);

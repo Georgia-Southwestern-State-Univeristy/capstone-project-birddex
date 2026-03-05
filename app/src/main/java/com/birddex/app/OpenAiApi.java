@@ -21,7 +21,7 @@ public class OpenAiApi {
      * Callback interface for handling results from the OpenAI API call.
      */
     public interface OpenAiCallback {
-        void onSuccess(String response, boolean isVerified);
+        void onSuccess(String response, boolean isVerified, boolean isGore);
         void onFailure(Exception e, String message);
     }
 
@@ -65,9 +65,10 @@ public class OpenAiApi {
                         Map<String, Object> resMap = (Map<String, Object>) result.getData();
                         String content = (String) resMap.get("result");
                         boolean isVerified = (boolean) resMap.get("isVerified");
+                        boolean isGore = resMap.containsKey("isGore") && (boolean) resMap.get("isGore");
                         if (content != null) {
                             Log.i(TAG, "[SUCCESS] Received content from cloud function");
-                            callback.onSuccess(content, isVerified);
+                            callback.onSuccess(content, isVerified, isGore);
                         } else {
                             callback.onFailure(new Exception("Null response"), "Cloud function returned empty result.");
                         }

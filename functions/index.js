@@ -2,15 +2,19 @@
 const functions = require("firebase-functions/v1");
 const auth = functions.auth;
 
-// 2. Use the standard v2 imports for your other functions
+// 2. Standard v2 imports (Note: onUserDeleted is REMOVED from here)
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
 const { onSchedule } = require("firebase-functions/v2/scheduler");
 const { onDocumentCreated, onDocumentDeleted, onDocumentUpdated } = require("firebase-functions/v2/firestore");
 const { defineSecret } = require("firebase-functions/params");
+
+// 3. Admin and external libraries (DECLARED ONLY ONCE)
 const admin = require("firebase-admin");
 const axios = require("axios");
 
-admin.initializeApp();
+if (admin.apps.length === 0) {
+    admin.initializeApp();
+}
 const db = admin.firestore();
 const storage = admin.storage();
 const messaging = admin.messaging();
@@ -250,7 +254,7 @@ async function getOrCreateAndSaveBirdFacts(birdId, commonName) {
 
     const [birdFactsDoc, hunterFactsDoc] = await Promise.all([
         birdFactsRef.get(),
-        hunterFactsDoc.get()
+        hunterFactsRef.get()
     ]);
 
     let generalFacts = {};
@@ -428,8 +432,8 @@ exports.identifyBird = onCall({ secrets: [OPENAI_API_KEY], timeoutSeconds: 30 },
             }
 
             if (currentRequestsRemaining <= 0) {
-                // If requests are 0 and cooldown is still active, throw error
-                const remainingCooldownMs = openAiCooldownResetTimestamp ? (pfpCooldownResetTimestamp.getTime() + COOLDOWN_PERIOD_MS - currentTime.getTime()) : 0;
+                // FIX: Reference the correct variable name here
+                const remainingCooldownMs = openAiCooldownResetTimestamp ? (openAiCooldownResetTimestamp.getTime() + COOLDOWN_PERIOD_MS - currentTime.getTime()) : 0;
                 throw new HttpsError("resource-exhausted", `You have reached your limit for AI bird identification requests. Try again in ${Math.ceil(remainingCooldownMs / (60 * 1000))} minutes.`);
             }
 
@@ -696,29 +700,36 @@ exports.getGeorgiaBirds = onCall({ secrets: [EBIRD_API_KEY], timeoutSeconds: 60 
                 });
 
             newBirdsFromEbird.sort((a, b) => a.commonName.localeCompare(b.commonName));
-            birdIdsToCache = newBirdsFromEbird.map(bird => bird.id);
+            const birdIdsToCache = newBirdsFromEbird.map(bird => bird.id);
 
-            // --- PHASE 2: Update Core 'birds' Collection & Cache Metadata ---
-            const batch1 = db.batch();
+            // --- PHASE 2: Update Core 'birds' Collection ---
 
-            // 2.1 Identify removed birds and delete their basic data and facts
+            // 2.1 Identify removed birds and delete their documents (if any)
             const removedBirdIds = cachedBirdIds.filter(id => !birdIdsToCache.includes(id));
-            for (const birdId of removedBirdIds) {
-                console.log(`Removing bird: ${birdId}`);
-                batch1.delete(db.collection("birds").doc(birdId));
-                // Only delete fact documents if they exist. We don't delete them here anymore,
-                // as getBirdDetailsAndFacts will handle their lifecycle.
-                // We'll trust that if a bird is removed, its facts won't be requested.
+            if (removedBirdIds.length > 0) {
+                const deleteBatch = db.batch();
+                removedBirdIds.forEach(birdId => {
+                    console.log(`Removing bird: ${birdId}`);
+                    deleteBatch.delete(db.collection("birds").doc(birdId));
+                });
+                await deleteBatch.commit();
+                console.log(`✅ Removed ${removedBirdIds.length} birds.`);
             }
 
-            // 2.2 Update/add core bird data to 'birds' collection (excluding dynamic locationId for now)
-            for (const bird of newBirdsFromEbird) {
-                const birdRef = db.collection("birds").doc(bird.id);
-                const birdCoreData = { ...bird };
-                delete birdCoreData.lastSeenLocationIdGeorgia; // Don't write this yet, resolve separately
-                batch1.set(birdRef, birdCoreData, { merge: true });
+            // 2.2 Update/add core bird data to 'birds' collection in chunks of 400
+            const birdEntries = newBirdsFromEbird;
+            for (let i = 0; i < birdEntries.length; i += 400) {
+                const batch = db.batch();
+                const chunk = birdEntries.slice(i, i + 400);
+                chunk.forEach(bird => {
+                    const birdRef = db.collection("birds").doc(bird.id);
+                    const birdCoreData = { ...bird };
+                    delete birdCoreData.lastSeenLocationIdGeorgia; // Don't write this yet, resolve separately
+                    batch.set(birdRef, birdCoreData, { merge: true });
+                });
+                await batch.commit();
+                console.log(`✅ Committed chunk ${i / 400 + 1} (birds ${i} to ${i + chunk.length - 1})`);
             }
-            await batch1.commit(); // Commit all bird data updates/deletions
             console.log("✅ Core 'birds' collection updated and removed birds processed.");
 
             // 2.3 Update the ebird_ga_cache document with metadata (after core birds are updated)
@@ -835,24 +846,77 @@ exports.searchBirdImage = onCall({ secrets: [NUTHATCH_API_KEY], timeoutSeconds: 
 
 
 // ======================================================
-// 4. IMPROVED: AUTOMATIC USER DATA CLEANUP & ANONYMIZATION
+// 4. AUTOMATIC USER DATA ARCHIVE & CLEANUP (v1 Syntax)
 // ======================================================
 exports.cleanupUserData = functions.runWith({
-    timeoutSeconds: 300,    memory: '512MB'
+    timeoutSeconds: 300,
+    memory: "512MB",
 }).auth.user().onDelete(async (user) => {
     const uid = user.uid;
-    console.log(`🧹 Starting comprehensive cleanup for user: ${uid}`);
-
-    const userRef = db.collection("users").doc(uid);
+    console.log(`🧹 Starting cleanup for user: ${uid}`);
 
     try {
-        // 1. Data Integrity & Privacy: Anonymize the user document
+        const userRef = admin.firestore().collection("users").doc(uid);
         const userDoc = await userRef.get();
+
+        // 1. FORUM ARCHIVING (Done first to ensure data is saved)
+        const threadsSnap = await admin.firestore().collection("forumThreads").where("userId", "==", uid).get();
+        console.log(`Found ${threadsSnap.size} forum threads to archive for user ${uid}`);
+
+        for (const threadDoc of threadsSnap.docs) {
+            const threadData = threadDoc.data();
+            const threadId = threadDoc.id;
+
+            // Fetch comments for this thread
+            const commentsSnap = await threadDoc.ref.collection("comments").get();
+            const comments = commentsSnap.docs.map(c => ({ id: c.id, ...c.data() }));
+
+            // A. Move Thread to deletedforum_backlog
+            await admin.firestore().collection("deletedforum_backlog").doc(threadId).set({
+                ...threadData,
+                archivedAt: admin.firestore.FieldValue.serverTimestamp(),
+                originalThreadId: threadId,
+                archivedComments: comments
+            });
+
+            // B. Move Image to Archive Folder in Storage
+            const postImageUrl = threadData.birdImageUrl || threadData.imageUrl;
+            if (postImageUrl && postImageUrl.includes("forum_post_images")) {
+                try {
+                    const decodedUrl = decodeURIComponent(postImageUrl);
+                    const pathStart = decodedUrl.indexOf("/o/") + 3;
+                    const pathEnd = decodedUrl.indexOf("?");
+                    const oldPath = decodedUrl.substring(pathStart, pathEnd !== -1 ? pathEnd : decodedUrl.length);
+
+                    const fileName = oldPath.split('/').pop();
+                    const newPath = `archive/forum_post_images/${fileName}`;
+
+                    const bucket = admin.storage().bucket();
+                    const file = bucket.file(oldPath);
+
+                    const [exists] = await file.exists();
+                    if (exists) {
+                        await file.copy(bucket.file(newPath));
+                        await file.delete();
+                        console.log(`📦 Archived image: ${oldPath} -> ${newPath}`);
+                    }
+                } catch (e) {
+                    console.error(`Image archive failed for post ${threadId}:`, e);
+                }
+            }
+
+            // C. Delete original Firestore documents
+            const threadBatch = admin.firestore().batch();
+            commentsSnap.forEach(c => threadBatch.delete(c.ref));
+            threadBatch.delete(threadDoc.ref);
+            await threadBatch.commit();
+        }
+
+        // 2. Anonymize user document
         if (userDoc.exists) {
             const userData = userDoc.data();
             const pfpUrl = userData.profilePictureUrl;
 
-            // Wipe Storage PFP if it exists
             if (pfpUrl && pfpUrl.includes('firebasestorage.googleapis.com')) {
                 try {
                     const decodedUrl = decodeURIComponent(pfpUrl);
@@ -861,7 +925,7 @@ exports.cleanupUserData = functions.runWith({
                 } catch (e) { console.error("PFP storage deletion failed", e); }
             }
 
-            await userRef.set({
+            await userRef.update({
                 username: "Deleted User",
                 email: "deleted@user.com",
                 profilePictureUrl: "",
@@ -869,82 +933,54 @@ exports.cleanupUserData = functions.runWith({
                 followerCount: 0,
                 followingCount: 0,
                 deletedAt: admin.firestore.FieldValue.serverTimestamp()
-            }, { merge: false });
+            });
         }
 
-        // 2. SOCIAL RELATIONSHIPS: Update counts for others
-        // Process FOLLOWING (People this user was following)
+        // 3. SOCIAL RELATIONSHIPS: Update counts for others
         const followingSnap = await userRef.collection("following").get();
-        const followingPromises = followingSnap.docs.map(async (doc) => {
+        await Promise.all(followingSnap.docs.map(async (doc) => {
             const targetId = doc.id;
-            const batch = db.batch();
-            // Remove this user from the target's followers list
-            batch.delete(db.collection("users").doc(targetId).collection("followers").doc(uid));
-            // Decrement the target's follower count
-            batch.update(db.collection("users").doc(targetId), {
-                followerCount: admin.firestore.FieldValue.increment(-1)
-            });
-            // Delete the relationship record from this user
+            const batch = admin.firestore().batch();
+            batch.delete(admin.firestore().collection("users").doc(targetId).collection("followers").doc(uid));
+            batch.update(admin.firestore().collection("users").doc(targetId), { followerCount: admin.firestore.FieldValue.increment(-1) });
             batch.delete(doc.ref);
             return batch.commit();
-        });
+        }));
 
-        // Process FOLLOWERS (People following this user)
         const followersSnap = await userRef.collection("followers").get();
-        const followersPromises = followersSnap.docs.map(async (doc) => {
+        await Promise.all(followersSnap.docs.map(async (doc) => {
             const followerId = doc.id;
-            const batch = db.batch();
-            // Remove this user from the follower's following list
-            batch.delete(db.collection("users").doc(followerId).collection("following").doc(uid));
-            // Decrement the follower's following count
-            batch.update(db.collection("users").doc(followerId), {
-                followingCount: admin.firestore.FieldValue.increment(-1)
-            });
-            // Delete the relationship record from this user
+            const batch = admin.firestore().batch();
+            batch.delete(admin.firestore().collection("users").doc(followerId).collection("following").doc(uid));
+            batch.update(admin.firestore().collection("users").doc(followerId), { followingCount: admin.firestore.FieldValue.increment(-1) });
             batch.delete(doc.ref);
             return batch.commit();
-        });
+        }));
 
-        await Promise.all([...followingPromises, ...followersPromises]);
-
-        // 3. Resource Management: Clear personal collections
-        const personalCollections = ["userBirds", "media", "birdCards"];
-        for (const col of personalCollections) {
-            const snap = await db.collection(col).where("userId", "==", uid).get();
-            const deletePromises = snap.docs.map(doc => doc.ref.delete());
-            await Promise.all(deletePromises);
+        // 4. Resource Management: Clear personal collections
+        const personalCols = ["userBirds", "media", "birdCards"];
+        for (const col of personalCols) {
+            const snap = await admin.firestore().collection(col).where("userId", "==", uid).get();
+            await Promise.all(snap.docs.map(doc => doc.ref.delete()));
         }
 
-        // 4. Storage Management: Wipe user folder
+        // 5. Storage Management: Wipe user collection folder
         try {
             await admin.storage().bucket().deleteFiles({ prefix: `userCollectionImages/${uid}/` });
         } catch (e) { console.error(`⚠️ Storage wipe failed for ${uid}`, e); }
 
-        // 5. Forum & Sightings Cleanup
-        // Handle forum threads (including comments deletion)
-        const threadsSnap = await db.collection("forumThreads").where("userId", "==", uid).get();
-        for (const threadDoc of threadsSnap.docs) {
-            const comments = await threadDoc.ref.collection("comments").get();
-            const threadBatch = db.batch();
-            comments.forEach(c => threadBatch.delete(c.ref));
-            threadBatch.delete(threadDoc.ref);
-            await threadBatch.commit();
-        }
-
-        // Anonymize sightings for the heatmap
-        const sightingsSnap = await db.collection("userBirdSightings").where("userId", "==", uid).get();
-        const sightingUpdates = sightingsSnap.docs.map(doc => doc.ref.update({
+        // 6. Anonymize userBirdSightings for global heat maps
+        const sightingsSnap = await admin.firestore().collection("userBirdSightings").where("userId", "==", uid).get();
+        await Promise.all(sightingsSnap.docs.map(doc => doc.ref.update({
             username: "Deleted User",
             imageUrl: "",
             isAnonymized: true
-        }));
-        await Promise.all(sightingUpdates);
+        })));
 
-        console.log(`✅ Successfully cleaned up and updated counts for deleted user ${uid}`);
+        console.log(`✅ Successfully archived and cleaned up for deleted user ${uid}`);
     } catch (err) {
         console.error(`❌ Cleanup failed for user ${uid}:`, err);
     }
-    return null;
 });
 
 
@@ -1609,8 +1645,17 @@ exports.onCommentCreated = onDocumentCreated("forumThreads/{threadId}/comments/{
             }
         };
 
+        try {
         const response = await messaging.send(message);
         console.log("Successfully sent notification:", response);
+        } catch (error) {
+        if (error.code === 'messaging/registration-token-not-registered') {
+        console.log(`Cleaning up invalid FCM token for user ${recipientUserId}`);
+        await db.collection("users").doc(recipientUserId).update({ fcmToken: admin.firestore.FieldValue.delete() });
+        } else {
+        console.error("Error sending notification:", error);
+        }
+    }
 
         // Mark notification as sent for this post if it was a top-level comment
         if (!parentCommentId) {
@@ -1626,7 +1671,7 @@ exports.onCommentCreated = onDocumentCreated("forumThreads/{threadId}/comments/{
 });
 
 // ======================================================
-// NEW: NOTIFY ON POST LIKE
+// NEW: NOTIFY ON POST LIKE (FIXED VERSION)
 // ======================================================
 exports.onPostLiked = onDocumentUpdated("forumThreads/{threadId}", async (event) => {
     const beforeData = event.data.before.data();
@@ -1635,62 +1680,43 @@ exports.onPostLiked = onDocumentUpdated("forumThreads/{threadId}", async (event)
     const beforeLikes = beforeData.likeCount || 0;
     const afterLikes = afterData.likeCount || 0;
 
-    // Only proceed if likes increased and author hasn't been notified yet
-    if (afterLikes <= beforeLikes || afterData.likeNotificationSent === true) {
-        return null;
-    }
+    if (afterLikes <= beforeLikes || afterData.likeNotificationSent === true) return null;
 
     const recipientUserId = afterData.userId;
-
     try {
         const recipientDoc = await db.collection("users").doc(recipientUserId).get();
         if (!recipientDoc.exists) return null;
 
         const recipientData = recipientDoc.data();
         const fcmToken = recipientData.fcmToken;
-        const notificationsEnabled = recipientData.notificationsEnabled !== false;
+        if (!fcmToken || recipientData.notificationsEnabled === false) return null;
 
-        if (!fcmToken || !notificationsEnabled) return null;
-
-        // Cooldown Check
-        const cooldownHours = recipientData.notificationCooldownHours !== undefined ? recipientData.notificationCooldownHours : 2;
-        if (runWith === undefined) { // Avoid errors if runWith isn't handled here
-             // logic continues below
-        }
-        if (cooldownHours > 0) {
-            const lastViewedAt = afterData.lastViewedAt;
-            if (lastViewedAt) {
-                const cooldownMs = cooldownHours * 60 * 60 * 1000;
-                if (Date.now() - lastViewedAt.toDate().getTime() < cooldownMs) {
-                    console.log("Like notification suppressed due to cooldown.");
-                    return null;
-                }
-            }
+        const cooldownHours = recipientData.notificationCooldownHours || 2;
+        if (cooldownHours > 0 && afterData.lastViewedAt) {
+            const cooldownMs = cooldownHours * 60 * 60 * 1000;
+            if (Date.now() - afterData.lastViewedAt.toDate().getTime() < cooldownMs) return null;
         }
 
         const message = {
             token: fcmToken,
-            notification: {
-                title: "Post Liked!",
-                body: `Someone liked your post.`
-            },
-            data: {
-                postId: event.params.threadId,
-                type: "like"
-            }
+            notification: { title: "Post Liked!", body: `Someone liked your post.` },
+            data: { postId: event.params.threadId, type: "like" }
         };
 
-        await messaging.send(message);
-        await event.data.after.ref.update({ likeNotificationSent: true });
-        console.log(`Like notification sent for post ${event.params.threadId}`);
-    } catch (error) {
-        console.error("Error sending like notification:", error);
-    }
+        try {
+            await messaging.send(message);
+            await event.data.after.ref.update({ likeNotificationSent: true });
+        } catch (error) {
+            if (error.code === 'messaging/registration-token-not-registered') {
+                await db.collection("users").doc(recipientUserId).update({ fcmToken: admin.firestore.FieldValue.delete() });
+            }
+        }
+    } catch (error) { console.error("Error in onPostLiked:", error); }
     return null;
 });
 
 // ======================================================
-// NEW: NOTIFY ON COMMENT LIKE
+// NEW: NOTIFY ON COMMENT LIKE (WITH TOKEN CLEANUP)
 // ======================================================
 exports.onCommentLiked = onDocumentUpdated("forumThreads/{threadId}/comments/{commentId}", async (event) => {
     const beforeData = event.data.before.data();
@@ -1741,11 +1767,20 @@ exports.onCommentLiked = onDocumentUpdated("forumThreads/{threadId}/comments/{co
             }
         };
 
-        await messaging.send(message);
-        await event.data.after.ref.update({ likeNotificationSent: true });
-        console.log(`Like notification sent for comment ${event.params.commentId}`);
+        try {
+            await messaging.send(message);
+            await event.data.after.ref.update({ likeNotificationSent: true });
+            console.log(`Like notification sent for comment ${event.params.commentId}`);
+        } catch (error) {
+            if (error.code === 'messaging/registration-token-not-registered') {
+                console.log(`Cleaning up invalid FCM token for user ${recipientUserId}`);
+                await db.collection("users").doc(recipientUserId).update({ fcmToken: admin.firestore.FieldValue.delete() });
+            } else {
+                console.error("Error sending comment like notification:", error);
+            }
+        }
     } catch (error) {
-        console.error("Error sending comment like notification:", error);
+        console.error("Error in onCommentLiked:", error);
     }
     return null;
 });

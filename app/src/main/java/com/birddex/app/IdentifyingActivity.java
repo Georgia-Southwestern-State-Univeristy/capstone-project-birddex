@@ -51,7 +51,6 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
     private ActivityResultLauncher<String[]> locationPermissionLauncher;
 
     private FirebaseManager firebaseManager;
-    private LoadingDialog loadingDialog;
 
     private Location currentLocation;
     private String currentLocalityName;
@@ -83,7 +82,6 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
 
         openAiApi = new OpenAiApi();
         firebaseManager = new FirebaseManager(this);
-        loadingDialog = new LoadingDialog(this);
 
         locationHelper = new LocationHelper(this, this);
         networkMonitor = new NetworkMonitor(this, this);
@@ -92,7 +90,6 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
         timeoutRunnable = () -> {
             if (identificationCompleted.compareAndSet(false, true)) {
                 Log.e(TAG, "Identification process timed out after " + IDENTIFICATION_TIMEOUT_MS + "ms");
-                if (loadingDialog.isShowing()) loadingDialog.dismiss();
                 finishActivityWithToast("Identification timed out. Please try again.");
             }
         };
@@ -127,10 +124,6 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
     protected void onPause() {
         super.onPause();
         networkMonitor.unregister();
-        if (loadingDialog != null && loadingDialog.isShowing()) {
-            Log.d(TAG, "onPause: Dismissing loading dialog");
-            loadingDialog.dismiss();
-        }
     }
 
     private void requestLocationPermissions() {
@@ -175,7 +168,6 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
     @Override public void onNetworkLost() {
         Log.w(TAG, "onNetworkLost: Connection lost during process");
         if (!identificationCompleted.get()) {
-            if (loadingDialog.isShowing()) loadingDialog.dismiss();
             finishActivityWithToast("Internet connection lost. Please reconnect and try again.");
         }
     }
@@ -192,8 +184,7 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
             return;
         }
 
-        Log.d(TAG, "startIdentificationFlow: Showing loading dialog and checking limits");
-        loadingDialog.show();
+        Log.d(TAG, "startIdentificationFlow: checking limits");
 
         firebaseManager.getOpenAiRequestsRemaining(new FirebaseManager.OpenAiRequestLimitListener() {
             @Override
@@ -206,7 +197,6 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
                     uploadImageToIdentificationStorage(imageUri, latitude, longitude, localityName, state, country);
                 } else {
                     Log.w(TAG, "onCheckComplete: Daily limit reached");
-                    loadingDialog.dismiss();
                     finishActivityWithToast("Daily limit reached for AI requests.");
                 }
             }
@@ -215,7 +205,6 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
             public void onFailure(String errorMessage) {
                 if (identificationCompleted.get()) return;
                 Log.e(TAG, "Failed to check OpenAI request limits: " + errorMessage);
-                loadingDialog.dismiss();
                 finishActivityWithToast("Failed to check AI limits.");
             }
         });
@@ -224,7 +213,6 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
     private void uploadImageToIdentificationStorage(Uri imageUri, @Nullable Double latitude, @Nullable Double longitude, @Nullable String localityName, @Nullable String state, @Nullable String country) {
         FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
         if (user == null) {
-            loadingDialog.dismiss();
             finishActivityWithToast("User not logged in.");
             return;
         }
@@ -243,13 +231,11 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
                         identifyBirdWithUrl(downloadUri.toString(), latitude, longitude, localityName, state, country);
                     }).addOnFailureListener(e -> {
                         Log.e(TAG, "Failed to get download URL", e);
-                        loadingDialog.dismiss();
                         finishActivityWithToast("Failed to process identification image link.");
                     });
                 })
                 .addOnFailureListener(e -> {
                     Log.e(TAG, "Upload failed", e);
-                    loadingDialog.dismiss();
                     finishActivityWithToast("Image upload for identification failed.");
                 });
     }
@@ -258,7 +244,6 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
         Log.d(TAG, "identifyBirdWithUrl: Encoding image for AI analysis...");
         String base64Image = encodeImage(localImageUri); // Still need base64 for the Vision API call
         if (base64Image == null) {
-            loadingDialog.dismiss();
             finishActivityWithToast("Failed to encode image for analysis.");
             return;
         }
@@ -271,17 +256,14 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
                 Log.d(TAG, "OpenAI onSuccess: isVerified=" + isVerified + ", isGore=" + isGore);
 
                 if (isGore) {
-                    loadingDialog.dismiss();
                     finishActivityWithToast("Please take a picture of a non-gore picture of a bird.");
                     return;
                 }
 
                 if (!isVerified) {
-                    loadingDialog.dismiss();
                     finishActivityWithToast("Bird not recognized in Georgia regional data.");
                     return;
                 }
-                loadingDialog.dismiss();
                 proceedToInfoActivity(response, downloadUrl, latitude, longitude, localityName, state, country);
             }
 
@@ -289,7 +271,6 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
             public void onFailure(Exception e, String message) {
                 if (identificationCompleted.get()) return;
                 Log.e(TAG, "OpenAI onFailure: " + message, e);
-                loadingDialog.dismiss();
                 finishActivityWithToast("Identification failed: " + message);
             }
         });

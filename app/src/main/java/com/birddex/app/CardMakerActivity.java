@@ -3,11 +3,13 @@ package com.birddex.app;
 import android.net.Uri;
 import android.os.Bundle;
 import android.util.Log;
+import android.view.View;
 import android.widget.Button;
 import android.widget.ImageView;
 import android.widget.TextView;
 import android.widget.Toast;
 import android.content.Intent;
+import android.widget.FrameLayout;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
@@ -57,7 +59,7 @@ public class CardMakerActivity extends AppCompatActivity {
     public static final String EXTRA_COUNTRY = "country";
 
     private FirebaseManager firebaseManager;
-    private LoadingDialog loadingDialog;
+    private FrameLayout loadingOverlay;
 
     private Uri originalImageUri;
     private String currentBirdId;
@@ -83,7 +85,7 @@ public class CardMakerActivity extends AppCompatActivity {
         setContentView(R.layout.activity_card_maker);
 
         firebaseManager = new FirebaseManager(this);
-        loadingDialog = new LoadingDialog(this);
+        loadingOverlay = findViewById(R.id.loadingOverlay);
 
         Button btnSave = findViewById(R.id.btnSaveCard);
         Button btnCancel = findViewById(R.id.btnCancelCard);
@@ -163,7 +165,7 @@ public class CardMakerActivity extends AppCompatActivity {
             return;
         }
 
-        loadingDialog.show();
+        loadingOverlay.setVisibility(View.VISIBLE);
 
         String userId = user.getUid();
         String originalImageFileName = "userCollectionImages/" + userId + "/" + UUID.randomUUID() + ".jpg";
@@ -178,13 +180,13 @@ public class CardMakerActivity extends AppCompatActivity {
                         storeBirdDiscovery(originalDownloadUri.toString());
                     }).addOnFailureListener(e -> {
                         Log.e(TAG, "Failed to get download URL", e);
-                        loadingDialog.dismiss();
+                        loadingOverlay.setVisibility(View.GONE);
                         Toast.makeText(CardMakerActivity.this, "Failed to save collection image link.", Toast.LENGTH_LONG).show();
                     });
                 })
                 .addOnFailureListener(e -> {
                     Log.e(TAG, "Original image upload failed: " + e.getMessage(), e);
-                    loadingDialog.dismiss();
+                    loadingOverlay.setVisibility(View.GONE);
                     Toast.makeText(CardMakerActivity.this, "Failed to upload image to your collection.", Toast.LENGTH_LONG).show();
                 });
     }
@@ -192,7 +194,7 @@ public class CardMakerActivity extends AppCompatActivity {
     private void storeBirdDiscovery(String originalImageUrl) {
         FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
         if (user == null) {
-            loadingDialog.dismiss();
+            loadingOverlay.setVisibility(View.GONE);
             return;
         }
 
@@ -327,7 +329,7 @@ public class CardMakerActivity extends AppCompatActivity {
                 )
                 .addOnSuccessListener(unused -> {
                     Log.d(TAG, "SUCCESS: All Firestore writes succeeded.");
-                    loadingDialog.dismiss();
+                    loadingOverlay.setVisibility(View.GONE);
                     Toast.makeText(CardMakerActivity.this, "Saved to your collection!", Toast.LENGTH_SHORT).show();
 
                     Intent home = new Intent(CardMakerActivity.this, HomeActivity.class);
@@ -338,7 +340,7 @@ public class CardMakerActivity extends AppCompatActivity {
                 })
                 .addOnFailureListener(e -> {
                     Log.e(TAG, "FAILURE: One or more Firestore writes failed.", e);
-                    loadingDialog.dismiss();
+                    loadingOverlay.setVisibility(View.GONE);
                     Toast.makeText(CardMakerActivity.this, "Error saving to collection. Please try again.", Toast.LENGTH_LONG).show();
                 });
     }
@@ -384,8 +386,8 @@ public class CardMakerActivity extends AppCompatActivity {
     @Override
     protected void onPause() {
         super.onPause();
-        if (loadingDialog != null && loadingDialog.isShowing()) {
-            loadingDialog.dismiss();
+        if (loadingOverlay != null && loadingOverlay.getVisibility() == View.VISIBLE) {
+            loadingOverlay.setVisibility(View.GONE);
         }
     }
 }

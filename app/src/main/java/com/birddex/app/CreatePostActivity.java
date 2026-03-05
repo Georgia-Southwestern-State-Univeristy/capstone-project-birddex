@@ -3,6 +3,7 @@ package com.birddex.app;
 import android.Manifest;
 import android.app.Activity;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.location.Location;
 import android.net.Uri;
@@ -42,6 +43,8 @@ public class CreatePostActivity extends AppCompatActivity {
     private static final String TAG = "CreatePostActivity";
     private static final int REQUEST_READ_EXTERNAL_STORAGE = 101;
     private static final int REQUEST_LOCATION_PERMISSION = 102;
+    private static final String PREFS_NAME = "BirdDexPrefs";
+    private static final String KEY_GRAPHIC_CONTENT = "show_graphic_content";
 
     private ActivityCreatePostBinding binding;
     private FirebaseAuth mAuth;
@@ -102,6 +105,14 @@ public class CreatePostActivity extends AppCompatActivity {
         });
 
         binding.btnPost.setOnClickListener(v -> attemptPost());
+
+        // Handle graphic content setting for Hunted checkbox
+        SharedPreferences sharedPreferences = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+        boolean showGraphicContent = sharedPreferences.getBoolean(KEY_GRAPHIC_CONTENT, false);
+        if (!showGraphicContent) {
+            binding.cbHunted.setEnabled(false);
+            binding.cbHunted.setAlpha(0.5f);
+        }
     }
 
     private boolean hasLocationPermission() {

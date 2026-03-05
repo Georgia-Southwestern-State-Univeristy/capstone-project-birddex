@@ -5,6 +5,7 @@ import android.app.AlertDialog;
 import android.content.Context;
 import android.content.DialogInterface;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.os.Bundle;
 import android.text.InputType;
 import android.util.Log;
@@ -19,6 +20,7 @@ import androidx.appcompat.app.AppCompatActivity;
 
 import com.google.android.gms.tasks.OnCompleteListener;
 import com.google.android.gms.tasks.Task;
+import com.google.android.material.materialswitch.MaterialSwitch;
 import com.google.firebase.auth.AuthCredential;
 import com.google.firebase.auth.EmailAuthProvider;
 import com.google.firebase.auth.FirebaseAuth;
@@ -29,16 +31,22 @@ public class SettingsActivity extends AppCompatActivity {
 
     private TextView tvUserEmail, tvUserName;
     private Button btnLogout, btnUpdateEmail, btnChangePassword, btnNotifications;
+    private MaterialSwitch switchGraphicContent;
 
     private FirebaseManager firebaseManager;
+    private SharedPreferences sharedPreferences;
 
     private static final String TAG = "SettingsActivity";
+    private static final String PREFS_NAME = "BirdDexPrefs";
+    private static final String KEY_GRAPHIC_CONTENT = "show_graphic_content";
 
     @SuppressLint("MissingInflatedId")
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_settings);
+
+        sharedPreferences = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
 
         // Initialize UI components
         tvUserEmail = findViewById(R.id.tvUserEmail);
@@ -47,6 +55,10 @@ public class SettingsActivity extends AppCompatActivity {
         btnLogout = findViewById(R.id.btnLogout);
         btnUpdateEmail = findViewById(R.id.btnUpdateEmail);
         btnChangePassword = findViewById(R.id.btnChangePassword);
+        switchGraphicContent = findViewById(R.id.switchGraphicContent);
+
+        // Set initial switch state
+        switchGraphicContent.setChecked(sharedPreferences.getBoolean(KEY_GRAPHIC_CONTENT, false));
 
         firebaseManager = new FirebaseManager(this);
 
@@ -83,6 +95,10 @@ public class SettingsActivity extends AppCompatActivity {
         btnChangePassword.setOnClickListener(v -> {
             initiatePasswordReset();
             Toast.makeText(SettingsActivity.this, "Please check your email to update your password.", Toast.LENGTH_LONG).show();
+        });
+
+        switchGraphicContent.setOnCheckedChangeListener((buttonView, isChecked) -> {
+            sharedPreferences.edit().putBoolean(KEY_GRAPHIC_CONTENT, isChecked).apply();
         });
     }
 

@@ -266,9 +266,16 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
         // We pass the base64 for analysis AND the storage URL for logging
         openAiApi.identifyBirdFromImage(base64Image, downloadUrl, latitude, longitude, localityName, new OpenAiApi.OpenAiCallback() {
             @Override
-            public void onSuccess(String response, boolean isVerified) {
+            public void onSuccess(String response, boolean isVerified, boolean isGore) {
                 if (identificationCompleted.get()) return;
-                Log.d(TAG, "OpenAI onSuccess: isVerified=" + isVerified);
+                Log.d(TAG, "OpenAI onSuccess: isVerified=" + isVerified + ", isGore=" + isGore);
+
+                if (isGore) {
+                    loadingDialog.dismiss();
+                    finishActivityWithToast("Please take a picture of a non-gore picture of a bird.");
+                    return;
+                }
+
                 if (!isVerified) {
                     loadingDialog.dismiss();
                     finishActivityWithToast("Bird not recognized in Georgia regional data.");

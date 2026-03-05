@@ -168,11 +168,15 @@ public class SocialActivity extends AppCompatActivity implements UserAdapter.OnU
         for (String id : userIds) {
             db.collection("users").document(id).get()
                     .addOnSuccessListener(doc -> {
-                        User user = doc.toObject(User.class);
-                        if (user != null) {
-                            user.setId(doc.getId());
-                            synchronized (fetchedUsers) {
-                                fetchedUsers.add(user);
+                        if (doc.exists()) {
+                            User user = doc.toObject(User.class);
+                            // SAFETY FILTER: Skip users marked as deleted
+                            Boolean isDeleted = doc.getBoolean("isDeleted");
+                            if (user != null && (isDeleted == null || !isDeleted)) {
+                                user.setId(doc.getId());
+                                synchronized (fetchedUsers) {
+                                    fetchedUsers.add(user);
+                                }
                             }
                         }
                         checkIfDone(fetchedCount, totalToFetch, fetchedUsers);

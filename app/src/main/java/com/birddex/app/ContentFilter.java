@@ -47,11 +47,12 @@ public class ContentFilter {
             "nigger", "kike", "faggot", "dyke", "retard", "tranny", "spic", "chink",
             "wetback", "coon", "nazi", "hitler", "negro", "beaner", "gook", "gypo", "fag",
             "cracker", "zipperhead", "sand nigger", "turban head", "darkie", "chud", "transvestite",
-            "troon", "nigga",
+            "troon", "nigga", "Dark Skin", "Cholo", "Gringo",
 
             // --- Violence & Harm ---
             "kill yourself", "suicide", "murder", "rape", "molest", "pedophile",
             "underage", "terrorist", "massacre", "genocide", "kys", "rapist",
+            "KYS",
 
             // --- Organizations
             "al qaeda", "ISIS", "KKK", "Klu Klux Klan", "Kool Kids Klub", "cia", "fbi",
@@ -72,7 +73,8 @@ public class ContentFilter {
             // --- People ---
             "trump", "biden", "obama", "bill clinton", "hillary clinton", "nick fuentes",
             "osama", "bin laden", "JD Vance", "Andrew Tate", "Tristan Tate", "Sneako",
-            "epstein", "Ghislaine Maxwell", "Jeffery Epstein",
+            "epstein", "Ghislaine Maxwell", "Jeffery Epstein", "Benjamin Netanyahu",
+            "Netanyahu", "Adolf Hitler", "Hitler", "Himmler",
 
             // --- Miscellaneous Clothing ---
             "g string", "lingerie", "thong"

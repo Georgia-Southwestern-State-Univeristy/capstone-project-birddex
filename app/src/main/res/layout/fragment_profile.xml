@@ -25,6 +25,20 @@
             app:layout_scrollFlags="scroll">
 
             <androidx.appcompat.widget.AppCompatImageButton
+                android:id="@+id/btnEditProfile"
+                android:layout_width="40dp"
+                android:layout_height="40dp"
+                android:layout_marginTop="12dp"
+                android:layout_marginStart="12dp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:contentDescription="Edit profile"
+                android:scaleType="center"
+                android:src="@drawable/ic_edit_24"
+                app:layout_constraintStart_toStartOf="parent"
+                app:layout_constraintTop_toTopOf="parent"
+                app:tint="?attr/colorOnSurface" />
+
+            <androidx.appcompat.widget.AppCompatImageButton
                 android:id="@+id/btnSettings"
                 android:layout_width="40dp"
                 android:layout_height="40dp"
@@ -42,6 +56,7 @@
                 android:id="@+id/ivPfp"
                 android:layout_width="110dp"
                 android:layout_height="110dp"
+                android:padding="2dp"
                 android:scaleType="centerCrop"
                 android:src="@drawable/ic_profile"
                 app:layout_constraintEnd_toEndOf="parent"
@@ -64,20 +79,6 @@
                 app:layout_constraintEnd_toEndOf="parent"
                 app:layout_constraintStart_toStartOf="parent"
                 app:layout_constraintTop_toBottomOf="@id/ivPfp" />
-
-            <androidx.appcompat.widget.AppCompatImageButton
-                android:id="@+id/btnEditProfile"
-                android:layout_width="28dp"
-                android:layout_height="28dp"
-                android:layout_marginStart="6dp"
-                android:background="?attr/selectableItemBackgroundBorderless"
-                android:contentDescription="Edit profile"
-                android:scaleType="center"
-                android:src="@drawable/ic_edit_24"
-                app:layout_constraintBottom_toBottomOf="@id/tvUsername"
-                app:layout_constraintStart_toEndOf="@id/tvUsername"
-                app:layout_constraintTop_toTopOf="@id/tvUsername"
-                app:tint="?attr/colorOnSurface" />
 
             <LinearLayout
                 android:id="@+id/llStats"
@@ -171,7 +172,7 @@
                 android:layout_height="wrap_content"
                 android:layout_marginTop="14dp"
                 android:autofillHints="textPersonFacts"
-                android:background="@drawable/bg_input"
+                android:background="@drawable/bg_white_rounded"
                 android:gravity="center"
                 android:hint="@string/hint_bio_empty"
                 android:inputType="textMultiLine"

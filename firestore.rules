@@ -15,9 +15,10 @@ service cloud.firestore {
       allow update: if request.auth != null && (
                       (request.auth.uid == userId &&
                        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-                         'username', 'profilePictureUrl', 'bio', 'followerCount', 'followingCount', 'fcmToken'
-                       ])) ||
-                      request.resource.data.diff(resource.data).affectedKeys().hasOnly(['followerCount', 'followingCount'])
+                         'username', 'profilePictureUrl','bio','followerCount','followingCount','fcmToken',
+                         'favoriteCardKeys'])) ||
+                      request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+                         'followerCount','followingCount'])
                     );
 
       // Private settings sub-collection (Only owner can access)

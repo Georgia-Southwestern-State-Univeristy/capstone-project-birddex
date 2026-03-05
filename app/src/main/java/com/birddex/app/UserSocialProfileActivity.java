@@ -69,6 +69,8 @@ public class UserSocialProfileActivity extends AppCompatActivity implements
     private final List<String> favoriteCardKeys = new ArrayList<>();
     private final List<CollectionSlot> allCollectionSlots = new ArrayList<>();
 
+    private ListenerRegistration userDetailsListener;
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -182,11 +184,34 @@ public class UserSocialProfileActivity extends AppCompatActivity implements
     }
 
     private void loadUserDetails() {
-        db.collection("users").document(targetUserId).get()
-                .addOnSuccessListener(doc -> {
-                    if (doc.exists()) {
+        if (userDetailsListener != null) {
+            userDetailsListener.remove();
+        }
+
+        userDetailsListener = db.collection("users").document(targetUserId)
+                .addSnapshotListener((doc, e) -> {
+                    if (e != null) {
+                        Log.e(TAG, "Listen failed.", e);
+                        return;
+                    }
+
+                    if (doc != null && doc.exists()) {
                         User user = doc.toObject(User.class);
                         if (user != null) {
+                            // Check if account was deleted
+                            Boolean isDeleted = doc.getBoolean("isDeleted");
+                            if (isDeleted != null && isDeleted) {
+                                tvUsername.setText("Deleted User");
+                                tvBio.setText("");
+                                tvFollowerCount.setText("0");
+                                tvFollowingCount.setText("0");
+                                ivPfp.setImageResource(R.drawable.ic_profile);
+                                btnFollow.setVisibility(View.GONE);
+                                btnUserFollowers.setEnabled(false);
+                                btnUserFollowing.setEnabled(false);
+                                return;
+                            }
+
                             tvUsername.setText(user.getUsername());
                             tvBio.setText(user.getBio() != null && !user.getBio().isEmpty() ? user.getBio() : "No bio yet.");
                             tvFollowerCount.setText(String.valueOf(user.getFollowerCount()));
@@ -204,6 +229,10 @@ public class UserSocialProfileActivity extends AppCompatActivity implements
                             }
                             loadFavoriteCards();
                         }
+                    } else {
+                        // User document doesn't exist at all
+                        tvUsername.setText("User Not Found");
+                        btnFollow.setVisibility(View.GONE);
                     }
                 });
     }
@@ -273,7 +302,7 @@ public class UserSocialProfileActivity extends AppCompatActivity implements
                 if (task.isSuccessful()) {
                     isFollowing = false;
                     updateFollowButtonUI();
-                    loadUserDetails();
+                    // Listener will handle UI update for counts
                 }
             });
         } else {
@@ -282,7 +311,7 @@ public class UserSocialProfileActivity extends AppCompatActivity implements
                 if (task.isSuccessful()) {
                     isFollowing = true;
                     updateFollowButtonUI();
-                    loadUserDetails();
+                    // Listener will handle UI update for counts
                 }
             });
         }
@@ -421,5 +450,13 @@ public class UserSocialProfileActivity extends AppCompatActivity implements
     @Override
     public boolean onFavoriteLongPressed(int position, @Nullable CollectionSlot slot) {
         return false;
+    }
+
+    @Override
+    protected void onDestroy() {
+        super.onDestroy();
+        if (userDetailsListener != null) {
+            userDetailsListener.remove();
+        }
     }
 }

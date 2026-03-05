@@ -412,7 +412,7 @@ public class ProfileFragment extends Fragment implements
         loadFavoriteCards();
     }
     private void loadProfilePicture(String url) {
-        if (url != null && url.isEmpty()) {
+        if (url != null && !url.isEmpty()) {
             Glide.with(this)
                     .load(url)
                     .placeholder(R.drawable.ic_profile)

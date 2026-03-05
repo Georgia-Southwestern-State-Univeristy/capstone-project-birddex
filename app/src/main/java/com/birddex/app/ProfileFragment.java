@@ -69,7 +69,7 @@ public class ProfileFragment extends Fragment implements
     private ShapeableImageView ivPfp;
     private TextView tvUsername;
     private TextView tvPoints;
-    private EditText etBio;
+    private TextView tvBio; // Changed from EditText to TextView
     private TextView tvFollowerCount;
     private TextView tvFollowingCount;
     private MaterialButton btnFollow;
@@ -157,7 +157,7 @@ public class ProfileFragment extends Fragment implements
         ivPfp = v.findViewById(R.id.ivPfp);
         tvUsername = v.findViewById(R.id.tvUsername);
         tvPoints = v.findViewById(R.id.tvPoints);
-        etBio = v.findViewById(R.id.etBio);
+        tvBio = v.findViewById(R.id.etBio); // Using ID etBio for now as per XML change
         tvFollowerCount = v.findViewById(R.id.tvFollowerCount);
         tvFollowingCount = v.findViewById(R.id.tvFollowingCount);
         btnFollow = v.findViewById(R.id.btnFollow);
@@ -260,10 +260,6 @@ public class ProfileFragment extends Fragment implements
     }
 
     private void setupUI() {
-        etBio.setFocusable(false);
-        etBio.setClickable(false);
-        etBio.setLongClickable(false);
-
         if (isCurrentUser) {
             btnEditProfile.setVisibility(View.VISIBLE);
             btnSettings.setVisibility(View.VISIBLE);
@@ -387,7 +383,7 @@ public class ProfileFragment extends Fragment implements
         currentProfilePictureUrl = userProfile.getProfilePictureUrl();
 
         tvUsername.setText(currentUsername != null ? currentUsername : "No Username");
-        etBio.setText(currentBio != null && !currentBio.trim().isEmpty() ? currentBio : "No bio yet.");
+        tvBio.setText(currentBio != null && !currentBio.trim().isEmpty() ? currentBio : "No bio yet.");
         tvPoints.setText("Total Points: " + userProfile.getTotalPoints());
         tvFollowerCount.setText(String.valueOf(userProfile.getFollowerCount()));
         tvFollowingCount.setText(String.valueOf(userProfile.getFollowingCount()));
@@ -416,7 +412,7 @@ public class ProfileFragment extends Fragment implements
         loadFavoriteCards();
     }
     private void loadProfilePicture(String url) {
-        if (url != null && !url.isEmpty()) {
+        if (url != null && url.isEmpty()) {
             Glide.with(this)
                     .load(url)
                     .placeholder(R.drawable.ic_profile)

@@ -86,9 +86,6 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
         loadUserProfilePicture();
         setupSwipeRefresh();
         
-        // Initial load
-        refreshPosts();
-
         return view;
     }
 
@@ -177,6 +174,7 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
     }
 
     private void refreshPosts() {
+        isFetching = false;
         lastVisible = null;
         isLastPage = false;
         postList.clear();
@@ -278,19 +276,45 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
     @Override
     public void onLikeClick(ForumPost post) {
         FirebaseUser user = mAuth.getCurrentUser();
-        if (user == null) return;
+        if (user == null || post.getId() == null) return;
 
         String userId = user.getUid();
         boolean currentlyLiked = post.getLikedBy() != null && post.getLikedBy().containsKey(userId);
 
+        // Optimistic UI Update: change the count locally before Firestore finishes
+        int currentCount = post.getLikeCount();
+        if (currentlyLiked) {
+            post.setLikeCount(Math.max(0, currentCount - 1));
+            post.getLikedBy().remove(userId);
+        } else {
+            post.setLikeCount(currentCount + 1);
+            post.getLikedBy().put(userId, true);
+        }
+        adapter.notifyDataSetChanged();
+
+        // Perform actual Firestore update
         if (currentlyLiked) {
             db.collection("forumThreads").document(post.getId())
                     .update("likeCount", FieldValue.increment(-1),
-                            "likedBy." + userId, FieldValue.delete());
+                            "likedBy." + userId, FieldValue.delete())
+                    .addOnFailureListener(e -> {
+                        // Revert local state on failure
+                        post.setLikeCount(currentCount);
+                        post.getLikedBy().put(userId, true);
+                        adapter.notifyDataSetChanged();
+                        Toast.makeText(getContext(), "Failed to update like", Toast.LENGTH_SHORT).show();
+                    });
         } else {
             db.collection("forumThreads").document(post.getId())
                     .update("likeCount", FieldValue.increment(1),
-                            "likedBy." + userId, true);
+                            "likedBy." + userId, true)
+                    .addOnFailureListener(e -> {
+                        // Revert local state on failure
+                        post.setLikeCount(currentCount);
+                        post.getLikedBy().remove(userId);
+                        adapter.notifyDataSetChanged();
+                        Toast.makeText(getContext(), "Failed to update like", Toast.LENGTH_SHORT).show();
+                    });
         }
     }
 
@@ -337,6 +361,17 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
     @Override
     public void onUserClick(String userId) {
         openUserProfile(userId);
+    }
+
+    @Override
+    public void onMapClick(ForumPost post) {
+        if (post.getLatitude() != null && post.getLongitude() != null) {
+            Intent intent = new Intent(getActivity(), NearbyHeatmapActivity.class);
+            intent.putExtra(NearbyHeatmapActivity.EXTRA_CENTER_LAT, post.getLatitude());
+            intent.putExtra(NearbyHeatmapActivity.EXTRA_CENTER_LNG, post.getLongitude());
+            intent.putExtra("extra_post_id", post.getId()); // Passing ID to focus on it
+            startActivity(intent);
+        }
     }
 
     private void showDeleteConfirmation(ForumPost post) {
@@ -498,8 +533,6 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
         input.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE);
         input.setHint("Please specify the reason (max 200 chars)...");
         input.setFilters(new InputFilter[]{new InputFilter.LengthFilter(200)});
-        input.setSingleLine(false);
-        input.setHorizontallyScrolling(false);
         input.setLines(5);
 
         FrameLayout container = new FrameLayout(requireContext());
@@ -559,6 +592,14 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
         Intent intent = new Intent(getActivity(), UserSocialProfileActivity.class);
         intent.putExtra(UserSocialProfileActivity.EXTRA_USER_ID, userId);
         startActivity(intent);
+    }
+
+    @Override
+    public void onResume() {
+        super.onResume();
+        if (binding != null) {
+            refreshPosts();
+        }
     }
 
     @Override

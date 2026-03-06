@@ -174,6 +174,10 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
         TextView tvViews = postView.findViewById(R.id.tvViewCount);
         View btnLike = postView.findViewById(R.id.btnLike);
         View btnOptions = postView.findViewById(R.id.btnPostOptions);
+        View btnViewOnMap = postView.findViewById(R.id.btnViewOnMap);
+
+        TextView tvSpottedBadge = postView.findViewById(R.id.tvSpottedBadge);
+        TextView tvHuntedBadge = postView.findViewById(R.id.tvHuntedBadge);
 
         tvUsername.setText(post.getUsername());
         String messageText = post.getMessage();
@@ -184,6 +188,9 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
         tvLikes.setText(String.valueOf(post.getLikeCount()));
         tvComments.setText(String.valueOf(post.getCommentCount()));
         tvViews.setText(post.getViewCount() + " views");
+
+        if (tvSpottedBadge != null) tvSpottedBadge.setVisibility(post.isSpotted() ? View.VISIBLE : View.GONE);
+        if (tvHuntedBadge != null) tvHuntedBadge.setVisibility(post.isHunted() ? View.VISIBLE : View.GONE);
 
         if (post.getTimestamp() != null) {
             tvTimestamp.setText(DateUtils.getRelativeTimeSpanString(post.getTimestamp().toDate().getTime()));
@@ -196,6 +203,22 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
             Glide.with(this).load(post.getBirdImageUrl()).into(ivBird);
         } else {
             cvImage.setVisibility(View.GONE);
+        }
+
+        if (btnViewOnMap != null) {
+            boolean hasLocation = post.isShowLocation() && post.getLatitude() != null && post.getLongitude() != null;
+            if ((post.isSpotted() || post.isHunted()) && hasLocation) {
+                btnViewOnMap.setVisibility(View.VISIBLE);
+                btnViewOnMap.setOnClickListener(v -> {
+                    Intent intent = new Intent(this, NearbyHeatmapActivity.class);
+                    intent.putExtra(NearbyHeatmapActivity.EXTRA_CENTER_LAT, post.getLatitude());
+                    intent.putExtra(NearbyHeatmapActivity.EXTRA_CENTER_LNG, post.getLongitude());
+                    intent.putExtra("extra_post_id", post.getId());
+                    startActivity(intent);
+                });
+            } else {
+                btnViewOnMap.setVisibility(View.GONE);
+            }
         }
 
         btnLike.setOnClickListener(v -> toggleLike());

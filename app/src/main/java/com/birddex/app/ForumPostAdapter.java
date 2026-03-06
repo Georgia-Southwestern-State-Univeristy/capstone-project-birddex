@@ -29,6 +29,7 @@ public class ForumPostAdapter extends RecyclerView.Adapter<ForumPostAdapter.Post
         void onPostClick(ForumPost post);
         void onOptionsClick(ForumPost post, View view);
         void onUserClick(String userId);
+        void onMapClick(ForumPost post);
     }
 
     public ForumPostAdapter(OnPostClickListener listener) {
@@ -72,6 +73,7 @@ public class ForumPostAdapter extends RecyclerView.Adapter<ForumPostAdapter.Post
         TextView tvCommentCount;
         TextView tvViewCount;
         ImageButton btnOptions;
+        LinearLayout btnViewOnMap;
         
         TextView tvSpottedBadge;
         TextView tvHuntedBadge;
@@ -91,6 +93,7 @@ public class ForumPostAdapter extends RecyclerView.Adapter<ForumPostAdapter.Post
             tvCommentCount = itemView.findViewById(R.id.tvCommentCount);
             tvViewCount = itemView.findViewById(R.id.tvViewCount);
             btnOptions = itemView.findViewById(R.id.btnPostOptions);
+            btnViewOnMap = itemView.findViewById(R.id.btnViewOnMap);
             
             tvSpottedBadge = itemView.findViewById(R.id.tvSpottedBadge);
             tvHuntedBadge = itemView.findViewById(R.id.tvHuntedBadge);
@@ -109,6 +112,17 @@ public class ForumPostAdapter extends RecyclerView.Adapter<ForumPostAdapter.Post
             }
             if (tvHuntedBadge != null) {
                 tvHuntedBadge.setVisibility(post.isHunted() ? View.VISIBLE : View.GONE);
+            }
+
+            // View on Map button visibility - Show for both spotted and hunted posts if location is shared
+            if (btnViewOnMap != null) {
+                boolean hasLocation = post.isShowLocation() && post.getLatitude() != null && post.getLongitude() != null;
+                if ((post.isSpotted() || post.isHunted()) && hasLocation) {
+                    btnViewOnMap.setVisibility(View.VISIBLE);
+                    btnViewOnMap.setOnClickListener(v -> listener.onMapClick(post));
+                } else {
+                    btnViewOnMap.setVisibility(View.GONE);
+                }
             }
 
             // Timestamp
@@ -137,7 +151,7 @@ public class ForumPostAdapter extends RecyclerView.Adapter<ForumPostAdapter.Post
             // Like status
             String currentUserId = FirebaseAuth.getInstance().getUid();
             if (currentUserId != null && post.getLikedBy() != null && post.getLikedBy().containsKey(currentUserId)) {
-                ivLikeIcon.setImageResource(R.drawable.ic_favorite_border); // Placeholder
+                ivLikeIcon.setImageResource(R.drawable.ic_favorite_border); // Placeholder - should be filled heart
             } else {
                 ivLikeIcon.setImageResource(R.drawable.ic_favorite_border);
             }

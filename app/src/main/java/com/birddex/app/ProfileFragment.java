@@ -107,6 +107,7 @@ public class ProfileFragment extends Fragment implements
     private final List<CollectionSlot> allCollectionSlots = new ArrayList<>();
 
     private ActivityResultLauncher<Intent> editProfileLauncher;
+    private ListenerRegistration profileListener;
 
     public static ProfileFragment newInstance(String userId) {
         ProfileFragment fragment = new ProfileFragment();
@@ -324,7 +325,7 @@ public class ProfileFragment extends Fragment implements
                 if (task.isSuccessful()) {
                     isFollowing = false;
                     updateFollowButton();
-                    fetchUserProfile();
+                    refreshPosts();
                 }
             });
         } else {
@@ -335,7 +336,7 @@ public class ProfileFragment extends Fragment implements
                 if (task.isSuccessful()) {
                     isFollowing = true;
                     updateFollowButton();
-                    fetchUserProfile();
+                    refreshPosts();
                 }
             });
         }
@@ -355,20 +356,30 @@ public class ProfileFragment extends Fragment implements
         refreshPosts();
     }
 
+    @Override
+    public void onStop() {
+        super.onStop();
+        if (profileListener != null) {
+            profileListener.remove();
+            profileListener = null;
+        }
+    }
+
     private void fetchUserProfile() {
         if (profileUserId == null) return;
 
-        db.collection("users").document(profileUserId).get(Source.CACHE)
-                .addOnSuccessListener(this::handleUserSnapshot)
-                .addOnFailureListener(e -> fetchUserProfileFromServer());
+        if (profileListener != null) profileListener.remove();
 
-        fetchUserProfileFromServer();
-    }
-
-    private void fetchUserProfileFromServer() {
-        db.collection("users").document(profileUserId).get(Source.SERVER)
-                .addOnSuccessListener(this::handleUserSnapshot)
-                .addOnFailureListener(e -> Log.e(TAG, "Server fetch failed", e));
+        profileListener = db.collection("users").document(profileUserId)
+                .addSnapshotListener((snapshot, e) -> {
+                    if (e != null) {
+                        Log.e(TAG, "Error listening to profile changes", e);
+                        return;
+                    }
+                    if (snapshot != null && snapshot.exists() && isAdded()) {
+                        handleUserSnapshot(snapshot);
+                    }
+                });
     }
 
     @SuppressWarnings("unchecked")
@@ -411,6 +422,7 @@ public class ProfileFragment extends Fragment implements
 
         loadFavoriteCards();
     }
+
     private void loadProfilePicture(String url) {
         if (url != null && !url.isEmpty()) {
             Glide.with(this)
@@ -484,9 +496,13 @@ public class ProfileFragment extends Fragment implements
     }
 
     private void refreshPosts() {
+        isFetching = false;
         lastVisible = null;
         isLastPage = false;
         postList.clear();
+        if (postsAdapter != null) {
+            postsAdapter.setPosts(new ArrayList<>());
+        }
         fetchPosts();
     }
 
@@ -608,6 +624,17 @@ public class ProfileFragment extends Fragment implements
         Intent intent = new Intent(requireContext(), UserSocialProfileActivity.class);
         intent.putExtra(UserSocialProfileActivity.EXTRA_USER_ID, userId);
         startActivity(intent);
+    }
+
+    @Override
+    public void onMapClick(ForumPost post) {
+        if (post.getLatitude() != null && post.getLongitude() != null) {
+            Intent intent = new Intent(requireContext(), NearbyHeatmapActivity.class);
+            intent.putExtra(NearbyHeatmapActivity.EXTRA_CENTER_LAT, post.getLatitude());
+            intent.putExtra(NearbyHeatmapActivity.EXTRA_CENTER_LNG, post.getLongitude());
+            intent.putExtra("extra_post_id", post.getId());
+            startActivity(intent);
+        }
     }
 
     @Override

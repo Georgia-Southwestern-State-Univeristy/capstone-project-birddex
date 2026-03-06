@@ -431,6 +431,17 @@ public class UserSocialProfileActivity extends AppCompatActivity implements
     }
 
     @Override
+    public void onMapClick(ForumPost post) {
+        if (post.getLatitude() != null && post.getLongitude() != null) {
+            Intent intent = new Intent(this, NearbyHeatmapActivity.class);
+            intent.putExtra(NearbyHeatmapActivity.EXTRA_CENTER_LAT, post.getLatitude());
+            intent.putExtra(NearbyHeatmapActivity.EXTRA_CENTER_LNG, post.getLongitude());
+            intent.putExtra("extra_post_id", post.getId());
+            startActivity(intent);
+        }
+    }
+
+    @Override
     public void onFavoriteClicked(int position, @Nullable CollectionSlot slot) {
         if (slot != null) {
             Intent intent = new Intent(this, ViewBirdCardActivity.class);

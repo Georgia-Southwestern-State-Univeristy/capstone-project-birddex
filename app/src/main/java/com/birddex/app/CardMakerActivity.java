@@ -323,28 +323,15 @@ public class CardMakerActivity extends AppCompatActivity {
             addSightingTcs.setResult(null);
         }
 
-        Task<Void> coreCollectionTask = Tasks.whenAll(
-                addUserBirdTcs.getTask(),
-                addUserBirdImageTcs.getTask(),
-                addCollectionSlotMaybeTcs.getTask()
-        );
-
-        coreCollectionTask
+        Tasks.whenAll(
+                        addLocationTcs.getTask(),
+                        addUserBirdTcs.getTask(),
+                        addUserBirdImageTcs.getTask(),
+                        addCollectionSlotMaybeTcs.getTask(),
+                        addSightingTcs.getTask()
+                )
                 .addOnSuccessListener(unused -> {
-                    Log.d(TAG, "SUCCESS: Core collection writes succeeded.");
-
-                    addLocationTcs.getTask()
-                            .addOnSuccessListener(locationUnused ->
-                                    Log.d(TAG, "SUCCESS: Location saved."))
-                            .addOnFailureListener(e ->
-                                    Log.w(TAG, "Location write failed, but collection save already succeeded.", e));
-
-                    addSightingTcs.getTask()
-                            .addOnSuccessListener(sightingUnused ->
-                                    Log.d(TAG, "SUCCESS: Optional sighting flow completed."))
-                            .addOnFailureListener(e ->
-                                    Log.w(TAG, "Sighting write failed, but collection save already succeeded.", e));
-
+                    Log.d(TAG, "SUCCESS: All Firestore writes succeeded.");
                     loadingOverlay.setVisibility(View.GONE);
 
                     Toast.makeText(CardMakerActivity.this, "Saved to your collection!", Toast.LENGTH_SHORT).show();
@@ -356,7 +343,7 @@ public class CardMakerActivity extends AppCompatActivity {
                     finish();
                 })
                 .addOnFailureListener(e -> {
-                    Log.e(TAG, "FAILURE: Core collection save failed.", e);
+                    Log.e(TAG, "FAILURE: One or more Firestore writes failed.", e);
                     loadingOverlay.setVisibility(View.GONE);
                     Toast.makeText(CardMakerActivity.this, "Error saving to collection. Please try again.", Toast.LENGTH_LONG).show();
                 });

@@ -1,8 +1,9 @@
 // 1. Use the specific v1 auth import for the cleanup trigger
 const functions = require("firebase-functions/v1");
+const { logger } = require("firebase-functions");
 const auth = functions.auth;
 
-// 2. Standard v2 imports (Note: onUserDeleted is REMOVED from here)
+// 2. Standard v2 imports
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
 const { onSchedule } = require("firebase-functions/v2/scheduler");
 const { onDocumentCreated, onDocumentDeleted, onDocumentUpdated } = require("firebase-functions/v2/firestore");
@@ -24,99 +25,78 @@ const OPENAI_API_KEY = defineSecret("OPENAI_API_KEY");
 const EBIRD_API_KEY = defineSecret("EBIRD_API_KEY");
 const NUTHATCH_API_KEY = defineSecret("NUTHATCH_API_KEY");
 
-// Hardcoded Georgia DNR Hunting Regulations link
-const GEORGIA_DNR_HUNTING_LINK = "https://georgiawildlife.com/hunting";
-
-// Constants for daily limits
-const MAX_OPENAI_REQUESTS = 100;
-const MAX_PFP_CHANGES = 5;
-const COOLDOWN_PERIOD_MS = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
-const FACT_CACHE_LIFETIME_MS = 30 * 24 * 60 * 60 * 1000; // 30 days in milliseconds
+// ======================================================
+// CENTRALIZED CONFIG (replaces scattered hard-coded values)
+// ======================================================
+const CONFIG = {
+    GEORGIA_DNR_HUNTING_LINK: "https://georgiawildlife.com/hunting",
+    MAX_OPENAI_REQUESTS: 100,
+    MAX_PFP_CHANGES: 5,
+    COOLDOWN_PERIOD_MS: 24 * 60 * 60 * 1000,       // 24 hours
+    FACT_CACHE_LIFETIME_MS: 30 * 24 * 60 * 60 * 1000, // 30 days
+    EBIRD_CACHE_TTL_MS: 72 * 60 * 60 * 1000,          // 72 hours
+    FORUM_ARCHIVE_DAYS_MS: 7 * 24 * 60 * 60 * 1000,   // 7 days
+    UNVERIFIED_USER_TTL_MS: 72 * 60 * 60 * 1000,      // 72 hours
+    FIRESTORE_BATCH_SIZE: 400,  // Firestore max is 500; using 400 for safety
+    LOCATION_PRECISION: 4,      // decimal places (~11 meters)
+};
 
 // ======================================================
 // HELPER: Input Sanitization
 // ======================================================
-/**
- * Sanitizes username input to prevent injection and enforce valid format
- * @param {string} username - The username to sanitize
- * @returns {string} - Sanitized username
- * @throws {HttpsError} - If username is invalid
- */
 function sanitizeUsername(username) {
     if (!username || typeof username !== "string") {
         throw new HttpsError("invalid-argument", "Username must be a non-empty string.");
     }
-
     const trimmed = username.trim();
-
-    // Check length (3-30 characters)
     if (trimmed.length < 3 || trimmed.length > 30) {
         throw new HttpsError("invalid-argument", "Username must be between 3 and 30 characters.");
     }
-
-    // Allow only alphanumeric and underscores
     if (!/^[a-zA-Z0-9_]+$/.test(trimmed)) {
         throw new HttpsError("invalid-argument", "Username can only contain letters, numbers, and underscores.");
     }
-
     return trimmed;
 }
 
-/**
- * Sanitizes text content to prevent XSS and injection attacks
- * @param {string} text - The text to sanitize
- * @param {number} maxLength - Maximum allowed length
- * @returns {string} - Sanitized text
- */
 function sanitizeText(text, maxLength = 5000) {
-    if (!text || typeof text !== "string") {
-        return "";
-    }
-
+    if (!text || typeof text !== "string") return "";
     const trimmed = text.trim();
-
-    // Truncate if too long
-    if (trimmed.length > maxLength) {
-        return trimmed.substring(0, maxLength);
-    }
-
-    // Remove potential HTML/script tags (basic sanitization)
+    if (trimmed.length > maxLength) return trimmed.substring(0, maxLength);
     return trimmed.replace(/<[^>]*>/g, "");
 }
 
-// Helper to create or get location document based on lat/lng and an optional locality name
+// ======================================================
+// HELPER: Location (FIXED race condition — always uses merge)
+// ======================================================
 async function getOrCreateLocation(latitude, longitude, localityName, db) {
-    // Round to a reasonable precision for location grouping, e.g., 4 decimal places (~11 meters)
-    const fixedLat = latitude.toFixed(4);
-    const fixedLng = longitude.toFixed(4);
+    const fixedLat = latitude.toFixed(CONFIG.LOCATION_PRECISION);
+    const fixedLng = longitude.toFixed(CONFIG.LOCATION_PRECISION);
     const locationId = `LOC_${fixedLat}_${fixedLng}`;
     const locationRef = db.collection("locations").doc(locationId);
 
-    const doc = await locationRef.get();
-    if (!doc.exists) {
-        const newLocationData = {
-            latitude: latitude,
-            longitude: longitude,
-            country: "US",
-            state: "GA",
-            locality: localityName || `Lat: ${fixedLat}, Lng: ${fixedLng}`
-        };
-        await locationRef.set(newLocationData, { merge: true });
-    } else if (localityName && doc.data().locality !== localityName) {
-        await locationRef.update({ locality: localityName });
-    }
+    const newLocationData = {
+        latitude: latitude,
+        longitude: longitude,
+        country: "US",
+        state: "GA",
+        locality: localityName || `Lat: ${fixedLat}, Lng: ${fixedLng}`
+    };
+
+    // FIXED: Always use set({ merge: true }) to prevent race condition duplicates
+    await locationRef.set(newLocationData, { merge: true });
     return locationId;
 }
 
-// Helper function to add a delay
+// ======================================================
+// HELPER: Delay
+// ======================================================
 function delay(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-/**
- * Helper to make an OpenAI API call with retry logic for rate limits.
- * FIXED: Better error handling and null checks
- */
+// ======================================================
+// HELPER: OpenAI call with retry logic
+// ======================================================
 async function callOpenAIWithRetry({ prompt, model, response_format, temperature, max_tokens, logPrefix, timeout = 10000 }) {
     let retries = 0;
     const maxRetries = 5;
@@ -139,51 +119,46 @@ async function callOpenAIWithRetry({ prompt, model, response_format, temperature
                 }
             );
 
-            // FIXED: Better null checking
             if (!aiResponse.data || !aiResponse.data.choices || !aiResponse.data.choices[0]) {
                 throw new Error("OpenAI returned invalid response format");
             }
-
             const content = aiResponse.data.choices[0].message?.content;
-            if (!content) {
-                throw new Error("OpenAI returned empty content");
-            }
+            if (!content) throw new Error("OpenAI returned empty content");
 
             return JSON.parse(content);
         } catch (error) {
             if (error.code === "ECONNABORTED") {
-                console.warn(`⚠️ OpenAI call timed out for ${logPrefix}. Retrying... (Attempt ${retries + 1}/${maxRetries})`);
+                logger.warn(`OpenAI call timed out for ${logPrefix}. Retrying... (${retries + 1}/${maxRetries})`);
                 retries++;
-                const delayTime = initialDelayMs * Math.pow(2, retries - 1);
-                await delay(delayTime);
+                await delay(initialDelayMs * Math.pow(2, retries - 1));
                 continue;
             }
             if (error.response && error.response.status === 429) {
                 retries++;
                 const delayTime = initialDelayMs * Math.pow(2, retries - 1);
-                console.warn(`⚠️ Rate limit hit for ${logPrefix}. Retrying in ${delayTime}ms... (Attempt ${retries}/${maxRetries})`);
+                logger.warn(`Rate limit hit for ${logPrefix}. Retrying in ${delayTime}ms... (${retries}/${maxRetries})`);
                 await delay(delayTime);
             } else {
-                console.error(`❌ Error calling OpenAI for ${logPrefix}:`, error);
+                logger.error(`Error calling OpenAI for ${logPrefix}:`, error);
                 throw error;
             }
         }
     }
-    throw new Error(`Failed to call OpenAI for ${logPrefix} after ${maxRetries} retries due to rate limits or timeouts.`);
+    throw new Error(`Failed to call OpenAI for ${logPrefix} after ${maxRetries} retries.`);
 }
 
-// Helper function to generate and save GENERAL bird facts using OpenAI
+// ======================================================
+// HELPER: Generate and save GENERAL bird facts
+// ======================================================
 async function generateAndSaveBirdFacts(birdId) {
     const birdDoc = await db.collection("birds").doc(birdId).get();
     if (!birdDoc.exists) {
-        console.error(`❌ Bird document with ID ${birdId} not found for general fact generation.`);
+        logger.error(`Bird document ${birdId} not found for general fact generation.`);
         throw new HttpsError("not-found", `Bird ${birdId} not found for general facts.`);
     }
-    const birdData = birdDoc.data();
-    const commonName = birdData.commonName;
-    const scientificName = birdData.scientificName;
+    const { commonName, scientificName } = birdDoc.data();
 
-    console.log(`Generating general facts for ${commonName} (${birdId})...`);
+    logger.info(`Generating general facts for ${commonName} (${birdId})`);
 
     try {
         const prompt = `Generate comprehensive, engaging, and paraphrased general bird facts for the ${commonName} (${scientificName}) bird, drawing information from general knowledge sources like "All About Birds" (do NOT copy directly). Format the response as a JSON object with the following keys. If a category is not applicable or information is scarce, use "N/A" or "Not readily available."
@@ -208,11 +183,10 @@ The JSON object should have these keys and corresponding facts:
   "bestAnglesBehaviors": "Tips for capturing photos: best angles or behaviors to photograph.",
   "timesBestLighting": "Tips for capturing photos: times of day with best lighting.",
   "avoidDisturbing": "Tips for capturing photos: how to avoid disturbing the bird."
-}
-`;
+}`;
 
         const factsJson = await callOpenAIWithRetry({
-            prompt: prompt,
+            prompt,
             model: "gpt-4o",
             response_format: { type: "json_object" },
             temperature: 0.7,
@@ -221,35 +195,33 @@ The JSON object should have these keys and corresponding facts:
             timeout: 25000
         });
 
-        console.log(`Raw GENERAL factsJson from OpenAI for ${commonName} (${birdId}):`, JSON.stringify(factsJson));
-
         const birdFactsRef = db.collection("birdFacts").doc(birdId);
         await birdFactsRef.set({
-            birdId: birdId,
+            birdId,
             lastGenerated: admin.firestore.FieldValue.serverTimestamp(),
             ...factsJson
         }, { merge: true });
 
-        console.log(`✅ Successfully generated and saved general facts for ${commonName} (${birdId})`);
+        logger.info(`Successfully generated and saved general facts for ${commonName} (${birdId})`);
         return factsJson;
     } catch (error) {
-        console.error(`❌ Error generating or saving GENERAL facts for ${commonName} (${birdId}):`, error);
+        logger.error(`Error generating GENERAL facts for ${commonName} (${birdId}):`, error);
         throw new HttpsError("internal", `Failed to generate bird facts: ${error.message}`);
     }
 }
 
-// Helper function to generate and save HUNTER bird facts using OpenAI
+// ======================================================
+// HELPER: Generate and save HUNTER bird facts
+// ======================================================
 async function generateAndSaveHunterFacts(birdId) {
     const birdDoc = await db.collection("birds").doc(birdId).get();
     if (!birdDoc.exists) {
-        console.error(`❌ Bird document with ID ${birdId} not found for hunter fact generation.`);
+        logger.error(`Bird document ${birdId} not found for hunter fact generation.`);
         throw new HttpsError("not-found", `Bird ${birdId} not found for hunter facts.`);
     }
-    const birdData = birdDoc.data();
-    const commonName = birdData.commonName;
-    const scientificName = birdData.scientificName;
+    const { commonName, scientificName } = birdDoc.data();
 
-    console.log(`Generating hunter facts for ${commonName} (${birdId})...`);
+    logger.info(`Generating hunter facts for ${commonName} (${birdId})`);
 
     try {
         const prompt = `Generate specific "Hunter Facts" for the ${commonName} (${scientificName}) bird, based on general knowledge of Georgia hunting regulations, referencing official sources like Georgia Department of Natural Resources (DNR) and U.S. Fish and Wildlife Service (USFWS) where applicable. Format the response as a JSON object with the following keys. If a category is not applicable or information is scarce, use "N/A" or "Not readily available." If no specific hunter facts are found, default the legalStatusGeorgia to "N/A - Information not readily available." and the notHuntableStatement to "N/A".
@@ -263,11 +235,10 @@ The JSON object should have these keys and corresponding facts:
   "notHuntableStatement": "Protected songbird — illegal to hunt under federal law.",
   "isEndangered": "No",
   "relevantRegulations": "Consult Georgia Department of Natural Resources (DNR) and U.S. Fish and Wildlife Service (USFWS) for specific legal details."
-}
-`;
+}`;
 
         const hunterFactsJson = await callOpenAIWithRetry({
-            prompt: prompt,
+            prompt,
             model: "gpt-4o",
             response_format: { type: "json_object" },
             temperature: 0.7,
@@ -276,35 +247,32 @@ The JSON object should have these keys and corresponding facts:
             timeout: 25000
         });
 
-        console.log(`Raw HUNTER factsJson from OpenAI for ${commonName} (${birdId}):`, JSON.stringify(hunterFactsJson));
-
         const hunterFactsRef = db.collection("birdFacts").doc(birdId).collection("hunterFacts").doc(birdId);
         await hunterFactsRef.set({
-            birdId: birdId,
+            birdId,
             lastGenerated: admin.firestore.FieldValue.serverTimestamp(),
-            georgiaDNRHuntingLink: GEORGIA_DNR_HUNTING_LINK,
+            georgiaDNRHuntingLink: CONFIG.GEORGIA_DNR_HUNTING_LINK,
             ...hunterFactsJson
         }, { merge: true });
 
-        console.log(`✅ Successfully generated and saved hunter facts for ${commonName} (${birdId})`);
-        return { ...hunterFactsJson, georgiaDNRHuntingLink: GEORGIA_DNR_HUNTING_LINK };
+        logger.info(`Successfully generated and saved hunter facts for ${commonName} (${birdId})`);
+        return { ...hunterFactsJson, georgiaDNRHuntingLink: CONFIG.GEORGIA_DNR_HUNTING_LINK };
     } catch (error) {
-        console.error(`❌ Error generating or saving HUNTER facts for ${commonName} (${birdId}):`, error);
+        logger.error(`Error generating HUNTER facts for ${commonName} (${birdId}):`, error);
         throw new HttpsError("internal", `Failed to generate hunter facts: ${error.message}`);
     }
 }
 
-/**
- * Helper to get or generate general and hunter facts for a bird, with staleness check.
- * NOTE: This is called lazily (only when user requests bird details), NOT for all 1000+ birds
- */
+// ======================================================
+// HELPER: Get or generate bird facts (lazy, with staleness check)
+// ======================================================
 async function getOrCreateAndSaveBirdFacts(birdId, commonName) {
     const birdFactsRef = db.collection("birdFacts").doc(birdId);
     const hunterFactsRef = db.collection("birdFacts").doc(birdId).collection("hunterFacts").doc(birdId);
 
     const [birdFactsDoc, hunterFactsDoc] = await Promise.all([
         birdFactsRef.get(),
-        hunterFactsDoc.get()
+        hunterFactsRef.get()
     ]);
 
     let generalFacts = {};
@@ -315,15 +283,14 @@ async function getOrCreateAndSaveBirdFacts(birdId, commonName) {
     let shouldRegenerateGeneral = true;
     if (birdFactsDoc.exists) {
         const data = birdFactsDoc.data();
-        if (data.lastGenerated && (currentTime - data.lastGenerated.toDate().getTime()) < FACT_CACHE_LIFETIME_MS) {
+        if (data.lastGenerated && (currentTime - data.lastGenerated.toDate().getTime()) < CONFIG.FACT_CACHE_LIFETIME_MS) {
             generalFacts = data;
             shouldRegenerateGeneral = false;
-            console.log(`General facts for ${commonName} (${birdId}) are fresh in Firestore.`);
+            logger.info(`General facts for ${commonName} (${birdId}) are fresh.`);
         } else {
-            console.log(`General facts for ${commonName} (${birdId}) are stale. Regenerating...`);
+            logger.info(`General facts for ${commonName} (${birdId}) are stale. Regenerating...`);
         }
     }
-
     if (shouldRegenerateGeneral) {
         generalFacts = await generateAndSaveBirdFacts(birdId);
     }
@@ -332,17 +299,16 @@ async function getOrCreateAndSaveBirdFacts(birdId, commonName) {
     let shouldRegenerateHunter = true;
     if (hunterFactsDoc.exists) {
         const data = hunterFactsDoc.data();
-        if (data.lastGenerated && (currentTime - data.lastGenerated.toDate().getTime()) < FACT_CACHE_LIFETIME_MS) {
+        if (data.lastGenerated && (currentTime - data.lastGenerated.toDate().getTime()) < CONFIG.FACT_CACHE_LIFETIME_MS) {
             hunterFacts = data;
             shouldRegenerateHunter = false;
-            console.log(`Hunter facts for ${commonName} (${birdId}) are fresh in Firestore.`);
+            logger.info(`Hunter facts for ${commonName} (${birdId}) are fresh.`);
         } else {
-            console.log(`Hunter facts for ${commonName} (${birdId}) are stale. Regenerating...`);
+            logger.info(`Hunter facts for ${commonName} (${birdId}) are stale. Regenerating...`);
         }
     } else {
-        console.log(`Hunter facts do not exist for ${commonName} (${birdId}). Generating...`);
+        logger.info(`Hunter facts do not exist for ${commonName} (${birdId}). Generating...`);
     }
-
     if (shouldRegenerateHunter) {
         hunterFacts = await generateAndSaveHunterFacts(birdId);
     }
@@ -351,13 +317,10 @@ async function getOrCreateAndSaveBirdFacts(birdId, commonName) {
 }
 
 // ======================================================
-// New: checkUsernameAndEmailAvailability Cloud Function
-// FIXED: Added input sanitization
+// checkUsernameAndEmailAvailability
 // ======================================================
 exports.checkUsernameAndEmailAvailability = onCall(async (request) => {
     const { username, email } = request.data;
-
-    // FIXED: Sanitize inputs
     const sanitizedUsername = sanitizeUsername(username);
 
     if (!email || typeof email !== "string" || email.trim().length === 0) {
@@ -365,54 +328,37 @@ exports.checkUsernameAndEmailAvailability = onCall(async (request) => {
     }
 
     try {
-        const usernameSnapshot = await db.collection("users")
-                                       .where("username", "==", sanitizedUsername)
-                                       .limit(1)
-                                       .get();
-        const isUsernameAvailable = usernameSnapshot.empty;
+        const [usernameSnapshot, emailSnapshot] = await Promise.all([
+            db.collection("users").where("username", "==", sanitizedUsername).limit(1).get(),
+            db.collection("users").where("email", "==", email.trim()).limit(1).get()
+        ]);
 
-        const emailSnapshot = await db.collection("users")
-                                       .where("email", "==", email.trim())
-                                       .limit(1)
-                                       .get();
-        const isEmailAvailable = emailSnapshot.empty;
-
-        console.log(`Availability check for username "${sanitizedUsername}": ${isUsernameAvailable}, email "${email}": ${isEmailAvailable}`);
-        return { isUsernameAvailable: isUsernameAvailable, isEmailAvailable: isEmailAvailable };
-
+        return {
+            isUsernameAvailable: usernameSnapshot.empty,
+            isEmailAvailable: emailSnapshot.empty
+        };
     } catch (error) {
-        console.error("Error checking username and email availability in Cloud Function:", error);
+        logger.error("Error checking username/email availability:", error);
         throw new HttpsError("internal", "Unable to check username and email availability.");
     }
 });
 
 // ======================================================
-// NEW: initializeUser Cloud Function
-// FIXED: Added input sanitization
+// initializeUser
 // ======================================================
 exports.initializeUser = onCall(async (request) => {
-    if (!request.auth) {
-        throw new HttpsError("unauthenticated", "Authentication required to initialize user.");
-    }
+    if (!request.auth) throw new HttpsError("unauthenticated", "Authentication required.");
 
     const { username, email } = request.data;
     const uid = request.auth.uid;
-
-    // FIXED: Sanitize username
     const sanitizedUsername = sanitizeUsername(username);
 
     try {
         const userRef = db.collection("users").doc(uid);
+        const usernameSnapshot = await db.collection("users").where("username", "==", sanitizedUsername).limit(1).get();
 
-        const usernameSnapshot = await db.collection("users")
-                                       .where("username", "==", sanitizedUsername)
-                                       .limit(1)
-                                       .get();
-
-        if (!usernameSnapshot.empty) {
-            if (usernameSnapshot.docs[0].id !== uid) {
-                 throw new HttpsError("already-exists", "Username is already taken.");
-            }
+        if (!usernameSnapshot.empty && usernameSnapshot.docs[0].id !== uid) {
+            throw new HttpsError("already-exists", "Username is already taken.");
         }
 
         await userRef.set({
@@ -422,110 +368,87 @@ exports.initializeUser = onCall(async (request) => {
             updatedAt: admin.firestore.FieldValue.serverTimestamp()
         }, { merge: true });
 
-        console.log(`✅ Successfully initialized user ${uid} with username ${sanitizedUsername}`);
+        logger.info(`Successfully initialized user ${uid} with username ${sanitizedUsername}`);
         return { success: true };
-
     } catch (error) {
-        console.error(`❌ Error initializing user ${uid}:`, error);
+        logger.error(`Error initializing user ${uid}:`, error);
         if (error instanceof HttpsError) throw error;
         throw new HttpsError("internal", "Failed to initialize user.");
     }
 });
 
 // ======================================================
-// NEW: Create User Document on Firebase Auth Signup
+// createUserDocument — on Auth signup
 // ======================================================
 exports.createUserDocument = auth.user().onCreate(async (user) => {
-    const uid = user.uid;
-    const email = user.email;
-
+    const { uid, email } = user;
     if (!email) {
-        console.error(`❌ createUserDocument: No email found for user ${uid}. Cannot create user document.`);
+        logger.error(`createUserDocument: No email found for user ${uid}.`);
         return null;
     }
 
-    const userRef = db.collection("users").doc(uid);
-
     try {
-        const newUserData = {
-            email: email,
+        await db.collection("users").doc(uid).set({
+            email,
             createdAt: admin.firestore.FieldValue.serverTimestamp(),
-            openAiRequestsRemaining: MAX_OPENAI_REQUESTS,
-            pfpChangesToday: MAX_PFP_CHANGES,
+            openAiRequestsRemaining: CONFIG.MAX_OPENAI_REQUESTS,
+            pfpChangesToday: CONFIG.MAX_PFP_CHANGES,
             totalBirds: 0,
             duplicateBirds: 0,
             totalPoints: 0,
             notificationsEnabled: true,
             repliesEnabled: true,
             notificationCooldownHours: 2
-        };
-        await userRef.set(newUserData, { merge: true });
-        console.log(`✅ Created/Merged user document for user ${uid} with email ${email}.`);
-        return null;
+        }, { merge: true });
+        logger.info(`Created user document for ${uid}`);
     } catch (error) {
-        console.error(`❌ Error creating user document for ${uid}:`, error);
-        return null;
+        logger.error(`Error creating user document for ${uid}:`, error);
     }
+    return null;
 });
 
 // ======================================================
-// NEW: archiveAndDeleteUser Cloud Function
+// archiveAndDeleteUser
 // ======================================================
 exports.archiveAndDeleteUser = onCall(async (request) => {
-    if (!request.auth) {
-        throw new HttpsError("unauthenticated", "The function must be called while authenticated.");
-    }
+    if (!request.auth) throw new HttpsError("unauthenticated", "The function must be called while authenticated.");
 
     const uid = request.auth.uid;
-
     try {
         const userDoc = await db.collection("users").doc(uid).get();
-
         if (userDoc.exists) {
-            const userData = userDoc.data();
-
             await db.collection("usersdeletedAccounts").doc(uid).set({
-                ...userData,
+                ...userDoc.data(),
                 archivedAt: admin.firestore.FieldValue.serverTimestamp(),
                 originalUid: uid,
                 deletionReason: "User requested account deletion"
             });
-
             await db.collection("users").doc(uid).delete();
-
-            console.log(`Successfully archived and deleted user doc for UID: ${uid}`);
-        } else {
-            console.log(`No user document found for UID: ${uid}, proceeding.`);
+            logger.info(`Archived and deleted user doc for UID: ${uid}`);
         }
-
         return { success: true };
     } catch (error) {
-        console.error("Error archiving user:", error);
+        logger.error("Error archiving user:", error);
         throw new HttpsError("internal", `Internal error during account archiving: ${error.message}`);
     }
 });
 
-
 // ======================================================
-// 1. Identify Bird (OpenAI)
-// FIXED: Moved OpenAI call BEFORE transaction to avoid race condition
-// FIXED: Better null checking on OpenAI response
+// identifyBird (OpenAI)
 // ======================================================
 exports.identifyBird = onCall({ secrets: [OPENAI_API_KEY], timeoutSeconds: 30 }, async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
 
     const userId = request.auth.uid;
     const userRef = db.collection("users").doc(userId);
-
     const { image, imageUrl, latitude, longitude, localityName } = request.data;
 
     if (typeof latitude !== "number" || typeof longitude !== "number") {
-        throw new HttpsError("invalid-argument", "Latitude and longitude are required and must be numbers.");
+        throw new HttpsError("invalid-argument", "Latitude and longitude are required numbers.");
     }
 
     try {
-        // FIXED: Make OpenAI call FIRST (before deducting from quota)
-        // This way, if OpenAI fails, user doesn't lose a request
+        // Make OpenAI call FIRST (before deducting quota)
         const aiResponse = await axios.post(
             "https://api.openai.com/v1/chat/completions",
             {
@@ -545,61 +468,53 @@ exports.identifyBird = onCall({ secrets: [OPENAI_API_KEY], timeoutSeconds: 30 },
             }
         );
 
-        // FIXED: Better null checking
-        if (!aiResponse.data || !aiResponse.data.choices || !aiResponse.data.choices[0]) {
+        if (!aiResponse.data?.choices?.[0]) {
             throw new HttpsError("internal", "OpenAI returned invalid response format.");
         }
 
         let identification = aiResponse.data.choices[0].message?.content;
-        if (!identification) {
-            throw new HttpsError("internal", "OpenAI returned empty response.");
-        }
+        if (!identification) throw new HttpsError("internal", "OpenAI returned empty response.");
 
-        // Check for gore response
         if (identification.includes("GORE")) {
-            console.log(`🚫 Gore detected in image from user ${userId}. Identification aborted.`);
+            logger.warn(`Gore detected in image from user ${userId}. Identification aborted.`);
             return { result: "GORE", isVerified: false, isGore: true };
         }
 
-        // NOW deduct from user's quota (after successful OpenAI call)
+        // Deduct quota after successful OpenAI call
         let updatedOpenAiRequestsRemaining = 0;
         await db.runTransaction(async (transaction) => {
             const userDoc = await transaction.get(userRef);
-            if (!userDoc.exists) {
-                throw new HttpsError("not-found", "User document not found.");
-            }
+            if (!userDoc.exists) throw new HttpsError("not-found", "User document not found.");
 
             const userData = userDoc.data();
             let currentRequestsRemaining = userData.openAiRequestsRemaining || 0;
-            const openAiCooldownResetTimestamp = userData.openAiCooldownResetTimestamp ? userData.openAiCooldownResetTimestamp.toDate() : null;
+            const openAiCooldownResetTimestamp = userData.openAiCooldownResetTimestamp?.toDate() || null;
             const currentTime = new Date();
 
-            if (openAiCooldownResetTimestamp && (currentTime.getTime() - openAiCooldownResetTimestamp.getTime()) >= COOLDOWN_PERIOD_MS) {
-                currentRequestsRemaining = MAX_OPENAI_REQUESTS;
-                console.log(`OpenAI request cooldown expired for user ${userId}. Resetting to ${MAX_OPENAI_REQUESTS}.`);
+            if (openAiCooldownResetTimestamp && (currentTime.getTime() - openAiCooldownResetTimestamp.getTime()) >= CONFIG.COOLDOWN_PERIOD_MS) {
+                currentRequestsRemaining = CONFIG.MAX_OPENAI_REQUESTS;
             }
 
             if (currentRequestsRemaining <= 0) {
-                const remainingCooldownMs = openAiCooldownResetTimestamp ? (openAiCooldownResetTimestamp.getTime() + COOLDOWN_PERIOD_MS - currentTime.getTime()) : 0;
-                throw new HttpsError("resource-exhausted", `You have reached your limit for AI bird identification requests. Try again in ${Math.ceil(remainingCooldownMs / (60 * 1000))} minutes.`);
+                const remainingCooldownMs = openAiCooldownResetTimestamp
+                    ? (openAiCooldownResetTimestamp.getTime() + CONFIG.COOLDOWN_PERIOD_MS - currentTime.getTime())
+                    : 0;
+                throw new HttpsError("resource-exhausted", `AI request limit reached. Try again in ${Math.ceil(remainingCooldownMs / (60 * 1000))} minutes.`);
             }
 
             updatedOpenAiRequestsRemaining = currentRequestsRemaining - 1;
-            let newOpenAiCooldownResetTimestamp = openAiCooldownResetTimestamp;
+            let newCooldownTimestamp = openAiCooldownResetTimestamp;
 
-            if (currentRequestsRemaining === MAX_OPENAI_REQUESTS && updatedOpenAiRequestsRemaining < MAX_OPENAI_REQUESTS) {
-                 newOpenAiCooldownResetTimestamp = admin.firestore.FieldValue.serverTimestamp();
-                 console.log(`User ${userId} made first OpenAI request for new cooldown cycle. Starting 24-hour cooldown.`);
+            if (currentRequestsRemaining === CONFIG.MAX_OPENAI_REQUESTS) {
+                newCooldownTimestamp = admin.firestore.FieldValue.serverTimestamp();
             }
 
             transaction.update(userRef, {
                 openAiRequestsRemaining: updatedOpenAiRequestsRemaining,
-                openAiCooldownResetTimestamp: newOpenAiCooldownResetTimestamp,
+                openAiCooldownResetTimestamp: newCooldownTimestamp,
             });
-            console.log(`User ${userId} used 1 OpenAI request. Remaining: ${updatedOpenAiRequestsRemaining}`);
         });
 
-        // FIXED: Better null checking with fallback values
         const aiBirdId = identification.split("ID:")[1]?.split("\n")[0]?.trim() || null;
         const aiCommonName = identification.split("Common Name:")[1]?.split("\n")[0]?.trim() || null;
         const aiScientificName = identification.split("Scientific Name:")[1]?.split("\n")[0]?.trim() || null;
@@ -607,35 +522,29 @@ exports.identifyBird = onCall({ secrets: [OPENAI_API_KEY], timeoutSeconds: 30 },
         const aiFamily = identification.split("Family:")[1]?.split("\n")[0]?.trim() || null;
 
         if (!aiBirdId || !aiCommonName || !aiScientificName) {
-            throw new HttpsError("internal", "OpenAI response format was unexpected. Could not extract bird information.");
+            throw new HttpsError("internal", "Could not extract bird information from OpenAI response.");
         }
 
         let isVerified = false;
         let verifiedBirdData = null;
         let finalBirdId = aiBirdId;
 
-        if (aiBirdId) {
-            const birdsSnapshot = await db.collection("birds")
-                                          .doc(aiBirdId)
-                                          .get();
-            if (birdsSnapshot.exists) {
-                isVerified = true;
-                verifiedBirdData = birdsSnapshot.data();
-                finalBirdId = verifiedBirdData.id;
-            }
-        }
+        // Parallel lookups for verification
+        const [byIdDoc, byNameSnapshot] = await Promise.all([
+            db.collection("birds").doc(aiBirdId).get(),
+            (aiCommonName && aiScientificName)
+                ? db.collection("birds").where("commonName", "==", aiCommonName).where("scientificName", "==", aiScientificName).limit(1).get()
+                : Promise.resolve({ empty: true, docs: [] })
+        ]);
 
-        if (!isVerified && aiCommonName && aiScientificName) {
-            const birdsSnapshot = await db.collection("birds")
-                                          .where("commonName", "==", aiCommonName)
-                                          .where("scientificName", "==", aiScientificName)
-                                          .limit(1)
-                                          .get();
-            if (!birdsSnapshot.empty) {
-                isVerified = true;
-                verifiedBirdData = birdsSnapshot.docs[0].data();
-                finalBirdId = verifiedBirdData.id;
-            }
+        if (byIdDoc.exists) {
+            isVerified = true;
+            verifiedBirdData = byIdDoc.data();
+            finalBirdId = verifiedBirdData.id;
+        } else if (!byNameSnapshot.empty) {
+            isVerified = true;
+            verifiedBirdData = byNameSnapshot.docs[0].data();
+            finalBirdId = verifiedBirdData.id;
         }
 
         const locationId = await getOrCreateLocation(latitude, longitude, localityName, db);
@@ -647,38 +556,31 @@ exports.identifyBird = onCall({ secrets: [OPENAI_API_KEY], timeoutSeconds: 30 },
                 scientificName: verifiedBirdData.scientificName || aiScientificName,
                 family: verifiedBirdData.family || aiFamily,
                 species: verifiedBirdData.species || aiSpecies,
-                locationId: locationId,
+                locationId,
                 verified: true,
                 imageUrl: imageUrl || "",
                 timestamp: admin.firestore.FieldValue.serverTimestamp()
             };
             await db.collection("identifications").add(identificationData);
-            console.log(`✅ Logged verified identification for ${identificationData.commonName} (ID: ${finalBirdId})`);
 
-            identification = `ID: ${finalBirdId}\n` +
-                             `Common Name: ${identificationData.commonName}\n` +
-                             `Scientific Name: ${identificationData.scientificName}\n` +
-                             `Species: ${identificationData.species}\n` +
-                             `Family: ${identificationData.family}`;
+            identification = `ID: ${finalBirdId}\nCommon Name: ${identificationData.commonName}\nScientific Name: ${identificationData.scientificName}\nSpecies: ${identificationData.species}\nFamily: ${identificationData.family}`;
         } else {
-             identification = `ID: Unknown\n` + identification;
+            identification = `ID: Unknown\n` + identification;
         }
 
-        return { result: identification, isVerified: isVerified };
+        return { result: identification, isVerified };
     } catch (error) {
-        console.error("OpenAI identification failed:", error);
+        logger.error("OpenAI identification failed:", error);
         if (error instanceof HttpsError) throw error;
         throw new HttpsError("internal", `OpenAI identification failed: ${error.message}`);
     }
 });
 
 // ======================================================
-// New: Callable function to record profile picture change
+// recordPfpChange
 // ======================================================
 exports.recordPfpChange = onCall({ timeoutSeconds: 15 }, async (request) => {
-    if (!request.auth) {
-        throw new HttpsError("unauthenticated", "Authentication required.");
-    }
+    if (!request.auth) throw new HttpsError("unauthenticated", "Authentication required.");
 
     const userId = request.auth.uid;
     const userRef = db.collection("users").doc(userId);
@@ -687,62 +589,52 @@ exports.recordPfpChange = onCall({ timeoutSeconds: 15 }, async (request) => {
         let updatedPfpChangesToday = 0;
         await db.runTransaction(async (transaction) => {
             const userDoc = await transaction.get(userRef);
-            if (!userDoc.exists) {
-                throw new HttpsError("not-found", "User document not found.");
-            }
+            if (!userDoc.exists) throw new HttpsError("not-found", "User document not found.");
 
             const userData = userDoc.data();
             let pfpChangesToday = userData.pfpChangesToday || 0;
-            const pfpCooldownResetTimestamp = userData.pfpCooldownResetTimestamp ? userData.pfpCooldownResetTimestamp.toDate() : null;
+            const pfpCooldownResetTimestamp = userData.pfpCooldownResetTimestamp?.toDate() || null;
             const currentTime = new Date();
 
-            if (pfpCooldownResetTimestamp && (currentTime.getTime() - pfpCooldownResetTimestamp.getTime()) >= COOLDOWN_PERIOD_MS) {
-                pfpChangesToday = MAX_PFP_CHANGES;
-                console.log(`PFP change cooldown expired for user ${userId}. Resetting to ${MAX_PFP_CHANGES}.`);
+            if (pfpCooldownResetTimestamp && (currentTime.getTime() - pfpCooldownResetTimestamp.getTime()) >= CONFIG.COOLDOWN_PERIOD_MS) {
+                pfpChangesToday = CONFIG.MAX_PFP_CHANGES;
             }
 
             if (pfpChangesToday <= 0) {
-                const remainingCooldownMs = pfpCooldownResetTimestamp ? (pfpCooldownResetTimestamp.getTime() + COOLDOWN_PERIOD_MS - currentTime.getTime()) : 0;
-                throw new HttpsError("resource-exhausted", `You have reached your limit for profile picture changes. Try again in ${Math.ceil(remainingCooldownMs / (60 * 1000))} minutes.`);
+                const remainingCooldownMs = pfpCooldownResetTimestamp
+                    ? (pfpCooldownResetTimestamp.getTime() + CONFIG.COOLDOWN_PERIOD_MS - currentTime.getTime())
+                    : 0;
+                throw new HttpsError("resource-exhausted", `PFP change limit reached. Try again in ${Math.ceil(remainingCooldownMs / (60 * 1000))} minutes.`);
             }
 
             updatedPfpChangesToday = pfpChangesToday - 1;
             let newPfpCooldownResetTimestamp = pfpCooldownResetTimestamp;
 
-            if (pfpChangesToday === MAX_PFP_CHANGES && updatedPfpChangesToday < MAX_PFP_CHANGES) {
+            if (pfpChangesToday === CONFIG.MAX_PFP_CHANGES) {
                 newPfpCooldownResetTimestamp = admin.firestore.FieldValue.serverTimestamp();
-                console.log(`User ${userId} made first PFP change for new cooldown cycle. Starting 24-hour cooldown.`);
             }
 
             transaction.update(userRef, {
                 pfpChangesToday: updatedPfpChangesToday,
                 pfpCooldownResetTimestamp: newPfpCooldownResetTimestamp,
             });
-            console.log(`User ${userId} changed PFP. Remaining changes today: ${updatedPfpChangesToday}`);
         });
 
         return { success: true, pfpChangesToday: updatedPfpChangesToday };
-
     } catch (error) {
-        console.error(`❌ Error recording PFP change for user ${userId}:`, error);
+        logger.error(`Error recording PFP change for user ${userId}:`, error);
         if (error instanceof HttpsError) throw error;
         throw new HttpsError("internal", "Failed to record profile picture change.");
     }
 });
 
-
 // ======================================================
-// 2. Fetch Georgia Bird List (eBird Cache) - Now ONLY fetching core bird data
-// FIXED: Added authentication requirement for security
+// getGeorgiaBirds (eBird Cache)
 // ======================================================
 exports.getGeorgiaBirds = onCall({ secrets: [EBIRD_API_KEY], timeoutSeconds: 60 }, async (request) => {
-    // FIXED: Require authentication to prevent abuse
-    if (!request.auth) {
-        throw new HttpsError("unauthenticated", "Authentication required to fetch bird list.");
-    }
+    if (!request.auth) throw new HttpsError("unauthenticated", "Authentication required.");
 
     const ebirdCacheDocRef = db.collection("ebird_ga_cache").doc("data");
-    const seventyTwoHours = 72 * 60 * 60 * 1000;
 
     try {
         let cachedBirdIds = [];
@@ -751,25 +643,19 @@ exports.getGeorgiaBirds = onCall({ secrets: [EBIRD_API_KEY], timeoutSeconds: 60 
             cachedBirdIds = currentCacheDoc.data().birdIds;
         }
 
-        let shouldFetchFromEbird = true;
-        if (currentCacheDoc.exists && (Date.now() - currentCacheDoc.data().lastUpdated < seventyTwoHours)) {
-            console.log("eBird cache is fresh.");
-            if (cachedBirdIds.length > 0) {
-                shouldFetchFromEbird = false;
-            }
-        }
+        const cacheIsFresh = currentCacheDoc.exists &&
+            (Date.now() - currentCacheDoc.data().lastUpdated < CONFIG.EBIRD_CACHE_TTL_MS) &&
+            cachedBirdIds.length > 0;
 
         let gaCoreBirds = [];
 
-        if (shouldFetchFromEbird) {
+        if (!cacheIsFresh) {
             const [codesRes, taxonomyRes, observationsRes] = await Promise.all([
                 axios.get("https://api.ebird.org/v2/product/spplist/US-GA", {
                     headers: { "X-eBirdApiToken": EBIRD_API_KEY.value() },
                     timeout: 15000
                 }),
-                axios.get("https://api.ebird.org/v2/ref/taxonomy/ebird?fmt=json", {
-                    timeout: 15000
-                }),
+                axios.get("https://api.ebird.org/v2/ref/taxonomy/ebird?fmt=json", { timeout: 15000 }),
                 axios.get("https://api.ebird.org/v2/data/obs/US-GA/recent", {
                     headers: { "X-eBirdApiToken": EBIRD_API_KEY.value() },
                     timeout: 15000
@@ -781,13 +667,12 @@ exports.getGeorgiaBirds = onCall({ secrets: [EBIRD_API_KEY], timeoutSeconds: 60 
 
             const lastSeenMap = new Map();
             for (const obs of recentObservations) {
-                const observationTimestamp = new Date(obs.obsDt).getTime();
-                const speciesCode = obs.speciesCode;
-
+                const ts = new Date(obs.obsDt).getTime();
+                const code = obs.speciesCode;
                 if (typeof obs.lat === "number" && typeof obs.lng === "number" &&
-                    (!lastSeenMap.has(speciesCode) || observationTimestamp > lastSeenMap.get(speciesCode).lastSeenTimestampGeorgia)) {
-                    lastSeenMap.set(speciesCode, {
-                        lastSeenTimestampGeorgia: observationTimestamp,
+                    (!lastSeenMap.has(code) || ts > lastSeenMap.get(code).lastSeenTimestampGeorgia)) {
+                    lastSeenMap.set(code, {
+                        lastSeenTimestampGeorgia: ts,
                         lastSeenLatitudeGeorgia: obs.lat,
                         lastSeenLongitudeGeorgia: obs.lng,
                         obsLocName: obs.locName
@@ -798,7 +683,7 @@ exports.getGeorgiaBirds = onCall({ secrets: [EBIRD_API_KEY], timeoutSeconds: 60 
             const newBirdsFromEbird = taxonomyRes.data
                 .filter(bird => gaCodes.includes(bird.speciesCode))
                 .map(bird => {
-                    const lastSeenData = lastSeenMap.get(bird.speciesCode);
+                    const ls = lastSeenMap.get(bird.speciesCode);
                     return {
                         id: bird.speciesCode,
                         commonName: bird.comName,
@@ -807,9 +692,9 @@ exports.getGeorgiaBirds = onCall({ secrets: [EBIRD_API_KEY], timeoutSeconds: 60 
                         species: bird.sciName,
                         isEndangered: false,
                         canHunt: false,
-                        lastSeenTimestampGeorgia: lastSeenData ? lastSeenData.lastSeenTimestampGeorgia : null,
-                        lastSeenLatitudeGeorgia: lastSeenData ? lastSeenData.lastSeenLatitudeGeorgia : null,
-                        lastSeenLongitudeGeorgia: lastSeenData ? lastSeenData.lastSeenLongitudeGeorgia : null,
+                        lastSeenTimestampGeorgia: ls?.lastSeenTimestampGeorgia || null,
+                        lastSeenLatitudeGeorgia: ls?.lastSeenLatitudeGeorgia || null,
+                        lastSeenLongitudeGeorgia: ls?.lastSeenLongitudeGeorgia || null,
                         lastSeenLocationIdGeorgia: null
                     };
                 });
@@ -817,160 +702,129 @@ exports.getGeorgiaBirds = onCall({ secrets: [EBIRD_API_KEY], timeoutSeconds: 60 
             newBirdsFromEbird.sort((a, b) => a.commonName.localeCompare(b.commonName));
             const birdIdsToCache = newBirdsFromEbird.map(bird => bird.id);
 
+            // Remove birds no longer in list
             const removedBirdIds = cachedBirdIds.filter(id => !birdIdsToCache.includes(id));
             if (removedBirdIds.length > 0) {
                 const deleteBatch = db.batch();
-                removedBirdIds.forEach(birdId => {
-                    console.log(`Removing bird: ${birdId}`);
-                    deleteBatch.delete(db.collection("birds").doc(birdId));
-                });
+                removedBirdIds.forEach(birdId => deleteBatch.delete(db.collection("birds").doc(birdId)));
                 await deleteBatch.commit();
-                console.log(`✅ Removed ${removedBirdIds.length} birds.`);
+                logger.info(`Removed ${removedBirdIds.length} birds.`);
             }
 
-            // FIXED: Comment explaining the 400 batch limit (Firestore max is 500, using 400 for safety)
-            const birdEntries = newBirdsFromEbird;
-            const BATCH_SIZE = 400; // Firestore allows 500 operations per batch, using 400 for safety margin
-            for (let i = 0; i < birdEntries.length; i += BATCH_SIZE) {
+            // Batch write birds (400 per batch for safety)
+            for (let i = 0; i < newBirdsFromEbird.length; i += CONFIG.FIRESTORE_BATCH_SIZE) {
                 const batch = db.batch();
-                const chunk = birdEntries.slice(i, i + BATCH_SIZE);
+                const chunk = newBirdsFromEbird.slice(i, i + CONFIG.FIRESTORE_BATCH_SIZE);
                 chunk.forEach(bird => {
-                    const birdRef = db.collection("birds").doc(bird.id);
                     const birdCoreData = { ...bird };
                     delete birdCoreData.lastSeenLocationIdGeorgia;
-                    batch.set(birdRef, birdCoreData, { merge: true });
+                    batch.set(db.collection("birds").doc(bird.id), birdCoreData, { merge: true });
                 });
                 await batch.commit();
-                console.log(`✅ Committed chunk ${Math.floor(i / BATCH_SIZE) + 1} (birds ${i} to ${i + chunk.length - 1})`);
             }
-            console.log("✅ Core 'birds' collection updated and removed birds processed.");
+            logger.info("Core birds collection updated.");
 
             await ebirdCacheDocRef.set({
                 lastUpdated: Date.now(),
                 lastUpdatedReadable: new Date().toLocaleString("en-US", { timeZone: "America/New_York" }),
                 birdIds: birdIdsToCache
             }, { merge: true });
-            console.log("✅ eBird cache metadata updated.");
 
-            const locationPromises = newBirdsFromEbird.map(async (bird) => {
-                let updatedLocationId = bird.lastSeenLocationIdGeorgia;
-
+            // Parallel location updates
+            gaCoreBirds = await Promise.all(newBirdsFromEbird.map(async (bird) => {
                 if (bird.lastSeenLatitudeGeorgia !== null && bird.lastSeenLongitudeGeorgia !== null) {
-                    const lastSeenObservationForBird = lastSeenMap.get(bird.id);
-                    const localityName = lastSeenObservationForBird ? lastSeenObservationForBird.obsLocName : null;
-                    updatedLocationId = await getOrCreateLocation(
+                    const ls = lastSeenMap.get(bird.id);
+                    const locationId = await getOrCreateLocation(
                         bird.lastSeenLatitudeGeorgia,
                         bird.lastSeenLongitudeGeorgia,
-                        localityName,
+                        ls?.obsLocName || null,
                         db
                     );
-                    await db.collection("birds").doc(bird.id).update({
-                        lastSeenLocationIdGeorgia: updatedLocationId
-                    });
+                    await db.collection("birds").doc(bird.id).update({ lastSeenLocationIdGeorgia: locationId });
+                    return { ...bird, lastSeenLocationIdGeorgia: locationId };
                 }
-                return { ...bird, lastSeenLocationIdGeorgia: updatedLocationId };
-            });
-
-            gaCoreBirds = await Promise.all(locationPromises);
-            console.log("✅ All core bird data and location IDs updated.");
+                return bird;
+            }));
 
         } else {
-            const birdsPromises = cachedBirdIds.map(birdId =>
-                db.collection("birds").doc(birdId).get().then(birdDoc => {
-                    if (birdDoc.exists) {
-                        return birdDoc.data();
-                    }
-                    return null;
-                })
-            );
-            gaCoreBirds = (await Promise.all(birdsPromises)).filter(b => b !== null);
-            console.log("✅ Returning cached core bird data.");
+            // Return cached data
+            gaCoreBirds = (await Promise.all(
+                cachedBirdIds.map(id => db.collection("birds").doc(id).get().then(d => d.exists ? d.data() : null))
+            )).filter(Boolean);
+            logger.info("Returning cached core bird data.");
         }
 
         return { birds: gaCoreBirds };
     } catch (error) {
-        console.error("❌ Error fetching or processing eBird data:", error);
+        logger.error("Error fetching eBird data:", error);
         throw new HttpsError("internal", `eBird data processing failed: ${error.message}`);
     }
 });
 
 // ======================================================
-// NEW: Callable function to get detailed bird facts (on demand)
-// NOTE: This is called lazily - only when user clicks on a bird
-// This prevents generating facts for all 1000+ birds unnecessarily
+// getBirdDetailsAndFacts (lazy on-demand)
 // ======================================================
 exports.getBirdDetailsAndFacts = onCall({ secrets: [OPENAI_API_KEY], timeoutSeconds: 60 }, async (request) => {
     const { birdId } = request.data;
-
     if (!birdId || typeof birdId !== "string" || birdId.trim().length === 0) {
         throw new HttpsError("invalid-argument", "The birdId field is required and must be a non-empty string.");
     }
 
     try {
         const birdDoc = await db.collection("birds").doc(birdId).get();
-        if (!birdDoc.exists) {
-            throw new HttpsError("not-found", `Bird with ID ${birdId} not found.`);
-        }
-        const coreBirdData = birdDoc.data();
+        if (!birdDoc.exists) throw new HttpsError("not-found", `Bird with ID ${birdId} not found.`);
 
-        // LAZY LOADING: Facts are only generated when user requests them
+        const coreBirdData = birdDoc.data();
         const { generalFacts, hunterFacts } = await getOrCreateAndSaveBirdFacts(birdId, coreBirdData.commonName);
 
         return {
             ...coreBirdData,
-            generalFacts: generalFacts,
-            hunterFacts: {
-                ...hunterFacts,
-                georgiaDNRHuntingLink: GEORGIA_DNR_HUNTING_LINK
-            }
+            generalFacts,
+            hunterFacts: { ...hunterFacts, georgiaDNRHuntingLink: CONFIG.GEORGIA_DNR_HUNTING_LINK }
         };
-
     } catch (error) {
-        console.error(`❌ Error fetching or generating details for bird ${birdId}:`, error);
+        logger.error(`Error fetching details for bird ${birdId}:`, error);
         if (error instanceof HttpsError) throw error;
         throw new HttpsError("internal", `Failed to get bird details: ${error.message}`);
     }
 });
 
-
 // ======================================================
-// 3. Search Bird Image (Nuthatch API)
+// searchBirdImage (Nuthatch API)
 // ======================================================
 exports.searchBirdImage = onCall({ secrets: [NUTHATCH_API_KEY], timeoutSeconds: 15 }, async (request) => {
     try {
         const response = await axios.get(
             `https://nuthatch.lastelm.software/v2/birds?name=${encodeURIComponent(request.data.searchTerm)}&hasImg=true`,
-            {
-                headers: { "api-key": NUTHATCH_API_KEY.value() },
-                timeout: 10000
-            }
+            { headers: { "api-key": NUTHATCH_API_KEY.value() }, timeout: 10000 }
         );
         return { data: response.data };
     } catch (error) {
-        console.error("Nuthatch API failed:", error);
+        logger.error("Nuthatch API failed:", error);
         throw new HttpsError("internal", `Nuthatch API request failed: ${error.message}`);
     }
 });
 
-
 // ======================================================
-// 4. AUTOMATIC USER DATA ARCHIVE & CLEANUP (v1 Syntax)
+// cleanupUserData — on Auth delete (v1)
+// FIXED: Parallel processing of forum threads to prevent timeout
 // ======================================================
 exports.cleanupUserData = functions.runWith({
     timeoutSeconds: 300,
     memory: "512MB",
 }).auth.user().onDelete(async (user) => {
     const uid = user.uid;
-    console.log(`🧹 Starting cleanup for user: ${uid}`);
+    logger.info(`Starting cleanup for user: ${uid}`);
 
     try {
         const userRef = admin.firestore().collection("users").doc(uid);
         const userDoc = await userRef.get();
 
         const threadsSnap = await admin.firestore().collection("forumThreads").where("userId", "==", uid).get();
-        console.log(`Found ${threadsSnap.size} forum threads to archive for user ${uid}`);
+        logger.info(`Found ${threadsSnap.size} forum threads to archive for user ${uid}`);
 
-        for (const threadDoc of threadsSnap.docs) {
+        // FIXED: Process threads in parallel with Promise.all() instead of sequentially
+        await Promise.all(threadsSnap.docs.map(async (threadDoc) => {
             const threadData = threadDoc.data();
             const threadId = threadDoc.id;
 
@@ -991,21 +845,17 @@ exports.cleanupUserData = functions.runWith({
                     const pathStart = decodedUrl.indexOf("/o/") + 3;
                     const pathEnd = decodedUrl.indexOf("?");
                     const oldPath = decodedUrl.substring(pathStart, pathEnd !== -1 ? pathEnd : decodedUrl.length);
-
-                    const fileName = oldPath.split("/").pop();
-                    const newPath = `archive/forum_post_images/${fileName}`;
+                    const newPath = `archive/forum_post_images/${oldPath.split("/").pop()}`;
 
                     const bucket = admin.storage().bucket();
                     const file = bucket.file(oldPath);
-
                     const [exists] = await file.exists();
                     if (exists) {
                         await file.copy(bucket.file(newPath));
                         await file.delete();
-                        console.log(`📦 Archived image: ${oldPath} -> ${newPath}`);
                     }
                 } catch (e) {
-                    console.error(`Image archive failed for post ${threadId}:`, e);
+                    logger.error(`Image archive failed for post ${threadId}:`, e);
                 }
             }
 
@@ -1013,7 +863,7 @@ exports.cleanupUserData = functions.runWith({
             commentsSnap.forEach(c => threadBatch.delete(c.ref));
             threadBatch.delete(threadDoc.ref);
             await threadBatch.commit();
-        }
+        }));
 
         if (userDoc.exists) {
             const userData = userDoc.data();
@@ -1024,7 +874,7 @@ exports.cleanupUserData = functions.runWith({
                     const decodedUrl = decodeURIComponent(pfpUrl);
                     const filePath = decodedUrl.substring(decodedUrl.indexOf("/o/") + 3, decodedUrl.indexOf("?"));
                     await admin.storage().bucket().file(filePath).delete();
-                } catch (e) { console.error("PFP storage deletion failed", e); }
+                } catch (e) { logger.error("PFP storage deletion failed", e); }
             }
 
             await userRef.update({
@@ -1038,35 +888,40 @@ exports.cleanupUserData = functions.runWith({
             });
         }
 
-        const followingSnap = await userRef.collection("following").get();
-        await Promise.all(followingSnap.docs.map(async (doc) => {
-            const targetId = doc.id;
-            const batch = admin.firestore().batch();
-            batch.delete(admin.firestore().collection("users").doc(targetId).collection("followers").doc(uid));
-            batch.update(admin.firestore().collection("users").doc(targetId), { followerCount: admin.firestore.FieldValue.increment(-1) });
-            batch.delete(doc.ref);
-            return batch.commit();
-        }));
+        // Parallel following/follower cleanup
+        const [followingSnap, followersSnap] = await Promise.all([
+            userRef.collection("following").get(),
+            userRef.collection("followers").get()
+        ]);
 
-        const followersSnap = await userRef.collection("followers").get();
-        await Promise.all(followersSnap.docs.map(async (doc) => {
-            const followerId = doc.id;
-            const batch = admin.firestore().batch();
-            batch.delete(admin.firestore().collection("users").doc(followerId).collection("following").doc(uid));
-            batch.update(admin.firestore().collection("users").doc(followerId), { followingCount: admin.firestore.FieldValue.increment(-1) });
-            batch.delete(doc.ref);
-            return batch.commit();
-        }));
+        await Promise.all([
+            ...followingSnap.docs.map(async (doc) => {
+                const targetId = doc.id;
+                const batch = admin.firestore().batch();
+                batch.delete(admin.firestore().collection("users").doc(targetId).collection("followers").doc(uid));
+                batch.update(admin.firestore().collection("users").doc(targetId), { followerCount: admin.firestore.FieldValue.increment(-1) });
+                batch.delete(doc.ref);
+                return batch.commit();
+            }),
+            ...followersSnap.docs.map(async (doc) => {
+                const followerId = doc.id;
+                const batch = admin.firestore().batch();
+                batch.delete(admin.firestore().collection("users").doc(followerId).collection("following").doc(uid));
+                batch.update(admin.firestore().collection("users").doc(followerId), { followingCount: admin.firestore.FieldValue.increment(-1) });
+                batch.delete(doc.ref);
+                return batch.commit();
+            })
+        ]);
 
         const personalCols = ["userBirds", "media", "birdCards"];
-        for (const col of personalCols) {
+        await Promise.all(personalCols.map(async (col) => {
             const snap = await admin.firestore().collection(col).where("userId", "==", uid).get();
             await Promise.all(snap.docs.map(doc => doc.ref.delete()));
-        }
+        }));
 
         try {
             await admin.storage().bucket().deleteFiles({ prefix: `userCollectionImages/${uid}/` });
-        } catch (e) { console.error(`⚠️ Storage wipe failed for ${uid}`, e); }
+        } catch (e) { logger.error(`Storage wipe failed for ${uid}`, e); }
 
         const sightingsSnap = await admin.firestore().collection("userBirdSightings").where("userId", "==", uid).get();
         await Promise.all(sightingsSnap.docs.map(doc => doc.ref.update({
@@ -1075,152 +930,113 @@ exports.cleanupUserData = functions.runWith({
             isAnonymized: true
         })));
 
-        console.log(`✅ Successfully archived and cleaned up for deleted user ${uid}`);
+        logger.info(`Successfully archived and cleaned up deleted user ${uid}`);
     } catch (err) {
-        console.error(`❌ Cleanup failed for user ${uid}:`, err);
+        logger.error(`Cleanup failed for user ${uid}:`, err);
     }
 });
 
-
 // ======================================================
-// 5. AUTOMATIC SIGHTING CLEANUP (SINGLE ITEM) - v2 Syntax
+// onCollectionSlotUpdatedForImageDeletion
 // ======================================================
 exports.onCollectionSlotUpdatedForImageDeletion = onDocumentUpdated("users/{userId}/collectionSlot/{slotId}", async (event) => {
     const beforeData = event.data.before.data();
     const afterData = event.data.after.data();
-
-    const userBirdId = beforeData.userBirdId;
+    const { userBirdId } = beforeData;
     const imageUrlBefore = beforeData.imageUrl;
     const imageUrlAfter = afterData.imageUrl;
 
     if (userBirdId && imageUrlBefore && !imageUrlAfter) {
-        console.log(`🧹 Starting cleanup for userBirdId: ${userBirdId} due to imageUrl deletion.`);
-        const batch = db.batch();
-
+        logger.info(`Starting cleanup for userBirdId: ${userBirdId}`);
         try {
-            const userBirdRef = db.collection("userBirds").doc(userBirdId);
-            batch.delete(userBirdRef);
-
-            await batch.commit();
-            console.log(`✅ Successfully cleaned up data for userBirdId: ${userBirdId} after imageUrl deletion.`);
-            return null;
-
+            await db.collection("userBirds").doc(userBirdId).delete();
+            logger.info(`Cleaned up userBirdId: ${userBirdId}`);
         } catch (err) {
-            console.error(`❌ Failed to cleanup data for userBirdId: ${userBirdId} after imageUrl deletion.`, err);
-            return null;
+            logger.error(`Failed to cleanup userBirdId: ${userBirdId}`, err);
         }
-    } else {
-        console.log(`No imageUrl deletion detected for collectionSlot ${event.params.slotId} or no userBirdId present.`);
-        return null;
     }
+    return null;
 });
 
-/**
- * Helper function to update user totals in a Firestore transaction.
- */
+// ======================================================
+// HELPER: Update user totals in a transaction
+// ======================================================
 async function _updateUserTotals(userId, totalBirdsChange, duplicateBirdsChange, totalPointsChange) {
     const userRef = db.collection("users").doc(userId);
-
     try {
         await db.runTransaction(async (transaction) => {
             const userDoc = await transaction.get(userRef);
             if (!userDoc.exists) {
-                console.error(`❌ _updateUserTotals: User document ${userId} not found.`);
+                logger.error(`_updateUserTotals: User ${userId} not found.`);
                 return;
             }
-
-            const userData = userDoc.data();
-            const currentTotalBirds = userData.totalBirds || 0;
-            const currentDuplicateBirds = userData.duplicateBirds || 0;
-            const currentTotalPoints = userData.totalPoints || 0;
-
+            const { totalBirds = 0, duplicateBirds = 0, totalPoints = 0 } = userDoc.data();
             transaction.update(userRef, {
-                totalBirds: Math.max(0, currentTotalBirds + totalBirdsChange),
-                duplicateBirds: Math.max(0, currentDuplicateBirds + duplicateBirdsChange),
-                totalPoints: Math.max(0, currentTotalPoints + totalPointsChange),
+                totalBirds: Math.max(0, totalBirds + totalBirdsChange),
+                duplicateBirds: Math.max(0, duplicateBirds + duplicateBirdsChange),
+                totalPoints: Math.max(0, totalPoints + totalPointsChange),
             });
         });
-        console.log(`✅ Successfully updated totals for user ${userId}.`);
     } catch (error) {
-        console.error(`❌ Failed to update totals for user ${userId}:`, error);
+        logger.error(`Failed to update totals for user ${userId}:`, error);
     }
 }
 
 // ======================================================
-// ON CREATE UserBird -> Update User Totals
+// onUserBirdCreated
 // ======================================================
 exports.onUserBirdCreated = onDocumentCreated("userBirds/{uploadId}", async (event) => {
     const userBirdData = event.data.data();
-    const userId = userBirdData.userId;
-
+    const { userId, pointsEarned = 0, isDuplicate = false } = userBirdData;
     if (!userId) {
-        console.error("❌ onUserBirdCreated: No userId found in created userBird document.");
+        logger.error("onUserBirdCreated: No userId in document.");
         return null;
     }
-
-    const pointsEarned = userBirdData.pointsEarned || 0;
-    const isDuplicate = userBirdData.isDuplicate || false;
-
-    console.log(`⬆️ onUserBirdCreated: Processing new userBird for user ${userId}. Points: ${pointsEarned}, Duplicate: ${isDuplicate}`);
-
     await _updateUserTotals(userId, 1, isDuplicate ? 1 : 0, pointsEarned);
     return null;
 });
 
 // ======================================================
-// NEW: ON DELETE UserBird -> Reverse User Totals
+// onUserBirdDeleted
 // ======================================================
 exports.onUserBirdDeleted = onDocumentDeleted("userBirds/{uploadId}", async (event) => {
     const userBirdData = event.data.data();
-    const userId = userBirdData.userId;
-
+    const { userId, pointsEarned = 0, isDuplicate = false } = userBirdData;
     if (!userId) {
-        console.error("❌ onUserBirdDeleted: No userId found in deleted userBird document.");
+        logger.error("onUserBirdDeleted: No userId in document.");
         return null;
     }
-
-    const pointsEarned = userBirdData.pointsEarned || 0;
-    const isDuplicate = userBirdData.isDuplicate || false;
-
-    console.log(`⬇️ onUserBirdDeleted: Processing deleted userBird for user ${userId}. Points: ${pointsEarned}, Duplicate: ${isDuplicate}`);
-
     await _updateUserTotals(userId, -1, isDuplicate ? -1 : 0, -pointsEarned);
     return null;
 });
 
-
-// --- CORE EBIRD FETCH/STORE LOGIC (for both scheduled & callable functions) ---
+// ======================================================
+// HELPER: Core eBird notable sightings fetch/store
+// ======================================================
 async function _fetchAndStoreEBirdDataCore() {
-    console.log("Executing _fetchAndStoreEBirdDataCore...");
-
+    logger.info("Executing _fetchAndStoreEBirdDataCore...");
     const REGION_CODE = "US-GA";
-    const ebirdApiUrl = `https://api.ebird.org/v2/data/obs/${REGION_CODE}/recent/notable`;
 
     try {
-        const response = await axios.get(ebirdApiUrl, {
-            headers: {
-                "X-eBirdApiToken": EBIRD_API_KEY.value(),
-            },
+        const response = await axios.get(`https://api.ebird.org/v2/data/obs/${REGION_CODE}/recent/notable`, {
+            headers: { "X-eBirdApiToken": EBIRD_API_KEY.value() },
             timeout: 15000
         });
 
         const ebirdSightings = response.data;
         if (!ebirdSightings || ebirdSightings.length === 0) {
-            console.log("No new eBird sightings found.");
+            logger.info("No new eBird sightings found.");
             return { status: "success", message: "No new eBird sightings found." };
         }
 
-        console.log(`Found ${ebirdSightings.length} sightings from eBird API.`);
+        logger.info(`Found ${ebirdSightings.length} sightings from eBird API.`);
         const batch = db.batch();
         let sightingsAdded = 0;
 
         for (const sighting of ebirdSightings) {
             const docId = sighting.subId;
             if (!docId) continue;
-
-            const docRef = db.collection("eBirdApiSightings").doc(docId);
-
-            const newSighting = {
+            batch.set(db.collection("eBirdApiSightings").doc(docId), {
                 speciesCode: sighting.speciesCode,
                 commonName: sighting.comName,
                 scientificName: sighting.sciName,
@@ -1232,258 +1048,184 @@ async function _fetchAndStoreEBirdDataCore() {
                 },
                 howMany: sighting.howMany || 1,
                 isReviewed: sighting.obsReviewed,
-            };
-
-            batch.set(docRef, newSighting);
+            });
             sightingsAdded++;
         }
 
-        if (sightingsAdded > 0) {
-            await batch.commit();
-            console.log(`✅ Successfully added or updated ${sightingsAdded} eBird sightings.`);
-        } else {
-            console.log("No valid sightings to add to the batch.");
-        }
+        if (sightingsAdded > 0) await batch.commit();
+        logger.info(`Successfully stored ${sightingsAdded} eBird sightings.`);
         return { status: "success", message: `Successfully added or updated ${sightingsAdded} eBird sightings.` };
     } catch (error) {
-        console.error("❌ Error fetching or storing eBird data:", error);
+        logger.error("Error fetching eBird data:", error);
         throw new HttpsError("internal", `eBird data processing failed: ${error.message}`);
     }
 }
 
 // ======================================================
-// SCHEDULED EBIRD SIGHTING FETCH
+// fetchAndStoreEBirdData (scheduled)
 // ======================================================
 exports.fetchAndStoreEBirdData = onSchedule({
     schedule: "every 72 hours",
     secrets: [EBIRD_API_KEY],
     timeoutSeconds: 300
 }, async (event) => {
-    console.log("Scheduled function: Starting eBird data fetch.");
+    logger.info("Scheduled eBird data fetch starting.");
     try {
         await _fetchAndStoreEBirdDataCore();
-        console.log("Scheduled function: eBird data fetch completed successfully.");
-        return null;
     } catch (error) {
-        console.error("Scheduled function: Error during eBird data fetch:", error);
-        return null;
+        logger.error("Scheduled eBird fetch failed:", error);
     }
+    return null;
 });
 
-
 // ======================================================
-// CALLABLE EBIRD SIGHTING FETCH (for app warmup)
+// triggerEbirdDataFetch (callable, for app warmup)
 // ======================================================
 exports.triggerEbirdDataFetch = onCall({ secrets: [EBIRD_API_KEY], timeoutSeconds: 60 }, async (request) => {
-    console.log("Callable function: Triggered eBird data fetch from app.");
+    logger.info("Callable eBird data fetch triggered.");
     try {
-        const result = await _fetchAndStoreEBirdDataCore();
-        console.log("Callable function: eBird data fetch completed successfully.");
-        return result;
+        return await _fetchAndStoreEBirdDataCore();
     } catch (error) {
-        console.error("Callable function: Error during eBird data fetch:", error);
+        logger.error("Callable eBird fetch failed:", error);
         throw error;
     }
 });
 
 // ======================================================
-// NEW: SCHEDULED UNVERIFIED USER CLEANUP (AFTER 72 HOURS)
+// cleanupUnverifiedUsers (scheduled, every 24h)
 // ======================================================
 exports.cleanupUnverifiedUsers = onSchedule({
     schedule: "every 24 hours",
     timeZone: "America/New_York",
     timeoutSeconds: 60
 }, async (event) => {
-    console.log("Starting scheduled cleanup of unverified users...");
-
-    const seventyTwoHoursAgo = Date.now() - (72 * 60 * 60 * 1000);
+    logger.info("Starting scheduled cleanup of unverified users...");
+    const cutoff = Date.now() - CONFIG.UNVERIFIED_USER_TTL_MS;
 
     try {
         let nextPageToken;
-        let unverifiedUsersDeletedCount = 0;
-
+        let deletedCount = 0;
         do {
             const listUsersResult = await admin.auth().listUsers(1000, nextPageToken);
             nextPageToken = listUsersResult.pageToken;
-
-            for (const userRecord of listUsersResult.users) {
-                if (!userRecord.emailVerified && userRecord.metadata.creationTime < seventyTwoHoursAgo) {
-                    console.log(`Deleting unverified user: ${userRecord.uid}, email: ${userRecord.email}, created: ${new Date(userRecord.metadata.creationTime).toISOString()}`);
+            await Promise.all(listUsersResult.users.map(async (userRecord) => {
+                if (!userRecord.emailVerified && userRecord.metadata.creationTime < cutoff) {
                     await admin.auth().deleteUser(userRecord.uid);
-                    unverifiedUsersDeletedCount++;
+                    deletedCount++;
                 }
-            }
+            }));
         } while (nextPageToken);
 
-        console.log(`✅ Completed scheduled cleanup. Total unverified users deleted: ${unverifiedUsersDeletedCount}`);
-        return null;
+        logger.info(`Unverified user cleanup complete. Deleted: ${deletedCount}`);
     } catch (error) {
-        console.error(`❌ Error during unverified user cleanup:`, error);
-        return null;
+        logger.error("Error during unverified user cleanup:", error);
     }
+    return null;
 });
 
 // ======================================================
-// NEW: ON DELETE UserBirdImage -> Deduct Points and Update Counts
+// onDeleteUserBirdImage
 // ======================================================
 exports.onDeleteUserBirdImage = onDocumentDeleted("users/{userId}/userBirdImage/{userBirdImageId}", async (event) => {
     const deletedImage = event.data.data();
     const userId = event.params.userId;
-    const userBirdRefId = deletedImage.userBirdRefId;
-    const imageUrl = deletedImage.imageUrl;
-    const birdId = deletedImage.birdId;
+    const { userBirdRefId, imageUrl, birdId } = deletedImage;
 
     if (!userBirdRefId) {
-        console.log("onDeleteUserBirdImage: No userBirdRefId found on deleted UserBirdImage, skipping update.");
+        logger.info("onDeleteUserBirdImage: No userBirdRefId found, skipping.");
         return null;
     }
 
     try {
         const batch = db.batch();
 
+        // Delete from storage
         if (imageUrl && imageUrl.includes("userCollectionImages")) {
             try {
                 const decodedUrl = decodeURIComponent(imageUrl);
-                const pathStart = decodedUrl.indexOf("/o/") + 3;
-                const pathEnd = decodedUrl.indexOf("?alt=media");
-                const filePath = decodedUrl.substring(pathStart, pathEnd);
-
-                console.log(`🗑️ Deleting file from storage: ${filePath}`);
+                const filePath = decodedUrl.substring(decodedUrl.indexOf("/o/") + 3, decodedUrl.indexOf("?alt=media"));
                 await admin.storage().bucket().file(filePath).delete();
-                console.log(`✅ Successfully deleted storage file: ${filePath}`);
             } catch (storageErr) {
-                console.error(`⚠️ Failed to delete image from storage: ${imageUrl}`, storageErr);
+                logger.error(`Failed to delete image from storage: ${imageUrl}`, storageErr);
             }
         }
 
+        // Update collectionSlot
         if (birdId) {
             const collectionSlotSnap = await db.collection("users").doc(userId).collection("collectionSlot")
-                .where("birdId", "==", birdId)
-                .get();
+                .where("birdId", "==", birdId).get();
 
             for (const slotDoc of collectionSlotSnap.docs) {
                 if (slotDoc.data().imageUrl === imageUrl) {
                     const otherImagesSnap = await db.collection("users").doc(userId).collection("userBirdImage")
-                        .where("birdId", "==", birdId)
-                        .limit(1)
-                        .get();
+                        .where("birdId", "==", birdId).limit(1).get();
 
                     if (!otherImagesSnap.empty) {
                         const replacement = otherImagesSnap.docs[0].data();
-                        console.log(`🔄 Updating collectionSlot ${slotDoc.id} with replacement image.`);
-                        batch.update(slotDoc.ref, {
-                            imageUrl: replacement.imageUrl,
-                            userBirdId: replacement.userBirdRefId
-                        });
+                        batch.update(slotDoc.ref, { imageUrl: replacement.imageUrl, userBirdId: replacement.userBirdRefId });
                     } else {
-                        console.log(`🗑️ Deleting collectionSlot ${slotDoc.id} as no images remain for this species.`);
                         batch.delete(slotDoc.ref);
                     }
                 }
             }
         }
 
+        // Delete associated sightings
         const sightingsSnap = await db.collection("userBirdSightings")
-            .where("userId", "==", userId)
-            .where("imageUrl", "==", imageUrl)
-            .get();
+            .where("userId", "==", userId).where("imageUrl", "==", imageUrl).get();
+        sightingsSnap.forEach(doc => batch.delete(doc.ref));
 
-        sightingsSnap.forEach(doc => {
-            batch.delete(doc.ref);
-            console.log(`🗑️ onDeleteUserBirdImage: Deleting userBirdSighting document ${doc.id}`);
-        });
-
-        // Commit batch for storage, collectionSlot, and sightings cleanup
         await batch.commit();
 
-        // FIXED: Check remaining images and update points in a transaction to prevent race condition
-        // If multiple images are deleted simultaneously, this ensures only one deletion triggers point deduction
+        // Atomically check remaining images and update points/totals
         await db.runTransaction(async (transaction) => {
-            // Re-query remaining images inside transaction for atomic check
             const remainingImagesSnapshot = await db.collection("users").doc(userId)
-                .collection("userBirdImage")
-                .where("userBirdRefId", "==", userBirdRefId)
-                .get();
+                .collection("userBirdImage").where("userBirdRefId", "==", userBirdRefId).get();
 
             if (remainingImagesSnapshot.empty) {
-                // This was the LAST image for this UserBird
                 const userBirdRef = db.collection("userBirds").doc(userBirdRefId);
                 const userBirdDoc = await transaction.get(userBirdRef);
 
                 if (userBirdDoc.exists) {
-                    const userBirdData = userBirdDoc.data();
-                    const pointsEarnedByBird = userBirdData.pointsEarned || 0;
-                    const isDuplicate = userBirdData.isDuplicate || false;
-
-                    console.log(`⬇️ onDeleteUserBirdImage: Last image deleted for UserBird ${userBirdRefId}. Reverting user totals.`);
-
-                    // Deduct points atomically within this transaction
+                    const { pointsEarned = 0, isDuplicate = false } = userBirdDoc.data();
                     const userRef = db.collection("users").doc(userId);
                     const userDoc = await transaction.get(userRef);
 
                     if (userDoc.exists) {
-                        const userData = userDoc.data();
-                        const currentTotalBirds = userData.totalBirds || 0;
-                        const currentDuplicateBirds = userData.duplicateBirds || 0;
-                        const currentTotalPoints = userData.totalPoints || 0;
-
+                        const { totalBirds = 0, duplicateBirds = 0, totalPoints = 0 } = userDoc.data();
                         transaction.update(userRef, {
-                            totalBirds: Math.max(0, currentTotalBirds - 1),
-                            duplicateBirds: Math.max(0, currentDuplicateBirds - (isDuplicate ? 1 : 0)),
-                            totalPoints: Math.max(0, currentTotalPoints - pointsEarnedByBird),
+                            totalBirds: Math.max(0, totalBirds - 1),
+                            duplicateBirds: Math.max(0, duplicateBirds - (isDuplicate ? 1 : 0)),
+                            totalPoints: Math.max(0, totalPoints - pointsEarned),
                         });
                     }
-
-                    // Delete the UserBird document
                     transaction.delete(userBirdRef);
-                    console.log(`🗑️ onDeleteUserBirdImage: Deleting UserBird document ${userBirdRefId} for user ${userId} as no images remain.`);
-                } else {
-                    console.log(`onDeleteUserBirdImage: UserBird document ${userBirdRefId} not found, but last image deleted.`);
                 }
-            } else {
-                console.log(`onDeleteUserBirdImage: UserBird document ${userBirdRefId} still has ${remainingImagesSnapshot.size} images. No changes to user totals.`);
             }
         });
-        return null;
-
     } catch (err) {
-        console.error(`❌ onDeleteUserBirdImage: Cleanup failed for user ${userId}:`, err);
-        return null;
+        logger.error(`onDeleteUserBirdImage: Cleanup failed for user ${userId}:`, err);
     }
+    return null;
 });
 
 // ======================================================
-// NEW: Callable function to moderate profile picture images using OpenAI Vision
+// moderatePfpImage (OpenAI Vision)
 // ======================================================
 exports.moderatePfpImage = onCall({ secrets: [OPENAI_API_KEY], timeoutSeconds: 30 }, async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
 
     const { imageBase64 } = request.data;
-
     if (!imageBase64 || typeof imageBase64 !== "string") {
         throw new HttpsError("invalid-argument", "Image data (Base64) is required.");
     }
 
     try {
-        console.log(`Starting PFP image moderation for user ${request.auth.uid}...`);
-
         const moderationPrompt = `Analyze the provided image for inappropriate content. Inappropriate content includes, but is not limited to, nudity, sexually suggestive material, hate symbols, graphic violence, illegal activities, or promotion of self-harm.
 
 Respond STRICTLY in JSON format with two keys:
 1. "isAppropriate": true if the image is appropriate, false otherwise.
-2. "moderationReason": a brief, clear reason if "isAppropriate" is false (e.g., "Contains nudity", "Hate symbol detected", "Graphic violence"), or "N/A" if appropriate.
-
-Example for inappropriate image:
-{
-  "isAppropriate": false,
-  "moderationReason": "Contains nudity"
-}
-
-Example for appropriate image:
-{
-  "isAppropriate": true,
-  "moderationReason": "N/A"
-}`;
+2. "moderationReason": a brief, clear reason if "isAppropriate" is false (e.g., "Contains nudity", "Hate symbol detected", "Graphic violence"), or "N/A" if appropriate.`;
 
         const aiResponse = await axios.post(
             "https://api.openai.com/v1/chat/completions",
@@ -1506,38 +1248,39 @@ Example for appropriate image:
             }
         );
 
-        const moderationResult = JSON.parse(aiResponse.data.choices[0].message.content);
-
-        console.log(`Moderation result for user ${request.auth.uid}: ${JSON.stringify(moderationResult)}`);
-
-        if (typeof moderationResult.isAppropriate === "boolean" && typeof moderationResult.moderationReason === "string") {
-            return moderationResult;
-        } else {
-            console.error("OpenAI moderation returned an unexpected format:", moderationResult);
-            throw new HttpsError("internal", "OpenAI moderation response malformed.");
+        const content = aiResponse.data.choices[0].message?.content;
+        if (!content) {
+            logger.warn("moderatePfpImage: OpenAI returned empty content, defaulting to appropriate.");
+            return { isAppropriate: true, moderationReason: "N/A" };
         }
 
+        const moderationResult = JSON.parse(content);
+        if (!moderationResult) {
+            logger.warn("moderatePfpImage: OpenAI returned null result, defaulting to appropriate.");
+            return { isAppropriate: true, moderationReason: "N/A" };
+        }
+
+        if (typeof moderationResult.isAppropriate !== "boolean" || typeof moderationResult.moderationReason !== "string") {
+            logger.warn("moderatePfpImage: OpenAI moderation response malformed, defaulting to appropriate.");
+            return { isAppropriate: true, moderationReason: "N/A" };
+        }
+        return moderationResult;
     } catch (error) {
-        console.error("Error during PFP image moderation:", error);
-        if (error.response && error.response.data) {
-            console.error("OpenAI API error details:", error.response.data);
-        }
+        logger.error("Error during PFP image moderation:", error);
         throw new HttpsError("internal", `Failed to moderate image content: ${error.message}`);
     }
 });
 
 // ======================================================
-// NEW: SCHEDULED FORUM POST ARCHIVING (AFTER 7 DAYS)
-// NOTE: Could be optimized by batching storage operations
+// archiveOldForumPosts (scheduled, every 24h)
 // ======================================================
 exports.archiveOldForumPosts = onSchedule({
     schedule: "every 24 hours",
     timeZone: "America/New_York",
     timeoutSeconds: 540
 }, async (event) => {
-    console.log("Starting scheduled forum post archiving...");
-
-    const archiveThreshold = new Date(Date.now() - (7 * 24 * 60 * 60 * 1000));
+    logger.info("Starting scheduled forum post archiving...");
+    const archiveThreshold = new Date(Date.now() - CONFIG.FORUM_ARCHIVE_DAYS_MS);
     const storageBucket = admin.storage().bucket();
 
     try {
@@ -1547,50 +1290,38 @@ exports.archiveOldForumPosts = onSchedule({
             .get();
 
         if (postsToArchive.empty) {
-            console.log("No old posts found to archive.");
+            logger.info("No old posts found to archive.");
             return null;
         }
 
-        console.log(`Archiving ${postsToArchive.size} posts...`);
+        logger.info(`Archiving ${postsToArchive.size} posts...`);
 
-        for (const postDoc of postsToArchive.docs) {
+        await Promise.all(postsToArchive.docs.map(async (postDoc) => {
             const postData = postDoc.data();
             const postId = postDoc.id;
-
             const commentsSnap = await postDoc.ref.collection("comments").get();
             const comments = commentsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
 
-            const archiveData = {
-                ...postData,
-                id: postId,
-                archivedAt: new Date().toISOString(),
-                comments: comments
-            };
-
-            const fileName = `archived_posts/${postId}.json`;
-            const file = storageBucket.file(fileName);
-            await file.save(JSON.stringify(archiveData), {
-                contentType: "application/json"
-            });
+            await storageBucket.file(`archived_posts/${postId}.json`).save(
+                JSON.stringify({ ...postData, id: postId, archivedAt: new Date().toISOString(), comments }),
+                { contentType: "application/json" }
+            );
 
             const batch = db.batch();
             commentsSnap.forEach(doc => batch.delete(doc.ref));
             batch.delete(postDoc.ref);
             await batch.commit();
+        }));
 
-            console.log(`✅ Archived and deleted post: ${postId}`);
-        }
-
-        console.log("✅ Completed archiving cycle.");
-        return null;
+        logger.info("Forum post archiving cycle complete.");
     } catch (error) {
-        console.error("❌ Error during forum post archiving:", error);
-        return null;
+        logger.error("Error during forum post archiving:", error);
     }
+    return null;
 });
 
 // ======================================================
-// NEW: NOTIFY ON REPLY OR POST ACTIVITY
+// onCommentCreated — notify on reply or post activity
 // ======================================================
 exports.onCommentCreated = onDocumentCreated("forumThreads/{threadId}/comments/{commentId}", async (event) => {
     const commentData = event.data.data();
@@ -1598,324 +1329,333 @@ exports.onCommentCreated = onDocumentCreated("forumThreads/{threadId}/comments/{
     const parentCommentId = commentData.parentCommentId;
 
     try {
-        let recipientUserId;
-        let title, body;
-        let postDoc;
+        let recipientUserId, title, body, postDoc;
 
         if (parentCommentId) {
             const parentCommentDoc = await db.collection("forumThreads").doc(threadId).collection("comments").doc(parentCommentId).get();
-            if (!parentCommentDoc.exists) {
-                console.log("Parent comment not found.");
-                return null;
-            }
+            if (!parentCommentDoc.exists) return null;
             recipientUserId = parentCommentDoc.data().userId;
             title = "New Reply";
             body = `${commentData.username} replied to your comment.`;
-
             postDoc = await db.collection("forumThreads").doc(threadId).get();
         } else {
             postDoc = await db.collection("forumThreads").doc(threadId).get();
-            if (!postDoc.exists) {
-                console.log("Post not found.");
-                return null;
-            }
-
-            const postData = postDoc.data();
-            recipientUserId = postData.userId;
-
-            if (postData.notificationSent === true) {
-                console.log("Notification already sent for this post activity. Skipping to avoid constant bothering.");
-                return null;
-            }
-
+            if (!postDoc.exists) return null;
+            recipientUserId = postDoc.data().userId;
+            if (postDoc.data().notificationSent === true) return null;
             title = "New Comment";
             body = `${commentData.username} commented on your post.`;
         }
 
-        if (recipientUserId === commentData.userId) {
-            console.log("User interacting with their own content. No notification.");
-            return null;
-        }
+        if (recipientUserId === commentData.userId) return null;
 
         const recipientDoc = await db.collection("users").doc(recipientUserId).get();
-        if (!recipientDoc.exists) {
-            console.log("Recipient user not found.");
-            return null;
-        }
+        if (!recipientDoc.exists) return null;
 
         const recipientData = recipientDoc.data();
-        const fcmToken = recipientData.fcmToken;
-        const notificationsEnabled = recipientData.notificationsEnabled !== false;
-        const repliesEnabled = recipientData.repliesEnabled !== false;
+        const { fcmToken, notificationsEnabled = true, repliesEnabled = true, notificationCooldownHours = 2 } = recipientData;
 
-        if (!notificationsEnabled) {
-            console.log("Notifications are disabled for user " + recipientUserId);
-            return null;
-        }
+        if (!notificationsEnabled) return null;
+        if (parentCommentId && !repliesEnabled) return null;
 
-        if (parentCommentId && !repliesEnabled) {
-            console.log("Reply notifications are disabled for user " + recipientUserId);
-            return null;
-        }
-
-        const cooldownHours = recipientData.notificationCooldownHours !== undefined ? recipientData.notificationCooldownHours : 2;
-        if (cooldownHours > 0 && postDoc && postDoc.exists) {
+        if (notificationCooldownHours > 0 && postDoc?.exists) {
             const lastViewedAt = postDoc.data().lastViewedAt;
-            if (lastViewedAt) {
-                const cooldownMs = cooldownHours * 60 * 60 * 1000;
-                const timeSinceView = Date.now() - lastViewedAt.toDate().getTime();
-                if (timeSinceView < cooldownMs) {
-                    console.log(`Notification suppressed: User viewed post ${timeSinceView / 60000} mins ago, cooldown is ${cooldownHours} hours.`);
-                    return null;
-                }
-            }
-        }
-
-        if (!fcmToken) {
-            console.log("No FCM token for user " + recipientUserId);
-            return null;
-        }
-
-        // FIXED: Use transaction to atomically check and set notificationSent flag
-        // This prevents multiple simultaneous comments from sending duplicate notifications
-        if (!parentCommentId) {
-            // For top-level comments, use transaction to prevent race condition
-            let shouldSendNotification = false;
-
-            await db.runTransaction(async (transaction) => {
-                const threadRef = db.collection("forumThreads").doc(threadId);
-                const threadDoc = await transaction.get(threadRef);
-
-                if (!threadDoc.exists) {
-                    console.log("Thread not found in transaction.");
-                    return;
-                }
-
-                const threadData = threadDoc.data();
-
-                // Check if notification was already sent
-                if (threadData.notificationSent === true) {
-                    console.log("Notification already sent (caught in transaction). Skipping.");
-                    shouldSendNotification = false;
-                } else {
-                    // Mark as sent atomically
-                    transaction.update(threadRef, { notificationSent: true });
-                    shouldSendNotification = true;
-                }
-            });
-
-            if (!shouldSendNotification) {
+            if (lastViewedAt && (Date.now() - lastViewedAt.toDate().getTime()) < notificationCooldownHours * 60 * 60 * 1000) {
                 return null;
             }
         }
 
-        const message = {
-            token: fcmToken,
-            notification: {
-                title: title,
-                body: body
-            },
-            data: {
-                postId: threadId
-            }
-        };
+        if (!fcmToken) return null;
 
-        try {
-            const response = await messaging.send(message);
-            console.log("Successfully sent notification:", response);
-        } catch (error) {
-            if (error.code === "messaging/registration-token-not-registered") {
-                console.log(`Cleaning up invalid FCM token for user ${recipientUserId}`);
-                await db.collection("users").doc(recipientUserId).update({ fcmToken: admin.firestore.FieldValue.delete() });
-            } else {
-                console.error("Error sending notification:", error);
-            }
+        // Use transaction for top-level comments to prevent duplicate notifications
+        if (!parentCommentId) {
+            let shouldSend = false;
+            await db.runTransaction(async (transaction) => {
+                const threadRef = db.collection("forumThreads").doc(threadId);
+                const threadDoc = await transaction.get(threadRef);
+                if (!threadDoc.exists || threadDoc.data().notificationSent === true) return;
+                transaction.update(threadRef, { notificationSent: true });
+                shouldSend = true;
+            });
+            if (!shouldSend) return null;
         }
 
-        return null;
-
+        try {
+            await messaging.send({ token: fcmToken, notification: { title, body }, data: { postId: threadId } });
+        } catch (error) {
+            if (error.code === "messaging/registration-token-not-registered") {
+                await db.collection("users").doc(recipientUserId).update({ fcmToken: admin.firestore.FieldValue.delete() });
+            } else {
+                logger.error("Error sending notification:", error);
+            }
+        }
     } catch (error) {
-        console.error("Error sending notification:", error);
-        return null;
+        logger.error("Error in onCommentCreated:", error);
     }
+    return null;
 });
 
 // ======================================================
-// NEW: NOTIFY ON POST LIKE (FIXED VERSION)
+// onPostLiked
 // ======================================================
 exports.onPostLiked = onDocumentUpdated("forumThreads/{threadId}", async (event) => {
     const beforeData = event.data.before.data();
     const afterData = event.data.after.data();
 
-    const beforeLikes = beforeData.likeCount || 0;
-    const afterLikes = afterData.likeCount || 0;
+    if ((afterData.likeCount || 0) <= (beforeData.likeCount || 0) || afterData.likeNotificationSent === true) return null;
 
-    if (afterLikes <= beforeLikes || afterData.likeNotificationSent === true) return null;
-
-    const recipientUserId = afterData.userId;
     try {
-        const recipientDoc = await db.collection("users").doc(recipientUserId).get();
+        const recipientDoc = await db.collection("users").doc(afterData.userId).get();
         if (!recipientDoc.exists) return null;
 
-        const recipientData = recipientDoc.data();
-        const fcmToken = recipientData.fcmToken;
-        if (!fcmToken || recipientData.notificationsEnabled === false) return null;
+        const { fcmToken, notificationsEnabled = true, notificationCooldownHours = 2 } = recipientDoc.data();
+        if (!fcmToken || !notificationsEnabled) return null;
 
-        const cooldownHours = recipientData.notificationCooldownHours || 2;
-        if (cooldownHours > 0 && afterData.lastViewedAt) {
-            const cooldownMs = cooldownHours * 60 * 60 * 1000;
-            if (Date.now() - afterData.lastViewedAt.toDate().getTime() < cooldownMs) return null;
-        }
-
-        const message = {
-            token: fcmToken,
-            notification: { title: "Post Liked!", body: `Someone liked your post.` },
-            data: { postId: event.params.threadId, type: "like" }
-        };
+        if (notificationCooldownHours > 0 && afterData.lastViewedAt &&
+            (Date.now() - afterData.lastViewedAt.toDate().getTime()) < notificationCooldownHours * 60 * 60 * 1000) return null;
 
         try {
-            await messaging.send(message);
+            await messaging.send({
+                token: fcmToken,
+                notification: { title: "Post Liked!", body: "Someone liked your post." },
+                data: { postId: event.params.threadId, type: "like" }
+            });
             await event.data.after.ref.update({ likeNotificationSent: true });
         } catch (error) {
             if (error.code === "messaging/registration-token-not-registered") {
-                await db.collection("users").doc(recipientUserId).update({ fcmToken: admin.firestore.FieldValue.delete() });
+                await db.collection("users").doc(afterData.userId).update({ fcmToken: admin.firestore.FieldValue.delete() });
             }
         }
-    } catch (error) { console.error("Error in onPostLiked:", error); }
+    } catch (error) { logger.error("Error in onPostLiked:", error); }
     return null;
 });
 
 // ======================================================
-// NEW: NOTIFY ON COMMENT LIKE (WITH TOKEN CLEANUP)
+// onCommentLiked
 // ======================================================
 exports.onCommentLiked = onDocumentUpdated("forumThreads/{threadId}/comments/{commentId}", async (event) => {
     const beforeData = event.data.before.data();
     const afterData = event.data.after.data();
 
-    const beforeLikes = beforeData.likeCount || 0;
-    const afterLikes = afterData.likeCount || 0;
-
-    if (afterLikes <= beforeLikes || afterData.likeNotificationSent === true) {
-        return null;
-    }
-
-    const recipientUserId = afterData.userId;
+    if ((afterData.likeCount || 0) <= (beforeData.likeCount || 0) || afterData.likeNotificationSent === true) return null;
 
     try {
-        const recipientDoc = await db.collection("users").doc(recipientUserId).get();
+        const recipientDoc = await db.collection("users").doc(afterData.userId).get();
         if (!recipientDoc.exists) return null;
 
-        const recipientData = recipientDoc.data();
-        const fcmToken = recipientData.fcmToken;
-        const notificationsEnabled = recipientData.notificationsEnabled !== false;
-
+        const { fcmToken, notificationsEnabled = true, notificationCooldownHours = 2 } = recipientDoc.data();
         if (!fcmToken || !notificationsEnabled) return null;
 
         const postDoc = await db.collection("forumThreads").doc(event.params.threadId).get();
-        const cooldownHours = recipientData.notificationCooldownHours !== undefined ? recipientData.notificationCooldownHours : 2;
-        if (cooldownHours > 0 && postDoc.exists) {
+        if (notificationCooldownHours > 0 && postDoc.exists) {
             const lastViewedAt = postDoc.data().lastViewedAt;
-            if (lastViewedAt) {
-                const cooldownMs = cooldownHours * 60 * 60 * 1000;
-                if (Date.now() - lastViewedAt.toDate().getTime() < cooldownMs) {
-                    console.log("Comment like notification suppressed due to cooldown.");
-                    return null;
-                }
-            }
+            if (lastViewedAt && (Date.now() - lastViewedAt.toDate().getTime()) < notificationCooldownHours * 60 * 60 * 1000) return null;
         }
-
-        const message = {
-            token: fcmToken,
-            notification: {
-                title: "Comment Liked!",
-                body: `Someone liked your comment.`
-            },
-            data: {
-                postId: event.params.threadId,
-                type: "comment_like"
-            }
-        };
 
         try {
-            await messaging.send(message);
+            await messaging.send({
+                token: fcmToken,
+                notification: { title: "Comment Liked!", body: "Someone liked your comment." },
+                data: { postId: event.params.threadId, type: "comment_like" }
+            });
             await event.data.after.ref.update({ likeNotificationSent: true });
-            console.log(`Like notification sent for comment ${event.params.commentId}`);
         } catch (error) {
             if (error.code === "messaging/registration-token-not-registered") {
-                console.log(`Cleaning up invalid FCM token for user ${recipientUserId}`);
-                await db.collection("users").doc(recipientUserId).update({ fcmToken: admin.firestore.FieldValue.delete() });
+                await db.collection("users").doc(afterData.userId).update({ fcmToken: admin.firestore.FieldValue.delete() });
             } else {
-                console.error("Error sending comment like notification:", error);
+                logger.error("Error sending comment like notification:", error);
             }
         }
-    } catch (error) {
-        console.error("Error in onCommentLiked:", error);
-    }
+    } catch (error) { logger.error("Error in onCommentLiked:", error); }
     return null;
 });
 
 // ======================================================
-// NEW: AUTOMATIC STORAGE CLEANUP ON PFP CHANGE
+// onUserProfileUpdated — sync PFP + username to forum content
+// FIXED: Added explicit timeoutSeconds for users with many posts
 // ======================================================
-exports.deleteOldPfpOnChange = onDocumentUpdated("users/{userId}", async (event) => {
+exports.onUserProfileUpdated = onDocumentUpdated({
+    document: "users/{userId}",
+    timeoutSeconds: 540  // FIXED: explicit timeout for users with 1000s of posts
+}, async (event) => {
     const newData = event.data.after.data();
     const oldData = event.data.before.data();
+    const userId = event.params.userId;
 
     const newPfp = newData.profilePictureUrl;
     const oldPfp = oldData.profilePictureUrl;
+    const newUsername = newData.username;
+    const oldUsername = oldData.username;
 
-    if (oldPfp && oldPfp !== newPfp) {
-        console.log(`PFP changed for ${event.params.userId}. Cleaning up old file...`);
-
-        if (oldPfp.includes("firebasestorage.googleapis.com")) {
-            try {
-                const decodedUrl = decodeURIComponent(oldPfp);
-                const startIndex = decodedUrl.indexOf("/o/") + 3;
-                const endIndex = decodedUrl.indexOf("?");
-                const filePath = decodedUrl.substring(startIndex, endIndex);
-
-                const bucket = admin.storage().bucket();
-                const file = bucket.file(filePath);
-
-                const [exists] = await file.exists();
-                if (exists) {
-                    await file.delete();
-                    console.log(`Deleted: ${filePath}`);
-                }
-            } catch (error) {
-                console.error("Error deleting old PFP:", error);
-            }
+    // Delete old PFP from storage
+    if (oldPfp && oldPfp !== newPfp && oldPfp.includes("firebasestorage.googleapis.com")) {
+        try {
+            const decodedUrl = decodeURIComponent(oldPfp);
+            const filePath = decodedUrl.substring(decodedUrl.indexOf("/o/") + 3, decodedUrl.indexOf("?"));
+            const bucket = admin.storage().bucket();
+            const file = bucket.file(filePath);
+            const [exists] = await file.exists();
+            if (exists) await file.delete();
+        } catch (error) {
+            logger.error("Error deleting old PFP from storage:", error);
         }
+    }
+
+    const updates = {};
+    if (newPfp !== oldPfp) updates.userProfilePictureUrl = newPfp;
+    if (newUsername !== oldUsername) updates.username = newUsername;
+
+    if (Object.keys(updates).length === 0) return null;
+
+    try {
+        const BATCH_SIZE = 450;
+
+        const processBatch = async (querySnapshot) => {
+            if (querySnapshot.empty) return 0;
+            const docs = querySnapshot.docs;
+            let count = 0;
+            for (let i = 0; i < docs.length; i += BATCH_SIZE) {
+                const batch = db.batch();
+                docs.slice(i, i + BATCH_SIZE).forEach(doc => batch.update(doc.ref, updates));
+                await batch.commit();
+                count += Math.min(BATCH_SIZE, docs.length - i);
+            }
+            return count;
+        };
+
+        const [postsSnap, commentsSnap] = await Promise.all([
+            db.collection("forumThreads").where("userId", "==", userId).get(),
+            db.collectionGroup("comments").where("userId", "==", userId).get()
+        ]);
+
+        const [postsUpdated, commentsUpdated] = await Promise.all([
+            processBatch(postsSnap),
+            processBatch(commentsSnap)
+        ]);
+
+        logger.info(`Synced profile updates to ${postsUpdated} posts and ${commentsUpdated} comments for user ${userId}`);
+    } catch (error) {
+        logger.error("Error syncing profile updates to forum content:", error);
     }
     return null;
 });
 
 // ======================================================
-// NEW: Automatic Auth Trigger
+// onUserAuthDeleted — automatic auth trigger
 // ======================================================
 exports.onUserAuthDeleted = auth.user().onDelete(async (user) => {
     const uid = user.uid;
     const userRef = db.collection("users").doc(uid);
-
     try {
         const userDoc = await userRef.get();
-
         if (userDoc.exists) {
-            const userData = userDoc.data();
-
             await db.collection("usersdeletedAccounts").doc(uid).set({
-                ...userData,
+                ...userDoc.data(),
                 archivedAt: admin.firestore.FieldValue.serverTimestamp(),
                 deletionType: "Automatic Auth Trigger (Manual or App Deletion)"
             });
-
             await userRef.delete();
-
-            console.log(`✅ Automatically archived and cleaned up Firestore for UID: ${uid}`);
-        } else {
-            console.log(`ℹ️ No Firestore document found for deleted user ${uid}.`);
+            logger.info(`Automatically archived and cleaned up Firestore for UID: ${uid}`);
         }
     } catch (error) {
-        console.error("❌ Error in onUserAuthDeleted trigger:", error);
+        logger.error("Error in onUserAuthDeleted trigger:", error);
+    }
+});
+
+// ======================================================
+// NEW: toggleFollow — atomic follow/unfollow
+// ======================================================
+exports.toggleFollow = onCall(async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Auth required.");
+
+    const followerId = request.auth.uid;
+    const { targetUserId, action } = request.data;
+
+    if (!targetUserId || typeof targetUserId !== "string") {
+        throw new HttpsError("invalid-argument", "targetUserId is required.");
+    }
+    if (action !== "follow" && action !== "unfollow") {
+        throw new HttpsError("invalid-argument", "action must be 'follow' or 'unfollow'.");
+    }
+    if (followerId === targetUserId) {
+        throw new HttpsError("invalid-argument", "Cannot follow yourself.");
+    }
+
+    const followerRef = db.collection("users").doc(followerId);
+    const targetRef = db.collection("users").doc(targetUserId);
+    const followingDocRef = followerRef.collection("following").doc(targetUserId);
+    const followerDocRef = targetRef.collection("followers").doc(followerId);
+
+    await db.runTransaction(async (t) => {
+        const followingDoc = await t.get(followingDocRef);
+
+        if (action === "follow" && !followingDoc.exists) {
+            t.set(followingDocRef, { timestamp: admin.firestore.FieldValue.serverTimestamp() });
+            t.set(followerDocRef, { timestamp: admin.firestore.FieldValue.serverTimestamp() });
+            t.update(followerRef, { followingCount: admin.firestore.FieldValue.increment(1) });
+            t.update(targetRef, { followerCount: admin.firestore.FieldValue.increment(1) });
+        } else if (action === "unfollow" && followingDoc.exists) {
+            t.delete(followingDocRef);
+            t.delete(followerDocRef);
+            t.update(followerRef, { followingCount: admin.firestore.FieldValue.increment(-1) });
+            t.update(targetRef, { followerCount: admin.firestore.FieldValue.increment(-1) });
+        }
+    });
+
+    return { success: true };
+});
+
+// ======================================================
+// NEW: submitReport — server-side duplicate check
+// ======================================================
+exports.submitReport = onCall(async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Auth required.");
+
+    const { targetId, targetType, reason } = request.data;
+    const reporterId = request.auth.uid;
+
+    if (!targetId || !targetType || !reason) {
+        throw new HttpsError("invalid-argument", "targetId, targetType, and reason are required.");
+    }
+
+    const existing = await db.collection("reports")
+        .where("reporterId", "==", reporterId)
+        .where("targetId", "==", targetId)
+        .limit(1)
+        .get();
+
+    if (!existing.empty) throw new HttpsError("already-exists", "You already reported this.");
+
+    await db.collection("reports").add({
+        reporterId,
+        targetId,
+        targetType,
+        reason: sanitizeText(reason, 500),
+        timestamp: admin.firestore.FieldValue.serverTimestamp(),
+        status: "pending"
+    });
+
+    return { success: true };
+});
+
+// ======================================================
+// NEW: getLeaderboard — server-side top 20 by points
+// ======================================================
+exports.getLeaderboard = onCall(async (request) => {
+    try {
+        const snapshot = await db.collection("users")
+            .orderBy("totalPoints", "desc")
+            .limit(20)
+            .get();
+
+        return snapshot.docs.map(doc => ({
+            id: doc.id,
+            username: doc.data().username,
+            totalPoints: doc.data().totalPoints,
+            profilePictureUrl: doc.data().profilePictureUrl || null
+        }));
+    } catch (error) {
+        logger.error("Error fetching leaderboard:", error);
+        throw new HttpsError("internal", "Failed to fetch leaderboard.");
     }
 });

@@ -78,11 +78,13 @@ public class UserSocialProfileActivity extends AppCompatActivity implements
 
         targetUserId = getIntent().getStringExtra(EXTRA_USER_ID);
         if (targetUserId == null) {
+            Log.e(TAG, "onCreate: Missing targetUserId in intent.");
             Toast.makeText(this, "User ID not found.", Toast.LENGTH_SHORT).show();
             finish();
             return;
         }
 
+        Log.d(TAG, "onCreate: Loading profile for UID: " + targetUserId);
         db = FirebaseFirestore.getInstance();
         firebaseManager = new FirebaseManager(this);
 
@@ -97,7 +99,10 @@ public class UserSocialProfileActivity extends AppCompatActivity implements
     private void initUI() {
         Toolbar toolbar = findViewById(R.id.toolbar);
         setSupportActionBar(toolbar);
-        toolbar.setNavigationOnClickListener(v -> finish());
+        toolbar.setNavigationOnClickListener(v -> {
+            Log.d(TAG, "Navigation back clicked.");
+            finish();
+        });
 
         ivPfp = findViewById(R.id.ivUserProfilePfp);
         tvUsername = findViewById(R.id.tvUserProfileUsername);
@@ -117,12 +122,14 @@ public class UserSocialProfileActivity extends AppCompatActivity implements
 
         FirebaseUser currentUser = FirebaseAuth.getInstance().getCurrentUser();
         if (currentUser != null && currentUser.getUid().equals(targetUserId)) {
+            Log.d(TAG, "User is viewing their own profile via SocialProfileActivity. Hiding follow button.");
             btnFollow.setVisibility(View.GONE);
         }
 
         btnFollow.setOnClickListener(v -> toggleFollow());
 
         btnUserFollowers.setOnClickListener(v -> {
+            Log.d(TAG, "Followers count clicked.");
             Intent intent = new Intent(this, SocialActivity.class);
             intent.putExtra(SocialActivity.EXTRA_USER_ID, targetUserId);
             intent.putExtra(SocialActivity.EXTRA_SHOW_FOLLOWING, false);
@@ -130,6 +137,7 @@ public class UserSocialProfileActivity extends AppCompatActivity implements
         });
 
         btnUserFollowing.setOnClickListener(v -> {
+            Log.d(TAG, "Following count clicked.");
             Intent intent = new Intent(this, SocialActivity.class);
             intent.putExtra(SocialActivity.EXTRA_USER_ID, targetUserId);
             intent.putExtra(SocialActivity.EXTRA_SHOW_FOLLOWING, true);
@@ -139,14 +147,11 @@ public class UserSocialProfileActivity extends AppCompatActivity implements
         tabLayout.addOnTabSelectedListener(new TabLayout.OnTabSelectedListener() {
             @Override
             public void onTabSelected(TabLayout.Tab tab) {
+                Log.d(TAG, "Tab selected: " + tab.getPosition());
                 applyTabState(tab.getPosition());
             }
-
-            @Override
-            public void onTabUnselected(TabLayout.Tab tab) {}
-
-            @Override
-            public void onTabReselected(TabLayout.Tab tab) {}
+            @Override public void onTabUnselected(TabLayout.Tab tab) {}
+            @Override public void onTabReselected(TabLayout.Tab tab) {}
         });
         
         applyTabState(0);
@@ -161,22 +166,15 @@ public class UserSocialProfileActivity extends AppCompatActivity implements
             rvFavoriteCards.setVisibility(View.VISIBLE);
             rvPosts.setVisibility(View.GONE);
             tvProfileTabEmpty.setVisibility(View.GONE);
-
             toolbarParams.setScrollFlags(0);
             headerParams.setScrollFlags(0);
             appBarLayout.setExpanded(true, true);
         } else {
             rvFavoriteCards.setVisibility(View.GONE);
-            if (postList.isEmpty()) {
-                tvProfileTabEmpty.setVisibility(View.VISIBLE);
-                rvPosts.setVisibility(View.GONE);
-            } else {
-                tvProfileTabEmpty.setVisibility(View.GONE);
-                rvPosts.setVisibility(View.VISIBLE);
-            }
-
-            toolbarParams.setScrollFlags(AppBarLayout.LayoutParams.SCROLL_FLAG_SCROLL);
-            headerParams.setScrollFlags(AppBarLayout.LayoutParams.SCROLL_FLAG_SCROLL);
+            rvPosts.setVisibility(postList.isEmpty() ? View.GONE : View.VISIBLE);
+            tvProfileTabEmpty.setVisibility(postList.isEmpty() ? View.VISIBLE : View.GONE);
+            toolbarParams.setScrollFlags(AppBarLayout.LayoutParams.SCROLL_FLAG_SCROLL | AppBarLayout.LayoutParams.SCROLL_FLAG_ENTER_ALWAYS);
+            headerParams.setScrollFlags(AppBarLayout.LayoutParams.SCROLL_FLAG_SCROLL | AppBarLayout.LayoutParams.SCROLL_FLAG_EXIT_UNTIL_COLLAPSED);
         }
         
         toolbar.setLayoutParams(toolbarParams);
@@ -184,31 +182,28 @@ public class UserSocialProfileActivity extends AppCompatActivity implements
     }
 
     private void loadUserDetails() {
-        if (userDetailsListener != null) {
-            userDetailsListener.remove();
-        }
+        if (userDetailsListener != null) userDetailsListener.remove();
 
+        Log.d(TAG, "Setting up SnapshotListener for user details: " + targetUserId);
         userDetailsListener = db.collection("users").document(targetUserId)
                 .addSnapshotListener((doc, e) -> {
                     if (e != null) {
-                        Log.e(TAG, "Listen failed.", e);
+                        Log.e(TAG, "loadUserDetails: Listen failed.", e);
                         return;
                     }
 
                     if (doc != null && doc.exists()) {
+                        Log.d(TAG, "loadUserDetails: Document updated.");
                         User user = doc.toObject(User.class);
                         if (user != null) {
-                            // Check if account was deleted
-                            Boolean isDeleted = doc.getBoolean("isDeleted");
-                            if (isDeleted != null && isDeleted) {
+                            if (Boolean.TRUE.equals(doc.getBoolean("isDeleted"))) {
+                                Log.w(TAG, "Viewing deleted user.");
                                 tvUsername.setText("Deleted User");
                                 tvBio.setText("");
                                 tvFollowerCount.setText("0");
                                 tvFollowingCount.setText("0");
                                 ivPfp.setImageResource(R.drawable.ic_profile);
                                 btnFollow.setVisibility(View.GONE);
-                                btnUserFollowers.setEnabled(false);
-                                btnUserFollowing.setEnabled(false);
                                 return;
                             }
 
@@ -217,20 +212,15 @@ public class UserSocialProfileActivity extends AppCompatActivity implements
                             tvFollowerCount.setText(String.valueOf(user.getFollowerCount()));
                             tvFollowingCount.setText(String.valueOf(user.getFollowingCount()));
                             
-                            Glide.with(this)
-                                    .load(user.getProfilePictureUrl())
-                                    .placeholder(R.drawable.ic_profile)
-                                    .into(ivPfp);
+                            Glide.with(this).load(user.getProfilePictureUrl()).placeholder(R.drawable.ic_profile).into(ivPfp);
 
                             favoriteCardKeys.clear();
                             List<String> savedKeys = (List<String>) doc.get("favoriteCardKeys");
-                            if (savedKeys != null) {
-                                favoriteCardKeys.addAll(savedKeys);
-                            }
+                            if (savedKeys != null) favoriteCardKeys.addAll(savedKeys);
                             loadFavoriteCards();
                         }
                     } else {
-                        // User document doesn't exist at all
+                        Log.w(TAG, "loadUserDetails: User document does not exist.");
                         tvUsername.setText("User Not Found");
                         btnFollow.setVisibility(View.GONE);
                     }
@@ -238,27 +228,25 @@ public class UserSocialProfileActivity extends AppCompatActivity implements
     }
 
     private void loadFavoriteCards() {
-        db.collection("users")
-                .document(targetUserId)
-                .collection("collectionSlot")
-                .get()
-                .addOnSuccessListener(queryDocumentSnapshots -> {
+        Log.d(TAG, "loadFavoriteCards: Fetching collectionSlot subcollection.");
+        db.collection("users").document(targetUserId).collection("collectionSlot").get()
+                .addOnSuccessListener(querySnapshot -> {
                     allCollectionSlots.clear();
-                    for (DocumentSnapshot doc : queryDocumentSnapshots.getDocuments()) {
+                    for (DocumentSnapshot doc : querySnapshot.getDocuments()) {
                         CollectionSlot slot = doc.toObject(CollectionSlot.class);
-                        if (slot == null) continue;
-                        slot.setId(doc.getId());
-                        allCollectionSlots.add(slot);
+                        if (slot != null) {
+                            slot.setId(doc.getId());
+                            allCollectionSlots.add(slot);
+                        }
                     }
+                    Log.d(TAG, "loadFavoriteCards: " + allCollectionSlots.size() + " slots loaded.");
                     refreshFavoritesDisplay();
-                });
+                })
+                .addOnFailureListener(e -> Log.e(TAG, "loadFavoriteCards: Failed.", e));
     }
 
     private void refreshFavoritesDisplay() {
-        while (favoriteCardKeys.size() < FAVORITE_SLOT_COUNT) {
-            favoriteCardKeys.add("");
-        }
-
+        while (favoriteCardKeys.size() < FAVORITE_SLOT_COUNT) favoriteCardKeys.add("");
         List<CollectionSlot> favoriteSlots = new ArrayList<>();
         for (int i = 0; i < FAVORITE_SLOT_COUNT; i++) {
             favoriteSlots.add(findSlotById(favoriteCardKeys.get(i)));
@@ -266,73 +254,75 @@ public class UserSocialProfileActivity extends AppCompatActivity implements
         favoritesAdapter.submitList(favoriteSlots);
     }
 
-    @Nullable
-    private CollectionSlot findSlotById(@Nullable String id) {
+    private CollectionSlot findSlotById(String id) {
         if (id == null || id.trim().isEmpty()) return null;
         for (CollectionSlot slot : allCollectionSlots) {
-            if (slot != null && id.equals(slot.getId())) {
-                return slot;
-            }
+            if (id.equals(slot.getId())) return slot;
         }
         return null;
     }
 
     private void checkFollowingStatus() {
+        Log.d(TAG, "checkFollowingStatus: Calling FirebaseManager.");
         firebaseManager.isFollowing(targetUserId, task -> {
             if (task.isSuccessful()) {
                 isFollowing = task.getResult();
+                Log.d(TAG, "checkFollowingStatus result: " + isFollowing);
                 updateFollowButtonUI();
+            } else {
+                Log.e(TAG, "checkFollowingStatus failed.", task.getException());
             }
         });
     }
 
     private void updateFollowButtonUI() {
-        if (isFollowing) {
-            btnFollow.setText("Following");
-        } else {
-            btnFollow.setText("Follow");
-        }
+        btnFollow.setText(isFollowing ? "Following" : "Follow");
     }
 
     private void toggleFollow() {
         btnFollow.setEnabled(false);
+        Log.d(TAG, "toggleFollow: Current state: " + isFollowing);
         if (isFollowing) {
             firebaseManager.unfollowUser(targetUserId, task -> {
                 btnFollow.setEnabled(true);
                 if (task.isSuccessful()) {
+                    Log.d(TAG, "unfollowUser success via CF.");
                     isFollowing = false;
                     updateFollowButtonUI();
-                    // Listener will handle UI update for counts
+                } else {
+                    Log.e(TAG, "unfollowUser failed.", task.getException());
+                    Toast.makeText(this, "Unfollow failed.", Toast.LENGTH_SHORT).show();
                 }
             });
         } else {
             firebaseManager.followUser(targetUserId, task -> {
                 btnFollow.setEnabled(true);
                 if (task.isSuccessful()) {
+                    Log.d(TAG, "followUser success via CF.");
                     isFollowing = true;
                     updateFollowButtonUI();
-                    // Listener will handle UI update for counts
+                } else {
+                    Log.e(TAG, "followUser failed.", task.getException());
+                    Toast.makeText(this, "Follow failed.", Toast.LENGTH_SHORT).show();
                 }
             });
         }
     }
 
     private void setupRecyclerViews() {
+        Log.d(TAG, "setupRecyclerViews: Initializing adapters.");
         adapter = new ForumPostAdapter(this);
-        LinearLayoutManager layoutManager = new LinearLayoutManager(this);
-        rvPosts.setLayoutManager(layoutManager);
+        rvPosts.setLayoutManager(new LinearLayoutManager(this));
         rvPosts.setAdapter(adapter);
 
         rvPosts.addOnScrollListener(new RecyclerView.OnScrollListener() {
             @Override
             public void onScrolled(@NonNull RecyclerView recyclerView, int dx, int dy) {
                 if (dy > 0) {
-                    int visibleItemCount = layoutManager.getChildCount();
-                    int totalItemCount = layoutManager.getItemCount();
-                    int pastVisibleItems = layoutManager.findFirstVisibleItemPosition();
-
-                    if (!isFetching && !isLastPage) {
-                        if ((visibleItemCount + pastVisibleItems) >= totalItemCount) {
+                    LinearLayoutManager lm = (LinearLayoutManager) rvPosts.getLayoutManager();
+                    if (lm != null && !isFetching && !isLastPage) {
+                        if (lm.getChildCount() + lm.findFirstVisibleItemPosition() >= lm.getItemCount()) {
+                            Log.d(TAG, "End of list reached. Fetching next page.");
                             fetchUserPosts();
                         }
                     }
@@ -348,20 +338,18 @@ public class UserSocialProfileActivity extends AppCompatActivity implements
     private void fetchUserPosts() {
         if (isFetching || isLastPage) return;
         isFetching = true;
+        Log.d(TAG, "fetchUserPosts: Fetching posts for UID: " + targetUserId);
 
         Query query = db.collection("forumThreads")
                 .whereEqualTo("userId", targetUserId)
                 .orderBy("timestamp", Query.Direction.DESCENDING)
                 .limit(PAGE_SIZE);
 
-        if (lastVisible != null) {
-            query = query.startAfter(lastVisible);
-        }
+        if (lastVisible != null) query = query.startAfter(lastVisible);
 
         query.get().addOnSuccessListener(value -> {
             if (value != null && !value.isEmpty()) {
                 lastVisible = value.getDocuments().get(value.size() - 1);
-                
                 for (DocumentSnapshot doc : value.getDocuments()) {
                     ForumPost post = doc.toObject(ForumPost.class);
                     if (post != null) {
@@ -369,70 +357,53 @@ public class UserSocialProfileActivity extends AppCompatActivity implements
                         postList.add(post);
                     }
                 }
-                
+                Log.d(TAG, "fetchUserPosts: " + value.size() + " posts loaded. Total: " + postList.size());
                 tvPostCount.setText(String.valueOf(postList.size()));
                 adapter.setPosts(new ArrayList<>(postList));
-                applyTabState(tabLayout.getSelectedTabPosition());
-
-                if (value.size() < PAGE_SIZE) {
-                    isLastPage = true;
-                }
+                if (value.size() < PAGE_SIZE) isLastPage = true;
             } else {
+                Log.d(TAG, "fetchUserPosts: No more posts.");
                 isLastPage = true;
             }
             isFetching = false;
         }).addOnFailureListener(e -> {
             isFetching = false;
-            Log.e(TAG, "Error fetching user posts", e);
+            Log.e(TAG, "fetchUserPosts: Error.", e);
         });
     }
 
-    @Override
-    public void onLikeClick(ForumPost post) {
+    @Override public void onLikeClick(ForumPost post) {
+        Log.d(TAG, "Post Liked: " + post.getId());
         FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
         if (user == null) return;
-
         String userId = user.getUid();
         boolean currentlyLiked = post.getLikedBy() != null && post.getLikedBy().containsKey(userId);
-
         if (currentlyLiked) {
-            db.collection("forumThreads").document(post.getId())
-                    .update("likeCount", FieldValue.increment(-1),
-                            "likedBy." + userId, FieldValue.delete());
+            db.collection("forumThreads").document(post.getId()).update("likeCount", FieldValue.increment(-1), "likedBy." + userId, FieldValue.delete());
         } else {
-            db.collection("forumThreads").document(post.getId())
-                    .update("likeCount", FieldValue.increment(1),
-                            "likedBy." + userId, true);
+            db.collection("forumThreads").document(post.getId()).update("likeCount", FieldValue.increment(1), "likedBy." + userId, true);
         }
     }
 
-    @Override
-    public void onCommentClick(ForumPost post) {
-        onPostClick(post);
-    }
-
-    @Override
-    public void onPostClick(ForumPost post) {
+    @Override public void onCommentClick(ForumPost post) { onPostClick(post); }
+    @Override public void onPostClick(ForumPost post) {
+        Log.d(TAG, "Post clicked: " + post.getId());
         Intent intent = new Intent(this, PostDetailActivity.class);
         intent.putExtra(PostDetailActivity.EXTRA_POST_ID, post.getId());
         startActivity(intent);
     }
-
-    @Override
-    public void onOptionsClick(ForumPost post, View view) {}
-
-    @Override
-    public void onUserClick(String userId) {
+    @Override public void onOptionsClick(ForumPost post, View view) { Log.d(TAG, "Post options clicked."); }
+    @Override public void onUserClick(String userId) {
         if (!userId.equals(targetUserId)) {
+            Log.d(TAG, "User in list clicked: " + userId);
             Intent intent = new Intent(this, UserSocialProfileActivity.class);
             intent.putExtra(UserSocialProfileActivity.EXTRA_USER_ID, userId);
             startActivity(intent);
         }
     }
-
-    @Override
-    public void onMapClick(ForumPost post) {
+    @Override public void onMapClick(ForumPost post) {
         if (post.getLatitude() != null && post.getLongitude() != null) {
+            Log.d(TAG, "Map clicked for post: " + post.getId());
             Intent intent = new Intent(this, NearbyHeatmapActivity.class);
             intent.putExtra(NearbyHeatmapActivity.EXTRA_CENTER_LAT, post.getLatitude());
             intent.putExtra(NearbyHeatmapActivity.EXTRA_CENTER_LNG, post.getLongitude());
@@ -441,9 +412,9 @@ public class UserSocialProfileActivity extends AppCompatActivity implements
         }
     }
 
-    @Override
-    public void onFavoriteClicked(int position, @Nullable CollectionSlot slot) {
+    @Override public void onFavoriteClicked(int position, @Nullable CollectionSlot slot) {
         if (slot != null) {
+            Log.d(TAG, "Favorite card clicked: " + slot.getCommonName());
             Intent intent = new Intent(this, ViewBirdCardActivity.class);
             intent.putExtra(CollectionCardAdapter.EXTRA_IMAGE_URL, slot.getImageUrl());
             intent.putExtra(CollectionCardAdapter.EXTRA_COMMON_NAME, slot.getCommonName());
@@ -451,23 +422,15 @@ public class UserSocialProfileActivity extends AppCompatActivity implements
             intent.putExtra(CollectionCardAdapter.EXTRA_STATE, slot.getState());
             intent.putExtra(CollectionCardAdapter.EXTRA_LOCALITY, slot.getLocality());
             intent.putExtra(CollectionCardAdapter.EXTRA_BIRD_ID, slot.getBirdId());
-            if (slot.getTimestamp() != null) {
-                intent.putExtra(CollectionCardAdapter.EXTRA_CAUGHT_TIME, slot.getTimestamp().getTime());
-            }
+            if (slot.getTimestamp() != null) intent.putExtra(CollectionCardAdapter.EXTRA_CAUGHT_TIME, slot.getTimestamp().getTime());
             startActivity(intent);
         }
     }
 
-    @Override
-    public boolean onFavoriteLongPressed(int position, @Nullable CollectionSlot slot) {
-        return false;
-    }
+    @Override public boolean onFavoriteLongPressed(int position, @Nullable CollectionSlot slot) { return false; }
 
-    @Override
-    protected void onDestroy() {
+    @Override protected void onDestroy() {
         super.onDestroy();
-        if (userDetailsListener != null) {
-            userDetailsListener.remove();
-        }
+        if (userDetailsListener != null) userDetailsListener.remove();
     }
 }

@@ -101,15 +101,18 @@ public class FirebaseManager {
                                                 }
                                             });
 
-                                    // After Firebase Auth user is created (and Cloud Function has run),
-                                    // explicitly add/update the username in Firestore.
-                                    User newUser = new User(firebaseUser.getUid(), email, username, null, null); // Assuming null for createdAt and defaultLocationId
-                                    addUser(newUser, addDocTask -> {
-                                        if (addDocTask.isSuccessful()) {
-                                            listener.onSuccess(firebaseUser);
-                                        } else {
-                                            Log.e(TAG, "Failed to add username to Firestore: ", addDocTask.getException());
-                                            listener.onFailure("Account created, but failed to save username.");
+                                    // NEW: Use a Callable Cloud Function to initialize the user document.
+                                    // This bypasses client-side security rules and race conditions.
+                                    initializeUser(username, email, new OnCompleteListener<Boolean>() {
+                                        @Override
+                                        public void onComplete(Task<Boolean> task) {
+                                            if (task.isSuccessful() && task.getResult()) {
+                                                listener.onSuccess(firebaseUser);
+                                            } else {
+                                                String error = (task.getException() != null) ? task.getException().getMessage() : "Unknown error during initialization.";
+                                                Log.e(TAG, "Failed to initialize user via Cloud Function: " + error);
+                                                listener.onFailure("Account created, but failed to save username: " + error);
+                                            }
                                         }
                                     });
 
@@ -132,6 +135,28 @@ public class FirebaseManager {
                 listener.onFailure("Error checking username and email: " + errorMessage);
             }
         });
+    }
+
+    /**
+     * Calls the 'initializeUser' Cloud Function to set the initial user profile data.
+     * @param username The chosen username.
+     * @param email The user's email.
+     * @param listener Completion listener.
+     */
+    public void initializeUser(String username, String email, OnCompleteListener<Boolean> listener) {
+        Map<String, Object> data = new HashMap<>();
+        data.put("username", username);
+        data.put("email", email);
+
+        mFunctions.getHttpsCallable("initializeUser")
+                .call(data)
+                .addOnCompleteListener(task -> {
+                    if (task.isSuccessful()) {
+                        listener.onComplete(Tasks.forResult(true));
+                    } else {
+                        listener.onComplete(Tasks.forException(task.getException()));
+                    }
+                });
     }
 
     // Renamed and updated from checkUsernameAvailability
@@ -292,6 +317,16 @@ public class FirebaseManager {
                 listener.onFailure("Failed to retrieve current user profile: " + (task.getException() != null ? task.getException().getMessage() : "Unknown error"));
             }
         });
+    }
+
+    /**
+     * Calls the 'archiveAndDeleteUser' Cloud Function to securely archive user data.
+     * @param listener Completion listener.
+     */
+    public void archiveAndDeleteUser(OnCompleteListener<HttpsCallableResult> listener) {
+        mFunctions.getHttpsCallable("archiveAndDeleteUser")
+                .call()
+                .addOnCompleteListener(listener);
     }
 
     public void deleteUser(String userId, OnCompleteListener<Void> listener) {

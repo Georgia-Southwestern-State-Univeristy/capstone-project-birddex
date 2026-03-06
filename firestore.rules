@@ -5,21 +5,21 @@ service cloud.firestore {
     match /users/{userId} {
       allow read: if request.auth != null; // Allow all auth users to read profiles for the forum
 
+      // Allow the owner to create their own document if it doesn't exist yet.
+      // The cloud function (createUserDocument) also creates it, but this covers the case
+      // where the client writes first (race condition). At minimum, a username must be provided.
       allow create: if request.auth != null && request.auth.uid == userId &&
-                     request.resource.data.username is string && request.resource.data.username.size() > 0 &&
-                     request.resource.data.email is string && request.resource.data.email.size() > 0 &&
-                     request.resource.data.createdAt is timestamp;
+                     request.resource.data.username is string && request.resource.data.username.size() > 0;
 
-
-      // RESTORED: Owner can only update profile fields. Others can only update social counts.
-      allow update: if request.auth != null && (
-                      (request.auth.uid == userId &&
-                       request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-                         'username', 'profilePictureUrl','bio','followerCount','followingCount','fcmToken',
-                         'favoriteCardKeys'])) ||
-                      request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-                         'followerCount','followingCount'])
-                    );
+      // Owner can only update allowed fields. (Counts are managed by cloud functions.)
+      allow update: if request.auth != null && request.auth.uid == userId &&
+                     request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+                       'username',
+                       'profilePictureUrl',
+                       'bio',
+                       'fcmToken',
+                       'favoriteCardKeys'
+                     ]);
 
       // Private settings sub-collection (Only owner can access)
       match /settings/{settingId} {
@@ -148,6 +148,11 @@ service cloud.firestore {
     match /deletedforum_backlog/{docId} {
         allow create: if request.auth != null && request.resource.data.deletedBy == request.auth.uid;
         allow read, update, delete: if false; // Only accessible via Firebase Console/Admin SDK
+    }
+    match /usersdeletedAccounts/{uid} {
+      // Strictly prevent any client-side access.
+      // Only the Admin SDK (Cloud Functions) can read/write here.
+      allow read, write: if false;
     }
 
     // eBird cache is read-only for clients (written by Cloud Function).

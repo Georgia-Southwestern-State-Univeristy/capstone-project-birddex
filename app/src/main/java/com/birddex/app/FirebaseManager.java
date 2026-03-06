@@ -964,4 +964,17 @@ public class FirebaseManager {
                 .call()
                 .addOnCompleteListener(listener);
     }
+
+    /**
+     * Triggers the 'getGeorgiaBirds' Cloud Function to sync the master bird database for Georgia.
+     * This populates the 'birds' collection with species names, IDs, families, and last seen data.
+     *
+     * @param listener The listener to be notified upon completion or failure.
+     */
+    public void syncGeorgiaBirdList(OnCompleteListener<HttpsCallableResult> listener) {
+        Log.d(TAG, "Calling Cloud Function: getGeorgiaBirds");
+        mFunctions.getHttpsCallable("getGeorgiaBirds")
+                .call()
+                .addOnCompleteListener(listener);
+    }
 }

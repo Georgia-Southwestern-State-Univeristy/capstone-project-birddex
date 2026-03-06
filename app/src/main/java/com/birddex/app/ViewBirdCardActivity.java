@@ -36,7 +36,6 @@ public class ViewBirdCardActivity extends AppCompatActivity {
     private String currentBirdId;
     private String currentState;
     private String currentLocality;
-    private Date currentCaughtDate;
 
     private ActivityResultLauncher<Intent> changeCardImageLauncher;
 
@@ -99,9 +98,7 @@ public class ViewBirdCardActivity extends AppCompatActivity {
         currentState = getIntent().getStringExtra(CollectionCardAdapter.EXTRA_STATE);
         currentLocality = getIntent().getStringExtra(CollectionCardAdapter.EXTRA_LOCALITY);
         currentBirdId = getIntent().getStringExtra(CollectionCardAdapter.EXTRA_BIRD_ID);
-
         long caughtTime = getIntent().getLongExtra(CollectionCardAdapter.EXTRA_CAUGHT_TIME, -1L);
-        currentCaughtDate = caughtTime > 0 ? new Date(caughtTime) : null;
 
         if (commonName != null && !commonName.trim().isEmpty()) {
             txtBirdName.setText(commonName);
@@ -118,7 +115,7 @@ public class ViewBirdCardActivity extends AppCompatActivity {
         }
 
         txtLocation.setText(CardFormatUtils.formatLocation(currentState, currentLocality));
-        txtDateCaught.setText(CardFormatUtils.formatCaughtDate(currentCaughtDate));
+        txtDateCaught.setText(CardFormatUtils.formatCaughtDate(caughtTime > 0 ? new Date(caughtTime) : null));
         txtFooter.setVisibility(View.GONE);
 
         loadBirdImage(currentImageUrl);
@@ -150,10 +147,12 @@ public class ViewBirdCardActivity extends AppCompatActivity {
 
     private void loadBirdImage(String imageUrl) {
         if (isFinishing() || isDestroyed()) return;
-
+        
+        // Fixed: Use override() or ensuring fixed dimensions in layout to avoid WRAP_CONTENT warning
+        // We also add a crossFade transition for better UX
         Glide.with(this)
                 .load(imageUrl)
-                .override(800, 800)
+                .override(800, 800) // Safeguard against wrap_content and excessive memory use
                 .fitCenter()
                 .transition(DrawableTransitionOptions.withCrossFade())
                 .placeholder(R.drawable.bg_image_placeholder)
@@ -198,7 +197,6 @@ public class ViewBirdCardActivity extends AppCompatActivity {
                 .get()
                 .addOnSuccessListener(userBirdSnap -> {
                     if (isFinishing() || isDestroyed()) return;
-
                     if (!userBirdSnap.exists()) {
                         ResolvedSelection resolved = new ResolvedSelection(
                                 selectedChoice.imageUrl,
@@ -231,8 +229,6 @@ public class ViewBirdCardActivity extends AppCompatActivity {
                             .document(locationId)
                             .get()
                             .addOnSuccessListener(locationSnap -> {
-                                if (isFinishing() || isDestroyed()) return;
-
                                 String resolvedState = null;
                                 String resolvedLocality = null;
 
@@ -255,7 +251,6 @@ public class ViewBirdCardActivity extends AppCompatActivity {
                             })
                             .addOnFailureListener(e -> {
                                 if (isFinishing() || isDestroyed()) return;
-
                                 ResolvedSelection resolved = new ResolvedSelection(
                                         selectedChoice.imageUrl,
                                         timeSpotted != null ? timeSpotted : selectedChoice.timestamp,
@@ -268,7 +263,6 @@ public class ViewBirdCardActivity extends AppCompatActivity {
                 })
                 .addOnFailureListener(e -> {
                     if (isFinishing() || isDestroyed()) return;
-
                     ResolvedSelection resolved = new ResolvedSelection(
                             selectedChoice.imageUrl,
                             selectedChoice.timestamp,
@@ -290,7 +284,6 @@ public class ViewBirdCardActivity extends AppCompatActivity {
                 .get()
                 .addOnSuccessListener(queryDocumentSnapshots -> {
                     if (isFinishing() || isDestroyed()) return;
-
                     if (queryDocumentSnapshots.isEmpty()) {
                         Toast.makeText(this, "No collection card found for this bird.", Toast.LENGTH_SHORT).show();
                         return;
@@ -309,35 +302,19 @@ public class ViewBirdCardActivity extends AppCompatActivity {
                         batch.update(doc.getReference(), "userBirdId", resolved.userBirdRefId);
                     }
 
-                    if (!isBlank(resolved.state)) {
-                        batch.update(doc.getReference(), "state", resolved.state);
-                    }
-
-                    if (!isBlank(resolved.locality)) {
-                        batch.update(doc.getReference(), "locality", resolved.locality);
-                    }
+                    batch.update(doc.getReference(), "state", resolved.state);
+                    batch.update(doc.getReference(), "locality", resolved.locality);
 
                     batch.commit()
                             .addOnSuccessListener(unused -> {
                                 if (isFinishing() || isDestroyed()) return;
-
                                 currentImageUrl = resolved.imageUrl;
-
-                                if (resolved.timestamp != null) {
-                                    currentCaughtDate = resolved.timestamp;
-                                }
-
-                                if (!isBlank(resolved.state)) {
-                                    currentState = resolved.state;
-                                }
-
-                                if (!isBlank(resolved.locality)) {
-                                    currentLocality = resolved.locality;
-                                }
+                                currentState = resolved.state;
+                                currentLocality = resolved.locality;
 
                                 loadBirdImage(currentImageUrl);
                                 txtLocation.setText(CardFormatUtils.formatLocation(currentState, currentLocality));
-                                txtDateCaught.setText(CardFormatUtils.formatCaughtDate(currentCaughtDate));
+                                txtDateCaught.setText(CardFormatUtils.formatCaughtDate(resolved.timestamp));
 
                                 Toast.makeText(this, "Card image updated.", Toast.LENGTH_SHORT).show();
                             })

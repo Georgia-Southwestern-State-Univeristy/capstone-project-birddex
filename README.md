@@ -51,10 +51,10 @@ Bird identification results are cross-referenced with the **eBird database** to 
 ### Bird Collection
 Users can store identified birds in their personal **BirdDex collection**, including:
 
-- Bird image
-- Species information
-- Capture location
-- Capture timestamp
+- Bird image  
+- Species information  
+- Capture location  
+- Capture timestamp  
 
 ### Bird Facts
 Bird facts are generated and cached to reduce repeated AI requests and improve system performance.
@@ -65,11 +65,11 @@ Bird sightings are stored with geographic metadata and displayed on a map-based 
 ### Community Forum
 Users can share bird sightings and interact with the community using a forum system that supports:
 
-- Threads
-- Replies
-- Pagination
-- Content filtering
-- Reporting
+- Threads  
+- Replies  
+- Pagination  
+- Content filtering  
+- Reporting  
 
 ---
 
@@ -100,10 +100,10 @@ BirdDex uses **Firebase** as its backend platform.
 
 Services used:
 
-- **Firebase Authentication** – user login and account management
-- **Cloud Firestore** – structured cloud database
-- **Firebase Storage** – image storage
-- **Firebase Cloud Functions** – API processing and backend logic
+- **Firebase Authentication** – user login and account management  
+- **Cloud Firestore** – structured cloud database  
+- **Firebase Storage** – image storage  
+- **Firebase Cloud Functions** – API processing and backend logic  
 
 Firebase manages authentication, stores bird metadata, and securely stores user-uploaded images.
 
@@ -140,39 +140,37 @@ The BirdDex system consists of a mobile client connected to cloud services and e
 
 Handles:
 
-- User authentication
-- Camera capture
-- Image preprocessing
-- API communication
-- UI rendering
-- Collection management
-- Forum interaction
-- Map-based sightings display
+- user authentication  
+- camera capture  
+- image preprocessing  
+- API communication  
+- UI rendering  
+- collection management  
+- forum interaction  
+- map-based sightings display  
 
 ### Cloud Infrastructure
 
 Firebase services manage:
 
-- User accounts
-- Bird data storage
-- Image storage
-- Bird fact caching
-- Forum data
-- Location-based sightings
+- user accounts  
+- bird data storage  
+- image storage  
+- bird fact caching  
+- forum data  
+- location-based sightings  
 
 ### External APIs
 
 External APIs provide:
 
-- Bird species identification
-- Bird metadata verification
-- Reference bird images
+- bird species identification  
+- bird metadata verification  
+- reference bird images  
 
 ---
 
 ### System Flow
-
-
 User Captures Bird Image
 ↓
 Image Processed in App
@@ -187,7 +185,6 @@ Bird Added to User Collection
 ↓
 Bird Sightings Stored for Near Me Feature
 
-
 ---
 
 ## Setup Instructions
@@ -196,74 +193,61 @@ Bird Sightings Stored for Near Me Feature
 
 ```bash
 git clone https://github.com/Georgia-Southwestern-State-University/capstone-project-birddex.git
-### 2. Open Project
+2. Open Project
 
 Open the project in Android Studio.
 
-### 3. Configure Firebase
+3. Configure Firebase
 
 Download the google-services.json file from Firebase and place it inside:
 
 app/
-### 4. Sync Gradle
+4. Sync Gradle
 
 Allow Android Studio to run Gradle Sync.
 
-### 5. Run Application
+5. Run Application
 
 Connect an Android device or emulator and run the application from Android Studio.
 
-# User Guide
+User Guide
 Create Account
 
-Launch the application
-
-Register using an email and password
-
-Sign in to access the main interface
+-Launch the application
+-Register using an email and password
+-Sign in to access the main interface
 
 Capture a Bird
 
-Tap Camera
-
-Take a photo of a bird
-
-Wait for the AI identification process
+-Tap Camera
+-Take a photo of a bird
+-Wait for the AI identification process
 
 Save Bird
 
-Review the identification result
-
-Confirm the species
-
-Save the bird to your collection
+-Review the identification result
+-Confirm the species
+-Save the bird to your collection
 
 View Collection
-
-Navigate to BirdDex Collection to view all captured birds.
+-Navigate to BirdDex Collection to view all captured birds.
 
 View Nearby Sightings
-
-Open the Near Me screen to view nearby bird sightings displayed on the map.
+-Open the Near Me screen to view nearby bird sightings displayed on the map.
 
 Use Forum
-
 Access the Forum to:
 
-Share sightings
-
-Reply to posts
-
-Discuss bird observations with other users
+-share sightings
+-reply to posts
+-discuss bird observations with other users
 
 License
-
 This project is developed for educational purposes as part of a university Computer Science Capstone project.
 
 Extras
-==================================================================
 Project Structure (UNDER MAINTENANCE)
-==================================================================
+
 capstone-project-birddex/
 
 app/

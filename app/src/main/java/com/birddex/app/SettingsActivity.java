@@ -2,14 +2,11 @@ package com.birddex.app;
 
 import android.annotation.SuppressLint;
 import android.app.AlertDialog;
-import android.content.Context;
-import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.os.Bundle;
 import android.text.InputType;
 import android.util.Log;
-import android.view.View;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.LinearLayout;
@@ -18,8 +15,6 @@ import android.widget.Toast;
 
 import androidx.appcompat.app.AppCompatActivity;
 
-import com.google.android.gms.tasks.OnCompleteListener;
-import com.google.android.gms.tasks.Task;
 import com.google.android.material.materialswitch.MaterialSwitch;
 import com.google.firebase.auth.AuthCredential;
 import com.google.firebase.auth.EmailAuthProvider;
@@ -30,7 +25,7 @@ import com.google.firebase.auth.FirebaseUser;
 public class SettingsActivity extends AppCompatActivity {
 
     private TextView tvUserEmail, tvUserName;
-    private Button btnLogout, btnUpdateEmail, btnChangePassword, btnNotifications;
+    private Button btnLogout, btnUpdateEmail, btnChangePassword, btnNotifications, btnDeleteAccount;
     private MaterialSwitch switchGraphicContent;
 
     private FirebaseManager firebaseManager;
@@ -100,6 +95,8 @@ public class SettingsActivity extends AppCompatActivity {
 
         btnDeleteAccount.setOnClickListener(v -> {
             showDeleteAccountConfirmation();
+        });
+
         switchGraphicContent.setOnCheckedChangeListener((buttonView, isChecked) -> {
             sharedPreferences.edit().putBoolean(KEY_GRAPHIC_CONTENT, isChecked).apply();
         });
@@ -334,7 +331,7 @@ public class SettingsActivity extends AppCompatActivity {
                         Toast.makeText(SettingsActivity.this, "Re-authentication failed. Incorrect password.", Toast.LENGTH_SHORT).show();
                     }
                 });
-    } // <--- THIS is the brace the recommendation was talking about. It closes reauthenticateAndDeleteAccount.
+    }
 
     private void processAccountDeletion(FirebaseUser user) {
         // Show a loading dialog so the user knows the process is happening on the server
@@ -364,5 +361,4 @@ public class SettingsActivity extends AppCompatActivity {
             }
         });
     }
-} // <--- This closes the SettingsActivity class
-
+}

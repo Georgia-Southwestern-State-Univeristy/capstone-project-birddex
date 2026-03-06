@@ -17,7 +17,7 @@
     <androidx.core.widget.NestedScrollView
         android:layout_width="match_parent"
         android:layout_height="0dp"
-        app:layout_constraintBottom_toTopOf="@id/commentInputLayout"
+        app:layout_constraintBottom_toTopOf="@id/commentInputContainer"
         app:layout_constraintTop_toBottomOf="@id/toolbar">
 
         <LinearLayout
@@ -37,6 +37,7 @@
                 android:background="?attr/colorOutlineVariant" />
 
             <TextView
+                android:id="@+id/tvCommentLabel"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:padding="16dp"
@@ -54,14 +55,14 @@
         </LinearLayout>
     </androidx.core.widget.NestedScrollView>
 
-    <!-- Comment Input -->
+    <!-- Comment Input Container -->
     <LinearLayout
-        android:id="@+id/commentInputLayout"
+        android:id="@+id/commentInputContainer"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="horizontal"
         android:padding="8dp"
-        android:gravity="center_vertical"
+        android:gravity="bottom"
         android:background="?attr/colorSurface"
         android:elevation="8dp"
         app:layout_constraintBottom_toBottomOf="parent">
@@ -70,15 +71,19 @@
             android:id="@+id/ivCurrentUserPfp"
             android:layout_width="32dp"
             android:layout_height="32dp"
+            android:layout_marginBottom="12dp"
             android:src="@drawable/ic_profile"
             app:shapeAppearanceOverlay="@style/ShapeAppearanceOverlay.App.CornerSize50Percent" />
 
         <com.google.android.material.textfield.TextInputLayout
+            android:id="@+id/commentInputLayout"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
             android:layout_marginStart="8dp"
             app:hintEnabled="false"
+            app:counterEnabled="true"
+            app:counterMaxLength="300"
             style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox.Dense">
 
             <com.google.android.material.textfield.TextInputEditText
@@ -88,6 +93,7 @@
                 android:hint="Write a comment..."
                 android:textSize="14sp"
                 android:padding="10dp"
+                android:maxLength="300"
                 android:background="@android:color/transparent" />
         </com.google.android.material.textfield.TextInputLayout>
 
@@ -95,6 +101,7 @@
             android:id="@+id/btnSendComment"
             android:layout_width="40dp"
             android:layout_height="40dp"
+            android:layout_marginBottom="8dp"
             android:background="?attr/selectableItemBackgroundBorderless"
             android:src="@drawable/ic_chat"
             app:tint="?attr/colorPrimary" />

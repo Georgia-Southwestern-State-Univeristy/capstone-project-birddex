@@ -48,6 +48,7 @@ public class EditProfileActivity extends AppCompatActivity implements NetworkMon
 
     private static final String TAG = "EditProfileActivity";
     private static final int REQUEST_READ_EXTERNAL_STORAGE = 100;
+    private static final int MAX_BIO_LENGTH = 90;
 
     private TextInputEditText etUsername;
     private TextInputEditText etBio;
@@ -166,15 +167,33 @@ public class EditProfileActivity extends AppCompatActivity implements NetworkMon
             }
 
             String newUsername = etUsername.getText().toString().trim();
-            String newBio = etBio.getText().toString();
+            // Aggressively trim and collapse newlines/spaces
+            String rawBio = etBio.getText().toString().trim();
+            String cleanedBio = rawBio.replaceAll("\n{2,}", "\n").replaceAll(" +", " ");
 
             if (newUsername.isEmpty()) {
                 etUsername.setError("Username cannot be empty");
                 return;
             }
 
+            // Check line count: max 3 lines (which means max 2 newline characters)
+            int newlineCount = 0;
+            for (int i = 0; i < cleanedBio.length(); i++) {
+                if (cleanedBio.charAt(i) == '\n') newlineCount++;
+            }
+
+            if (newlineCount >= 3) {
+                Toast.makeText(this, "Bio cannot be longer than 3 lines down.", Toast.LENGTH_SHORT).show();
+                return;
+            }
+
+            if (cleanedBio.length() > MAX_BIO_LENGTH) {
+                Toast.makeText(this, "Bio exceeds maximum length of " + MAX_BIO_LENGTH + " characters.", Toast.LENGTH_SHORT).show();
+                return;
+            }
+
             if (!ContentFilter.isSafe(this, newUsername, "Username")) return;
-            if (!ContentFilter.isSafe(this, newBio, "Bio")) return;
+            if (!ContentFilter.isSafe(this, cleanedBio, "Bio")) return;
 
             // Check if a new image was cropped OR if the old URL is different from current imageUri
             boolean pfpChanged = (imageUri != null) || (uploadedProfilePictureDownloadUrl != null && !uploadedProfilePictureDownloadUrl.equals(initialProfilePictureUrl));
@@ -208,7 +227,7 @@ public class EditProfileActivity extends AppCompatActivity implements NetworkMon
                                 if (isFinishing() || isDestroyed()) return;
                                 if (isAppropriate) {
                                     Log.d(TAG, "PFP appropriate, proceeding with uploadImageToFirebase.");
-                                    uploadImageToFirebase(imageUri, newUsername, newBio); // Proceed with upload
+                                    uploadImageToFirebase(imageUri, newUsername, cleanedBio); // Proceed with upload
                                 } else {
                                     loadingOverlay.setVisibility(View.GONE);
                                     Toast.makeText(EditProfileActivity.this, "PFP rejected: " + moderationReason, Toast.LENGTH_LONG).show();
@@ -252,7 +271,7 @@ public class EditProfileActivity extends AppCompatActivity implements NetworkMon
                 Log.d(TAG, "PFP not changed. Showing loading overlay and saving profile text changes.");
                 loadingOverlay.setVisibility(View.VISIBLE);
                 // If no new image, and username/bio changed, save those
-                saveProfileChanges(newUsername, newBio, initialProfilePictureUrl); // Pass current PFP URL
+                saveProfileChanges(newUsername, cleanedBio, initialProfilePictureUrl); // Pass current PFP URL
             }
         });
 
@@ -364,10 +383,10 @@ public class EditProfileActivity extends AppCompatActivity implements NetworkMon
     }
 
 
-    private void uploadImageToFirebase(Uri newImageUri, String newUsername, String newBio) {
+    private void uploadImageToFirebase(Uri newImageUri, String newUsername, String cleanedBio) {
         FirebaseUser user = mAuth.getCurrentUser();
         if (user == null || newImageUri == null) {
-            saveProfileChanges(newUsername, newBio, initialProfilePictureUrl);
+            saveProfileChanges(newUsername, cleanedBio, initialProfilePictureUrl);
             return;
         }
 
@@ -387,7 +406,7 @@ public class EditProfileActivity extends AppCompatActivity implements NetworkMon
 
                 newProfileImageRef.getDownloadUrl().addOnSuccessListener(uri -> {
                     if (isFinishing() || isDestroyed()) return;
-                    saveProfileChanges(newUsername, newBio, uri.toString());
+                    saveProfileChanges(newUsername, cleanedBio, uri.toString());
                 }).addOnFailureListener(e -> {
                     loadingOverlay.setVisibility(View.GONE);
                     Toast.makeText(this, "Failed to get URL", Toast.LENGTH_SHORT).show();
@@ -411,12 +430,12 @@ public class EditProfileActivity extends AppCompatActivity implements NetworkMon
         } catch (IOException e) { return null; }
     }
 
-    private void saveProfileChanges(String newUsername, String newBio, String finalProfilePictureUrl) {
-        boolean hasChanges = !newUsername.equals(initialUsername) || !newBio.equals(initialBio) || (finalProfilePictureUrl != null && !finalProfilePictureUrl.equals(initialProfilePictureUrl));
+    private void saveProfileChanges(String newUsername, String cleanedBio, String finalProfilePictureUrl) {
+        boolean hasChanges = !newUsername.equals(initialUsername) || !cleanedBio.equals(initialBio) || (finalProfilePictureUrl != null && !finalProfilePictureUrl.equals(initialProfilePictureUrl));
 
         if (hasChanges) {
             User userToUpdate = new User(mAuth.getCurrentUser().getUid(), null, newUsername, null, null);
-            userToUpdate.setBio(newBio);
+            userToUpdate.setBio(cleanedBio);
             userToUpdate.setProfilePictureUrl(finalProfilePictureUrl);
 
             firebaseManager.updateUserProfile(userToUpdate, new FirebaseManager.AuthListener() {
@@ -424,7 +443,7 @@ public class EditProfileActivity extends AppCompatActivity implements NetworkMon
                 public void onSuccess(com.google.firebase.auth.FirebaseUser user) {
                     if (isFinishing() || isDestroyed()) return;
                     loadingOverlay.setVisibility(View.GONE);
-                    setResult(RESULT_OK, new Intent().putExtra("newUsername", newUsername).putExtra("newBio", newBio).putExtra("newProfilePictureUrl", finalProfilePictureUrl));
+                    setResult(RESULT_OK, new Intent().putExtra("newUsername", newUsername).putExtra("newBio", cleanedBio).putExtra("newProfilePictureUrl", finalProfilePictureUrl));
                     finish();
                 }
 

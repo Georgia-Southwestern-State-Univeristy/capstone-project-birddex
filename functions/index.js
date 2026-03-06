@@ -1472,22 +1472,22 @@ exports.onCommentLiked = onDocumentUpdated("forumThreads/{threadId}/comments/{co
 
 // ======================================================
 // onUserProfileUpdated — sync PFP + username to forum content
-// FIXED: Added explicit timeoutSeconds for users with many posts
+// FIXED: Added error handling and split collection tasks to prevent total failure
 // ======================================================
 exports.onUserProfileUpdated = onDocumentUpdated({
     document: "users/{userId}",
-    timeoutSeconds: 540  // FIXED: explicit timeout for users with 1000s of posts
+    timeoutSeconds: 540
 }, async (event) => {
     const newData = event.data.after.data();
     const oldData = event.data.before.data();
     const userId = event.params.userId;
 
-    const newPfp = newData.profilePictureUrl;
-    const oldPfp = oldData.profilePictureUrl;
-    const newUsername = newData.username;
-    const oldUsername = oldData.username;
+    const newPfp = newData.profilePictureUrl || "";
+    const oldPfp = oldData.profilePictureUrl || "";
+    const newUsername = newData.username || "";
+    const oldUsername = oldData.username || "";
 
-    // Delete old PFP from storage
+    // Delete old PFP from storage if changed
     if (oldPfp && oldPfp !== newPfp && oldPfp.includes("firebasestorage.googleapis.com")) {
         try {
             const decodedUrl = decodeURIComponent(oldPfp);
@@ -1496,8 +1496,9 @@ exports.onUserProfileUpdated = onDocumentUpdated({
             const file = bucket.file(filePath);
             const [exists] = await file.exists();
             if (exists) await file.delete();
+            logger.info(`Deleted old storage PFP for user ${userId}`);
         } catch (error) {
-            logger.error("Error deleting old PFP from storage:", error);
+            logger.error(`Error deleting old PFP for user ${userId}:`, error);
         }
     }
 
@@ -1505,38 +1506,61 @@ exports.onUserProfileUpdated = onDocumentUpdated({
     if (newPfp !== oldPfp) updates.userProfilePictureUrl = newPfp;
     if (newUsername !== oldUsername) updates.username = newUsername;
 
-    if (Object.keys(updates).length === 0) return null;
-
-    try {
-        const BATCH_SIZE = 450;
-
-        const processBatch = async (querySnapshot) => {
-            if (querySnapshot.empty) return 0;
-            const docs = querySnapshot.docs;
-            let count = 0;
-            for (let i = 0; i < docs.length; i += BATCH_SIZE) {
-                const batch = db.batch();
-                docs.slice(i, i + BATCH_SIZE).forEach(doc => batch.update(doc.ref, updates));
-                await batch.commit();
-                count += Math.min(BATCH_SIZE, docs.length - i);
-            }
-            return count;
-        };
-
-        const [postsSnap, commentsSnap] = await Promise.all([
-            db.collection("forumThreads").where("userId", "==", userId).get(),
-            db.collectionGroup("comments").where("userId", "==", userId).get()
-        ]);
-
-        const [postsUpdated, commentsUpdated] = await Promise.all([
-            processBatch(postsSnap),
-            processBatch(commentsSnap)
-        ]);
-
-        logger.info(`Synced profile updates to ${postsUpdated} posts and ${commentsUpdated} comments for user ${userId}`);
-    } catch (error) {
-        logger.error("Error syncing profile updates to forum content:", error);
+    if (Object.keys(updates).length === 0) {
+        logger.info(`No visual profile changes detected for user ${userId}.`);
+        return null;
     }
+
+    const BATCH_SIZE = 450;
+    const processBatch = async (querySnapshot, batchUpdates) => {
+        if (querySnapshot.empty) return 0;
+        const docs = querySnapshot.docs;
+        let count = 0;
+        for (let i = 0; i < docs.length; i += BATCH_SIZE) {
+            const batch = db.batch();
+            docs.slice(i, i + BATCH_SIZE).forEach(doc => batch.update(doc.ref, batchUpdates));
+            await batch.commit();
+            count += Math.min(BATCH_SIZE, docs.length - i);
+        }
+        return count;
+    };
+
+    // 1. Update forumThreads (always works)
+    try {
+        const postsSnap = await db.collection("forumThreads").where("userId", "==", userId).get();
+        const postsCount = await processBatch(postsSnap, updates);
+        logger.info(`Updated ${postsCount} forum posts for user ${userId}`);
+    } catch (e) { logger.error("Failed to update forum posts:", e); }
+
+    // 2. Update userBirdSightings (always works)
+    if (newUsername !== oldUsername) {
+        try {
+            const sightingsSnap = await db.collection("userBirdSightings").where("userId", "==", userId).get();
+            const sightingsCount = await processBatch(sightingsSnap, { username: newUsername });
+            logger.info(`Updated ${sightingsCount} sightings for user ${userId}`);
+        } catch (e) { logger.error("Failed to update sightings:", e); }
+    }
+
+    // 3. Update comments (requires collectionGroup index)
+    try {
+        const commentsSnap = await db.collectionGroup("comments").where("userId", "==", userId).get();
+        const commentsCount = await processBatch(commentsSnap, updates);
+        logger.info(`Updated ${commentsCount} comments for user ${userId}`);
+    } catch (e) {
+        logger.warn("Could not update comments - likely missing collectionGroup index:", e.message);
+    }
+
+    // 4. Update parentUsername (requires collectionGroup index)
+    if (newUsername !== oldUsername) {
+        try {
+            const repliesSnap = await db.collectionGroup("comments").where("parentUsername", "==", oldUsername).get();
+            const repliesCount = await processBatch(repliesSnap, { parentUsername: newUsername });
+            logger.info(`Updated ${repliesCount} reply references for user ${userId}`);
+        } catch (e) {
+            logger.warn("Could not update reply references - likely missing collectionGroup index:", e.message);
+        }
+    }
+
     return null;
 });
 

@@ -1,156 +1,186 @@
-# capstone-project-birddex
-BirdDex 🐦
+Capstone-Project-BirdDex
+BirdDex 
 Computer Science Capstone Project
 
-📖 Project Overview
-BirdDex is a mobile Android application designed to help users capture, identify, and catalog bird species using their own photos.
-The application integrates camera functionality, AI-assisted identification, and cloud-based storage to create an interactive digital “BirdDex” collection.
-This repository documents the completion of Sprint 1 (MVP Foundations) and the transition into Sprint 2, which focuses on refining current functionality and expanding features.
+Project Overview
+BirdDex is an Android mobile application that allows users to capture, identify, and catalog bird species using their own photos. The application combines camera functionality, AI-assisted image recognition, and cloud-based storage to create a digital bird collection.
+BirdDex enables users to photograph birds in the wild, receive AI-generated species identification, verify results using external bird databases, and store discoveries in a personal collection. The application also provides location-aware sightings and community discussion through integrated forum features.
+The system serves as a data modeling and scalable wildlife observation platform, demonstrating the integration of mobile development, cloud infrastructure, and external APIs.
 
-🚧 Project Status
+Project Status
 In Development
-✔ Sprint 1 Complete – Core Functionality Implemented
-🚀 Sprint 2 In Progress – Polishing & Feature Expansion
+✔ Sprint 1 Complete – Core system foundations implemented
+✔ Sprint 2 Complete – Feature expansion and system stability improvements
+Current Development Focus
+Upcoming development work includes:
+Nuthatch API integration
+improved bird identification fallback system
+bird selection interface for uncertain matches
+card rarity upgrade system
+in-app store mechanics
+additional system performance optimizations
 
-This README reflects the current state of the project. Features listed as planned are scheduled for future sprints.
-🎯 Sprint 1 Goal
+Core System Features
+Bird Capture
+Users capture bird images using the built-in device camera through the CameraX API.
+AI Identification
+Captured images are processed through an AI pipeline that analyzes the bird and returns species identification data.
+Data Verification
+Bird identification results are cross-referenced with the eBird database to validate species information.
+Bird Collection
+Users can store identified birds in their personal BirdDex collection, including:
+bird image
+species information
+capture location
+capture timestamp
+Bird Facts
+Bird facts are generated and cached to reduce repeated AI requests and improve system performance.
+Near Me Feature
+Bird sightings are stored with geographic metadata and displayed on a map-based interface that allows users to view nearby bird activity.
+Community Forum
+Users can share bird sightings and interact with the community using a forum system that supports:
+threads
+replies
+pagination
+content filtering
+reporting
+Technology Stack
+Platform
+Android
+Language
+Java
+Build System
+Gradle (Kotlin DSL)
+IDE
+Android Studio
+Version Control
+Git + GitHub
+Backend Infrastructure
+Firebase Services
+BirdDex uses Firebase as its backend platform.
+Services used:
+Firebase Authentication – user login and account management
+Cloud Firestore – structured cloud database
+Firebase Storage – image storage
+Firebase Cloud Functions – API processing and backend logic
+Firebase manages authentication, stores bird metadata, and securely stores user-uploaded images.
+Provider: Google Firebase
+https://firebase.google.com
 
-The primary goal of Sprint 1 was to establish a stable project foundation that future development can build upon.
-Sprint 1 focused on:
-Project setup and configuration
-Repository and version control structure
-Android project scaffolding
-Initial integration of camera, AI services, and cloud database(s)
 
-✅ Completed in Sprint 1
+Third-Party APIs
+OpenAI API
+Used for AI-assisted bird identification from captured images.
+eBird API
+Bird observation database provided by the Cornell Lab of Ornithology used for species verification and bird metadata.
+Provider: Cornell Lab of Ornithology
+https://ebird.org
+API Terms: https://ebird.org/api/terms-of-use
 
-Android Studio project successfully created
-Gradle build system configured
-GitHub Classroom repository initialized
-.gitignore configured to prevent committing local/build artifacts
-Core Android project structure established
-Team coordination and sprint planning completed
-Firebase Authentication integration
-Firebase Firestore and Cloud Storage integration
-CameraX API integration
-AI / Image Recognition API integration
-Functional collection view for stored birds
+All eBird data used in this application is subject to the eBird API Terms of Use and the eBird Data Access Terms. Data is used for educational and research purposes only. © Cornell Lab of Ornithology. Attribution is provided where applicable.
 
 
-🛠 Technology Stack
+System Architecture (Current Implementation)
+The BirdDex system consists of a mobile client connected to cloud services and external data APIs.
+Mobile Application (Android)
+Handles:
+user authentication
+camera capture
+image preprocessing
+API communication
+UI rendering
+collection management
+forum interaction
+map-based sightings display
+Cloud Infrastructure
+Firebase services manage:
+user accounts
+bird data storage
+image storage
+bird fact caching
+forum data
+location-based sightings
+External APIs
+External APIs provide:
+bird species identification
+bird metadata verification
+reference bird images
+System Flow:
+User Captures Bird Image
+       ↓
+Image Processed in App
+       ↓
+AI Identification Request
+       ↓
+Verification via eBird Database
+       ↓
+Results Stored in Firestore
+       ↓
+Bird Added to User Collection
+       ↓
+Bird Sightings Stored for Near Me Feature
 
-Platform: Android
-Language: Java
-Build System: Gradle (Kotlin DSL)
-IDE: Android Studio
-Version Control: Git & GitHub (GitHub Classroom)
-API’s: Open AI API, Ebird API, Firebase Firestore
-Planned for Future Sprints
-Regional Board functionality
-Redesigned index with placeholder cards and filtering
-Hunters’ section
-Additional features and refinements
 
-**Third-Party Services**
+Setup Instructions
+1. Clone Repository
+git clone https://github.com/Georgia-Southwestern-State-University/capstone-project-birddex.git
 
-Firebase (Google)
-Firebase is used as the backend service for authentication, data storage, and media storage.
-Service Provider: Google Firebase
-Website: https://firebase.google.com
-Services Used:
-Firebase Authentication
-Cloud Firestore
-Firebase Cloud Storage
-Usage: Non-commercial, educational use as part of a university capstone project
+2. Open Project
+Open the project in Android Studio.
 
-Firebase manages user accounts, stores bird metadata, and securely stores user-uploaded images. All usage complies with Google Firebase Terms of Service.
-Shape
-====================================================================================================
-**Third-Party APIs & Data**
+3. Configure Firebase
+Download the google-services.json file from Firebase and place it inside:
+app/
 
-eBird API (Cornell Lab of Ornithology)
-This project uses bird observation data accessed through the eBird API, provided by the Cornell Lab of Ornithology.
-API Provider: Cornell Lab of Ornithology (eBird)
-Website: https://ebird.org
-API Terms of Use: https://ebird.org/api/terms-of-use
-Usage: Non-commercial, educational use as part of a university capstone project
+4. Sync Gradle
+Allow Android Studio to run Gradle sync.
 
-All eBird data used in this application is subject to the eBird API Terms of Use and the eBird Data Access Terms. Data is used for educational and research purposes only.
-© Cornell Lab of Ornithology. Attribution is provided where applicable.
-====================================================================================================
+5. Run Application
+Connect an Android device or emulator and run the application from Android Studio.
 
 User Guide
-
-Clone BirdDex Repo
-Locate and Install BirdDex
-Sign up with your email and create your user account
-From the home screen, tap Camera and take a picture of a bird
-Open the collection and view the saved bird images
-
- 
-========================================================================
-
+Create Account
+Launch the application.
+Register using an email and password.
+Sign in to access the main interface.
+Capture a Bird
+Tap Camera.
+Take a photo of a bird.
+Wait for the AI identification process.
+Save Bird
+Review the identification result.
+Confirm the species.
+Save the bird to your collection.
+View Collection
+Navigate to BirdDex Collection to view all captured birds.
+View Nearby Sightings
+Open the Near Me screen to view nearby bird sightings displayed on the map.
+Use Forum
+Access the Forum to:
+share sightings
+reply to posts
+discuss bird observations with other users.
+License
+This project is developed for educational purposes as part of a university Computer Science Capstone project.
+==================================================================
 Extras
- 
-========================================================================
-
-
+==================================================================
 📂Project Structure (UNDER MAINTENANCE)
-
 capstone-project-birddex/
 
-├── app/                                # Main Android application module
-│   ├── build/                          # Compiled outputs (auto-generated)
-│   ├── src/
-│   │   ├── androidTest/                # Instrumented UI tests
-│   │   ├── test/                       # Local unit tests
-│   │   └── main/
-│   │       ├── java/
-│   │       │   └── com/example/birddex/
-│   │       │       ├── MainActivity.java
-│   │       │       ├── LoginActivity.java
-│   │       │       ├── SignUpActivity.java
-│   │       │       ├── HomeActivity.java
-│   │       │       ├── CameraFragment.java
-│   │       │       ├── IdentifyingActivity.java
-│   │       │       ├── ImageResultActivity.java
-│   │       │       ├── BirdInfoActivity.java
-│   │       │       ├── BirdLookupActivity.java
-│   │       │       ├── ImageUploadActivity.java
-│   │       │       ├── FirebaseManager.java
-│   │       │       ├── OpenAiApi.java
-│   │       │       ├── NuthatchApi.java
-│   │       │       ├── ProfileFragment.java
-│   │       │       ├── NearbyFragment.java
-│   │       │       ├── ForumFragment.java
-│   │       │       ├── SearchCollectionFragment.java
-│   │       │       ├── FavoritesAdapter.java
-│   │       │       ├── SimpleGridAdapter.java
-│   │       │       └── SettingsApi.java
-│   │       │
-│   │       ├── res/                    # UI and resource files
-│   │       │   ├── layout/             # Activity & Fragment layouts
-│   │       │   ├── drawable/            # Images and vector assets
-│   │       │   ├── menu/                # App menus
-│   │       │   ├── values/              # Colors, styles, strings
-│   │       │   ├── values-night/        # Dark mode resources
-│   │       │   └── xml/                 # Configuration XML files
-│   │       │
-│   │       └── AndroidManifest.xml      # App configuration & permissions
-│   │
-│   ├── build.gradle.kts                 # App-level Gradle configuration
-│   ├── google-services.json             # Firebase configuration
-│   └── proguard-rules.pro               # ProGuard/R8 rules
+app/
+├── src/main/java/com/example/birddex
+│   ├── Activities
+│   ├── Fragments
+│   ├── API services
+│   ├── Firebase manager
+│   └── UI adapters
 │
-├── gradle/                              # Gradle wrapper support files
-├── .gitignore                           # Git ignore rules
-├── README.md                            # Project documentation
-├── build.gradle.kts                     # Project-level Gradle configuration
-├── settings.gradle.kts                  # Module declarations
-├── gradle.properties                    # Gradle settings
-├── gradlew                              # Gradle wrapper (macOS/Linux)
-├── gradlew.bat                          # Gradle wrapper (Windows)
-├── local.properties                     # Local SDK paths (auto-generated)
-├── .gradle/                             # Local Gradle cache (auto-generated)
-├── .idea/                               # Android Studio settings (auto-generated)
-└── build/                               # Root build outputs (auto-generated)
+├── res/
+│   ├── layout
+│   ├── drawable
+│   ├── values
+│   └── menu
+│
+└── AndroidManifest.xml
+

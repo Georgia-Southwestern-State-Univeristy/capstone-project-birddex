@@ -192,28 +192,28 @@ Bird Sightings Stored for Near Me Feature
 
 ## Setup Instructions
 
-### 1. Clone Repository
+# 1. Clone Repository
 
 ```bash
 git clone https://github.com/Georgia-Southwestern-State-University/capstone-project-birddex.git
-2. Open Project
+# 2. Open Project
 
 Open the project in Android Studio.
 
-3. Configure Firebase
+# 3. Configure Firebase
 
 Download the google-services.json file from Firebase and place it inside:
 
 app/
-4. Sync Gradle
+# 4. Sync Gradle
 
 Allow Android Studio to run Gradle Sync.
 
-5. Run Application
+# 5. Run Application
 
 Connect an Android device or emulator and run the application from Android Studio.
 
-User Guide
+### User Guide
 Create Account
 
 Launch the application

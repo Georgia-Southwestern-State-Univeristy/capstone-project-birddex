@@ -2,6 +2,7 @@ package com.birddex.app;
 
 import android.Manifest;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
@@ -79,6 +80,8 @@ public class NearbyHeatmapActivity extends AppCompatActivity
     private static final String TAG = "NearbyHeatmapActivity";
     public static final String EXTRA_CENTER_LAT = "extra_center_lat";
     public static final String EXTRA_CENTER_LNG = "extra_center_lng";
+    private static final String PREFS_NAME = "BirdDexPrefs";
+    private static final String KEY_GRAPHIC_CONTENT = "show_graphic_content";
 
     private static final double DEFAULT_LAT = 32.6781;
     private static final double DEFAULT_LNG = -83.2220;
@@ -244,11 +247,16 @@ public class NearbyHeatmapActivity extends AppCompatActivity
 
     private void processForumPins(com.google.firebase.firestore.QuerySnapshot querySnapshot) {
         clearForumMarkers();
+        SharedPreferences sharedPreferences = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+        boolean showGraphicContent = sharedPreferences.getBoolean(KEY_GRAPHIC_CONTENT, false);
+
         for (DocumentSnapshot doc : querySnapshot.getDocuments()) {
             ForumPost post = doc.toObject(ForumPost.class);
             if (post != null && post.getLatitude() != null && post.getLongitude() != null) {
                 post.setId(doc.getId());
-                addPinToMap(post);
+                if (showGraphicContent || !post.isHunted()) {
+                    addPinToMap(post);
+                }
             }
         }
     }

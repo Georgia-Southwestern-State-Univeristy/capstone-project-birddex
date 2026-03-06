@@ -549,7 +549,7 @@ public class SearchCollectionFragment extends Fragment {
 
         sortDisplayedSlots();
         cardAdapter.notifyDataSetChanged();
-        updateEmptyState(displayedSlots.isEmpty(), "No birds match this filter.");
+        updateEmptyState(displayedSlots.isEmpty(), "No birds collected yet.");
     }
 
     private void filterRecentPhotos(String query) {

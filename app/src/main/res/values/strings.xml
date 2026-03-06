@@ -33,4 +33,6 @@
     <string name="dialog_delete_account_message">Are you sure? Your account will be closed and your data will be wiped. This action cannot be undone.</string>
     <string name="dialog_confirm_deletion_title">Confirm Deletion</string>
     <string name="dialog_confirm_deletion_message">Please enter your password to confirm account deletion.</string>
+    <string name="label_graphic_content">Graphic Content</string>
+    <string name="desc_graphic_content">Show hunter posts and hunted map pins</string>
 </resources>

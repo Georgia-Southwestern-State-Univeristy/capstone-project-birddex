@@ -48,8 +48,9 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
     private static final String TAG = "ForumFragment";
     private static final int PAGE_SIZE = 20;
 
-    private static final String PREFS_NAME = "ForumPrefs";
+    private static final String PREFS_NAME = "BirdDexPrefs";
     private static final String KEY_FILTER = "current_filter";
+    private static final String KEY_GRAPHIC_CONTENT = "show_graphic_content";
     
     private FragmentForumBinding binding;
     private FirebaseAuth mAuth;
@@ -238,6 +239,9 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
             query = query.startAfter(lastVisible);
         }
 
+        SharedPreferences sharedPreferences = requireContext().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+        boolean showGraphicContent = sharedPreferences.getBoolean(KEY_GRAPHIC_CONTENT, false);
+
         query.get().addOnSuccessListener(value -> {
             if (!isAdded() || binding == null) return;
             binding.swipeRefreshLayout.setRefreshing(false);
@@ -249,7 +253,9 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
                     ForumPost post = doc.toObject(ForumPost.class);
                     if (post != null) {
                         post.setId(doc.getId());
-                        postList.add(post);
+                        if (showGraphicContent || !post.isHunted()) {
+                            postList.add(post);
+                        }
                     }
                 }
                 

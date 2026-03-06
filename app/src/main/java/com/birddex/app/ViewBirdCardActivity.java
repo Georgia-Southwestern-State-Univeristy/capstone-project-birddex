@@ -23,6 +23,8 @@ import com.google.firebase.firestore.FirebaseFirestore;
 import com.google.firebase.firestore.WriteBatch;
 
 import java.util.Date;
+import java.util.HashMap;
+import java.util.Map;
 
 public class ViewBirdCardActivity extends AppCompatActivity {
 
@@ -76,7 +78,7 @@ public class ViewBirdCardActivity extends AppCompatActivity {
                     ImageChoice selectedChoice = new ImageChoice(
                             selectedImageUrl,
                             timestampMillis > 0 ? new Date(timestampMillis) : null,
-                            selectedUserBirdRefId
+                            normalizeBlankToNull(selectedUserBirdRefId)
                     );
 
                     resolveSelectionAndApply(currentUser.getUid(), selectedChoice);
@@ -96,8 +98,8 @@ public class ViewBirdCardActivity extends AppCompatActivity {
         currentImageUrl = getIntent().getStringExtra(CollectionCardAdapter.EXTRA_IMAGE_URL);
         String commonName = getIntent().getStringExtra(CollectionCardAdapter.EXTRA_COMMON_NAME);
         String sciName = getIntent().getStringExtra(CollectionCardAdapter.EXTRA_SCI_NAME);
-        currentState = getIntent().getStringExtra(CollectionCardAdapter.EXTRA_STATE);
-        currentLocality = getIntent().getStringExtra(CollectionCardAdapter.EXTRA_LOCALITY);
+        currentState = normalizeBlankToNull(getIntent().getStringExtra(CollectionCardAdapter.EXTRA_STATE));
+        currentLocality = normalizeBlankToNull(getIntent().getStringExtra(CollectionCardAdapter.EXTRA_LOCALITY));
         currentBirdId = getIntent().getStringExtra(CollectionCardAdapter.EXTRA_BIRD_ID);
 
         long caughtTime = getIntent().getLongExtra(CollectionCardAdapter.EXTRA_CAUGHT_TIME, -1L);
@@ -180,11 +182,155 @@ public class ViewBirdCardActivity extends AppCompatActivity {
             return;
         }
 
-        if (isBlank(selectedChoice.userBirdRefId)) {
+        if (!isBlank(selectedChoice.userBirdRefId)) {
+            resolveFromUserBirdDocument(userId, selectedChoice, selectedChoice.userBirdRefId);
+            return;
+        }
+
+        FirebaseFirestore.getInstance()
+                .collection("users")
+                .document(userId)
+                .collection("userBirdImage")
+                .whereEqualTo("imageUrl", selectedChoice.imageUrl)
+                .limit(1)
+                .get()
+                .addOnSuccessListener(imageQuery -> {
+                    if (isFinishing() || isDestroyed()) return;
+
+                    if (!imageQuery.isEmpty()) {
+                        DocumentSnapshot imageDoc = imageQuery.getDocuments().get(0);
+                        String resolvedUserBirdRefId = normalizeBlankToNull(imageDoc.getString("userBirdRefId"));
+                        Date resolvedTimestamp = imageDoc.getDate("timestamp");
+
+                        ImageChoice enrichedChoice = new ImageChoice(
+                                selectedChoice.imageUrl,
+                                resolvedTimestamp != null ? resolvedTimestamp : selectedChoice.timestamp,
+                                resolvedUserBirdRefId
+                        );
+
+                        if (!isBlank(enrichedChoice.userBirdRefId)) {
+                            resolveFromUserBirdDocument(userId, enrichedChoice, enrichedChoice.userBirdRefId);
+                            return;
+                        }
+                    }
+
+                    resolveFromUserBirdByImage(userId, selectedChoice);
+                })
+                .addOnFailureListener(e -> {
+                    if (isFinishing() || isDestroyed()) return;
+                    resolveFromUserBirdByImage(userId, selectedChoice);
+                });
+    }
+
+    private void resolveFromUserBirdByImage(String userId, ImageChoice selectedChoice) {
+        FirebaseFirestore.getInstance()
+                .collection("userBirds")
+                .whereEqualTo("imageUrl", selectedChoice.imageUrl)
+                .limit(5)
+                .get()
+                .addOnSuccessListener(userBirdQuery -> {
+                    if (isFinishing() || isDestroyed()) return;
+
+                    if (userBirdQuery.isEmpty()) {
+                        ResolvedSelection resolved = new ResolvedSelection(
+                                selectedChoice.imageUrl,
+                                selectedChoice.timestamp,
+                                null,
+                                null,
+                                null
+                        );
+                        applyResolvedSelection(userId, resolved);
+                        return;
+                    }
+
+                    DocumentSnapshot userBirdDoc = null;
+                    for (DocumentSnapshot candidate : userBirdQuery.getDocuments()) {
+                        String candidateUserId = candidate.getString("userId");
+                        String candidateBirdId = candidate.getString("birdSpeciesId");
+                        if (userId.equals(candidateUserId) && currentBirdId.equals(candidateBirdId)) {
+                            userBirdDoc = candidate;
+                            break;
+                        }
+                    }
+
+                    if (userBirdDoc == null) {
+                        ResolvedSelection resolved = new ResolvedSelection(
+                                selectedChoice.imageUrl,
+                                selectedChoice.timestamp,
+                                null,
+                                null,
+                                null
+                        );
+                        applyResolvedSelection(userId, resolved);
+                        return;
+                    }
+
+                    String resolvedUserBirdRefId = userBirdDoc.getId();
+                    Date timeSpotted = userBirdDoc.getDate("timeSpotted");
+                    String locationId = normalizeBlankToNull(userBirdDoc.getString("locationId"));
+
+                    resolveFromLocation(
+                            userId,
+                            selectedChoice.imageUrl,
+                            timeSpotted != null ? timeSpotted : selectedChoice.timestamp,
+                            resolvedUserBirdRefId,
+                            locationId
+                    );
+                })
+                .addOnFailureListener(e -> {
+                    if (isFinishing() || isDestroyed()) return;
+
+                    ResolvedSelection resolved = new ResolvedSelection(
+                            selectedChoice.imageUrl,
+                            selectedChoice.timestamp,
+                            null,
+                            null,
+                            null
+                    );
+                    applyResolvedSelection(userId, resolved);
+                });
+    }
+
+    private void resolveFromUserBirdDocument(String userId, ImageChoice selectedChoice, String userBirdRefId) {
+        FirebaseFirestore.getInstance()
+                .collection("userBirds")
+                .document(userBirdRefId)
+                .get()
+                .addOnSuccessListener(userBirdSnap -> {
+                    if (isFinishing() || isDestroyed()) return;
+
+                    if (!userBirdSnap.exists()) {
+                        resolveFromUserBirdByImage(userId, selectedChoice);
+                        return;
+                    }
+
+                    Date timeSpotted = userBirdSnap.getDate("timeSpotted");
+                    String locationId = normalizeBlankToNull(userBirdSnap.getString("locationId"));
+
+                    resolveFromLocation(
+                            userId,
+                            selectedChoice.imageUrl,
+                            timeSpotted != null ? timeSpotted : selectedChoice.timestamp,
+                            userBirdRefId,
+                            locationId
+                    );
+                })
+                .addOnFailureListener(e -> {
+                    if (isFinishing() || isDestroyed()) return;
+                    resolveFromUserBirdByImage(userId, selectedChoice);
+                });
+    }
+
+    private void resolveFromLocation(String userId,
+                                     String imageUrl,
+                                     Date timestamp,
+                                     String userBirdRefId,
+                                     String locationId) {
+        if (isBlank(locationId)) {
             ResolvedSelection resolved = new ResolvedSelection(
-                    selectedChoice.imageUrl,
-                    selectedChoice.timestamp,
-                    null,
+                    imageUrl,
+                    timestamp,
+                    userBirdRefId,
                     null,
                     null
             );
@@ -193,86 +339,36 @@ public class ViewBirdCardActivity extends AppCompatActivity {
         }
 
         FirebaseFirestore.getInstance()
-                .collection("userBirds")
-                .document(selectedChoice.userBirdRefId)
+                .collection("locations")
+                .document(locationId)
                 .get()
-                .addOnSuccessListener(userBirdSnap -> {
+                .addOnSuccessListener(locationSnap -> {
                     if (isFinishing() || isDestroyed()) return;
 
-                    if (!userBirdSnap.exists()) {
-                        ResolvedSelection resolved = new ResolvedSelection(
-                                selectedChoice.imageUrl,
-                                selectedChoice.timestamp,
-                                selectedChoice.userBirdRefId,
-                                null,
-                                null
-                        );
-                        applyResolvedSelection(userId, resolved);
-                        return;
+                    String resolvedState = null;
+                    String resolvedLocality = null;
+
+                    if (locationSnap.exists()) {
+                        resolvedState = normalizeBlankToNull(locationSnap.getString("state"));
+                        resolvedLocality = normalizeBlankToNull(locationSnap.getString("locality"));
                     }
 
-                    Date timeSpotted = userBirdSnap.getDate("timeSpotted");
-                    String locationId = userBirdSnap.getString("locationId");
-
-                    if (isBlank(locationId)) {
-                        ResolvedSelection resolved = new ResolvedSelection(
-                                selectedChoice.imageUrl,
-                                timeSpotted != null ? timeSpotted : selectedChoice.timestamp,
-                                selectedChoice.userBirdRefId,
-                                null,
-                                null
-                        );
-                        applyResolvedSelection(userId, resolved);
-                        return;
-                    }
-
-                    FirebaseFirestore.getInstance()
-                            .collection("locations")
-                            .document(locationId)
-                            .get()
-                            .addOnSuccessListener(locationSnap -> {
-                                if (isFinishing() || isDestroyed()) return;
-
-                                String resolvedState = null;
-                                String resolvedLocality = null;
-
-                                if (locationSnap.exists()) {
-                                    String dbState = locationSnap.getString("state");
-                                    String dbLocality = locationSnap.getString("locality");
-
-                                    if (!isBlank(dbState)) resolvedState = dbState;
-                                    if (!isBlank(dbLocality)) resolvedLocality = dbLocality;
-                                }
-
-                                ResolvedSelection resolved = new ResolvedSelection(
-                                        selectedChoice.imageUrl,
-                                        timeSpotted != null ? timeSpotted : selectedChoice.timestamp,
-                                        selectedChoice.userBirdRefId,
-                                        resolvedState,
-                                        resolvedLocality
-                                );
-                                applyResolvedSelection(userId, resolved);
-                            })
-                            .addOnFailureListener(e -> {
-                                if (isFinishing() || isDestroyed()) return;
-
-                                ResolvedSelection resolved = new ResolvedSelection(
-                                        selectedChoice.imageUrl,
-                                        timeSpotted != null ? timeSpotted : selectedChoice.timestamp,
-                                        selectedChoice.userBirdRefId,
-                                        null,
-                                        null
-                                );
-                                applyResolvedSelection(userId, resolved);
-                            });
+                    ResolvedSelection resolved = new ResolvedSelection(
+                            imageUrl,
+                            timestamp,
+                            userBirdRefId,
+                            resolvedState,
+                            resolvedLocality
+                    );
+                    applyResolvedSelection(userId, resolved);
                 })
                 .addOnFailureListener(e -> {
                     if (isFinishing() || isDestroyed()) return;
 
                     ResolvedSelection resolved = new ResolvedSelection(
-                            selectedChoice.imageUrl,
-                            selectedChoice.timestamp,
-                            selectedChoice.userBirdRefId,
+                            imageUrl,
+                            timestamp,
+                            userBirdRefId,
                             null,
                             null
                     );
@@ -299,23 +395,18 @@ public class ViewBirdCardActivity extends AppCompatActivity {
                     DocumentSnapshot doc = queryDocumentSnapshots.getDocuments().get(0);
                     WriteBatch batch = FirebaseFirestore.getInstance().batch();
 
-                    batch.update(doc.getReference(), "imageUrl", resolved.imageUrl);
+                    Map<String, Object> updates = new HashMap<>();
+                    updates.put("imageUrl", resolved.imageUrl);
+                    updates.put("state", normalizeBlankToNull(resolved.state));
+                    updates.put("locality", normalizeBlankToNull(resolved.locality));
 
                     if (resolved.timestamp != null) {
-                        batch.update(doc.getReference(), "timestamp", resolved.timestamp);
+                        updates.put("timestamp", resolved.timestamp);
                     }
 
-                    if (!isBlank(resolved.userBirdRefId)) {
-                        batch.update(doc.getReference(), "userBirdId", resolved.userBirdRefId);
-                    }
+                    updates.put("userBirdId", normalizeBlankToNull(resolved.userBirdRefId));
 
-                    if (!isBlank(resolved.state)) {
-                        batch.update(doc.getReference(), "state", resolved.state);
-                    }
-
-                    if (!isBlank(resolved.locality)) {
-                        batch.update(doc.getReference(), "locality", resolved.locality);
-                    }
+                    batch.update(doc.getReference(), updates);
 
                     batch.commit()
                             .addOnSuccessListener(unused -> {
@@ -327,13 +418,8 @@ public class ViewBirdCardActivity extends AppCompatActivity {
                                     currentCaughtDate = resolved.timestamp;
                                 }
 
-                                if (!isBlank(resolved.state)) {
-                                    currentState = resolved.state;
-                                }
-
-                                if (!isBlank(resolved.locality)) {
-                                    currentLocality = resolved.locality;
-                                }
+                                currentState = normalizeBlankToNull(resolved.state);
+                                currentLocality = normalizeBlankToNull(resolved.locality);
 
                                 loadBirdImage(currentImageUrl);
                                 txtLocation.setText(CardFormatUtils.formatLocation(currentState, currentLocality));
@@ -354,6 +440,10 @@ public class ViewBirdCardActivity extends AppCompatActivity {
 
     private boolean isBlank(String value) {
         return value == null || value.trim().isEmpty();
+    }
+
+    private String normalizeBlankToNull(String value) {
+        return isBlank(value) ? null : value.trim();
     }
 
     private static class ImageChoice {

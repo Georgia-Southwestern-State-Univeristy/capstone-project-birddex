@@ -1,17 +1,16 @@
 package com.birddex.app;
 
+import android.content.Intent;
 import android.net.Uri;
 import android.os.Bundle;
 import android.util.Log;
 import android.view.View;
 import android.widget.Button;
+import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.TextView;
 import android.widget.Toast;
-import android.content.Intent;
-import android.widget.FrameLayout;
 
-import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatActivity;
 
@@ -23,12 +22,12 @@ import com.google.android.gms.tasks.TaskCompletionSource;
 import com.google.android.gms.tasks.Tasks;
 import com.google.firebase.auth.FirebaseAuth;
 import com.google.firebase.auth.FirebaseUser;
+import com.google.firebase.firestore.DocumentReference;
 import com.google.firebase.firestore.FirebaseFirestore;
 import com.google.firebase.firestore.Query;
+import com.google.firebase.firestore.Transaction;
 import com.google.firebase.storage.FirebaseStorage;
 import com.google.firebase.storage.StorageReference;
-import com.google.firebase.firestore.DocumentReference;
-import com.google.firebase.firestore.Transaction;
 
 import java.util.Date;
 import java.util.HashMap;
@@ -63,6 +62,8 @@ public class CardMakerActivity extends AppCompatActivity {
 
     private FirebaseManager firebaseManager;
     private FrameLayout loadingOverlay;
+    private Button btnSave;
+    private Button btnCancel;
 
     private Uri originalImageUri;
     private String currentBirdId;
@@ -82,6 +83,9 @@ public class CardMakerActivity extends AppCompatActivity {
     private Double currentLongitude;
     private String currentCountry;
 
+    private boolean isSaveInProgress = false;
+    private boolean isSaveFinished = false;
+
     @Override
     protected void onCreate(@Nullable Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -90,8 +94,8 @@ public class CardMakerActivity extends AppCompatActivity {
         firebaseManager = new FirebaseManager(this);
         loadingOverlay = findViewById(R.id.loadingOverlay);
 
-        Button btnSave = findViewById(R.id.btnSaveCard);
-        Button btnCancel = findViewById(R.id.btnCancelCard);
+        btnSave = findViewById(R.id.btnSaveCard);
+        btnCancel = findViewById(R.id.btnCancelCard);
 
         TextView txtBirdName = findViewById(R.id.txtBirdName);
         TextView txtScientific = findViewById(R.id.txtScientific);
@@ -118,8 +122,12 @@ public class CardMakerActivity extends AppCompatActivity {
 
         currentQuantity = getIntent().getStringExtra(EXTRA_QUANTITY);
         shouldRecordSighting = getIntent().getBooleanExtra(EXTRA_RECORD_SIGHTING, false);
-        currentLatitude = getIntent().hasExtra(EXTRA_LATITUDE) ? getIntent().getDoubleExtra(EXTRA_LATITUDE, 0.0) : null;
-        currentLongitude = getIntent().hasExtra(EXTRA_LONGITUDE) ? getIntent().getDoubleExtra(EXTRA_LONGITUDE, 0.0) : null;
+        currentLatitude = getIntent().hasExtra(EXTRA_LATITUDE)
+                ? getIntent().getDoubleExtra(EXTRA_LATITUDE, 0.0)
+                : null;
+        currentLongitude = getIntent().hasExtra(EXTRA_LONGITUDE)
+                ? getIntent().getDoubleExtra(EXTRA_LONGITUDE, 0.0)
+                : null;
         currentCountry = getIntent().getStringExtra(EXTRA_COUNTRY);
 
         if (originalImageUri == null) {
@@ -156,11 +164,21 @@ public class CardMakerActivity extends AppCompatActivity {
                 .fitCenter()
                 .into(imgBird);
 
-        btnCancel.setOnClickListener(v -> finish());
+        btnCancel.setOnClickListener(v -> {
+            if (!isSaveInProgress) {
+                finish();
+            }
+        });
+
         btnSave.setOnClickListener(v -> processAndSaveBirdDiscovery(originalImageUri));
     }
 
-    private void processAndSaveBirdDiscovery(Uri originalImageUri) {
+    private void processAndSaveBirdDiscovery(Uri imageUriToSave) {
+        if (isSaveInProgress || isSaveFinished) {
+            Log.d(TAG, "Ignoring duplicate save tap.");
+            return;
+        }
+
         FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
         if (user == null) {
             Log.e(TAG, "Process failed: User is not authenticated.");
@@ -168,7 +186,8 @@ public class CardMakerActivity extends AppCompatActivity {
             return;
         }
 
-        loadingOverlay.setVisibility(View.VISIBLE);
+        isSaveInProgress = true;
+        setSavingUi(true);
 
         String userId = user.getUid();
         String originalImageFileName = "userCollectionImages/" + userId + "/" + UUID.randomUUID() + ".jpg";
@@ -176,28 +195,29 @@ public class CardMakerActivity extends AppCompatActivity {
 
         Log.d(TAG, "processAndSaveBirdDiscovery: Uploading to " + originalImageFileName);
 
-        storageRef.putFile(originalImageUri)
-                .addOnSuccessListener(taskSnapshot -> {
-                    storageRef.getDownloadUrl().addOnSuccessListener(originalDownloadUri -> {
-                        Log.d(TAG, "Original image uploaded to collection: " + originalDownloadUri);
-                        storeBirdDiscovery(originalDownloadUri.toString());
-                    }).addOnFailureListener(e -> {
-                        Log.e(TAG, "Failed to get download URL", e);
-                        loadingOverlay.setVisibility(View.GONE);
-                        Toast.makeText(CardMakerActivity.this, "Failed to save collection image link.", Toast.LENGTH_LONG).show();
-                    });
-                })
-                .addOnFailureListener(e -> {
-                    Log.e(TAG, "Original image upload failed: " + e.getMessage(), e);
-                    loadingOverlay.setVisibility(View.GONE);
-                    Toast.makeText(CardMakerActivity.this, "Failed to upload image to your collection.", Toast.LENGTH_LONG).show();
-                });
+        storageRef.putFile(imageUriToSave)
+                .addOnSuccessListener(taskSnapshot ->
+                        storageRef.getDownloadUrl()
+                                .addOnSuccessListener(originalDownloadUri -> {
+                                    if (isSaveFinished) {
+                                        return;
+                                    }
+                                    Log.d(TAG, "Original image uploaded to collection: " + originalDownloadUri);
+                                    storeBirdDiscovery(originalDownloadUri.toString());
+                                })
+                                .addOnFailureListener(e ->
+                                        handleSaveFailure("Failed to save collection image link.", e)
+                                )
+                )
+                .addOnFailureListener(e ->
+                        handleSaveFailure("Failed to upload image to your collection.", e)
+                );
     }
 
     private void storeBirdDiscovery(String originalImageUrl) {
         FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
         if (user == null) {
-            loadingOverlay.setVisibility(View.GONE);
+            handleSaveFailure("Error: No user logged in. Please log in again.", null);
             return;
         }
 
@@ -237,24 +257,28 @@ public class CardMakerActivity extends AppCompatActivity {
                 .collection("locations")
                 .document(locationId)
                 .set(locationData)
-                .addOnSuccessListener(unused -> addLocationTcs.setResult(null))
-                .addOnFailureListener(addLocationTcs::setException);
+                .addOnSuccessListener(unused -> safeSetResult(addLocationTcs))
+                .addOnFailureListener(e -> safeSetException(addLocationTcs, e));
 
         final TaskCompletionSource<Void> addUserBirdTcs = new TaskCompletionSource<>();
         firebaseManager.addUserBird(userBird, task -> {
             if (task.isSuccessful()) {
-                addUserBirdTcs.setResult(null);
+                safeSetResult(addUserBirdTcs);
             } else {
-                addUserBirdTcs.setException(task.getException());
+                safeSetException(addUserBirdTcs, task.getException() != null
+                        ? task.getException()
+                        : new IllegalStateException("Failed to save userBird."));
             }
         });
 
         final TaskCompletionSource<Void> addUserBirdImageTcs = new TaskCompletionSource<>();
         firebaseManager.addUserBirdImage(userId, userBirdImageId, userBirdImage, task -> {
             if (task.isSuccessful()) {
-                addUserBirdImageTcs.setResult(null);
+                safeSetResult(addUserBirdImageTcs);
             } else {
-                addUserBirdImageTcs.setException(task.getException());
+                safeSetException(addUserBirdImageTcs, task.getException() != null
+                        ? task.getException()
+                        : new IllegalStateException("Failed to save userBirdImage."));
             }
         });
 
@@ -269,7 +293,7 @@ public class CardMakerActivity extends AppCompatActivity {
                 .get()
                 .addOnSuccessListener(existingSlotQuery -> {
                     if (!existingSlotQuery.isEmpty()) {
-                        addCollectionSlotMaybeTcs.setResult(null);
+                        safeSetResult(addCollectionSlotMaybeTcs);
                         return;
                     }
 
@@ -306,38 +330,35 @@ public class CardMakerActivity extends AppCompatActivity {
 
                                 firebaseManager.addCollectionSlot(userId, collectionSlotId, collectionSlot, task -> {
                                     if (task.isSuccessful()) {
-                                        addCollectionSlotMaybeTcs.setResult(null);
+                                        safeSetResult(addCollectionSlotMaybeTcs);
                                     } else {
-                                        addCollectionSlotMaybeTcs.setException(task.getException());
+                                        safeSetException(addCollectionSlotMaybeTcs, task.getException() != null
+                                                ? task.getException()
+                                                : new IllegalStateException("Failed to save collectionSlot."));
                                     }
                                 });
                             })
-                            .addOnFailureListener(addCollectionSlotMaybeTcs::setException);
+                            .addOnFailureListener(e -> safeSetException(addCollectionSlotMaybeTcs, e));
                 })
-                .addOnFailureListener(addCollectionSlotMaybeTcs::setException);
+                .addOnFailureListener(e -> safeSetException(addCollectionSlotMaybeTcs, e));
 
         final TaskCompletionSource<Void> addSightingTcs = new TaskCompletionSource<>();
         if (shouldRecordSighting) {
             saveUserBirdSightingIfAllowed(userId, userBirdId, now, currentQuantity, addSightingTcs);
         } else {
-            addSightingTcs.setResult(null);
+            safeSetResult(addSightingTcs);
         }
 
-        Task<Void> coreCollectionTask = Tasks.whenAll(
+        Task<Void> requiredSaveTask = Tasks.whenAll(
+                addLocationTcs.getTask(),
                 addUserBirdTcs.getTask(),
                 addUserBirdImageTcs.getTask(),
                 addCollectionSlotMaybeTcs.getTask()
         );
 
-        coreCollectionTask
+        requiredSaveTask
                 .addOnSuccessListener(unused -> {
-                    Log.d(TAG, "SUCCESS: Core collection writes succeeded.");
-
-                    addLocationTcs.getTask()
-                            .addOnSuccessListener(locationUnused ->
-                                    Log.d(TAG, "SUCCESS: Location saved."))
-                            .addOnFailureListener(e ->
-                                    Log.w(TAG, "Location write failed, but collection save already succeeded.", e));
+                    Log.d(TAG, "SUCCESS: Required collection writes succeeded.");
 
                     addSightingTcs.getTask()
                             .addOnSuccessListener(sightingUnused ->
@@ -345,27 +366,65 @@ public class CardMakerActivity extends AppCompatActivity {
                             .addOnFailureListener(e ->
                                     Log.w(TAG, "Sighting write failed, but collection save already succeeded.", e));
 
-                    loadingOverlay.setVisibility(View.GONE);
-
-                    Toast.makeText(CardMakerActivity.this, "Saved to your collection!", Toast.LENGTH_SHORT).show();
-
-                    Intent home = new Intent(CardMakerActivity.this, HomeActivity.class);
-                    home.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
-                    home.putExtra("openTab", "collection");
-                    startActivity(home);
-                    finish();
+                    handleSaveSuccess();
                 })
-                .addOnFailureListener(e -> {
-                    Log.e(TAG, "FAILURE: Core collection save failed.", e);
-                    loadingOverlay.setVisibility(View.GONE);
-                    Toast.makeText(CardMakerActivity.this, "Error saving to collection. Please try again.", Toast.LENGTH_LONG).show();
-                });
+                .addOnFailureListener(e ->
+                        handleSaveFailure("Error saving to collection. Please try again.", e)
+                );
     }
 
-    private void saveUserBirdSightingIfAllowed(String userId, String userBirdId, Date timestamp, String quantity, TaskCompletionSource<Void> tcs) {
+    private void handleSaveSuccess() {
+        if (isSaveFinished || isFinishing() || isDestroyed()) {
+            return;
+        }
+
+        isSaveFinished = true;
+        isSaveInProgress = false;
+        setSavingUi(false);
+
+        Toast.makeText(this, "Saved to your collection!", Toast.LENGTH_SHORT).show();
+
+        Intent home = new Intent(CardMakerActivity.this, HomeActivity.class);
+        home.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
+        home.putExtra("openTab", "collection");
+        startActivity(home);
+        finish();
+    }
+
+    private void handleSaveFailure(String userMessage, @Nullable Exception e) {
+        if (isSaveFinished || isFinishing() || isDestroyed()) {
+            Log.w(TAG, "Ignoring late failure after save completion.", e);
+            return;
+        }
+
+        Log.e(TAG, userMessage, e);
+        isSaveInProgress = false;
+        setSavingUi(false);
+        Toast.makeText(CardMakerActivity.this, userMessage, Toast.LENGTH_LONG).show();
+    }
+
+    private void setSavingUi(boolean saving) {
+        if (loadingOverlay != null) {
+            loadingOverlay.setVisibility(saving ? View.VISIBLE : View.GONE);
+        }
+        if (btnSave != null) {
+            btnSave.setEnabled(!saving);
+            btnSave.setClickable(!saving);
+        }
+        if (btnCancel != null) {
+            btnCancel.setEnabled(!saving);
+            btnCancel.setClickable(!saving);
+        }
+    }
+
+    private void saveUserBirdSightingIfAllowed(String userId,
+                                               String userBirdId,
+                                               Date timestamp,
+                                               String quantity,
+                                               TaskCompletionSource<Void> tcs) {
         if (currentBirdId == null || currentBirdId.trim().isEmpty()) {
             Log.w(TAG, "Skipping heatmap upload: currentBirdId is missing.");
-            tcs.setResult(null);
+            safeSetResult(tcs);
             return;
         }
 
@@ -419,15 +478,19 @@ public class CardMakerActivity extends AppCompatActivity {
                         "Saved to collection. Heatmap upload skipped because this species was already uploaded in the last 24 hours.",
                         Toast.LENGTH_LONG
                 ).show();
-                tcs.setResult(null);
+                safeSetResult(tcs);
             }
         }).addOnFailureListener(e -> {
             Log.e(TAG, "Failed checking heatmap cooldown", e);
-            tcs.setException(e);
+            safeSetException(tcs, e);
         });
     }
 
-    private void saveUserBirdSighting(String userId, String userBirdId, Date timestamp, String quantity, TaskCompletionSource<Void> tcs) {
+    private void saveUserBirdSighting(String userId,
+                                      String userBirdId,
+                                      Date timestamp,
+                                      String quantity,
+                                      TaskCompletionSource<Void> tcs) {
         Map<String, Object> userSightingData = new HashMap<>();
         userSightingData.put("userBirdId", userBirdId);
         userSightingData.put("userId", userId);
@@ -457,17 +520,36 @@ public class CardMakerActivity extends AppCompatActivity {
         firebaseManager.addUserBirdSighting(userBirdSighting, task -> {
             if (task.isSuccessful()) {
                 Log.d(TAG, "SUCCESS: Saved UserBirdSighting: " + userBirdSightId);
-                tcs.setResult(null);
+                safeSetResult(tcs);
             } else {
-                Log.e(TAG, "FAILURE: Could not save UserBirdSighting", task.getException());
-                tcs.setException(task.getException());
+                Exception error = task.getException() != null
+                        ? task.getException()
+                        : new IllegalStateException("Failed to save UserBirdSighting.");
+                Log.e(TAG, "FAILURE: Could not save UserBirdSighting", error);
+                safeSetException(tcs, error);
             }
         });
+    }
+
+    private void safeSetResult(TaskCompletionSource<Void> tcs) {
+        if (!tcs.getTask().isComplete()) {
+            tcs.setResult(null);
+        }
+    }
+
+    private void safeSetException(TaskCompletionSource<Void> tcs, Exception e) {
+        Exception safeException = e != null ? e : new IllegalStateException("Unknown task failure.");
+        if (!tcs.getTask().isComplete()) {
+            tcs.setException(safeException);
+        }
     }
 
     @Override
     protected void onPause() {
         super.onPause();
+        if (isSaveFinished) {
+            return;
+        }
         if (loadingOverlay != null && loadingOverlay.getVisibility() == View.VISIBLE) {
             loadingOverlay.setVisibility(View.GONE);
         }

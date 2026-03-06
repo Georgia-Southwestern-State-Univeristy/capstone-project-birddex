@@ -37,15 +37,19 @@ import com.google.android.gms.location.LocationRequest;
 import com.google.android.gms.location.LocationResult;
 import com.google.android.gms.location.LocationServices;
 import com.google.android.gms.location.Priority;
+import com.google.firebase.Timestamp;
 import com.google.firebase.firestore.DocumentSnapshot;
+import com.google.firebase.firestore.FirebaseFirestore;
 
 import org.json.JSONObject;
 
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Date;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -76,6 +80,7 @@ public class NearbyFragment extends Fragment {
     private String lastPlaceShown = null;
 
     private FirebaseManager firebaseManager;
+    private FirebaseFirestore db;
     private EbirdApi ebirdApi;
     private BirdCacheManager cacheManager;
 
@@ -92,6 +97,7 @@ public class NearbyFragment extends Fragment {
     private static final double SEARCH_RADIUS_METERS = 50000;
     private static final long SIGHTING_RECENCY_MS = 72L * 60 * 60 * 1000;
     private static final float MIN_DISTANCE_FOR_FETCH = 1000f;
+    private static final int MAX_USER_SIGHTINGS = 500;
 
     @Nullable
     @Override
@@ -114,6 +120,7 @@ public class NearbyFragment extends Fragment {
         rvNearby.setAdapter(adapter);
 
         firebaseManager = new FirebaseManager(requireContext());
+        db = FirebaseFirestore.getInstance();
         ebirdApi = new EbirdApi();
         cacheManager = new BirdCacheManager(requireContext());
 
@@ -296,9 +303,8 @@ public class NearbyFragment extends Fragment {
         if (currentLocation == null) return;
 
         fetchCount = 0;
-        Log.d(TAG, "Starting dual-fetch from Firestore and eBird...");
+        Log.d(TAG, "Starting dual-fetch from userBirdSightings and eBird...");
 
-        // Show inline progress bar and clear current list
         if (isAdded() && getActivity() != null) {
             getActivity().runOnUiThread(() -> {
                 pbLoading.setVisibility(View.VISIBLE);
@@ -311,39 +317,52 @@ public class NearbyFragment extends Fragment {
         firestoreBirds.clear();
         ebirdBirds.clear();
 
-        firebaseManager.getAllBirds(task -> {
-            if (task.isSuccessful() && task.getResult() != null) {
-                for (DocumentSnapshot doc : task.getResult().getDocuments()) {
-                    Bird bird = doc.toObject(Bird.class);
+        loadUserSightingsNearby();
+        loadEbirdNearby();
+    }
 
-                    if (bird != null && isBlank(bird.getId())) {
-                        bird.setId(doc.getId());
+    private void loadUserSightingsNearby() {
+        db.collection("userBirdSightings")
+                .limit(MAX_USER_SIGHTINGS)
+                .get()
+                .addOnSuccessListener(querySnapshot -> {
+                    firestoreBirds.clear();
+
+                    for (DocumentSnapshot doc : querySnapshot.getDocuments()) {
+                        Bird bird = mapUserSightingToBird(doc);
+                        if (isValidSighting(bird)) {
+                            firestoreBirds.add(bird);
+                            cacheSearchBird(bird);
+                        }
                     }
 
-                    if (bird != null) {
-                        cacheSearchBird(bird);
-                    }
+                    checkIfAllFetched();
+                })
+                .addOnFailureListener(e -> {
+                    Log.e(TAG, "Failed loading userBirdSightings", e);
+                    checkIfAllFetched();
+                });
+    }
 
-                    if (isValidSighting(bird)) {
-                        firestoreBirds.add(bird);
-                    }
-                }
-            }
-            checkIfAllFetched();
-        });
-
+    private void loadEbirdNearby() {
         ebirdApi.fetchCoreGeorgiaBirdList(new EbirdApi.EbirdCoreBirdListCallback() {
             @Override
             public void onSuccess(List<JSONObject> birdsJson) {
+                ebirdBirds.clear();
+
                 for (JSONObject json : birdsJson) {
                     Bird bird = parseBirdJson(json);
-                    if (isValidSighting(bird)) ebirdBirds.add(bird);
+                    if (isValidSighting(bird)) {
+                        ebirdBirds.add(bird);
+                    }
                 }
+
                 checkIfAllFetched();
             }
 
             @Override
             public void onFailure(Exception e) {
+                Log.e(TAG, "Failed loading eBird nearby birds", e);
                 checkIfAllFetched();
             }
         });
@@ -354,6 +373,32 @@ public class NearbyFragment extends Fragment {
         if (fetchCount >= 2) {
             processFinalList();
         }
+    }
+
+    private Bird mapUserSightingToBird(DocumentSnapshot doc) {
+        Bird bird = new Bird();
+
+        String baseBirdId = getStringValue(doc, "birdId");
+        String commonName = getStringValue(doc, "commonName");
+        String scientificName = getStringValue(doc, "scientificName");
+        String species = getStringValue(doc, "species");
+        String family = getStringValue(doc, "family");
+
+        bird.setId(!isBlank(baseBirdId) ? baseBirdId : doc.getId());
+        bird.setCommonName(!isBlank(commonName) ? commonName : "Unknown bird");
+        bird.setScientificName(!isBlank(scientificName) ? scientificName : "");
+        bird.setSpecies(!isBlank(species) ? species : "");
+        bird.setFamily(!isBlank(family) ? family : "");
+
+        Double lat = getDoubleValue(doc, "location.latitude", "latitude", "lat", "lastSeenLatitudeGeorgia");
+        Double lng = getDoubleValue(doc, "location.longitude", "longitude", "lng", "lastSeenLongitudeGeorgia");
+        Long timeMillis = getTimeMillisValue(doc, "timestamp", "observationDate", "lastSeenTimestampGeorgia");
+
+        bird.setLastSeenLatitudeGeorgia(lat);
+        bird.setLastSeenLongitudeGeorgia(lng);
+        bird.setLastSeenTimestampGeorgia(timeMillis);
+
+        return bird;
     }
 
     private boolean isValidSighting(Bird bird) {
@@ -385,30 +430,38 @@ public class NearbyFragment extends Fragment {
         b.setId(json.optString("id"));
         b.setCommonName(json.optString("commonName"));
         b.setScientificName(json.optString("scientificName"));
-        b.setLastSeenLatitudeGeorgia(json.optDouble("lastSeenLatitudeGeorgia"));
-        b.setLastSeenLongitudeGeorgia(json.optDouble("lastSeenLongitudeGeorgia"));
-        b.setLastSeenTimestampGeorgia(json.optLong("lastSeenTimestampGeorgia"));
+
+        if (json.has("lastSeenLatitudeGeorgia") && !json.isNull("lastSeenLatitudeGeorgia")) {
+            b.setLastSeenLatitudeGeorgia(json.optDouble("lastSeenLatitudeGeorgia"));
+        }
+
+        if (json.has("lastSeenLongitudeGeorgia") && !json.isNull("lastSeenLongitudeGeorgia")) {
+            b.setLastSeenLongitudeGeorgia(json.optDouble("lastSeenLongitudeGeorgia"));
+        }
+
+        if (json.has("lastSeenTimestampGeorgia") && !json.isNull("lastSeenTimestampGeorgia")) {
+            b.setLastSeenTimestampGeorgia(json.optLong("lastSeenTimestampGeorgia"));
+        }
+
         return b;
     }
 
     private void processFinalList() {
-        List<Bird> combined = new ArrayList<>(firestoreBirds);
+        List<Bird> combined = new ArrayList<>();
+        combined.addAll(firestoreBirds);
+        combined.addAll(ebirdBirds);
 
-        for (Bird eb : ebirdBirds) {
-            boolean isDup = false;
-            for (Bird b : combined) {
-                if (b.getId() != null && b.getId().equals(eb.getId())) {
-                    isDup = true;
-                    break;
-                }
-            }
-            if (!isDup) combined.add(eb);
-        }
+        Collections.sort(combined, (b1, b2) -> {
+            Long t1 = b1.getLastSeenTimestampGeorgia();
+            Long t2 = b2.getLastSeenTimestampGeorgia();
 
-        Collections.sort(combined, (b1, b2) ->
-                b2.getLastSeenTimestampGeorgia().compareTo(b1.getLastSeenTimestampGeorgia()));
+            if (t1 == null && t2 == null) return 0;
+            if (t1 == null) return 1;
+            if (t2 == null) return -1;
 
-        // Save to cache
+            return t2.compareTo(t1);
+        });
+
         cacheManager.saveNearbyBirds(combined);
 
         if (isAdded() && getActivity() != null) {
@@ -633,6 +686,70 @@ public class NearbyFragment extends Fragment {
 
     private boolean isBlank(String value) {
         return value == null || value.trim().isEmpty();
+    }
+
+    private String getStringValue(DocumentSnapshot doc, String... fieldPaths) {
+        for (String fieldPath : fieldPaths) {
+            Object value = getNestedValue(doc, fieldPath);
+            if (value != null) {
+                String text = String.valueOf(value).trim();
+                if (!text.isEmpty()) {
+                    return text;
+                }
+            }
+        }
+        return null;
+    }
+
+    private Double getDoubleValue(DocumentSnapshot doc, String... fieldPaths) {
+        for (String fieldPath : fieldPaths) {
+            Object value = getNestedValue(doc, fieldPath);
+            if (value instanceof Number) {
+                return ((Number) value).doubleValue();
+            }
+        }
+        return null;
+    }
+
+    private Long getTimeMillisValue(DocumentSnapshot doc, String... fieldPaths) {
+        for (String fieldPath : fieldPaths) {
+            Object value = getNestedValue(doc, fieldPath);
+
+            if (value instanceof Timestamp) {
+                return ((Timestamp) value).toDate().getTime();
+            }
+
+            if (value instanceof Date) {
+                return ((Date) value).getTime();
+            }
+
+            if (value instanceof Number) {
+                return ((Number) value).longValue();
+            }
+        }
+        return null;
+    }
+
+    private Object getNestedValue(DocumentSnapshot doc, String path) {
+        if (path == null || path.trim().isEmpty()) {
+            return null;
+        }
+
+        if (!path.contains(".")) {
+            return doc.get(path);
+        }
+
+        String[] parts = path.split("\\.");
+        Object current = doc.get(parts[0]);
+
+        for (int i = 1; i < parts.length; i++) {
+            if (!(current instanceof Map)) {
+                return null;
+            }
+            current = ((Map<?, ?>) current).get(parts[i]);
+        }
+
+        return current;
     }
 
     private static class SearchBirdItem {

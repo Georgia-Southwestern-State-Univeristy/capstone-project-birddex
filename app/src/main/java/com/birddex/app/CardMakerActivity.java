@@ -27,6 +27,8 @@ import com.google.firebase.firestore.FirebaseFirestore;
 import com.google.firebase.firestore.Query;
 import com.google.firebase.storage.FirebaseStorage;
 import com.google.firebase.storage.StorageReference;
+import com.google.firebase.firestore.DocumentReference;
+import com.google.firebase.firestore.Transaction;
 
 import java.util.Date;
 import java.util.HashMap;
@@ -40,6 +42,7 @@ import java.util.UUID;
 public class CardMakerActivity extends AppCompatActivity {
 
     private static final String TAG = "CardMakerActivity";
+    private static final long HEATMAP_COOLDOWN_MS = 24L * 60L * 60L * 1000L;
 
     public static final String EXTRA_IMAGE_URI = "imageUri";
     public static final String EXTRA_BIRD_NAME = "birdName";
@@ -72,7 +75,7 @@ public class CardMakerActivity extends AppCompatActivity {
     private String currentLocality;
     private String currentState;
     private long currentCaughtTime;
-    
+
     private String currentQuantity;
     private boolean shouldRecordSighting;
     private Double currentLatitude;
@@ -112,7 +115,7 @@ public class CardMakerActivity extends AppCompatActivity {
         currentLocality = getIntent().getStringExtra(EXTRA_LOCALITY);
         currentState = getIntent().getStringExtra(EXTRA_STATE);
         currentCaughtTime = getIntent().getLongExtra(EXTRA_CAUGHT_TIME, System.currentTimeMillis());
-        
+
         currentQuantity = getIntent().getStringExtra(EXTRA_QUANTITY);
         shouldRecordSighting = getIntent().getBooleanExtra(EXTRA_RECORD_SIGHTING, false);
         currentLatitude = getIntent().hasExtra(EXTRA_LATITUDE) ? getIntent().getDoubleExtra(EXTRA_LATITUDE, 0.0) : null;
@@ -172,7 +175,7 @@ public class CardMakerActivity extends AppCompatActivity {
         StorageReference storageRef = FirebaseStorage.getInstance().getReference().child(originalImageFileName);
 
         Log.d(TAG, "processAndSaveBirdDiscovery: Uploading to " + originalImageFileName);
-        
+
         storageRef.putFile(originalImageUri)
                 .addOnSuccessListener(taskSnapshot -> {
                     storageRef.getDownloadUrl().addOnSuccessListener(originalDownloadUri -> {
@@ -315,7 +318,7 @@ public class CardMakerActivity extends AppCompatActivity {
 
         final TaskCompletionSource<Void> addSightingTcs = new TaskCompletionSource<>();
         if (shouldRecordSighting) {
-            saveUserBirdSighting(userId, userBirdId, now, currentQuantity, addSightingTcs);
+            saveUserBirdSightingIfAllowed(userId, userBirdId, now, currentQuantity, addSightingTcs);
         } else {
             addSightingTcs.setResult(null);
         }
@@ -330,6 +333,7 @@ public class CardMakerActivity extends AppCompatActivity {
                 .addOnSuccessListener(unused -> {
                     Log.d(TAG, "SUCCESS: All Firestore writes succeeded.");
                     loadingOverlay.setVisibility(View.GONE);
+
                     Toast.makeText(CardMakerActivity.this, "Saved to your collection!", Toast.LENGTH_SHORT).show();
 
                     Intent home = new Intent(CardMakerActivity.this, HomeActivity.class);
@@ -343,6 +347,71 @@ public class CardMakerActivity extends AppCompatActivity {
                     loadingOverlay.setVisibility(View.GONE);
                     Toast.makeText(CardMakerActivity.this, "Error saving to collection. Please try again.", Toast.LENGTH_LONG).show();
                 });
+    }
+
+    private void saveUserBirdSightingIfAllowed(String userId, String userBirdId, Date timestamp, String quantity, TaskCompletionSource<Void> tcs) {
+        if (currentBirdId == null || currentBirdId.trim().isEmpty()) {
+            Log.w(TAG, "Skipping heatmap upload: currentBirdId is missing.");
+            tcs.setResult(null);
+            return;
+        }
+
+        FirebaseFirestore db = FirebaseFirestore.getInstance();
+        DocumentReference cooldownRef = db.collection("users")
+                .document(userId)
+                .collection("settings")
+                .document("heatmapCooldowns");
+
+        long nowMs = timestamp.getTime();
+
+        db.runTransaction((Transaction.Function<Boolean>) transaction -> {
+            com.google.firebase.firestore.DocumentSnapshot snapshot = transaction.get(cooldownRef);
+
+            Map<String, Object> speciesCooldowns = new HashMap<>();
+            Object rawCooldowns = snapshot.get("speciesCooldowns");
+            if (rawCooldowns instanceof Map) {
+                Map<?, ?> existing = (Map<?, ?>) rawCooldowns;
+                for (Map.Entry<?, ?> entry : existing.entrySet()) {
+                    if (entry.getKey() != null) {
+                        speciesCooldowns.put(String.valueOf(entry.getKey()), entry.getValue());
+                    }
+                }
+            }
+
+            long lastUploadMs = 0L;
+            Object rawLastUpload = speciesCooldowns.get(currentBirdId);
+            if (rawLastUpload instanceof Number) {
+                lastUploadMs = ((Number) rawLastUpload).longValue();
+            }
+
+            boolean cooldownExpired = (nowMs - lastUploadMs) >= HEATMAP_COOLDOWN_MS;
+            if (cooldownExpired) {
+                speciesCooldowns.put(currentBirdId, nowMs);
+
+                Map<String, Object> cooldownDoc = new HashMap<>();
+                cooldownDoc.put("speciesCooldowns", speciesCooldowns);
+                cooldownDoc.put("updatedAt", nowMs);
+                transaction.set(cooldownRef, cooldownDoc);
+                return true;
+            }
+
+            return false;
+        }).addOnSuccessListener(canUpload -> {
+            if (Boolean.TRUE.equals(canUpload)) {
+                saveUserBirdSighting(userId, userBirdId, timestamp, quantity, tcs);
+            } else {
+                Log.d(TAG, "Heatmap cooldown active for birdId=" + currentBirdId + ". Skipping userBirdSighting write.");
+                Toast.makeText(
+                        CardMakerActivity.this,
+                        "Saved to collection. Heatmap upload skipped because this species was already uploaded in the last 24 hours.",
+                        Toast.LENGTH_LONG
+                ).show();
+                tcs.setResult(null);
+            }
+        }).addOnFailureListener(e -> {
+            Log.e(TAG, "Failed checking heatmap cooldown", e);
+            tcs.setException(e);
+        });
     }
 
     private void saveUserBirdSighting(String userId, String userBirdId, Date timestamp, String quantity, TaskCompletionSource<Void> tcs) {

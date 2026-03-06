@@ -47,13 +47,16 @@ import com.google.android.gms.maps.model.Marker;
 import com.google.android.gms.maps.model.MarkerOptions;
 import com.google.android.gms.maps.model.TileOverlay;
 import com.google.android.gms.maps.model.TileOverlayOptions;
+import com.google.android.material.bottomsheet.BottomSheetBehavior;
+import com.google.android.material.bottomsheet.BottomSheetDialog;
+import com.google.android.gms.maps.model.CameraPosition;
+import com.google.android.gms.maps.model.LatLngBounds;
 import com.google.firebase.auth.FirebaseAuth;
 import com.google.firebase.auth.FirebaseUser;
 import com.google.firebase.firestore.DocumentReference;
 import com.google.firebase.firestore.DocumentSnapshot;
 import com.google.firebase.firestore.FieldValue;
 import com.google.firebase.firestore.FirebaseFirestore;
-import com.google.firebase.firestore.MetadataChanges;
 import com.google.firebase.firestore.Query;
 import com.google.firebase.firestore.Source;
 import com.google.firebase.firestore.WriteBatch;
@@ -62,8 +65,6 @@ import com.google.firebase.storage.StorageReference;
 import com.google.maps.android.heatmaps.Gradient;
 import com.google.maps.android.heatmaps.HeatmapTileProvider;
 import com.google.maps.android.heatmaps.WeightedLatLng;
-import com.google.android.material.bottomsheet.BottomSheetBehavior;
-import com.google.android.material.bottomsheet.BottomSheetDialog;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -82,6 +83,11 @@ public class NearbyHeatmapActivity extends AppCompatActivity
     public static final String EXTRA_CENTER_LNG = "extra_center_lng";
     private static final String PREFS_NAME = "BirdDexPrefs";
     private static final String KEY_GRAPHIC_CONTENT = "show_graphic_content";
+    private LatLngBounds currentVisibleBounds;
+    private float lastAppliedZoom = -1f;
+    private LatLng lastAppliedTarget;
+    private static final float MIN_ZOOM_CHANGE_TO_REFRESH = 0.5f;
+    private static final float MIN_CAMERA_MOVE_TO_REFRESH_METERS = 500f;
 
     private static final double DEFAULT_LAT = 32.6781;
     private static final double DEFAULT_LNG = -83.2220;
@@ -124,25 +130,26 @@ public class NearbyHeatmapActivity extends AppCompatActivity
 
     private final List<WeightedLatLng> userHeatPoints = new ArrayList<>();
     private final List<WeightedLatLng> eBirdHeatPoints = new ArrayList<>();
+    private final List<HotspotSighting> userHotspotSightings = new ArrayList<>();
+    private final List<HotspotSighting> eBirdHotspotSightings = new ArrayList<>();
 
     private final Map<String, HotspotBucket> hotspotBuckets = new LinkedHashMap<>();
     private final List<Circle> hotspotCircles = new ArrayList<>();
     private final Map<String, HotspotBucket> circleIdToBucket = new HashMap<>();
-    
+
     private final List<Marker> forumMarkers = new ArrayList<>();
 
     private double centerLat = Double.NaN;
     private double centerLng = Double.NaN;
 
     private int pendingLoads = 0;
-    
+
     private ForumComment replyingToComment = null;
     private EditText currentPopupEditText;
     private ForumPost activePost;
     private FirebaseManager firebaseManager;
     private ForumCommentAdapter popupCommentAdapter;
 
-    // Pagination for popup comments
     private List<ForumComment> popupCommentList = new ArrayList<>();
     private DocumentSnapshot lastPopupCommentVisible;
     private boolean isFetchingPopupComments = false;
@@ -205,26 +212,79 @@ public class NearbyHeatmapActivity extends AppCompatActivity
             }
         }
 
-        fetchHeatmapData();
-        loadForumPins();
+        googleMap.setOnCameraIdleListener(() -> {
+            if (googleMap == null) return;
+
+            CameraPosition cameraPosition = googleMap.getCameraPosition();
+            LatLng target = cameraPosition.target;
+            float zoom = cameraPosition.zoom;
+
+            currentVisibleBounds = googleMap.getProjection().getVisibleRegion().latLngBounds;
+
+            // keep your nearby-center behavior in sync with the actual map center
+            centerLat = target.latitude;
+            centerLng = target.longitude;
+
+            boolean shouldRefresh = false;
+
+            if (lastAppliedTarget == null) {
+                shouldRefresh = true;
+            } else {
+                float[] results = new float[1];
+                android.location.Location.distanceBetween(
+                        lastAppliedTarget.latitude,
+                        lastAppliedTarget.longitude,
+                        target.latitude,
+                        target.longitude,
+                        results
+                );
+
+                float movedMeters = results[0];
+                float zoomDiff = Math.abs(zoom - lastAppliedZoom);
+
+                if (movedMeters >= MIN_CAMERA_MOVE_TO_REFRESH_METERS ||
+                        zoomDiff >= MIN_ZOOM_CHANGE_TO_REFRESH) {
+                    shouldRefresh = true;
+                }
+            }
+
+            if (shouldRefresh) {
+                lastAppliedTarget = target;
+                lastAppliedZoom = zoom;
+                fetchHeatmapData();
+                loadForumPins();
+            }
+        });
+
+        // initial visible bounds
+        googleMap.setOnMapLoadedCallback(() -> {
+            if (googleMap != null) {
+                currentVisibleBounds = googleMap.getProjection().getVisibleRegion().latLngBounds;
+                CameraPosition cameraPosition = googleMap.getCameraPosition();
+                lastAppliedTarget = cameraPosition.target;
+                lastAppliedZoom = cameraPosition.zoom;
+                fetchHeatmapData();
+                loadForumPins();
+            }
+        });
     }
 
     private void fetchHeatmapData() {
         pendingLoads = 2;
         userHeatPoints.clear();
         eBirdHeatPoints.clear();
+        userHotspotSightings.clear();
+        eBirdHotspotSightings.clear();
         hotspotBuckets.clear();
         clearHotspotCircles();
 
         tvMapSubtitle.setText("Loading heatmap...");
 
-        // Heatmap data is heavy, so we try CACHE first
         loadUserBirdSightings();
         loadEbirdApiSightings();
     }
 
     private void loadForumPins() {
-        // We removed the hard limit here to show all pins
         db.collection("forumThreads")
                 .whereEqualTo("showLocation", true)
                 .get(Source.CACHE)
@@ -254,7 +314,15 @@ public class NearbyHeatmapActivity extends AppCompatActivity
             ForumPost post = doc.toObject(ForumPost.class);
             if (post != null && post.getLatitude() != null && post.getLongitude() != null) {
                 post.setId(doc.getId());
-                if (showGraphicContent || !post.isHunted()) {
+
+                boolean inVisibleBounds = true;
+                if (currentVisibleBounds != null) {
+                    inVisibleBounds = currentVisibleBounds.contains(
+                            new LatLng(post.getLatitude(), post.getLongitude())
+                    );
+                }
+
+                if (inVisibleBounds && (showGraphicContent || !post.isHunted())) {
                     addPinToMap(post);
                 }
             }
@@ -263,11 +331,11 @@ public class NearbyHeatmapActivity extends AppCompatActivity
 
     private void addPinToMap(ForumPost post) {
         LatLng pos = new LatLng(post.getLatitude(), post.getLongitude());
-        
+
         StringBuilder status = new StringBuilder();
         if (post.isSpotted()) status.append("Spotted ");
         if (post.isHunted()) status.append("Hunted ");
-        
+
         String title = post.getUsername() + (status.length() > 0 ? " (" + status.toString().trim() + ")" : "");
 
         BitmapDescriptor pinIcon;
@@ -276,7 +344,7 @@ public class NearbyHeatmapActivity extends AppCompatActivity
         } else if (post.isHunted()) {
             pinIcon = createColoredPin(Color.BLACK);
         } else if (post.isSpotted()) {
-            pinIcon = createColoredPin(Color.rgb(255, 165, 0)); // Orange
+            pinIcon = createColoredPin(Color.rgb(255, 165, 0));
         } else {
             pinIcon = BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_AZURE);
         }
@@ -301,10 +369,10 @@ public class NearbyHeatmapActivity extends AppCompatActivity
         Paint paint = new Paint();
         paint.setColor(color);
         paint.setAntiAlias(true);
-        
+
         canvas.drawCircle(size / 2f, size / 3f, size / 3f, paint);
         canvas.drawRect(size / 2f - 4, size / 2f, size / 2f + 4, size * 0.9f, paint);
-        
+
         return BitmapDescriptorFactory.fromBitmap(bitmap);
     }
 
@@ -316,10 +384,10 @@ public class NearbyHeatmapActivity extends AppCompatActivity
         paint.setAntiAlias(true);
 
         paint.setColor(Color.BLUE);
-        canvas.drawArc(size / 6f, 0, size * 5/6f, size * 2/3f, 90, 180, true, paint);
-        
+        canvas.drawArc(size / 6f, 0, size * 5 / 6f, size * 2 / 3f, 90, 180, true, paint);
+
         paint.setColor(Color.BLACK);
-        canvas.drawArc(size / 6f, 0, size * 5/6f, size * 2/3f, 270, 180, true, paint);
+        canvas.drawArc(size / 6f, 0, size * 5 / 6f, size * 2 / 3f, 270, 180, true, paint);
 
         paint.setColor(Color.BLUE);
         canvas.drawRect(size / 2f - 4, size / 2f, size / 2f, size * 0.9f, paint);
@@ -361,7 +429,6 @@ public class NearbyHeatmapActivity extends AppCompatActivity
             }
         }
 
-        // Bind Post Data
         View postContent = view.findViewById(R.id.postContent);
         TextView tvUsername = postContent.findViewById(R.id.tvPostUsername);
         TextView tvTimestamp = postContent.findViewById(R.id.tvPostTimestamp);
@@ -373,7 +440,7 @@ public class NearbyHeatmapActivity extends AppCompatActivity
         TextView tvComments = postContent.findViewById(R.id.tvCommentCount);
         TextView tvViews = postContent.findViewById(R.id.tvViewCount);
         View btnPostOptions = postContent.findViewById(R.id.btnPostOptions);
-        
+
         TextView tvSpottedBadge = postContent.findViewById(R.id.tvSpottedBadge);
         TextView tvHuntedBadge = postContent.findViewById(R.id.tvHuntedBadge);
 
@@ -382,7 +449,7 @@ public class NearbyHeatmapActivity extends AppCompatActivity
         tvLikes.setText(String.valueOf(post.getLikeCount()));
         tvComments.setText(String.valueOf(post.getCommentCount()));
         tvViews.setText(post.getViewCount() + " views");
-        
+
         if (tvSpottedBadge != null) tvSpottedBadge.setVisibility(post.isSpotted() ? View.VISIBLE : View.GONE);
         if (tvHuntedBadge != null) tvHuntedBadge.setVisibility(post.isHunted() ? View.VISIBLE : View.GONE);
 
@@ -391,7 +458,7 @@ public class NearbyHeatmapActivity extends AppCompatActivity
         }
 
         Glide.with(this).load(post.getUserProfilePictureUrl()).placeholder(R.drawable.ic_profile).into(ivPfp);
-        
+
         if (post.getBirdImageUrl() != null && !post.getBirdImageUrl().isEmpty()) {
             cvImage.setVisibility(View.VISIBLE);
             Glide.with(this).load(post.getBirdImageUrl()).into(ivBird);
@@ -408,7 +475,6 @@ public class NearbyHeatmapActivity extends AppCompatActivity
 
         btnPostOptions.setOnClickListener(v -> showPostOptions(post, v, dialog));
 
-        // Setup Comments with Pagination
         RecyclerView rvComments = view.findViewById(R.id.rvComments);
         popupCommentAdapter = new ForumCommentAdapter(this);
         LinearLayoutManager layoutManager = new LinearLayoutManager(this);
@@ -465,25 +531,23 @@ public class NearbyHeatmapActivity extends AppCompatActivity
                     comment.setParentCommentId(replyingToComment.getId());
                     comment.setParentUsername(replyingToComment.getUsername());
                 }
-                
+
                 WriteBatch batch = db.batch();
                 DocumentReference commentRef = db.collection("forumThreads").document(post.getId()).collection("comments").document();
                 batch.set(commentRef, comment);
                 batch.update(db.collection("forumThreads").document(post.getId()), "commentCount", FieldValue.increment(1));
-                
+
                 batch.commit().addOnSuccessListener(aVoid -> {
                     currentPopupEditText.setText("");
                     currentPopupEditText.setHint("Write a comment...");
                     replyingToComment = null;
-                    
-                    // Simple refresh
                     refreshPopupComments();
                 });
             });
         });
 
         dialog.show();
-        
+
         View bottomSheet = dialog.findViewById(com.google.android.material.R.id.design_bottom_sheet);
         if (bottomSheet != null) {
             BottomSheetBehavior<View> behavior = BottomSheetBehavior.from(bottomSheet);
@@ -536,7 +600,7 @@ public class NearbyHeatmapActivity extends AppCompatActivity
     private void showPostOptions(ForumPost post, View view, BottomSheetDialog dialog) {
         PopupMenu popup = new PopupMenu(this, view);
         FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
-        
+
         if (user != null && post.getUserId().equals(user.getUid())) {
             popup.getMenu().add("Delete");
         }
@@ -593,7 +657,7 @@ public class NearbyHeatmapActivity extends AppCompatActivity
                 .get()
                 .addOnSuccessListener(queryDocumentSnapshots -> {
                     WriteBatch batch = db.batch();
-                    
+
                     for (DocumentSnapshot doc : queryDocumentSnapshots) {
                         Map<String, Object> commentBacklog = new HashMap<>();
                         commentBacklog.put("type", "comment_archived_with_post");
@@ -602,21 +666,21 @@ public class NearbyHeatmapActivity extends AppCompatActivity
                         commentBacklog.put("data", doc.getData());
                         commentBacklog.put("deletedBy", userId);
                         commentBacklog.put("deletedAt", FieldValue.serverTimestamp());
-                        
+
                         batch.set(db.collection("deletedforum_backlog").document(), commentBacklog);
                         batch.delete(doc.getReference());
                     }
-                    
+
                     Map<String, Object> postBacklog = new HashMap<>();
                     postBacklog.put("type", "post");
                     postBacklog.put("originalId", post.getId());
                     postBacklog.put("data", post);
                     postBacklog.put("deletedBy", userId);
                     postBacklog.put("deletedAt", FieldValue.serverTimestamp());
-                    
+
                     batch.set(db.collection("deletedforum_backlog").document(), postBacklog);
                     batch.delete(db.collection("forumThreads").document(post.getId()));
-                    
+
                     batch.commit().addOnSuccessListener(aVoid -> {
                         Toast.makeText(this, "Post and comments deleted", Toast.LENGTH_SHORT).show();
                         if (bottomSheetDialog != null) bottomSheetDialog.dismiss();
@@ -782,7 +846,7 @@ public class NearbyHeatmapActivity extends AppCompatActivity
     public void onCommentOptionsClick(ForumComment comment, View view) {
         PopupMenu popup = new PopupMenu(this, view);
         FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
-        
+
         boolean isCommentAuthor = user != null && comment.getUserId().equals(user.getUid());
 
         if (isCommentAuthor) {
@@ -828,15 +892,15 @@ public class NearbyHeatmapActivity extends AppCompatActivity
                             backlogByUserId(batch, user.getUid(), "comment_reply", doc.getId(), doc.getData());
                             batch.delete(doc.getReference());
                         }
-                        
+
                         backlogByUserId(batch, user.getUid(), "comment", comment.getId(), comment);
 
                         batch.delete(db.collection("forumThreads").document(activePost.getId())
                                 .collection("comments").document(comment.getId()));
-                        
-                        batch.update(db.collection("forumThreads").document(activePost.getId()), 
+
+                        batch.update(db.collection("forumThreads").document(activePost.getId()),
                                 "commentCount", FieldValue.increment(-totalToDelete));
-                        
+
                         batch.commit().addOnSuccessListener(aVoid -> {
                             Toast.makeText(this, "Comment deleted", Toast.LENGTH_SHORT).show();
                             refreshPopupComments();
@@ -882,7 +946,6 @@ public class NearbyHeatmapActivity extends AppCompatActivity
     }
 
     private void loadUserBirdSightings() {
-        // Fetch sightings from CACHE first
         db.collection("userBirdSightings")
                 .limit(500)
                 .get(Source.CACHE)
@@ -925,8 +988,11 @@ public class NearbyHeatmapActivity extends AppCompatActivity
     }
 
     private void processSightings(com.google.firebase.firestore.QuerySnapshot querySnapshot, boolean isUserSighting) {
-        if (isUserSighting) userHeatPoints.clear();
-        else eBirdHeatPoints.clear();
+        List<WeightedLatLng> targetHeatPoints = isUserSighting ? userHeatPoints : eBirdHeatPoints;
+        List<HotspotSighting> targetHotspotSightings = isUserSighting ? userHotspotSightings : eBirdHotspotSightings;
+
+        targetHeatPoints.clear();
+        targetHotspotSightings.clear();
 
         for (DocumentSnapshot doc : querySnapshot.getDocuments()) {
             Double lat = getAnyDouble(doc, "location.latitude", "lastSeenLatitudeGeorgia", "latitude", "lat");
@@ -936,18 +1002,35 @@ public class NearbyHeatmapActivity extends AppCompatActivity
             if (lat == null || lng == null) continue;
             if (shouldBeFiltered(lat, lng, timeMillis)) continue;
 
-            if (isUserSighting) userHeatPoints.add(new WeightedLatLng(new LatLng(lat, lng), 1.8));
-            else eBirdHeatPoints.add(new WeightedLatLng(new LatLng(lat, lng), 1.0));
+            if (isUserSighting) {
+                targetHeatPoints.add(new WeightedLatLng(new LatLng(lat, lng), 1.8));
+            } else {
+                targetHeatPoints.add(new WeightedLatLng(new LatLng(lat, lng), 1.0));
+            }
 
             String birdName = extractBirdName(doc);
-            addToHotspotBucket(lat, lng, birdName, isUserSighting);
+            targetHotspotSightings.add(new HotspotSighting(lat, lng, birdName, isUserSighting));
         }
+
+        rebuildHotspotBuckets();
         onCollectionFinished();
     }
 
     private void onCollectionFinished() {
         pendingLoads--;
         if (pendingLoads <= 0) renderHeatmaps();
+    }
+
+    private void rebuildHotspotBuckets() {
+        hotspotBuckets.clear();
+
+        for (HotspotSighting sighting : userHotspotSightings) {
+            addToHotspotBucket(sighting.lat, sighting.lng, sighting.birdName, true);
+        }
+
+        for (HotspotSighting sighting : eBirdHotspotSightings) {
+            addToHotspotBucket(sighting.lat, sighting.lng, sighting.birdName, false);
+        }
     }
 
     private void renderHeatmaps() {
@@ -1191,7 +1274,14 @@ public class NearbyHeatmapActivity extends AppCompatActivity
             }
         }
 
-        if (hasNearbyCenter()) {
+        // When map bounds are available, filter by what is actually visible on screen.
+        if (currentVisibleBounds != null) {
+            LatLng point = new LatLng(lat, lng);
+            if (!currentVisibleBounds.contains(point)) {
+                return true;
+            }
+        } else if (hasNearbyCenter()) {
+            // fallback to old 50km center-radius behavior
             float[] results = new float[1];
             android.location.Location.distanceBetween(
                     centerLat,
@@ -1201,7 +1291,9 @@ public class NearbyHeatmapActivity extends AppCompatActivity
                     results
             );
 
-            return results[0] > SEARCH_RADIUS_METERS;
+            if (results[0] > SEARCH_RADIUS_METERS) {
+                return true;
+            }
         }
 
         return false;
@@ -1252,6 +1344,20 @@ public class NearbyHeatmapActivity extends AppCompatActivity
             }
         }
         return null;
+    }
+
+    private static class HotspotSighting {
+        final double lat;
+        final double lng;
+        final String birdName;
+        final boolean isUserSighting;
+
+        HotspotSighting(double lat, double lng, String birdName, boolean isUserSighting) {
+            this.lat = lat;
+            this.lng = lng;
+            this.birdName = birdName;
+            this.isUserSighting = isUserSighting;
+        }
     }
 
     private static class HotspotBucket {

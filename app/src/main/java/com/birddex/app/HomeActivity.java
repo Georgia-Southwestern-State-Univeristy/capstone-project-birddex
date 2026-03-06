@@ -29,6 +29,7 @@ public class HomeActivity extends AppCompatActivity implements NetworkMonitor.Ne
     private int lastNonCameraTabId = R.id.nav_forum;
 
     private EbirdApi ebirdApi; // New: EbirdApi instance
+    private FirebaseManager firebaseManager;
     private List<JSONObject> allGeorgiaBirds; // New: To hold the core bird list
     private NetworkMonitor networkMonitor; // New: NetworkMonitor instance
 
@@ -42,6 +43,7 @@ public class HomeActivity extends AppCompatActivity implements NetworkMonitor.Ne
 
         // Initialize EbirdApi and the bird list
         ebirdApi = new EbirdApi();
+        firebaseManager = new FirebaseManager(this);
         allGeorgiaBirds = new ArrayList<>();
 
         // Initialize NetworkMonitor
@@ -49,6 +51,7 @@ public class HomeActivity extends AppCompatActivity implements NetworkMonitor.Ne
 
         // Load the core Georgia bird list in the background
         fetchCoreGeorgiaBirdList();
+        checkBirdDataSync();
 
         // Check for deep links or specific navigation requests
         handleIntent(getIntent());
@@ -189,5 +192,17 @@ public class HomeActivity extends AppCompatActivity implements NetworkMonitor.Ne
     public void onNetworkLost() {
         Log.e(TAG, "Network lost in HomeActivity.");
         Toast.makeText(this, "Internet connection lost. Bird data may be incomplete.", Toast.LENGTH_LONG).show();
+    }
+    /** * Triggers the Cloud Function to ensure the Firestore bird database
+     * is synced with eBird. The function uses a 72-hour cache.
+     */
+    private void checkBirdDataSync() {
+        firebaseManager.syncGeorgiaBirdList(task -> {
+            if (task.isSuccessful()) {
+                Log.d(TAG, "Bird data sync check complete.");
+            } else {
+                Log.e(TAG, "Automatic bird sync failed", task.getException());
+            }
+        });
     }
 }

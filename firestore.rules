@@ -11,14 +11,17 @@ service cloud.firestore {
       allow create: if request.auth != null && request.auth.uid == userId &&
                      request.resource.data.username is string && request.resource.data.username.size() > 0;
 
-      // Owner can only update allowed fields. (Counts are managed by cloud functions.)
+      // Owner can only update allowed fields. (Stats and counters are managed by cloud functions.)
       allow update: if request.auth != null && request.auth.uid == userId &&
                      request.resource.data.diff(resource.data).affectedKeys().hasOnly([
                        'username',
                        'profilePictureUrl',
                        'bio',
                        'fcmToken',
-                       'favoriteCardKeys'
+                       'favoriteCardKeys',
+                       'notificationsEnabled',
+                       'repliesEnabled',
+                       'notificationCooldownHours'
                      ]);
 
       // Private settings sub-collection (Only owner can access)
@@ -59,11 +62,11 @@ service cloud.firestore {
 
     match /birdFacts/{birdId} {
       allow read: if request.auth != null;
-      allow write: if request.auth != null;
+      allow write: if false; // Only written via Admin SDK in index.js
 
       match /hunterFacts/{hunterFactsDocId} {
         allow read: if request.auth != null;
-        allow write: if request.auth != null;
+        allow write: if false; // Only written via Admin SDK in index.js
       }
     }
 
@@ -74,13 +77,14 @@ service cloud.firestore {
     }
 
     match /locations/{locationId} {
-      allow read, create: if request.auth != null;
+      allow read: if request.auth != null;
+      allow create: if false; // Created via Cloud Function helper
       allow update, delete: if false;
     }
 
     match /identifications/{identificationId} {
       allow read: if request.auth != null;
-      allow create: if false;
+      allow create: if false; // Logged via identifyBird Cloud Function
       allow update, delete: if false;
     }
 
@@ -107,7 +111,7 @@ service cloud.firestore {
         allow write: if request.auth != null && request.auth.uid == resource.data.userId;
     }
 
-    // UPDATED FORUM RULES
+    // FORUM RULES
     match /forumThreads/{threadId} {
         allow read: if request.auth != null;
         allow create: if request.auth != null && request.resource.data.userId == request.auth.uid;
@@ -133,7 +137,7 @@ service cloud.firestore {
                 (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['likeCount', 'likedBy']))
             );
 
-            // Only the comment author can delete (Post owner is NOT included)
+            // Only the comment author can delete
             allow delete: if request.auth != null && resource.data.userId == request.auth.uid;
         }
     }
@@ -144,14 +148,11 @@ service cloud.firestore {
         allow read, update, delete: if false;
     }
 
-    // Allow users to archive their deleted content
+    // Archival collections strictly locked to clients
     match /deletedforum_backlog/{docId} {
-        allow create: if request.auth != null && request.resource.data.deletedBy == request.auth.uid;
-        allow read, update, delete: if false; // Only accessible via Firebase Console/Admin SDK
+        allow read, write: if false;
     }
     match /usersdeletedAccounts/{uid} {
-      // Strictly prevent any client-side access.
-      // Only the Admin SDK (Cloud Functions) can read/write here.
       allow read, write: if false;
     }
 

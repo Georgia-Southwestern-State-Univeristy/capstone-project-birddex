@@ -45,6 +45,7 @@ public class CreatePostActivity extends AppCompatActivity {
     private static final int REQUEST_LOCATION_PERMISSION = 102;
     private static final String PREFS_NAME = "BirdDexPrefs";
     private static final String KEY_GRAPHIC_CONTENT = "show_graphic_content";
+    private static final int MAX_POST_LENGTH = 500;
 
     private ActivityCreatePostBinding binding;
     private FirebaseAuth mAuth;
@@ -227,6 +228,11 @@ public class CreatePostActivity extends AppCompatActivity {
         String message = binding.etPostMessage.getText().toString().trim();
         if (message.isEmpty() && selectedImageUri == null) {
             Toast.makeText(this, "Please add a message or an image", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        if (message.length() > MAX_POST_LENGTH) {
+            Toast.makeText(this, "Post exceeds maximum length of " + MAX_POST_LENGTH + " characters.", Toast.LENGTH_SHORT).show();
             return;
         }
 

@@ -50,6 +50,8 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
     public static final String EXTRA_POST_ID = "extra_post_id";
     private static final long EDIT_WINDOW_MS = 5 * 60 * 1000; // 5 minutes
     private static final int COMMENTS_PAGE_SIZE = 25;
+    private static final int MAX_POST_LENGTH = 500;
+    private static final int MAX_COMMENT_LENGTH = 300;
 
     private ActivityPostDetailBinding binding;
     private FirebaseFirestore db;
@@ -268,6 +270,7 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
         input.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE);
         input.setText(post.getMessage());
         input.setHint("Message");
+        input.setFilters(new InputFilter[]{new InputFilter.LengthFilter(MAX_POST_LENGTH)});
         layout.addView(input);
 
         final CheckBox cbSpotted = new CheckBox(this);
@@ -289,6 +292,10 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
 
         builder.setPositiveButton("Save", (dialog, which) -> {
             String newText = input.getText().toString().trim();
+            if (newText.length() > MAX_POST_LENGTH) {
+                Toast.makeText(this, "Post exceeds maximum length", Toast.LENGTH_SHORT).show();
+                return;
+            }
             updatePost(post, newText, cbSpotted.isChecked(), cbHunted.isChecked(), swLocation.isChecked());
         });
         builder.setNegativeButton("Cancel", (dialog, which) -> dialog.cancel());
@@ -556,6 +563,11 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
         String text = binding.etComment.getText().toString().trim();
         if (text.isEmpty()) return;
 
+        if (text.length() > MAX_COMMENT_LENGTH) {
+            Toast.makeText(this, "Comment exceeds maximum length", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
         if (!ContentFilter.isSafe(this, text, "Comment")) return;
 
         FirebaseUser user = mAuth.getCurrentUser();
@@ -668,6 +680,7 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
         final EditText input = new EditText(this);
         input.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE);
         input.setText(comment.getText());
+        input.setFilters(new InputFilter[]{new InputFilter.LengthFilter(MAX_COMMENT_LENGTH)});
         
         FrameLayout container = new FrameLayout(this);
         FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
@@ -678,6 +691,10 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
 
         builder.setPositiveButton("Save", (dialog, which) -> {
             String newText = input.getText().toString().trim();
+            if (newText.length() > MAX_COMMENT_LENGTH) {
+                Toast.makeText(this, "Comment exceeds maximum length", Toast.LENGTH_SHORT).show();
+                return;
+            }
             if (!newText.isEmpty() && !newText.equals(comment.getText())) {
                 updateComment(comment, newText);
             }

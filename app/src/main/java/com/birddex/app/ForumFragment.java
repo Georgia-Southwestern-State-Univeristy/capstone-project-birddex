@@ -195,6 +195,7 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
         db.collection("users").document(user.getUid()).collection("following")
                 .get()
                 .addOnSuccessListener(querySnapshot -> {
+                    if (!isAdded()) return;
                     followedIds.clear();
                     for (DocumentSnapshot doc : querySnapshot.getDocuments()) {
                         followedIds.add(doc.getId());
@@ -209,6 +210,10 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
     }
 
     private void fetchPosts() {
+        if (!isAdded() || getContext() == null) {
+            return;
+        }
+
         if (isFetching || isLastPage) {
             if (binding != null) binding.swipeRefreshLayout.setRefreshing(false);
             return;
@@ -237,7 +242,7 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
             query = query.startAfter(lastVisible);
         }
 
-        SharedPreferences sharedPreferences = requireContext().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+        SharedPreferences sharedPreferences = getContext().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
         boolean showGraphicContent = sharedPreferences.getBoolean(KEY_GRAPHIC_CONTENT, false);
 
         query.get().addOnSuccessListener(value -> {

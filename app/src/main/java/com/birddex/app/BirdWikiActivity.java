@@ -15,7 +15,6 @@ import com.bumptech.glide.Glide;
 import com.google.firebase.firestore.DocumentSnapshot;
 import com.google.firebase.firestore.FirebaseFirestore;
 import com.google.firebase.firestore.Source;
-import com.google.firebase.functions.FirebaseFunctions;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -26,6 +25,7 @@ public class BirdWikiActivity extends AppCompatActivity {
     public static final String EXTRA_BIRD_ID = "birdId";
 
     private FirebaseFirestore db;
+    private FirebaseManager firebaseManager;
     private boolean isGeneratingFacts = false;
 
     private ImageView ivBirdHeaderImage;
@@ -40,6 +40,7 @@ public class BirdWikiActivity extends AppCompatActivity {
         setContentView(R.layout.activity_bird_wiki);
 
         db = FirebaseFirestore.getInstance();
+        firebaseManager = new FirebaseManager(this);
 
         bindViews();
         initializePlaceholders();
@@ -51,9 +52,7 @@ public class BirdWikiActivity extends AppCompatActivity {
             return;
         }
 
-        loadBirdBasics(birdId);
-        loadGeneralFacts(birdId);
-        loadHunterFacts(birdId);
+        loadAllData(birdId);
     }
 
     private void bindViews() {
@@ -101,7 +100,7 @@ public class BirdWikiActivity extends AppCompatActivity {
     }
 
     private void initializePlaceholders() {
-        tvPageTitle.setText("Bird");
+        tvPageTitle.setText("Loading...");
         tvPageScientificName.setText("Scientific name");
         ivBirdHeaderImage.setVisibility(View.GONE);
 
@@ -110,14 +109,32 @@ public class BirdWikiActivity extends AppCompatActivity {
         }
     }
 
-    private void loadBirdBasics(String birdId) {
-        // Try Cache first
+    private void loadAllData(String birdId) {
+        // 1. Load Basics (Cache -> Server)
         db.collection("birds").document(birdId).get(Source.CACHE)
-                .addOnSuccessListener(this::processBasics)
+                .addOnSuccessListener(doc -> {
+                    if (doc.exists()) processBasics(doc);
+                    else fetchBasicsFromServer(birdId);
+                })
                 .addOnFailureListener(e -> fetchBasicsFromServer(birdId));
-        
-        // Always try to sync with server
-        fetchBasicsFromServer(birdId);
+
+        // 2. Coordinate Facts Loading (Check cache first for both)
+        db.collection("birdFacts").document(birdId).get(Source.CACHE)
+                .addOnSuccessListener(genDoc -> {
+                    db.collection("birdFacts").document(birdId).collection("hunterFacts").document(birdId).get(Source.CACHE)
+                            .addOnSuccessListener(hunterDoc -> {
+                                if (genDoc.exists() && hunterDoc.exists()) {
+                                    // Both found in cache!
+                                    updateGeneralFactsFromMap(genDoc.getData());
+                                    updateHunterFactsFromMap(hunterDoc.getData());
+                                } else {
+                                    // Something is missing, call Cloud Function once
+                                    fetchFactsFromCloudFunction(birdId);
+                                }
+                            })
+                            .addOnFailureListener(e -> fetchFactsFromCloudFunction(birdId));
+                })
+                .addOnFailureListener(e -> fetchFactsFromCloudFunction(birdId));
     }
 
     private void fetchBasicsFromServer(String birdId) {
@@ -135,7 +152,7 @@ public class BirdWikiActivity extends AppCompatActivity {
         String species = doc.getString("species");
 
         tvPageTitle.setText(firstNonBlank(commonName, "Unknown Bird"));
-        tvPageScientificName.setText(firstNonBlank(scientificName, "Scientific name not available"));
+        tvPageScientificScientificName(firstNonBlank(scientificName, "Scientific name not available"));
 
         setFact("family", family);
         setFact("species", species);
@@ -145,13 +162,17 @@ public class BirdWikiActivity extends AppCompatActivity {
         }
     }
 
+    private void tvPageScientificScientificName(String name) {
+        if (tvPageScientificName != null) tvPageScientificName.setText(name);
+    }
+
     private void loadBirdImage(String commonName) {
-        // Cache first for image URL
         db.collection("bird_images").document(commonName).get(Source.CACHE)
-                .addOnSuccessListener(this::processImage)
+                .addOnSuccessListener(doc -> {
+                    if (doc.exists()) processImage(doc);
+                    else fetchImageFromServer(commonName);
+                })
                 .addOnFailureListener(e -> fetchImageFromServer(commonName));
-        
-        fetchImageFromServer(commonName);
     }
 
     private void fetchImageFromServer(String commonName) {
@@ -169,38 +190,11 @@ public class BirdWikiActivity extends AppCompatActivity {
         }
 
         ivBirdHeaderImage.setVisibility(View.VISIBLE);
-        Glide.with(this)
-                .load(imageUrl)
-                .into(ivBirdHeaderImage);
-    }
-
-    private void loadGeneralFacts(String birdId) {
-        // Cache first
-        db.collection("birdFacts").document(birdId).get(Source.CACHE)
-                .addOnSuccessListener(this::processGeneralFacts)
-                .addOnFailureListener(e -> fetchGeneralFactsFromServer(birdId));
-
-        fetchGeneralFactsFromServer(birdId);
-    }
-
-    private void fetchGeneralFactsFromServer(String birdId) {
-        db.collection("birdFacts").document(birdId).get(Source.SERVER)
-                .addOnSuccessListener(this::processGeneralFacts);
-    }
-
-    private void processGeneralFacts(DocumentSnapshot doc) {
-        if (isFinishing() || isDestroyed()) return;
-
-        if (!doc.exists()) {
-            fetchFactsFromCloudFunction(getIntent().getStringExtra(EXTRA_BIRD_ID));
-            return;
-        }
-
-        updateGeneralFactsFromMap(doc.getData());
+        Glide.with(this).load(imageUrl).into(ivBirdHeaderImage);
     }
 
     private void updateGeneralFactsFromMap(Map<String, Object> data) {
-        if (data == null) return;
+        if (data == null || isFinishing() || isDestroyed()) return;
 
         setFact("conservationStatus", getString(data.get("conservationStatus")));
         setFact("seasonalPresence", getString(data.get("seasonalPresence")));
@@ -223,32 +217,8 @@ public class BirdWikiActivity extends AppCompatActivity {
         setFact("avoidDisturbing", getString(data.get("avoidDisturbing")));
     }
 
-    private void loadHunterFacts(String birdId) {
-        db.collection("birdFacts").document(birdId).collection("hunterFacts").document(birdId).get(Source.CACHE)
-                .addOnSuccessListener(this::processHunterFacts)
-                .addOnFailureListener(e -> fetchHunterFactsFromServer(birdId));
-
-        fetchHunterFactsFromServer(birdId);
-    }
-
-    private void fetchHunterFactsFromServer(String birdId) {
-        db.collection("birdFacts").document(birdId).collection("hunterFacts").document(birdId).get(Source.SERVER)
-                .addOnSuccessListener(this::processHunterFacts);
-    }
-
-    private void processHunterFacts(DocumentSnapshot doc) {
-        if (isFinishing() || isDestroyed()) return;
-
-        if (!doc.exists()) {
-            fetchFactsFromCloudFunction(getIntent().getStringExtra(EXTRA_BIRD_ID));
-            return;
-        }
-
-        updateHunterFactsFromMap(doc.getData());
-    }
-
     private void updateHunterFactsFromMap(Map<String, Object> data) {
-        if (data == null) return;
+        if (data == null || isFinishing() || isDestroyed()) return;
 
         String legalStatusGeorgia = getString(data.get("legalStatusGeorgia"));
         String season = getString(data.get("season"));
@@ -280,37 +250,31 @@ public class BirdWikiActivity extends AppCompatActivity {
 
         Log.d(TAG, "Fetching facts from Cloud Function for birdId: " + birdId);
 
-        Map<String, Object> data = new HashMap<>();
-        data.put("birdId", birdId);
+        firebaseManager.getBirdDetailsAndFacts(birdId, task -> {
+            isGeneratingFacts = false;
+            if (isFinishing() || isDestroyed()) return;
 
-        FirebaseFunctions.getInstance()
-                .getHttpsCallable("getBirdDetailsAndFacts")
-                .call(data)
-                .addOnSuccessListener(result -> {
-                    isGeneratingFacts = false;
-                    if (isFinishing() || isDestroyed()) return;
-
-                    Object resultData = result.getData();
-                    if (resultData instanceof Map) {
-                        Map<String, Object> resultMap = (Map<String, Object>) resultData;
-                        
-                        // Update general facts
-                        Object genFactsObj = resultMap.get("generalFacts");
-                        if (genFactsObj instanceof Map) {
-                            updateGeneralFactsFromMap((Map<String, Object>) genFactsObj);
-                        }
-
-                        // Update hunter facts
-                        Object hunterFactsObj = resultMap.get("hunterFacts");
-                        if (hunterFactsObj instanceof Map) {
-                            updateHunterFactsFromMap((Map<String, Object>) hunterFactsObj);
-                        }
+            if (task.isSuccessful() && task.getResult() != null) {
+                Object resultData = task.getResult().getData();
+                if (resultData instanceof Map) {
+                    Map<String, Object> resultMap = (Map<String, Object>) resultData;
+                    
+                    // Update general facts
+                    Object genFactsObj = resultMap.get("generalFacts");
+                    if (genFactsObj instanceof Map) {
+                        updateGeneralFactsFromMap((Map<String, Object>) genFactsObj);
                     }
-                })
-                .addOnFailureListener(e -> {
-                    isGeneratingFacts = false;
-                    Log.e(TAG, "Failed to fetch facts from Cloud Function", e);
-                });
+
+                    // Update hunter facts
+                    Object hunterFactsObj = resultMap.get("hunterFacts");
+                    if (hunterFactsObj instanceof Map) {
+                        updateHunterFactsFromMap((Map<String, Object>) hunterFactsObj);
+                    }
+                }
+            } else {
+                Log.e(TAG, "Failed to fetch facts from Cloud Function", task.getException());
+            }
+        });
     }
 
     private String buildHunterBlock(String legalStatusGeorgia,

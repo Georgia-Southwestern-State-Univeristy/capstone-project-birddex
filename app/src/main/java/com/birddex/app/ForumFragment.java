@@ -598,7 +598,7 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
     public void onResume() {
         super.onResume();
         if (binding != null) {
-            refreshPosts();
+            binding.getRoot().postDelayed(this::refreshPosts, 1500);
         }
     }
 

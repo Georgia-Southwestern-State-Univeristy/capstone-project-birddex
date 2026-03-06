@@ -2,164 +2,115 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
+    // --- Helper functions ---
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return request.auth != null && request.auth.uid == userId;
+    }
+
+    // --- Users Collection ---
     match /users/{userId} {
-      allow read: if request.auth != null; // Allow all auth users to read profiles for the forum
+      allow read: if isSignedIn();
+      // Allow only the owner to update their profile (bio, pfp, etc.)
+      allow update: if isOwner(userId);
+      // Deny direct creation/deletion; handled by Cloud Functions
+      allow create, delete: if false;
 
-      // Allow the owner to create their own document if it doesn't exist yet.
-      // The cloud function (createUserDocument) also creates it, but this covers the case
-      // where the client writes first (race condition). At minimum, a username must be provided.
-      allow create: if request.auth != null && request.auth.uid == userId &&
-                     request.resource.data.username is string && request.resource.data.username.size() > 0;
-
-      // Owner can only update allowed fields. (Stats and counters are managed by cloud functions.)
-      allow update: if request.auth != null && request.auth.uid == userId &&
-                     request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-                       'username',
-                       'profilePictureUrl',
-                       'bio',
-                       'fcmToken',
-                       'favoriteCardKeys',
-                       'notificationsEnabled',
-                       'repliesEnabled',
-                       'notificationCooldownHours'
-                     ]);
-
-      // Private settings sub-collection (Only owner can access)
-      match /settings/{settingId} {
-        allow read, write: if request.auth != null && request.auth.uid == userId;
-      }
-
-      match /collectionSlot/{slotId} {
-        allow read: if request.auth != null;
-        allow write: if request.auth != null && request.auth.uid == userId;
-      }
-
-      match /userBirdImage/{userBirdImageId} {
-        allow read: if request.auth != null && request.auth.uid == userId;
-        allow create: if request.auth != null && request.auth.uid == userId &&
-                      request.resource.data.userId == userId;
-        allow update, delete: if request.auth != null && request.auth.uid == userId &&
-                              resource.data.userId == userId;
-      }
-
-      // Rules for the 'following' list (Only the owner can manage who they follow)
+      // --- Following Sub-collection ---
       match /following/{followedId} {
-        allow read: if request.auth != null;
-        allow write: if request.auth.uid == userId;
-      }
-
-      // Rules for the 'followers' list (Allows other users to add themselves to this list)
-      match /followers/{followerId} {
-        allow read: if request.auth != null;
-        allow write: if request.auth.uid == followerId;
-      }
-    }
-
-    match /birds/{birdId} {
-      allow read: if true;
-      allow write: if false;
-    }
-
-    match /birdFacts/{birdId} {
-      allow read: if request.auth != null;
-      allow write: if false; // Only written via Admin SDK in index.js
-
-      match /hunterFacts/{hunterFactsDocId} {
-        allow read: if request.auth != null;
-        allow write: if false; // Only written via Admin SDK in index.js
-      }
-    }
-
-    match /userBirds/{userBirdId} {
-      allow read: if request.auth != null;
-      allow create: if request.auth != null && request.auth.uid == request.resource.data.userId;
-      allow update, delete: if request.auth != null && request.auth.uid == resource.data.userId;
-    }
-
-    match /locations/{locationId} {
-      allow read: if request.auth != null;
-      allow create: if false; // Created via Cloud Function helper
-      allow update, delete: if false;
-    }
-
-    match /identifications/{identificationId} {
-      allow read: if request.auth != null;
-      allow create: if false; // Logged via identifyBird Cloud Function
-      allow update, delete: if false;
-    }
-
-    match /media/{mediaId} {
-      allow read, write: if request.auth != null && resource.data.userId == request.auth.uid;
-    }
-
-    match /userBirdSightings/{userBirdSightingId} {
-        allow read: if request.auth != null;
-        // userId is nested inside user_sighting map
-        allow create: if request.auth != null && request.resource.data.user_sighting.userId == request.auth.uid;
-        allow update: if request.auth != null && resource.data.user_sighting.userId == request.auth.uid;
-        // Deny deletion to keep records permanent as requested
-        allow delete: if false;
-    }
-
-    match /eBirdApiSightings/{ebirdSightingId} {
-        allow read: if request.auth != null;
+        allow read: if isSignedIn();
         allow write: if false;
+      }
+
+      // --- Followers Sub-collection ---
+      match /followers/{followerId} {
+        allow read: if isSignedIn();
+        allow write: if false;
+      }
+
+      // --- Collection Slots ---
+      match /collectionSlot/{slotId} {
+        allow read: if isSignedIn();
+        allow write: if isOwner(userId);
+      }
+
+      // --- Bird Images ---
+      match /userBirdImage/{imageId} {
+        allow read: if isSignedIn();
+        allow write: if isOwner(userId);
+      }
+
+      // --- Settings (Cooldowns, etc.) ---
+      match /settings/{docId} {
+        allow read, write: if isOwner(userId);
+      }
     }
 
-    match /hunterSightings/{sightingId} {
-        allow read: if request.auth != null;
-        allow write: if request.auth != null && request.auth.uid == resource.data.userId;
+    // --- Forum Collection ---
+    match /forumThreads/{postId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && request.resource.data.userId == request.auth.uid;
+      allow update, delete: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow update: if isSignedIn() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['likeCount', 'likedBy']);
+
+      match /comments/{commentId} {
+        allow read: if isSignedIn();
+        allow create: if isSignedIn() && request.resource.data.userId == request.auth.uid;
+        // Allow deletion if the user owns the comment OR if they own the parent thread
+        allow delete: if isSignedIn() && (resource.data.userId == request.auth.uid || get(/databases/$(database)/documents/forumThreads/$(postId)).data.userId == request.auth.uid);
+        allow update: if isSignedIn() && (resource.data.userId == request.auth.uid || request.resource.data.diff(resource.data).affectedKeys().hasOnly(['likeCount', 'likedBy']));
+      }
     }
 
-    // FORUM RULES
-    match /forumThreads/{threadId} {
-        allow read: if request.auth != null;
-        allow create: if request.auth != null && request.resource.data.userId == request.auth.uid;
-
-        // Owner can update everything; others can only update likes/views/counts
-        allow update: if request.auth != null && (
-            (request.auth.uid == resource.data.userId) ||
-            (request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-                'likeCount', 'likedBy', 'viewCount', 'viewedBy', 'commentCount',
-                'lastViewedAt', 'notificationSent', 'likeNotificationSent'
-            ]))
-        );
-
-        allow delete: if request.auth != null && resource.data.userId == request.auth.uid;
-
-        match /comments/{commentId} {
-            allow read: if request.auth != null;
-            allow create: if request.auth != null && request.resource.data.userId == request.auth.uid;
-
-            // Owner can update text; others can only update likes
-            allow update: if request.auth != null && (
-                (request.auth.uid == resource.data.userId) ||
-                (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['likeCount', 'likedBy']))
-            );
-
-            // Only the comment author can delete
-            allow delete: if request.auth != null && resource.data.userId == request.auth.uid;
-        }
-    }
-
-    // Reports: Allow any authenticated user to create a report.
-    match /reports/{reportId} {
-        allow create: if request.auth != null;
-        allow read, update, delete: if false;
-    }
-
-    // Archival collections strictly locked to clients
+    // --- Backlog Collection for Deletions ---
     match /deletedforum_backlog/{docId} {
-        allow read, write: if false;
-    }
-    match /usersdeletedAccounts/{uid} {
-      allow read, write: if false;
+      allow create: if isSignedIn();
+      allow read, update, delete: if false;
     }
 
-    // eBird cache is read-only for clients (written by Cloud Function).
-    match /ebird_ga_cache/{document} {
-      allow read: if request.auth != null;
+    // --- Reports Collection ---
+    match /reports/{reportId} {
+      allow read: if false;
+      allow create: if isSignedIn();
+    }
+
+    // --- Birds & Facts ---
+    match /birds/{birdId} {
+      allow read: if isSignedIn();
       allow write: if false;
+    }
+    match /birdFacts/{birdId} {
+      allow read: if isSignedIn();
+      allow write: if false;
+      match /hunterFacts/{factId} {
+        allow read: if isSignedIn();
+        allow write: if false;
+      }
+    }
+
+    // --- Global Collections ---
+    match /userBirds/{sightingId} {
+      allow read: if isSignedIn();
+      allow write: if isSignedIn() && request.resource.data.userId == request.auth.uid;
+    }
+    match /userBirdSightings/{sightingId} {
+      allow read: if isSignedIn();
+      allow write: if isSignedIn() && request.resource.data.userId == request.auth.uid;
+    }
+    match /identifications/{idId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn();
+    }
+    match /locations/{locId} {
+      allow read: if isSignedIn();
+      allow write: if isSignedIn();
+    }
+    match /hunterSightings/{sightingId} {
+      allow read: if isSignedIn();
+      allow write: if isSignedIn() && request.resource.data.userId == request.auth.uid;
     }
   }
 }

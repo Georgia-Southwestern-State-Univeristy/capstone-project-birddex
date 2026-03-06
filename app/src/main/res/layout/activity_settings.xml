@@ -183,6 +183,16 @@
                 app:strokeColor="@color/md_theme_error"
                 app:cornerRadius="12dp" />
 
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnDeleteAccount"
+                style="@style/Widget.Material3.Button.TextButton"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:text="Delete Account"
+                android:textColor="@color/md_theme_error"
+                app:cornerRadius="12dp" />
+
         </LinearLayout>
     </androidx.cardview.widget.CardView>
 

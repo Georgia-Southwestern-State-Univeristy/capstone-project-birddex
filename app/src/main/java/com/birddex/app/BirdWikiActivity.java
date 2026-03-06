@@ -15,6 +15,7 @@ import com.bumptech.glide.Glide;
 import com.google.firebase.firestore.DocumentSnapshot;
 import com.google.firebase.firestore.FirebaseFirestore;
 import com.google.firebase.firestore.Source;
+import com.google.firebase.functions.FirebaseFunctions;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -25,6 +26,7 @@ public class BirdWikiActivity extends AppCompatActivity {
     public static final String EXTRA_BIRD_ID = "birdId";
 
     private FirebaseFirestore db;
+    private boolean isGeneratingFacts = false;
 
     private ImageView ivBirdHeaderImage;
     private TextView tvPageTitle;
@@ -187,27 +189,38 @@ public class BirdWikiActivity extends AppCompatActivity {
     }
 
     private void processGeneralFacts(DocumentSnapshot doc) {
-        if (isFinishing() || isDestroyed() || !doc.exists()) return;
+        if (isFinishing() || isDestroyed()) return;
 
-        setFact("conservationStatus", doc.getString("conservationStatus"));
-        setFact("seasonalPresence", doc.getString("seasonalPresence"));
-        setFact("whereInGeorgiaFound", doc.getString("whereInGeorgiaFound"));
+        if (!doc.exists()) {
+            fetchFactsFromCloudFunction(getIntent().getStringExtra(EXTRA_BIRD_ID));
+            return;
+        }
 
-        setFact("sizeAppearance", doc.getString("sizeAppearance"));
-        setFact("distinctiveBehaviors", doc.getString("distinctiveBehaviors"));
-        setFact("similarSpecies", doc.getString("similarSpecies"));
-        setFact("peakViewingTimes", doc.getString("peakViewingTimes"));
-        setFact("diet", doc.getString("diet"));
-        setFact("nestingHabits", doc.getString("nestingHabits"));
-        setFact("roleInEcosystem", doc.getString("roleInEcosystem"));
-        setFact("uniqueBehaviorsSpecific", doc.getString("uniqueBehaviorsSpecific"));
-        setFact("recordSettingFacts", doc.getString("recordSettingFacts"));
-        setFact("culturalHistoricalNotes", doc.getString("culturalHistoricalNotes"));
-        setFact("howToHelp", doc.getString("howToHelp"));
-        setFact("threatsInGeorgia", doc.getString("threatsInGeorgia"));
-        setFact("bestAnglesBehaviors", doc.getString("bestAnglesBehaviors"));
-        setFact("timesBestLighting", doc.getString("timesBestLighting"));
-        setFact("avoidDisturbing", doc.getString("avoidDisturbing"));
+        updateGeneralFactsFromMap(doc.getData());
+    }
+
+    private void updateGeneralFactsFromMap(Map<String, Object> data) {
+        if (data == null) return;
+
+        setFact("conservationStatus", getString(data.get("conservationStatus")));
+        setFact("seasonalPresence", getString(data.get("seasonalPresence")));
+        setFact("whereInGeorgiaFound", getString(data.get("whereInGeorgiaFound")));
+
+        setFact("sizeAppearance", getString(data.get("sizeAppearance")));
+        setFact("distinctiveBehaviors", getString(data.get("distinctiveBehaviors")));
+        setFact("similarSpecies", getString(data.get("similarSpecies")));
+        setFact("peakViewingTimes", getString(data.get("peakViewingTimes")));
+        setFact("diet", getString(data.get("diet")));
+        setFact("nestingHabits", getString(data.get("nestingHabits")));
+        setFact("roleInEcosystem", getString(data.get("roleInEcosystem")));
+        setFact("uniqueBehaviorsSpecific", getString(data.get("uniqueBehaviorsSpecific")));
+        setFact("recordSettingFacts", getString(data.get("recordSettingFacts")));
+        setFact("culturalHistoricalNotes", getString(data.get("culturalHistoricalNotes")));
+        setFact("howToHelp", getString(data.get("howToHelp")));
+        setFact("threatsInGeorgia", getString(data.get("threatsInGeorgia")));
+        setFact("bestAnglesBehaviors", getString(data.get("bestAnglesBehaviors")));
+        setFact("timesBestLighting", getString(data.get("timesBestLighting")));
+        setFact("avoidDisturbing", getString(data.get("avoidDisturbing")));
     }
 
     private void loadHunterFacts(String birdId) {
@@ -224,18 +237,28 @@ public class BirdWikiActivity extends AppCompatActivity {
     }
 
     private void processHunterFacts(DocumentSnapshot doc) {
-        if (isFinishing() || isDestroyed() || !doc.exists()) return;
+        if (isFinishing() || isDestroyed()) return;
 
-        String legalStatusGeorgia = doc.getString("legalStatusGeorgia");
-        String season = doc.getString("season");
-        String licenseRequirements = doc.getString("licenseRequirements");
-        String federalProtections = doc.getString("federalProtections");
-        String notHuntableStatement = doc.getString("notHuntableStatement");
-        String relevantRegulations = doc.getString("relevantRegulations");
-        String georgiaDNRHuntingLink = doc.getString("georgiaDNRHuntingLink");
+        if (!doc.exists()) {
+            fetchFactsFromCloudFunction(getIntent().getStringExtra(EXTRA_BIRD_ID));
+            return;
+        }
 
-        Object endangeredObj = doc.get("isEndangered");
-        String isEndangered = endangeredObj != null ? String.valueOf(endangeredObj) : null;
+        updateHunterFactsFromMap(doc.getData());
+    }
+
+    private void updateHunterFactsFromMap(Map<String, Object> data) {
+        if (data == null) return;
+
+        String legalStatusGeorgia = getString(data.get("legalStatusGeorgia"));
+        String season = getString(data.get("season"));
+        String licenseRequirements = getString(data.get("licenseRequirements"));
+        String federalProtections = getString(data.get("federalProtections"));
+        String notHuntableStatement = getString(data.get("notHuntableStatement"));
+        String relevantRegulations = getString(data.get("relevantRegulations"));
+        String georgiaDNRHuntingLink = getString(data.get("georgiaDNRHuntingLink"));
+
+        String isEndangered = getString(data.get("isEndangered"));
 
         String hunterFactsBlock = buildHunterBlock(
                 legalStatusGeorgia,
@@ -249,6 +272,45 @@ public class BirdWikiActivity extends AppCompatActivity {
         setFact("hunterFacts", hunterFactsBlock);
         setFact("relevantRegulations", relevantRegulations);
         setFact("georgiaDNRHuntingLink", georgiaDNRHuntingLink);
+    }
+
+    private void fetchFactsFromCloudFunction(String birdId) {
+        if (isGeneratingFacts || isBlank(birdId)) return;
+        isGeneratingFacts = true;
+
+        Log.d(TAG, "Fetching facts from Cloud Function for birdId: " + birdId);
+
+        Map<String, Object> data = new HashMap<>();
+        data.put("birdId", birdId);
+
+        FirebaseFunctions.getInstance()
+                .getHttpsCallable("getBirdDetailsAndFacts")
+                .call(data)
+                .addOnSuccessListener(result -> {
+                    isGeneratingFacts = false;
+                    if (isFinishing() || isDestroyed()) return;
+
+                    Object resultData = result.getData();
+                    if (resultData instanceof Map) {
+                        Map<String, Object> resultMap = (Map<String, Object>) resultData;
+                        
+                        // Update general facts
+                        Object genFactsObj = resultMap.get("generalFacts");
+                        if (genFactsObj instanceof Map) {
+                            updateGeneralFactsFromMap((Map<String, Object>) genFactsObj);
+                        }
+
+                        // Update hunter facts
+                        Object hunterFactsObj = resultMap.get("hunterFacts");
+                        if (hunterFactsObj instanceof Map) {
+                            updateHunterFactsFromMap((Map<String, Object>) hunterFactsObj);
+                        }
+                    }
+                })
+                .addOnFailureListener(e -> {
+                    isGeneratingFacts = false;
+                    Log.e(TAG, "Failed to fetch facts from Cloud Function", e);
+                });
     }
 
     private String buildHunterBlock(String legalStatusGeorgia,
@@ -296,5 +358,9 @@ public class BirdWikiActivity extends AppCompatActivity {
 
     private boolean isBlank(String value) {
         return value == null || value.trim().isEmpty();
+    }
+
+    private String getString(Object val) {
+        return val == null ? null : String.valueOf(val);
     }
 }

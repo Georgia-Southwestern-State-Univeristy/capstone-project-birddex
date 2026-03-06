@@ -2,6 +2,7 @@
 const functions = require("firebase-functions/v1");
 const auth = functions.auth;
 
+
 // 2. Standard v2 imports (Note: onUserDeleted is REMOVED from here)
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
 const { onSchedule } = require("firebase-functions/v2/scheduler");
@@ -254,7 +255,7 @@ async function getOrCreateAndSaveBirdFacts(birdId, commonName) {
 
     const [birdFactsDoc, hunterFactsDoc] = await Promise.all([
         birdFactsRef.get(),
-        hunterFactsRef.get()
+        hunterFactsDoc.get()
     ]);
 
     let generalFacts = {};
@@ -344,6 +345,57 @@ exports.checkUsernameAndEmailAvailability = onCall(async (request) => {
 });
 
 // ======================================================
+// NEW: initializeUser Cloud Function
+// Sets the username and email for a newly created user.
+// Bypasses security rules via Admin SDK.
+// ======================================================
+exports.initializeUser = onCall(async (request) => {
+    if (!request.auth) {
+        throw new HttpsError("unauthenticated", "Authentication required to initialize user.");
+    }
+
+    const { username, email } = request.data;
+    const uid = request.auth.uid;
+
+    if (!username || typeof username !== 'string' || username.trim().length === 0) {
+        throw new HttpsError('invalid-argument', 'Username is required.');
+    }
+
+    try {
+        const userRef = db.collection("users").doc(uid);
+
+        // Re-check username availability to be safe (server-side check)
+        const usernameSnapshot = await db.collection('users')
+                                       .where('username', '==', username)
+                                       .limit(1)
+                                       .get();
+
+        if (!usernameSnapshot.empty) {
+            // Check if it's the current user's document (unlikely on creation but possible if retrying)
+            if (usernameSnapshot.docs[0].id !== uid) {
+                 throw new HttpsError('already-exists', 'Username is already taken.');
+            }
+        }
+
+        // Use merge: true to avoid overwriting fields set by createUserDocument auth trigger
+        await userRef.set({
+            username: username,
+            email: email || request.auth.token.email,
+            id: uid, // Redundant but consistent with existing app expectations
+            updatedAt: admin.firestore.FieldValue.serverTimestamp()
+        }, { merge: true });
+
+        console.log(`✅ Successfully initialized user ${uid} with username ${username}`);
+        return { success: true };
+
+    } catch (error) {
+        console.error(`❌ Error initializing user ${uid}:`, error);
+        if (error instanceof HttpsError) throw error;
+        throw new HttpsError('internal', 'Failed to initialize user.');
+    }
+});
+
+// ======================================================
 // NEW: Create User Document on Firebase Auth Signup
 // Triggered when a new user signs up in Firebase Authentication.
 // ======================================================
@@ -359,18 +411,7 @@ exports.createUserDocument = auth.user().onCreate(async (user) => {
     const userRef = db.collection("users").doc(uid);
 
     try {
-        // Note: A username should ideally be collected during app's signup flow
-        // and then associated with this UID. For now, we'll use a placeholder or assume it's set later.
-        // You might consider passing the username via a custom claim or directly setting it
-        // from the client after this function creates the initial document.
-
-        // Check if a document already exists (e.g., if a previous attempt failed but Auth user was created)
-        const userDoc = await userRef.get();
-        if (userDoc.exists) {
-            console.log(`⚠️ User document for ${uid} already exists. Skipping creation.`);
-            return null;
-        }
-
+        // Note: Use merge: true here so we don't overwrite if initializeUser ran first
         const newUserData = {
             email: email,
             createdAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -382,15 +423,57 @@ exports.createUserDocument = auth.user().onCreate(async (user) => {
             notificationsEnabled: true, // Default to true
             repliesEnabled: true, // Default to true
             notificationCooldownHours: 2 // Default to 2 hours
-            // 'username' field will need to be populated from the client or another function
-            // For now, it's not set here as it's typically provided by the client during registration.
         };
-        await userRef.set(newUserData);
-        console.log(`✅ Created new user document for user ${uid} with email ${email}.`);
+        await userRef.set(newUserData, { merge: true });
+        console.log(`✅ Created/Merged user document for user ${uid} with email ${email}.`);
         return null;
     } catch (error) {
         console.error(`❌ Error creating user document for ${uid}:`, error);
         return null;
+    }
+});
+
+// ======================================================
+// NEW: archiveAndDeleteUser Cloud Function
+// Archives user data to 'usersdeletedAccounts' before deletion
+// ======================================================
+exports.archiveAndDeleteUser = onCall(async (request) => {
+    // 1. Security Check: Ensure the user is authenticated
+    if (!request.auth) {
+        throw new HttpsError('unauthenticated', 'The function must be called while authenticated.');
+    }
+
+    const uid = request.auth.uid;
+
+    try {
+        // 2. Fetch the user's data from the 'users' collection
+        const userDoc = await db.collection('users').doc(uid).get();
+
+        if (userDoc.exists) {
+            const userData = userDoc.data();
+
+            // 3. Add to 'usersdeletedAccounts' collection (exact name requested)
+            // Using .set() on the same UID ensures a 1:1 archive mapping
+            await db.collection('usersdeletedAccounts').doc(uid).set({
+                ...userData,
+                archivedAt: admin.firestore.FieldValue.serverTimestamp(),
+                originalUid: uid,
+                deletionReason: "User requested account deletion"
+            });
+
+            // 4. Delete the user document from the active 'users' collection
+            // Server-side deletion is faster and more reliable than client-side
+            await db.collection('users').doc(uid).delete();
+
+            console.log(`Successfully archived and deleted user doc for UID: ${uid}`);
+        } else {
+            console.log(`No user document found for UID: ${uid}, proceeding.`);
+        }
+
+        return { success: true };
+    } catch (error) {
+        console.error("Error archiving user:", error);
+        throw new HttpsError('internal', 'Internal error during account archiving: ' + error.message);
     }
 });
 
@@ -1822,4 +1905,36 @@ exports.deleteOldPfpOnChange = onDocumentUpdated("users/{userId}", async (event)
         }
     }
     return null;
+});
+// ======================================================
+// NEW: Automatic Auth Trigger
+// This runs whenever a user is deleted (Manually in Console OR via App)
+// ======================================================
+exports.onUserAuthDeleted = auth.user().onDelete(async (user) => {
+    const uid = user.uid;
+    const userRef = db.collection("users").doc(uid);
+
+    try {
+        const userDoc = await userRef.get();
+
+        if (userDoc.exists) {
+            const userData = userDoc.data();
+
+            // 1. Archive the data to 'usersdeletedAccounts'
+            await db.collection('usersdeletedAccounts').doc(uid).set({
+                ...userData,
+                archivedAt: admin.firestore.FieldValue.serverTimestamp(),
+                deletionType: "Automatic Auth Trigger (Manual or App Deletion)"
+            });
+
+            // 2. Delete the original document from 'users'
+            await userRef.delete();
+
+            console.log(`✅ Automatically archived and cleaned up Firestore for UID: ${uid}`);
+        } else {
+            console.log(`ℹ️ No Firestore document found for deleted user ${uid}.`);
+        }
+    } catch (error) {
+        console.error("❌ Error in onUserAuthDeleted trigger:", error);
+    }
 });

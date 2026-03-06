@@ -27,4 +27,10 @@
     <string name="label_preferences">Preferences</string>
     <string name="btn_notifications">Notifications</string>
     <string name="btn_logout">Log Out</string>
+    <string name="btn_delete_account">Delete Account</string>
+    <string name="dialog_delete_account_title">Delete Account</string>
+    <!-- Optional: More accurate message -->
+    <string name="dialog_delete_account_message">Are you sure? Your account will be closed and your data will be wiped. This action cannot be undone.</string>
+    <string name="dialog_confirm_deletion_title">Confirm Deletion</string>
+    <string name="dialog_confirm_deletion_message">Please enter your password to confirm account deletion.</string>
 </resources>

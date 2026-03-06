@@ -28,7 +28,7 @@ import com.google.firebase.auth.FirebaseUser;
 public class SettingsActivity extends AppCompatActivity {
 
     private TextView tvUserEmail, tvUserName;
-    private Button btnLogout, btnUpdateEmail, btnChangePassword, btnNotifications;
+    private Button btnLogout, btnUpdateEmail, btnChangePassword, btnNotifications, btnDeleteAccount;
 
     private FirebaseManager firebaseManager;
 
@@ -47,6 +47,7 @@ public class SettingsActivity extends AppCompatActivity {
         btnLogout = findViewById(R.id.btnLogout);
         btnUpdateEmail = findViewById(R.id.btnUpdateEmail);
         btnChangePassword = findViewById(R.id.btnChangePassword);
+        btnDeleteAccount = findViewById(R.id.btnDeleteAccount);
 
         firebaseManager = new FirebaseManager(this);
 
@@ -84,6 +85,10 @@ public class SettingsActivity extends AppCompatActivity {
             initiatePasswordReset();
             Toast.makeText(SettingsActivity.this, "Please check your email to update your password.", Toast.LENGTH_LONG).show();
         });
+
+        btnDeleteAccount.setOnClickListener(v -> {
+            showDeleteAccountConfirmation();
+        });
     }
 
     /**
@@ -102,9 +107,19 @@ public class SettingsActivity extends AppCompatActivity {
                         Log.d(TAG, "Email mismatch detected. Syncing Firestore with Auth email.");
                         userProfile.setEmail(currentAuthEmail);
                         firebaseManager.updateUserProfile(userProfile, new FirebaseManager.AuthListener() {
-                            @Override public void onSuccess(FirebaseUser user) { Log.d(TAG, "Firestore email synced successfully."); }
-                            @Override public void onFailure(String errorMessage) { Log.e(TAG, "Failed to sync email to Firestore: " + errorMessage); }
-                            @Override public void onUsernameTaken() {}
+                            @Override
+                            public void onSuccess(FirebaseUser user) {
+                                Log.d(TAG, "Firestore email synced successfully.");
+                            }
+
+                            @Override
+                            public void onFailure(String errorMessage) {
+                                Log.e(TAG, "Failed to sync email to Firestore: " + errorMessage);
+                            }
+
+                            @Override
+                            public void onUsernameTaken() {
+                            }
 
                             @Override
                             public void onEmailTaken() {
@@ -240,7 +255,7 @@ public class SettingsActivity extends AppCompatActivity {
         FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
         if (user != null && user.getEmail() != null) {
             firebaseManager.sendPasswordResetEmail(user.getEmail(), task -> {
-                if(task.isSuccessful()) {
+                if (task.isSuccessful()) {
                     Toast.makeText(SettingsActivity.this, "Password reset email sent.", Toast.LENGTH_SHORT).show();
                 } else {
                     Toast.makeText(SettingsActivity.this, "Failed to send password reset email.", Toast.LENGTH_SHORT).show();
@@ -248,4 +263,92 @@ public class SettingsActivity extends AppCompatActivity {
             });
         }
     }
-}
+
+    private void showDeleteAccountConfirmation() {
+        new AlertDialog.Builder(this)
+                .setTitle(R.string.dialog_delete_account_title)
+                .setMessage(R.string.dialog_delete_account_message)
+                .setPositiveButton("Delete", (dialog, which) -> {
+                    promptForReauthenticationAndDelete();
+                })
+                .setNegativeButton("Cancel", null)
+                .show();
+    }
+
+    private void promptForReauthenticationAndDelete() {
+        AlertDialog.Builder builder = new AlertDialog.Builder(this);
+        builder.setTitle(R.string.dialog_confirm_deletion_title);
+        builder.setMessage(R.string.dialog_confirm_deletion_message);
+
+        final EditText passwordInput = new EditText(this);
+        passwordInput.setHint("Password");
+        passwordInput.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
+
+        LinearLayout layout = new LinearLayout(this);
+        layout.setOrientation(LinearLayout.VERTICAL);
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+        );
+        int margin = (int) (16 * getResources().getDisplayMetrics().density);
+        params.setMargins(margin, 0, margin, 0);
+        passwordInput.setLayoutParams(params);
+        layout.addView(passwordInput);
+        builder.setView(layout);
+
+        builder.setPositiveButton("Confirm Delete", (dialog, which) -> {
+            String password = passwordInput.getText().toString().trim();
+            if (!password.isEmpty()) {
+                reauthenticateAndDeleteAccount(password);
+            }
+        });
+        builder.setNegativeButton("Cancel", (dialog, which) -> dialog.cancel());
+        builder.show();
+    }
+
+    private void reauthenticateAndDeleteAccount(String password) {
+        FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
+        if (user == null) return;
+
+        AuthCredential credential = EmailAuthProvider.getCredential(user.getEmail(), password);
+        user.reauthenticate(credential)
+                .addOnCompleteListener(reauthTask -> {
+                    if (reauthTask.isSuccessful()) {
+                        // This calls the method below
+                        processAccountDeletion(user);
+                    } else {
+                        Toast.makeText(SettingsActivity.this, "Re-authentication failed. Incorrect password.", Toast.LENGTH_SHORT).show();
+                    }
+                });
+    } // <--- THIS is the brace the recommendation was talking about. It closes reauthenticateAndDeleteAccount.
+
+    private void processAccountDeletion(FirebaseUser user) {
+        // Show a loading dialog so the user knows the process is happening on the server
+        AlertDialog progressDialog = new AlertDialog.Builder(this)
+                .setMessage("Archiving and deleting account... Please wait.")
+                .setCancelable(false)
+                .show();
+
+        // 1. Call the Cloud Function (index.js) to archive data to 'usersdeletedAccounts'
+        firebaseManager.archiveAndDeleteUser(task -> {
+            if (task.isSuccessful()) {
+                // 2. Archive successful, now delete the Firebase Auth record
+                user.delete().addOnCompleteListener(deleteTask -> {
+                    progressDialog.dismiss();
+                    if (deleteTask.isSuccessful()) {
+                        Toast.makeText(SettingsActivity.this, "Account deleted successfully.", Toast.LENGTH_SHORT).show();
+                        goToWelcomeAndClear();
+                    } else {
+                        Log.e(TAG, "Auth deletion failed", deleteTask.getException());
+                        Toast.makeText(SettingsActivity.this, "Data archived, but failed to remove login: " + deleteTask.getException().getMessage(), Toast.LENGTH_LONG).show();
+                    }
+                });
+            } else {
+                progressDialog.dismiss();
+                Log.e(TAG, "Cloud Function Archive Error: ", task.getException());
+                Toast.makeText(SettingsActivity.this, "Failed to archive account data. Please check your connection and try again.", Toast.LENGTH_LONG).show();
+            }
+        });
+    }
+} // <--- This closes the SettingsActivity class
+

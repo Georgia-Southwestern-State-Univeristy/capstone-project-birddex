@@ -57,7 +57,7 @@ Users can store identified birds in their personal **BirdDex collection**, inclu
 - Capture timestamp  
 
 ### Bird Facts
-Bird facts are generated and cached to reduce repeated AI requests and improve system performance.
+Bird facts are pre-generated and cached to reduce repeated AI requests and improve system performance.
 
 ### Near Me Feature
 Bird sightings are stored with geographic metadata and displayed on a map-based interface that allows users to view nearby bird activity.
@@ -134,7 +134,13 @@ All eBird data used in this application is subject to the **eBird API Terms of U
 
 ## System Architecture (Current Implementation)
 
+![BirdDex System Architecture](documents/diagrams/Updated_Sys_Arch_Diagram.png)
+
 The BirdDex system consists of a mobile client connected to cloud services and external data APIs.
+
+## Database Schema
+
+![BirdDex Database ERD](documents/diagrams/BirdDex_ERD.png)
 
 ### Mobile Application (Android)
 

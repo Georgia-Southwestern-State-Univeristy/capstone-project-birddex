@@ -132,19 +132,25 @@ service cloud.firestore {
       allow update, delete: if isSignedIn() && isOwnerOfResource();
     }
 
-    // --- Identifications ---
+    // --- Identifications (Internal logging only) ---
     match /identifications/{idId} {
-      allow read: if isSignedIn();
-      allow create: if isSignedIn() && incomingDataOwned();
-      allow update, delete: if isSignedIn() && isOwnerOfResource();
+      // Total lockdown: only Cloud Functions (Admin) can touch this
+      allow read, write: if false;
     }
 
     // --- Locations ---
     match /locations/{locId} {
       allow read: if isSignedIn();
-      allow create: if isSignedIn() && incomingDataOwned();
-      // Only the creator can update/delete their location
-      allow update, delete: if isSignedIn() && isOwnerOfResource();
+      allow create: if isSignedIn();
+
+      // Allow updates ONLY if the coordinates haven't changed.
+      // This lets the app refresh the locality name but stops hackers from
+      // changing the actual physical location of a known ID.
+      allow update: if isSignedIn() &&
+        request.resource.data.latitude == resource.data.latitude &&
+        request.resource.data.longitude == resource.data.longitude;
+
+      allow delete: if false;
     }
 
     // --- Hunter Sightings ---

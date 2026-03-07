@@ -60,7 +60,10 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
     private Handler timeoutHandler;
     private Runnable timeoutRunnable;
     private static final long IDENTIFICATION_TIMEOUT_MS = 45000; // Increased timeout for upload + AI
-    private AtomicBoolean identificationCompleted = new AtomicBoolean(false);
+    private final AtomicBoolean identificationCompleted = new AtomicBoolean(false);
+    // Guards startIdentificationFlow so only one call proceeds even if location callback
+    // and permission result both fire near-simultaneously.
+    private final AtomicBoolean identificationStarted = new AtomicBoolean(false);
     private final String requestId = UUID.randomUUID().toString(); // Persistent ID for this specific attempt
 
     @Override
@@ -178,6 +181,12 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
             Log.d(TAG, "startIdentificationFlow: Already completed, ignoring");
             return;
         }
+        // Use compareAndSet so that if the location callback and the permission callback both
+        // invoke this method at the same time, only the first one proceeds.
+        if (!identificationStarted.compareAndSet(false, true)) {
+            Log.d(TAG, "startIdentificationFlow: Already started, ignoring duplicate call");
+            return;
+        }
 
         if (!networkMonitor.isConnected()) {
             Log.e(TAG, "startIdentificationFlow: No internet connection");
@@ -280,7 +289,7 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
     private void proceedToInfoActivity(String contentStr, @Nullable String downloadUrl, @Nullable Double latitude, @Nullable Double longitude, @Nullable String localityName, @Nullable String state, @Nullable String country) {
         if (identificationCompleted.compareAndSet(false, true)) {
             timeoutHandler.removeCallbacks(timeoutRunnable);
-            
+
             Log.d(TAG, "proceedToInfoActivity: Parsing results...");
             String birdId = "Unknown", commonName = "Unknown", scientificName = "Unknown", species = "Unknown", family = "Unknown";
             String[] lines = contentStr.split("\r?\n");
@@ -324,9 +333,9 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
             ByteArrayOutputStream baos = new ByteArrayOutputStream();
             bitmap.compress(Bitmap.CompressFormat.JPEG, 75, baos);
             return Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP);
-        } catch (IOException e) { 
+        } catch (IOException e) {
             Log.e(TAG, "encodeImage: Error", e);
-            return null; 
+            return null;
         }
     }
 

@@ -32,6 +32,7 @@ public class HomeActivity extends AppCompatActivity implements NetworkMonitor.Ne
     private FirebaseManager firebaseManager;
     private List<JSONObject> allGeorgiaBirds; // New: To hold the core bird list
     private NetworkMonitor networkMonitor; // New: NetworkMonitor instance
+    private boolean isFetchingBirds = false; // Flag to prevent redundant fetches
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -137,24 +138,27 @@ public class HomeActivity extends AppCompatActivity implements NetworkMonitor.Ne
      * This data can then be used by other fragments as needed.
      */
     private void fetchCoreGeorgiaBirdList() {
+        if (isFetchingBirds) return;
+
         if (!networkMonitor.isConnected()) {
             Log.w(TAG, "Attempted to fetchCoreGeorgiaBirdList but no network in HomeActivity.");
             Toast.makeText(this, "No internet to fetch bird list.", Toast.LENGTH_SHORT).show();
-            // Optionally, set a flag or try fetching again when network becomes available
             return;
         }
 
+        isFetchingBirds = true;
         ebirdApi.fetchCoreGeorgiaBirdList(new EbirdApi.EbirdCoreBirdListCallback() {
             @Override
             public void onSuccess(List<JSONObject> birds) {
+                isFetchingBirds = false;
                 allGeorgiaBirds.clear();
                 allGeorgiaBirds.addAll(birds);
                 Log.d(TAG, "Loaded " + allGeorgiaBirds.size() + " core Georgia birds from Cloud cache.");
-                // Optionally, notify fragments or other components that the bird list is ready
             }
 
             @Override
             public void onFailure(Exception e) {
+                isFetchingBirds = false;
                 Log.e(TAG, "Failed to fetch core bird list in HomeActivity: " + e.getMessage(), e);
                 Toast.makeText(HomeActivity.this, "Failed to load core bird data in background.", Toast.LENGTH_LONG).show();
             }
@@ -178,20 +182,25 @@ public class HomeActivity extends AppCompatActivity implements NetworkMonitor.Ne
     }
 
     // --- NetworkMonitor Callbacks ---
+    // NetworkMonitor callbacks can arrive on a background thread (ConnectivityManager fires
+    // onAvailable/onLost on its own executor).  Any UI interaction must be posted to the main thread.
     @Override
     public void onNetworkAvailable() {
         Log.d(TAG, "Network became available in HomeActivity.");
-        // If bird list was not loaded due to no network, try again.
-        if (allGeorgiaBirds.isEmpty()) {
-            Toast.makeText(this, "Internet connection restored. Retrying bird list fetch.", Toast.LENGTH_SHORT).show();
-            fetchCoreGeorgiaBirdList();
-        }
+        runOnUiThread(() -> {
+            if (allGeorgiaBirds.isEmpty()) {
+                Toast.makeText(this, "Internet connection restored. Retrying bird list fetch.", Toast.LENGTH_SHORT).show();
+                fetchCoreGeorgiaBirdList();
+            }
+        });
     }
 
     @Override
     public void onNetworkLost() {
         Log.e(TAG, "Network lost in HomeActivity.");
-        Toast.makeText(this, "Internet connection lost. Bird data may be incomplete.", Toast.LENGTH_LONG).show();
+        runOnUiThread(() ->
+                Toast.makeText(this, "Internet connection lost. Bird data may be incomplete.", Toast.LENGTH_LONG).show()
+        );
     }
     /** * Triggers the Cloud Function to ensure the Firestore bird database
      * is synced with eBird. The function uses a 72-hour cache.

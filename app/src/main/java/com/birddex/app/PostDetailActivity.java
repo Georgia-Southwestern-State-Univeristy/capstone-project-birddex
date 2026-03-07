@@ -62,14 +62,21 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
     private ForumCommentAdapter adapter;
     private String currentUsername;
     private String currentUserPfpUrl;
-    
+
+
     private List<ForumComment> commentList = new ArrayList<>();
     private DocumentSnapshot lastCommentVisible;
     private boolean isFetchingComments = false;
     private boolean isLastCommentsPage = false;
-    
+    private boolean postLikeInFlight = false;
+
+
     private ForumComment replyingToComment = null;
     private boolean hasMarkedAsViewed = false;
+    // Guards against double-tap races on comment likes
+    // Thread-safe set guarding against double-tap races on comment likes.
+    private final java.util.Set<String> commentLikeInFlight =
+            java.util.Collections.newSetFromMap(new java.util.concurrent.ConcurrentHashMap<>());
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -132,7 +139,7 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
                                 String userId = user.getUid();
                                 handleViewTracking(userId, originalPost);
                             }
-                            
+
                             bindPostToLayout(originalPost);
                         }
                     }
@@ -164,7 +171,7 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
     private void bindPostToLayout(ForumPost post) {
         if (isFinishing() || isDestroyed()) return;
         View postView = binding.postContent.getRoot();
-        
+
         TextView tvUsername = postView.findViewById(R.id.tvPostUsername);
         TextView tvTimestamp = postView.findViewById(R.id.tvPostTimestamp);
         TextView tvMessage = postView.findViewById(R.id.tvPostMessage);
@@ -200,7 +207,7 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
         }
 
         Glide.with(this).load(post.getUserProfilePictureUrl()).placeholder(R.drawable.ic_profile).into(ivPfp);
-        
+
         if (post.getBirdImageUrl() != null && !post.getBirdImageUrl().isEmpty()) {
             cvImage.setVisibility(View.VISIBLE);
             Glide.with(this).load(post.getBirdImageUrl()).into(ivBird);
@@ -234,7 +241,7 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
 
         btnLike.setOnClickListener(v -> toggleLike());
         btnOptions.setOnClickListener(v -> showPostOptions(post, v));
-        
+
         ivPfp.setOnClickListener(v -> openUserProfile(post.getUserId()));
         tvUsername.setOnClickListener(v -> openUserProfile(post.getUserId()));
     }
@@ -242,7 +249,7 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
     private void showPostOptions(ForumPost post, View view) {
         PopupMenu popup = new PopupMenu(this, view);
         FirebaseUser user = mAuth.getCurrentUser();
-        
+
         if (user != null && post.getUserId().equals(user.getUid())) {
             if (post.getTimestamp() != null) {
                 long postTime = post.getTimestamp().toDate().getTime();
@@ -369,7 +376,7 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
                 .get()
                 .addOnSuccessListener(queryDocumentSnapshots -> {
                     WriteBatch batch = db.batch();
-                    
+
                     for (DocumentSnapshot doc : queryDocumentSnapshots) {
                         Map<String, Object> commentBacklog = new HashMap<>();
                         commentBacklog.put("type", "comment_archived_with_post");
@@ -378,21 +385,21 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
                         commentBacklog.put("data", doc.getData());
                         commentBacklog.put("deletedBy", userId);
                         commentBacklog.put("deletedAt", FieldValue.serverTimestamp());
-                        
+
                         batch.set(db.collection("deletedforum_backlog").document(), commentBacklog);
                         batch.delete(doc.getReference());
                     }
-                    
+
                     Map<String, Object> postBacklog = new HashMap<>();
                     postBacklog.put("type", "post");
                     postBacklog.put("originalId", post.getId());
                     postBacklog.put("data", post);
                     postBacklog.put("deletedBy", userId);
                     postBacklog.put("deletedAt", FieldValue.serverTimestamp());
-                    
+
                     batch.set(db.collection("deletedforum_backlog").document(), postBacklog);
                     batch.delete(db.collection("forumThreads").document(post.getId()));
-                    
+
                     batch.commit().addOnSuccessListener(aVoid -> {
                         if (isFinishing() || isDestroyed()) return;
                         Toast.makeText(this, "Post and comments deleted", Toast.LENGTH_SHORT).show();
@@ -462,7 +469,7 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
         String[] reasons = {"Inappropriate Language", "Inappropriate Image", "Spam", "Harassment", "Other"};
         new AlertDialog.Builder(this)
                 .setTitle("Report Post")
-                		.setItems(reasons, (dialog, which) -> {
+                .setItems(reasons, (dialog, which) -> {
                     String selectedReason = reasons[which];
                     if (selectedReason.equals("Other")) {
                         showOtherReportDialog(reason -> submitReport(post, reason));
@@ -487,14 +494,16 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
     }
 
     private void toggleLike() {
+        if (postLikeInFlight) return; // block double-tap while write is in flight
         FirebaseUser user = mAuth.getCurrentUser();
         if (user == null || originalPost == null) return;
+
+        postLikeInFlight = true;
 
         String userId = user.getUid();
         if (originalPost.getLikedBy() == null) originalPost.setLikedBy(new HashMap<>());
         boolean liked = originalPost.getLikedBy().containsKey(userId);
 
-        // Optimistic UI update
         int currentCount = originalPost.getLikeCount();
         if (liked) {
             originalPost.setLikeCount(Math.max(0, currentCount - 1));
@@ -505,25 +514,27 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
         }
         bindPostToLayout(originalPost);
 
-        // Update Source of Truth only.
-        // likeCount is handled by server trigger.
         if (liked) {
             db.collection("forumThreads").document(postId)
                     .update("likedBy." + userId, FieldValue.delete())
-                    .addOnFailureListener(e -> {
-                        // Revert on failure
-                        originalPost.setLikeCount(currentCount);
-                        originalPost.getLikedBy().put(userId, true);
-                        bindPostToLayout(originalPost);
+                    .addOnCompleteListener(task -> {
+                        postLikeInFlight = false;
+                        if (!task.isSuccessful()) {
+                            originalPost.setLikeCount(currentCount);
+                            originalPost.getLikedBy().put(userId, true);
+                            bindPostToLayout(originalPost);
+                        }
                     });
         } else {
             db.collection("forumThreads").document(postId)
                     .update("likedBy." + userId, true)
-                    .addOnFailureListener(e -> {
-                        // Revert on failure
-                        originalPost.setLikeCount(currentCount);
-                        originalPost.getLikedBy().remove(userId);
-                        bindPostToLayout(originalPost);
+                    .addOnCompleteListener(task -> {
+                        postLikeInFlight = false;
+                        if (!task.isSuccessful()) {
+                            originalPost.setLikeCount(currentCount);
+                            originalPost.getLikedBy().remove(userId);
+                            bindPostToLayout(originalPost);
+                        }
                     });
         }
     }
@@ -533,7 +544,7 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
         LinearLayoutManager layoutManager = new LinearLayoutManager(this);
         binding.rvComments.setLayoutManager(layoutManager);
         binding.rvComments.setAdapter(adapter);
-        
+
         binding.rvComments.addOnScrollListener(new RecyclerView.OnScrollListener() {
             @Override
             public void onScrolled(@NonNull RecyclerView recyclerView, int dx, int dy) {
@@ -566,10 +577,10 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
 
         query.get().addOnSuccessListener(value -> {
             if (isFinishing() || isDestroyed()) return;
-            
+
             if (value != null && !value.isEmpty()) {
                 lastCommentVisible = value.getDocuments().get(value.size() - 1);
-                
+
                 for (DocumentSnapshot doc : value.getDocuments()) {
                     ForumComment comment = doc.toObject(ForumComment.class);
                     if (comment != null) {
@@ -578,7 +589,7 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
                     }
                 }
                 adapter.setComments(new ArrayList<>(commentList));
-                
+
                 if (value.size() < COMMENTS_PAGE_SIZE) {
                     isLastCommentsPage = true;
                 }
@@ -608,12 +619,12 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
 
         binding.btnSendComment.setEnabled(false);
         ForumComment comment = new ForumComment(postId, user.getUid(), currentUsername, currentUserPfpUrl, text);
-        
+
         if (replyingToComment != null) {
             comment.setParentCommentId(replyingToComment.getId());
             comment.setParentUsername(replyingToComment.getUsername());
         }
-        
+
         // Removed manual commentCount increment. Handled by server trigger.
         db.collection("forumThreads").document(postId).collection("comments").add(comment)
                 .addOnSuccessListener(aVoid -> {
@@ -622,7 +633,7 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
                     binding.etComment.setHint("Write a comment...");
                     replyingToComment = null;
                     binding.btnSendComment.setEnabled(true);
-                    
+
                     // Refresh list
                     lastCommentVisible = null;
                     isLastCommentsPage = false;
@@ -642,6 +653,11 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
         if (user == null) return;
 
         String userId = user.getUid();
+        // Prevent a double-tap race: if a write for this comment is already in-flight,
+        // ignore the second tap entirely rather than sending conflicting increments.
+        if (commentLikeInFlight.contains(comment.getId())) return;
+        commentLikeInFlight.add(comment.getId());
+
         if (comment.getLikedBy() == null) comment.setLikedBy(new HashMap<>());
         boolean liked = comment.getLikedBy().containsKey(userId);
 
@@ -660,21 +676,27 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
             db.collection("forumThreads").document(postId).collection("comments").document(comment.getId())
                     .update("likeCount", FieldValue.increment(-1),
                             "likedBy." + userId, FieldValue.delete())
-                    .addOnFailureListener(e -> {
-                        // Revert on failure
-                        comment.setLikeCount(currentCount);
-                        comment.getLikedBy().put(userId, true);
-                        adapter.notifyDataSetChanged();
+                    .addOnCompleteListener(task -> {
+                        commentLikeInFlight.remove(comment.getId());
+                        if (!task.isSuccessful()) {
+                            // Revert on failure
+                            comment.setLikeCount(currentCount);
+                            comment.getLikedBy().put(userId, true);
+                            adapter.notifyDataSetChanged();
+                        }
                     });
         } else {
             db.collection("forumThreads").document(postId).collection("comments").document(comment.getId())
                     .update("likeCount", FieldValue.increment(1),
                             "likedBy." + userId, true)
-                    .addOnFailureListener(e -> {
-                        // Revert on failure
-                        comment.setLikeCount(currentCount);
-                        comment.getLikedBy().remove(userId);
-                        adapter.notifyDataSetChanged();
+                    .addOnCompleteListener(task -> {
+                        commentLikeInFlight.remove(comment.getId());
+                        if (!task.isSuccessful()) {
+                            // Revert on failure
+                            comment.setLikeCount(currentCount);
+                            comment.getLikedBy().remove(userId);
+                            adapter.notifyDataSetChanged();
+                        }
                     });
         }
     }
@@ -699,7 +721,7 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
     private void showCommentOptions(ForumComment comment, View view) {
         PopupMenu popup = new PopupMenu(this, view);
         FirebaseUser user = mAuth.getCurrentUser();
-        
+
         boolean isCommentAuthor = user != null && comment.getUserId().equals(user.getUid());
 
         if (isCommentAuthor) {
@@ -734,7 +756,7 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
         input.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE);
         input.setText(comment.getText());
         input.setFilters(new InputFilter[]{new InputFilter.LengthFilter(MAX_COMMENT_LENGTH)});
-        
+
         FrameLayout container = new FrameLayout(this);
         FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         params.leftMargin = params.rightMargin = 40;
@@ -761,8 +783,8 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
         if (!ContentFilter.isSafe(this, newText, "Comment")) return;
 
         db.collection("forumThreads").document(postId).collection("comments").document(comment.getId())
-                .update("text", newText, 
-                        "edited", true, 
+                .update("text", newText,
+                        "edited", true,
                         "lastEditedAt", FieldValue.serverTimestamp())
                 .addOnSuccessListener(aVoid -> Toast.makeText(this, "Comment updated", Toast.LENGTH_SHORT).show())
                 .addOnFailureListener(e -> Toast.makeText(this, "Update failed", Toast.LENGTH_SHORT).show());
@@ -794,12 +816,12 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
                             backlogByUserId(batch, user.getUid(), "comment_reply", doc.getId(), doc.getData());
                             batch.delete(doc.getReference());
                         }
-                        
+
                         backlogByUserId(batch, user.getUid(), "comment", comment.getId(), comment);
 
                         batch.delete(db.collection("forumThreads").document(postId)
                                 .collection("comments").document(comment.getId()));
-                        
+
                         // Removed manual commentCount decrement. Handled by server trigger.
                         batch.commit().addOnSuccessListener(aVoid -> {
                             if (isFinishing() || isDestroyed()) return;
@@ -884,7 +906,7 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
         input.setHint("Please specify the reason (max 200 chars)...");
         input.setFilters(new InputFilter[]{new InputFilter.LengthFilter(200)});
         input.setLines(5);
-        
+
         FrameLayout container = new FrameLayout(this);
         FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         params.leftMargin = params.rightMargin = 40;

@@ -72,6 +72,8 @@ public class EditProfileActivity extends AppCompatActivity implements NetworkMon
     private MaterialButton btnChangePhoto;
 
     private Uri imageUri;
+    // Prevents double-tapping Save from firing the async upload chain twice
+    private boolean isSaveInProgress = false;
     private String uploadedProfilePictureDownloadUrl = null; // To store the URL after successful upload
 
     // Activity Result Launchers
@@ -124,16 +126,16 @@ public class EditProfileActivity extends AppCompatActivity implements NetworkMon
 
         // Register for image picking result
         pickImageLauncher = registerForActivityResult(new ActivityResultContracts.StartActivityForResult(),
-            result -> {
-                if (result.getResultCode() == Activity.RESULT_OK && result.getData() != null) {
-                    Uri selectedImageUri = result.getData().getData();
-                    if (selectedImageUri != null) {
-                        startImageCropper(selectedImageUri);
-                    } else {
-                        Toast.makeText(this, "Failed to get image URI", Toast.LENGTH_SHORT).show();
+                result -> {
+                    if (result.getResultCode() == Activity.RESULT_OK && result.getData() != null) {
+                        Uri selectedImageUri = result.getData().getData();
+                        if (selectedImageUri != null) {
+                            startImageCropper(selectedImageUri);
+                        } else {
+                            Toast.makeText(this, "Failed to get image URI", Toast.LENGTH_SHORT).show();
+                        }
                     }
-                }
-            });
+                });
 
         // Register for image cropping result
         cropImageLauncher = registerForActivityResult(new CropImageContract(), result -> {
@@ -162,6 +164,7 @@ public class EditProfileActivity extends AppCompatActivity implements NetworkMon
         });
 
         btnSave.setOnClickListener(v -> {
+            if (isSaveInProgress) return; // Prevent double-tap race
             if (!networkMonitor.isConnected()) {
                 Toast.makeText(this, "No internet connection. Please check your network and try again.", Toast.LENGTH_LONG).show();
                 return;
@@ -201,11 +204,12 @@ public class EditProfileActivity extends AppCompatActivity implements NetworkMon
 
             if (pfpChanged) {
                 Log.d(TAG, "PFP changed, showing loading overlay and calling recordPfpChange Cloud Function.");
+                isSaveInProgress = true;
                 loadingOverlay.setVisibility(View.VISIBLE);
-                
+
                 // Idempotency: Generate a unique ID for this specific save attempt
                 String pfpChangeId = UUID.randomUUID().toString();
-                
+
                 firebaseManager.recordPfpChange(pfpChangeId, new FirebaseManager.PfpChangeLimitListener() {
                     @Override
                     public void onSuccess(int pfpChangesToday, Date pfpCooldownResetTimestamp) { // Updated signature
@@ -259,6 +263,7 @@ public class EditProfileActivity extends AppCompatActivity implements NetworkMon
                     @Override
                     public void onFailure(String errorMessage) {
                         if (isFinishing() || isDestroyed()) return;
+                        isSaveInProgress = false;
                         loadingOverlay.setVisibility(View.GONE);
                         Log.e(TAG, "Failed to record PFP change: " + errorMessage);
                         Toast.makeText(EditProfileActivity.this, "Error: " + errorMessage, Toast.LENGTH_LONG).show();
@@ -267,12 +272,14 @@ public class EditProfileActivity extends AppCompatActivity implements NetworkMon
                     @Override
                     public void onLimitExceeded() {
                         if (isFinishing() || isDestroyed()) return;
+                        isSaveInProgress = false;
                         loadingOverlay.setVisibility(View.GONE);
                         Log.w(TAG, "PFP limit exceeded.");
                         Toast.makeText(EditProfileActivity.this, "Daily limit reached.", Toast.LENGTH_LONG).show();
                     }
                 });
             } else {
+                isSaveInProgress = true;
                 Log.d(TAG, "PFP not changed. Showing loading overlay and saving profile text changes.");
                 loadingOverlay.setVisibility(View.VISIBLE);
                 // If no new image, and username/bio changed, save those
@@ -403,24 +410,24 @@ public class EditProfileActivity extends AppCompatActivity implements NetworkMon
         StorageReference newProfileImageRef = storageRef.child("profile_pictures/" + fileName);
 
         newProfileImageRef.putFile(newImageUri)
-            .addOnSuccessListener(taskSnapshot -> {
-                if (isFinishing() || isDestroyed()) return;
-
-                // We no longer need to manually delete the old file here in the app!
-                // The Cloud Function in index.js will handle it once saveProfileChanges updates Firestore.
-
-                newProfileImageRef.getDownloadUrl().addOnSuccessListener(uri -> {
+                .addOnSuccessListener(taskSnapshot -> {
                     if (isFinishing() || isDestroyed()) return;
-                    saveProfileChanges(newUsername, cleanedBio, uri.toString());
-                }).addOnFailureListener(e -> {
+
+                    // We no longer need to manually delete the old file here in the app!
+                    // The Cloud Function in index.js will handle it once saveProfileChanges updates Firestore.
+
+                    newProfileImageRef.getDownloadUrl().addOnSuccessListener(uri -> {
+                        if (isFinishing() || isDestroyed()) return;
+                        saveProfileChanges(newUsername, cleanedBio, uri.toString());
+                    }).addOnFailureListener(e -> {
+                        loadingOverlay.setVisibility(View.GONE);
+                        Toast.makeText(this, "Failed to get URL", Toast.LENGTH_SHORT).show();
+                    });
+                })
+                .addOnFailureListener(e -> {
                     loadingOverlay.setVisibility(View.GONE);
-                    Toast.makeText(this, "Failed to get URL", Toast.LENGTH_SHORT).show();
+                    Toast.makeText(this, "Upload failed", Toast.LENGTH_SHORT).show();
                 });
-            })
-            .addOnFailureListener(e -> {
-                loadingOverlay.setVisibility(View.GONE);
-                Toast.makeText(this, "Upload failed", Toast.LENGTH_SHORT).show();
-            });
     }
 
     private String encodeImage(Uri imageUri) {
@@ -474,17 +481,24 @@ public class EditProfileActivity extends AppCompatActivity implements NetworkMon
     }
 
     @Override
-    protected void onResume() {
-        super.onResume();
-        networkMonitor.register();
-    }
-
-    @Override
     protected void onPause() {
         super.onPause();
         networkMonitor.unregister();
-        if (loadingOverlay != null && loadingOverlay.getVisibility() == View.VISIBLE) {
+        // Do NOT reset isSaveInProgress — the async chain may still be running.
+        // Hiding the overlay is fine (user left the screen), but the guard must
+        // stay true so a re-entry tap cannot start a second parallel chain.
+        if (loadingOverlay != null) {
             loadingOverlay.setVisibility(View.GONE);
+        }
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        networkMonitor.register();
+        // Re-show the overlay if a save was in progress when the user left.
+        if (isSaveInProgress && loadingOverlay != null) {
+            loadingOverlay.setVisibility(View.VISIBLE);
         }
     }
 

@@ -11,6 +11,10 @@ import android.widget.ImageView;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import com.google.firebase.firestore.DocumentSnapshot;
+import com.google.firebase.firestore.SetOptions;
+import java.util.Collections;
+
 import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatActivity;
 
@@ -285,9 +289,9 @@ public class CardMakerActivity extends AppCompatActivity {
 
         final TaskCompletionSource<Void> addCollectionSlotMaybeTcs = new TaskCompletionSource<>();
 
+// First: skip if a slot for this bird already exists (optimistic read, acceptable TOCTOU within single session)
         FirebaseFirestore.getInstance()
-                .collection("users")
-                .document(userId)
+                .collection("users").document(userId)
                 .collection("collectionSlot")
                 .whereEqualTo("birdId", currentBirdId)
                 .limit(1)
@@ -298,48 +302,46 @@ public class CardMakerActivity extends AppCompatActivity {
                         return;
                     }
 
-                    FirebaseFirestore.getInstance()
-                            .collection("users")
-                            .document(userId)
-                            .collection("collectionSlot")
-                            .orderBy("slotIndex", Query.Direction.DESCENDING)
-                            .limit(1)
-                            .get()
-                            .addOnSuccessListener(slotIndexQuery -> {
-                                int nextSlotIndex = 0;
-                                if (!slotIndexQuery.isEmpty()) {
-                                    Long maxSlotIndexLong = slotIndexQuery.getDocuments().get(0).getLong("slotIndex");
-                                    if (maxSlotIndexLong != null) {
-                                        nextSlotIndex = maxSlotIndexLong.intValue() + 1;
-                                    }
-                                }
+                    // Atomically claim the next slotIndex via a counter document
+                    DocumentReference counterRef = FirebaseFirestore.getInstance()
+                            .collection("users").document(userId)
+                            .collection("collectionMeta").document("slotCounter");
 
-                                CollectionSlot collectionSlot = new CollectionSlot();
-                                collectionSlot.setId(collectionSlotId);
-                                collectionSlot.setUserBirdId(userBirdId);
-                                collectionSlot.setBirdId(currentBirdId);
-                                collectionSlot.setTimestamp(now);
-                                collectionSlot.setState(currentState);
-                                collectionSlot.setLocality(currentLocality);
-                                collectionSlot.setImageUrl(originalImageUrl);
-                                collectionSlot.setRarity(currentRarity != null && !currentRarity.trim().isEmpty()
-                                        ? currentRarity
-                                        : "Unknown");
-                                collectionSlot.setSlotIndex(nextSlotIndex);
-                                collectionSlot.setCommonName(currentCommonName);
-                                collectionSlot.setScientificName(currentScientificName);
+                    FirebaseFirestore.getInstance().runTransaction(transaction -> {
+                        DocumentSnapshot counterSnap = transaction.get(counterRef);
+                        long nextIndex = (counterSnap.exists() && counterSnap.getLong("nextSlotIndex") != null)
+                                ? counterSnap.getLong("nextSlotIndex")
+                                : 0L;
+                        // Atomically increment — next caller gets nextIndex + 1
+                        transaction.set(counterRef,
+                                Collections.singletonMap("nextSlotIndex", nextIndex + 1),
+                                SetOptions.merge());
+                        return nextIndex;
+                    }).addOnSuccessListener(nextSlotIndex -> {
+                        CollectionSlot collectionSlot = new CollectionSlot();
+                        collectionSlot.setId(collectionSlotId);
+                        collectionSlot.setUserBirdId(userBirdId);
+                        collectionSlot.setBirdId(currentBirdId);
+                        collectionSlot.setTimestamp(now);
+                        collectionSlot.setState(currentState);
+                        collectionSlot.setLocality(currentLocality);
+                        collectionSlot.setImageUrl(originalImageUrl);
+                        collectionSlot.setRarity(currentRarity != null && !currentRarity.trim().isEmpty()
+                                ? currentRarity : "Unknown");
+                        collectionSlot.setSlotIndex((int) (long) nextSlotIndex);
+                        collectionSlot.setCommonName(currentCommonName);
+                        collectionSlot.setScientificName(currentScientificName);
 
-                                firebaseManager.addCollectionSlot(userId, collectionSlotId, collectionSlot, task -> {
-                                    if (task.isSuccessful()) {
-                                        safeSetResult(addCollectionSlotMaybeTcs);
-                                    } else {
-                                        safeSetException(addCollectionSlotMaybeTcs, task.getException() != null
-                                                ? task.getException()
-                                                : new IllegalStateException("Failed to save collectionSlot."));
-                                    }
-                                });
-                            })
-                            .addOnFailureListener(e -> safeSetException(addCollectionSlotMaybeTcs, e));
+                        firebaseManager.addCollectionSlot(userId, collectionSlotId, collectionSlot, task -> {
+                            if (task.isSuccessful()) {
+                                safeSetResult(addCollectionSlotMaybeTcs);
+                            } else {
+                                safeSetException(addCollectionSlotMaybeTcs, task.getException() != null
+                                        ? task.getException()
+                                        : new IllegalStateException("Failed to save collectionSlot."));
+                            }
+                        });
+                    }).addOnFailureListener(e -> safeSetException(addCollectionSlotMaybeTcs, e));
                 })
                 .addOnFailureListener(e -> safeSetException(addCollectionSlotMaybeTcs, e));
 

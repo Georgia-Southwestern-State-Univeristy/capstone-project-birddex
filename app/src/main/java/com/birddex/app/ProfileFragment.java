@@ -100,7 +100,8 @@ public class ProfileFragment extends Fragment implements
     private ActivityResultLauncher<Intent> editProfileLauncher;
     private ListenerRegistration profileListener;
 
-    public ProfileFragment() {}
+    public ProfileFragment() {
+    }
 
     public static ProfileFragment newInstance(String userId) {
         ProfileFragment fragment = new ProfileFragment();
@@ -190,7 +191,10 @@ public class ProfileFragment extends Fragment implements
     private void setupRecyclerViews() {
         favoritesAdapter = new FavoritesAdapter(isCurrentUser, this);
         rvFavoriteCards.setLayoutManager(new GridLayoutManager(requireContext(), 3) {
-            @Override public boolean canScrollVertically() { return false; }
+            @Override
+            public boolean canScrollVertically() {
+                return false;
+            }
         });
         rvFavoriteCards.setAdapter(favoritesAdapter);
 
@@ -215,9 +219,18 @@ public class ProfileFragment extends Fragment implements
 
     private void setupTabs() {
         profileTabLayout.addOnTabSelectedListener(new TabLayout.OnTabSelectedListener() {
-            @Override public void onTabSelected(TabLayout.Tab tab) { applyTabState(tab.getPosition()); }
-            @Override public void onTabUnselected(TabLayout.Tab tab) {}
-            @Override public void onTabReselected(TabLayout.Tab tab) {}
+            @Override
+            public void onTabSelected(TabLayout.Tab tab) {
+                applyTabState(tab.getPosition());
+            }
+
+            @Override
+            public void onTabUnselected(TabLayout.Tab tab) {
+            }
+
+            @Override
+            public void onTabReselected(TabLayout.Tab tab) {
+            }
         });
         applyTabState(0);
     }
@@ -277,8 +290,12 @@ public class ProfileFragment extends Fragment implements
         Log.d(TAG, "Listening to profile updates for: " + profileUserId);
         profileListener = db.collection("users").document(profileUserId)
                 .addSnapshotListener((snapshot, e) -> {
-                    if (e != null) { Log.e(TAG, "Profile listen failed.", e); return; }
-                    if (snapshot != null && snapshot.exists() && isAdded()) handleUserSnapshot(snapshot);
+                    if (e != null) {
+                        Log.e(TAG, "Profile listen failed.", e);
+                        return;
+                    }
+                    if (snapshot != null && snapshot.exists() && isAdded())
+                        handleUserSnapshot(snapshot);
                 });
     }
 
@@ -305,7 +322,7 @@ public class ProfileFragment extends Fragment implements
         favoriteCardKeys.clear();
         List<String> cloudKeys = (List<String>) doc.get("favoriteCardKeys");
         if (cloudKeys != null) favoriteCardKeys.addAll(cloudKeys);
-        
+
         loadFavoriteCards();
     }
 
@@ -317,7 +334,10 @@ public class ProfileFragment extends Fragment implements
                     allCollectionSlots.clear();
                     for (DocumentSnapshot doc : querySnapshot.getDocuments()) {
                         CollectionSlot slot = doc.toObject(CollectionSlot.class);
-                        if (slot != null) { slot.setId(doc.getId()); allCollectionSlots.add(slot); }
+                        if (slot != null) {
+                            slot.setId(doc.getId());
+                            allCollectionSlots.add(slot);
+                        }
                     }
                     refreshFavoritesDisplay();
                 });
@@ -360,13 +380,21 @@ public class ProfileFragment extends Fragment implements
             firebaseManager.unfollowUser(profileUserId, task -> {
                 if (!isAdded()) return;
                 btnFollow.setEnabled(true);
-                if (task.isSuccessful()) { isFollowing = false; btnFollow.setText("Follow"); refreshPosts(); }
+                if (task.isSuccessful()) {
+                    isFollowing = false;
+                    btnFollow.setText("Follow");
+                    refreshPosts();
+                }
             });
         } else {
             firebaseManager.followUser(profileUserId, task -> {
                 if (!isAdded()) return;
                 btnFollow.setEnabled(true);
-                if (task.isSuccessful()) { isFollowing = true; btnFollow.setText("Following"); refreshPosts(); }
+                if (task.isSuccessful()) {
+                    isFollowing = true;
+                    btnFollow.setText("Following");
+                    refreshPosts();
+                }
             });
         }
     }
@@ -383,34 +411,66 @@ public class ProfileFragment extends Fragment implements
                 lastVisible = value.getDocuments().get(value.size() - 1);
                 for (DocumentSnapshot doc : value.getDocuments()) {
                     ForumPost post = doc.toObject(ForumPost.class);
-                    if (post != null) { post.setId(doc.getId()); postList.add(post); }
+                    if (post != null) {
+                        post.setId(doc.getId());
+                        postList.add(post);
+                    }
                 }
                 postsAdapter.setPosts(new ArrayList<>(postList));
                 if (value.size() < PAGE_SIZE) isLastPage = true;
-            } else { isLastPage = true; }
+            } else {
+                isLastPage = true;
+            }
             isFetching = false;
             applyTabState(profileTabLayout.getSelectedTabPosition());
-        }).addOnFailureListener(e -> { isFetching = false; Log.e(TAG, "Post fetch failed.", e); });
+        }).addOnFailureListener(e -> {
+            isFetching = false;
+            Log.e(TAG, "Post fetch failed.", e);
+        });
     }
 
     private void refreshPosts() {
-        isFetching = false; lastVisible = null; isLastPage = false; postList.clear();
+        isFetching = false;
+        lastVisible = null;
+        isLastPage = false;
+        postList.clear();
         if (postsAdapter != null) postsAdapter.setPosts(new ArrayList<>());
         fetchPosts();
     }
 
     private void setupSwipeRefresh() {
-        swipeRefreshLayout.setOnRefreshListener(() -> { fetchUserProfile(); refreshPosts(); });
+        swipeRefreshLayout.setOnRefreshListener(() -> {
+            fetchUserProfile();
+            refreshPosts();
+            // The snapshot listener and post fetch are async; stop the spinner after a
+            // short grace period so it doesn't spin forever if the user is offline.
+            swipeRefreshLayout.postDelayed(() -> {
+                if (isAdded() && swipeRefreshLayout != null) {
+                    swipeRefreshLayout.setRefreshing(false);
+                }
+            }, 3000);
+        });
     }
 
-    @Override public void onLikeClick(ForumPost post) { Log.d(TAG, "Like: " + post.getId()); }
-    @Override public void onCommentClick(ForumPost post) { onPostClick(post); }
-    @Override public void onPostClick(ForumPost post) {
+    @Override
+    public void onLikeClick(ForumPost post) {
+        Log.d(TAG, "Like: " + post.getId());
+    }
+
+    @Override
+    public void onCommentClick(ForumPost post) {
+        onPostClick(post);
+    }
+
+    @Override
+    public void onPostClick(ForumPost post) {
         Intent intent = new Intent(requireContext(), PostDetailActivity.class);
         intent.putExtra(PostDetailActivity.EXTRA_POST_ID, post.getId());
         startActivity(intent);
     }
-    @Override public void onOptionsClick(ForumPost post, View view) {
+
+    @Override
+    public void onOptionsClick(ForumPost post, View view) {
         PopupMenu popup = new PopupMenu(requireContext(), view);
         FirebaseUser user = mAuth.getCurrentUser();
         if (user != null && user.getUid().equals(post.getUserId())) popup.getMenu().add("Delete");
@@ -422,14 +482,18 @@ public class ProfileFragment extends Fragment implements
         });
         popup.show();
     }
-    @Override public void onUserClick(String userId) {
+
+    @Override
+    public void onUserClick(String userId) {
         if (!userId.equals(profileUserId)) {
             Intent intent = new Intent(requireContext(), UserSocialProfileActivity.class);
             intent.putExtra(UserSocialProfileActivity.EXTRA_USER_ID, userId);
             startActivity(intent);
         }
     }
-    @Override public void onMapClick(ForumPost post) {
+
+    @Override
+    public void onMapClick(ForumPost post) {
         if (post.getLatitude() != null && post.getLongitude() != null) {
             Intent intent = new Intent(requireContext(), NearbyHeatmapActivity.class);
             intent.putExtra(NearbyHeatmapActivity.EXTRA_CENTER_LAT, post.getLatitude());
@@ -439,9 +503,11 @@ public class ProfileFragment extends Fragment implements
         }
     }
 
-    @Override public void onFavoriteClicked(int position, @Nullable CollectionSlot slot) {
-        if (slot == null) { if (isCurrentUser) showFavoritePickerDialog(position); }
-        else {
+    @Override
+    public void onFavoriteClicked(int position, @Nullable CollectionSlot slot) {
+        if (slot == null) {
+            if (isCurrentUser) showFavoritePickerDialog(position);
+        } else {
             Intent intent = new Intent(requireContext(), ViewBirdCardActivity.class);
             intent.putExtra(CollectionCardAdapter.EXTRA_IMAGE_URL, slot.getImageUrl());
             intent.putExtra(CollectionCardAdapter.EXTRA_COMMON_NAME, slot.getCommonName());
@@ -457,15 +523,20 @@ public class ProfileFragment extends Fragment implements
             startActivity(intent);
         }
     }
-    @Override public boolean onFavoriteLongPressed(int position, @Nullable CollectionSlot slot) {
+
+    @Override
+    public boolean onFavoriteLongPressed(int position, @Nullable CollectionSlot slot) {
         if (!isCurrentUser) return false;
         showFavoritePickerDialog(position);
         return true;
     }
 
     private void showFavoritePickerDialog(int position) {
-        if (allCollectionSlots.isEmpty()) { Toast.makeText(getContext(), "No cards found.", Toast.LENGTH_SHORT).show(); return; }
-        
+        if (allCollectionSlots.isEmpty()) {
+            Toast.makeText(getContext(), "No cards found.", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
         View dialogView = LayoutInflater.from(requireContext()).inflate(R.layout.dialog_favorite_picker, null);
         EditText etSearch = dialogView.findViewById(R.id.etSearch);
         ListView listView = dialogView.findViewById(R.id.listView);
@@ -482,8 +553,12 @@ public class ProfileFragment extends Fragment implements
                 .create();
 
         etSearch.addTextChangedListener(new TextWatcher() {
-            @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
-            @Override public void onTextChanged(CharSequence s, int start, int before, int count) {
+            @Override
+            public void beforeTextChanged(CharSequence s, int start, int count, int after) {
+            }
+
+            @Override
+            public void onTextChanged(CharSequence s, int start, int before, int count) {
                 filteredSlots.clear();
                 String query = s.toString().toLowerCase();
                 for (CollectionSlot slot : allCollectionSlots) {
@@ -495,7 +570,10 @@ public class ProfileFragment extends Fragment implements
                 adapter.addAll(getSlotNames(filteredSlots));
                 adapter.notifyDataSetChanged();
             }
-            @Override public void afterTextChanged(Editable s) {}
+
+            @Override
+            public void afterTextChanged(Editable s) {
+            }
         });
 
         listView.setOnItemClickListener((parent, view, which, id) -> {
@@ -536,6 +614,24 @@ public class ProfileFragment extends Fragment implements
         });
     }
 
-    @Override public void onResume() { super.onResume(); fetchUserProfile(); refreshPosts(); }
-    @Override public void onStop() { super.onStop(); if (profileListener != null) profileListener.remove(); }
+    @Override
+    public void onResume() {
+        super.onResume();
+        // Only re-attach the profile listener if it's not already active.
+        // Unconditionally removing + re-adding in onResume creates a small window
+        // where no listener is registered (listener gap race condition).
+        if (profileListener == null) {
+            fetchUserProfile();
+        }
+        refreshPosts();
+    }
+
+    @Override
+    public void onStop() {
+        super.onStop();
+        if (profileListener != null) {
+            profileListener.remove();
+            profileListener = null; // ← allow onResume() guard to re-register
+        }
+    }
 }

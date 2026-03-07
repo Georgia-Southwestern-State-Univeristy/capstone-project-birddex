@@ -73,7 +73,7 @@ public class SearchCollectionFragment extends Fragment {
     private final List<CollectionSlot> uniqueSpeciesSlots = new ArrayList<>();
     private final List<CollectionSlot> displayedSlots = new ArrayList<>();
     private final List<RecentPhotoEntry> recentPhotoEntries = new ArrayList<>();
-
+    private int fetchGeneration = 0;
     private SortMode currentSortMode = SortMode.DEFAULT;
     private ViewMode currentViewMode = ViewMode.SPECIES_CARDS;
 
@@ -296,7 +296,9 @@ public class SearchCollectionFragment extends Fragment {
     }
 
     private void processCollectionSnapshots(String uid, com.google.firebase.firestore.QuerySnapshot queryDocumentSnapshots) {
+        final int myGeneration = ++fetchGeneration; // increment and capture atomically on main thread
         rawSlots.clear();
+
         for (QueryDocumentSnapshot document : queryDocumentSnapshots) {
             CollectionSlot slot = new CollectionSlot();
             slot.setId(document.getId());
@@ -311,7 +313,6 @@ public class SearchCollectionFragment extends Fragment {
             slot.setState(document.getString("state"));
             slot.setLocality(document.getString("locality"));
             slot.setRarity(document.getString("rarity"));
-
             rawSlots.add(slot);
 
             boolean missingBirdId = isBlank(slot.getBirdId());
@@ -322,10 +323,14 @@ public class SearchCollectionFragment extends Fragment {
             String userBirdId = slot.getUserBirdId();
             if ((missingBirdId || missingNames || missingLocation || missingTimestamp)
                     && !isBlank(userBirdId)) {
-                backfillFromUserBird(uid, slot, missingBirdId, missingNames, missingLocation, missingTimestamp);
+                // Pass myGeneration so backfill can detect staleness
+                backfillFromUserBird(uid, slot, myGeneration, missingBirdId, missingNames, missingLocation, missingTimestamp);
             }
         }
-        rebuildSpeciesListAndFilter();
+
+        if (fetchGeneration == myGeneration) {
+            rebuildSpeciesListAndFilter();
+        }
     }
 
     private void fetchRecentPhotos() {
@@ -407,6 +412,7 @@ public class SearchCollectionFragment extends Fragment {
 
     private void backfillFromUserBird(String userId,
                                       CollectionSlot slot,
+                                      int generation,
                                       boolean missingBirdId,
                                       boolean missingNames,
                                       boolean missingLocation,
@@ -417,10 +423,11 @@ public class SearchCollectionFragment extends Fragment {
                 .document(slot.getUserBirdId())
                 .get()
                 .addOnSuccessListener(userBirdSnap -> {
+                    // Abort if a newer fetch has replaced rawSlots
+                    if (fetchGeneration != generation) return;
                     if (!userBirdSnap.exists()) return;
 
                     Map<String, Object> baseUpdates = new LinkedHashMap<>();
-
                     String birdId = userBirdSnap.getString("birdSpeciesId");
                     String locationId = userBirdSnap.getString("locationId");
                     Date timeSpotted = userBirdSnap.getDate("timeSpotted");
@@ -429,72 +436,44 @@ public class SearchCollectionFragment extends Fragment {
                         slot.setBirdId(birdId);
                         baseUpdates.put("birdId", birdId);
                     }
-
                     if (missingTimestamp && timeSpotted != null) {
                         slot.setTimestamp(timeSpotted);
                         baseUpdates.put("timestamp", timeSpotted);
                     }
-
                     if (!baseUpdates.isEmpty()) {
                         updateCollectionSlot(userId, slot.getId(), baseUpdates);
                     }
 
                     if (missingNames && !isBlank(birdId)) {
                         FirebaseFirestore.getInstance()
-                                .collection("birds")
-                                .document(birdId)
-                                .get()
+                                .collection("birds").document(birdId).get()
                                 .addOnSuccessListener(birdSnap -> {
+                                    if (fetchGeneration != generation) return; // stale
                                     if (!birdSnap.exists()) return;
 
                                     Map<String, Object> updates = new LinkedHashMap<>();
                                     String commonName = birdSnap.getString("commonName");
                                     String scientificName = birdSnap.getString("scientificName");
-
-                                    if (!isBlank(commonName)) {
-                                        slot.setCommonName(commonName);
-                                        updates.put("commonName", commonName);
-                                    }
-
-                                    if (!isBlank(scientificName)) {
-                                        slot.setScientificName(scientificName);
-                                        updates.put("scientificName", scientificName);
-                                    }
-
-                                    if (!updates.isEmpty()) {
-                                        updateCollectionSlot(userId, slot.getId(), updates);
-                                    }
-
+                                    if (!isBlank(commonName)) { slot.setCommonName(commonName); updates.put("commonName", commonName); }
+                                    if (!isBlank(scientificName)) { slot.setScientificName(scientificName); updates.put("scientificName", scientificName); }
+                                    if (!updates.isEmpty()) updateCollectionSlot(userId, slot.getId(), updates);
                                     rebuildSpeciesListAndFilter();
                                 });
                     }
 
                     if (missingLocation && !isBlank(locationId)) {
                         FirebaseFirestore.getInstance()
-                                .collection("locations")
-                                .document(locationId)
-                                .get()
+                                .collection("locations").document(locationId).get()
                                 .addOnSuccessListener(locationSnap -> {
+                                    if (fetchGeneration != generation) return; // stale
                                     if (!locationSnap.exists()) return;
 
                                     Map<String, Object> updates = new LinkedHashMap<>();
                                     String state = locationSnap.getString("state");
                                     String locality = locationSnap.getString("locality");
-
-                                    if (!isBlank(state)) {
-                                        slot.setState(state);
-                                        updates.put("state", state);
-                                    }
-
-                                    if (!isBlank(locality)) {
-                                        slot.setLocality(locality);
-                                        updates.put("locality", locality);
-                                    }
-
-                                    if (!updates.isEmpty()) {
-                                        updateCollectionSlot(userId, slot.getId(), updates);
-                                    }
-
+                                    if (!isBlank(state)) { slot.setState(state); updates.put("state", state); }
+                                    if (!isBlank(locality)) { slot.setLocality(locality); updates.put("locality", locality); }
+                                    if (!updates.isEmpty()) updateCollectionSlot(userId, slot.getId(), updates);
                                     rebuildSpeciesListAndFilter();
                                 });
                     }

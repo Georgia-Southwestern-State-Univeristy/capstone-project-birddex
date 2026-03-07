@@ -11,8 +11,10 @@ import com.google.firebase.auth.FirebaseAuth;
 import com.google.firebase.auth.FirebaseUser;
 import com.google.firebase.firestore.DocumentReference;
 import com.google.firebase.firestore.DocumentSnapshot;
+import com.google.firebase.firestore.EventListener;
 import com.google.firebase.firestore.FieldValue;
 import com.google.firebase.firestore.FirebaseFirestore;
+import com.google.firebase.firestore.ListenerRegistration;
 import com.google.firebase.firestore.QuerySnapshot;
 import com.google.firebase.firestore.WriteBatch;
 import com.google.firebase.functions.FirebaseFunctions;
@@ -222,6 +224,15 @@ public class FirebaseManager {
                 listener.onFailure(error);
             }
         });
+    }
+
+    public void updateSessionId(String userId, String sessionId, OnCompleteListener<Void> listener) {
+        Log.d(TAG, "Updating session ID for user: " + userId);
+        db.collection("users").document(userId).update("currentSessionId", sessionId).addOnCompleteListener(listener);
+    }
+
+    public ListenerRegistration listenToSessionId(String userId, EventListener<DocumentSnapshot> listener) {
+        return db.collection("users").document(userId).addSnapshotListener(listener);
     }
 
     public void archiveAndDeleteUser(OnCompleteListener<HttpsCallableResult> listener) {

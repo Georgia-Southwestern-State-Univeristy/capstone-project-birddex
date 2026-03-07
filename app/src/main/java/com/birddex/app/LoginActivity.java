@@ -56,8 +56,14 @@ public class LoginActivity extends AppCompatActivity {
                         if (user != null && user.isEmailVerified()) {
                             // On successful login and email verified, navigate to the HomeActivity.
                             Toast.makeText(LoginActivity.this, "Login successful.", Toast.LENGTH_SHORT).show();
-                            startActivity(new Intent(LoginActivity.this, HomeActivity.class));
-                            finish(); // Finish current activity to prevent returning on back press.
+
+                            // Create and update session ID to handle single device login
+                            SessionManager sessionManager = new SessionManager(LoginActivity.this);
+                            String sessionId = sessionManager.createSession();
+                            firebaseManager.updateSessionId(user.getUid(), sessionId, task -> {
+                                startActivity(new Intent(LoginActivity.this, HomeActivity.class));
+                                finish(); // Finish current activity to prevent returning on back press.
+                            });
                         } else if (user != null && !user.isEmailVerified()) {
                             // User logged in, but email is not verified.
                             // Log out the user and prompt them to verify their email.

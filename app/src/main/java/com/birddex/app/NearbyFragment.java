@@ -87,10 +87,12 @@ public class NearbyFragment extends Fragment {
     private boolean isUpdating = false;
     private boolean isSearchDataLoading = false;
     private ExecutorService geoExecutor;
+    
+    // Race condition fixes: using local results instead of global lists
     private int fetchCount = 0;
-
-    private final List<Bird> firestoreBirds = new ArrayList<>();
-    private final List<Bird> ebirdBirds = new ArrayList<>();
+    private final List<Bird> latestFirestoreResults = Collections.synchronizedList(new ArrayList<>());
+    private final List<Bird> latestEbirdResults = Collections.synchronizedList(new ArrayList<>());
+    
     private final List<Bird> searchableBirds = new ArrayList<>();
 
     private static final long LOCATION_UPDATE_INTERVAL_MS = 3 * 60 * 1000;
@@ -235,8 +237,10 @@ public class NearbyFragment extends Fragment {
                 String place = getCityStateFromLocation(location);
                 if (isAdded() && getActivity() != null) {
                     getActivity().runOnUiThread(() -> {
-                        txtLocation.setText("Location: " + place);
-                        lastPlaceShown = place;
+                        if (isAdded()) {
+                            txtLocation.setText("Location: " + place);
+                            lastPlaceShown = place;
+                        }
                     });
                 }
             });
@@ -307,15 +311,17 @@ public class NearbyFragment extends Fragment {
 
         if (isAdded() && getActivity() != null) {
             getActivity().runOnUiThread(() -> {
-                pbLoading.setVisibility(View.VISIBLE);
-                rvNearby.setVisibility(View.GONE);
-                tvNoBirds.setVisibility(View.GONE);
-                adapter.updateList(new ArrayList<>());
+                if (isAdded()) {
+                    pbLoading.setVisibility(View.VISIBLE);
+                    rvNearby.setVisibility(View.GONE);
+                    tvNoBirds.setVisibility(View.GONE);
+                    adapter.updateList(new ArrayList<>());
+                }
             });
         }
 
-        firestoreBirds.clear();
-        ebirdBirds.clear();
+        latestFirestoreResults.clear();
+        latestEbirdResults.clear();
 
         loadUserSightingsNearby();
         loadEbirdNearby();
@@ -326,16 +332,15 @@ public class NearbyFragment extends Fragment {
                 .limit(MAX_USER_SIGHTINGS)
                 .get()
                 .addOnSuccessListener(querySnapshot -> {
-                    firestoreBirds.clear();
-
+                    List<Bird> localFirestore = new ArrayList<>();
                     for (DocumentSnapshot doc : querySnapshot.getDocuments()) {
                         Bird bird = mapUserSightingToBird(doc);
                         if (isValidSighting(bird)) {
-                            firestoreBirds.add(bird);
+                            localFirestore.add(bird);
                             cacheSearchBird(bird);
                         }
                     }
-
+                    latestFirestoreResults.addAll(localFirestore);
                     checkIfAllFetched();
                 })
                 .addOnFailureListener(e -> {
@@ -348,15 +353,14 @@ public class NearbyFragment extends Fragment {
         ebirdApi.fetchCoreGeorgiaBirdList(new EbirdApi.EbirdCoreBirdListCallback() {
             @Override
             public void onSuccess(List<JSONObject> birdsJson) {
-                ebirdBirds.clear();
-
+                List<Bird> localEbird = new ArrayList<>();
                 for (JSONObject json : birdsJson) {
                     Bird bird = parseBirdJson(json);
                     if (isValidSighting(bird)) {
-                        ebirdBirds.add(bird);
+                        localEbird.add(bird);
                     }
                 }
-
+                latestEbirdResults.addAll(localEbird);
                 checkIfAllFetched();
             }
 
@@ -448,8 +452,8 @@ public class NearbyFragment extends Fragment {
 
     private void processFinalList() {
         List<Bird> combined = new ArrayList<>();
-        combined.addAll(firestoreBirds);
-        combined.addAll(ebirdBirds);
+        combined.addAll(latestFirestoreResults);
+        combined.addAll(latestEbirdResults);
 
         Collections.sort(combined, (b1, b2) -> {
             Long t1 = b1.getLastSeenTimestampGeorgia();
@@ -466,14 +470,16 @@ public class NearbyFragment extends Fragment {
 
         if (isAdded() && getActivity() != null) {
             getActivity().runOnUiThread(() -> {
-                pbLoading.setVisibility(View.GONE);
-                if (combined.isEmpty()) {
-                    rvNearby.setVisibility(View.GONE);
-                    tvNoBirds.setVisibility(View.VISIBLE);
-                } else {
-                    adapter.updateList(combined);
-                    tvNoBirds.setVisibility(View.GONE);
-                    rvNearby.setVisibility(View.VISIBLE);
+                if (isAdded()) {
+                    pbLoading.setVisibility(View.GONE);
+                    if (combined.isEmpty()) {
+                        rvNearby.setVisibility(View.GONE);
+                        tvNoBirds.setVisibility(View.VISIBLE);
+                    } else {
+                        adapter.updateList(combined);
+                        tvNoBirds.setVisibility(View.GONE);
+                        rvNearby.setVisibility(View.VISIBLE);
+                    }
                 }
             });
         }

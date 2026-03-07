@@ -661,9 +661,11 @@ public class FirebaseManager {
 
     // --- SYNC & LIMIT HELPERS ---
 
-    public void recordPfpChange(PfpChangeLimitListener listener) {
+    public void recordPfpChange(String changeId, PfpChangeLimitListener listener) {
         Log.d(TAG, "Calling recordPfpChange Cloud Function.");
-        mFunctions.getHttpsCallable("recordPfpChange").call().addOnCompleteListener(task -> {
+        Map<String, Object> data = new HashMap<>();
+        data.put("changeId", changeId);
+        mFunctions.getHttpsCallable("recordPfpChange").call(data).addOnCompleteListener(task -> {
             if (task.isSuccessful() && task.getResult() != null) {
                 Map<String, Object> res = (Map<String, Object>) task.getResult().getData();
                 int remaining = ((Number) res.get("pfpChangesToday")).intValue();

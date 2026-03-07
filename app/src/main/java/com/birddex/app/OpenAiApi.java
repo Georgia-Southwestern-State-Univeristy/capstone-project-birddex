@@ -36,6 +36,7 @@ public class OpenAiApi {
      * @param latitude The latitude where the image was taken (can be null if not available).
      * @param longitude The longitude where the image was taken (can be null if not available).
      * @param localityName The locality name where the image was taken (can be null if not available).
+     * @param requestId A unique ID for idempotency to prevent duplicate quota deductions.
      * @param callback The callback to handle the response.
      */
     public void identifyBirdFromImage(String base64Image,
@@ -43,10 +44,13 @@ public class OpenAiApi {
                                       @Nullable Double latitude,
                                       @Nullable Double longitude,
                                       @Nullable String localityName,
+                                      String requestId,
                                       OpenAiCallback callback) {
         Map<String, Object> data = new HashMap<>();
         data.put("image", base64Image);
-        data.put("imageUrl", imageUrl); // New parameter for storage link
+        data.put("imageUrl", imageUrl);
+        data.put("requestId", requestId); // Added for idempotency
+
         if (latitude != null) {
             data.put("latitude", latitude);
         }

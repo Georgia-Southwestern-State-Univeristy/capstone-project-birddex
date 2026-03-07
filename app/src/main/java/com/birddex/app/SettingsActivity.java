@@ -29,6 +29,7 @@ public class SettingsActivity extends AppCompatActivity {
     private MaterialSwitch switchGraphicContent;
 
     private FirebaseManager firebaseManager;
+    private SessionManager sessionManager;
     private SharedPreferences sharedPreferences;
 
     private static final String TAG = "SettingsActivity";
@@ -57,6 +58,7 @@ public class SettingsActivity extends AppCompatActivity {
         switchGraphicContent.setChecked(sharedPreferences.getBoolean(KEY_GRAPHIC_CONTENT, false));
 
         firebaseManager = new FirebaseManager(this);
+        sessionManager = new SessionManager(this);
 
         FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
         if (user == null) {
@@ -76,6 +78,7 @@ public class SettingsActivity extends AppCompatActivity {
         // Set up click listeners for all buttons
         btnLogout.setOnClickListener(v -> {
             FirebaseAuth.getInstance().signOut();
+            sessionManager.clearSession();
             goToWelcomeAndClear();
         });
 
@@ -348,6 +351,7 @@ public class SettingsActivity extends AppCompatActivity {
                     progressDialog.dismiss();
                     if (deleteTask.isSuccessful()) {
                         Toast.makeText(SettingsActivity.this, "Account deleted successfully.", Toast.LENGTH_SHORT).show();
+                        sessionManager.clearSession();
                         goToWelcomeAndClear();
                     } else {
                         Log.e(TAG, "Auth deletion failed", deleteTask.getException());

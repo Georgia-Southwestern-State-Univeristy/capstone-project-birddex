@@ -11,24 +11,33 @@ service cloud.firestore {
       return request.auth != null && request.auth.uid == userId;
     }
 
+    function isOwnerOfResource() {
+      return request.auth != null && resource.data.userId == request.auth.uid;
+    }
+
+    function incomingDataOwned() {
+      return request.auth != null && request.resource.data.userId == request.auth.uid;
+    }
+
     // --- Users Collection ---
     match /users/{userId} {
+      // Any signed-in user can read public profiles
       allow read: if isSignedIn();
-      // Allow only the owner to update their profile (bio, pfp, etc.)
+      // Only owner can update their own profile
       allow update: if isOwner(userId);
-      // Deny direct creation/deletion; handled by Cloud Functions
+      // Creation/deletion handled by Cloud Functions only
       allow create, delete: if false;
 
       // --- Following Sub-collection ---
       match /following/{followedId} {
         allow read: if isSignedIn();
-        allow write: if false;
+        allow write: if false; // Cloud Functions only
       }
 
       // --- Followers Sub-collection ---
       match /followers/{followerId} {
         allow read: if isSignedIn();
-        allow write: if false;
+        allow write: if false; // Cloud Functions only
       }
 
       // --- Collection Slots ---
@@ -43,29 +52,47 @@ service cloud.firestore {
         allow write: if isOwner(userId);
       }
 
-      // --- Settings (Cooldowns, etc.) ---
+      // --- Settings (private to owner only) ---
       match /settings/{docId} {
         allow read, write: if isOwner(userId);
       }
     }
 
     // --- Forum Collection ---
-        match /forumThreads/{postId} {
-          allow read: if isSignedIn();
-          allow create: if isSignedIn() && request.resource.data.userId == request.auth.uid;
-          allow update, delete: if isSignedIn() && resource.data.userId == request.auth.uid;
-          // Allow non-owners to update stats and view tracking
-          allow update: if isSignedIn() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['likeCount', 'likedBy', 'viewCount', 'viewedBy', 'commentCount']);
+    match /forumThreads/{postId} {
+      allow read: if isSignedIn();
 
-          match /comments/{commentId} {
-            allow read: if isSignedIn();
-            allow create: if isSignedIn() && request.resource.data.userId == request.auth.uid;
-            // Allow deletion if the user owns the comment OR if they own the parent thread
-            allow delete: if isSignedIn() && (resource.data.userId == request.auth.uid || get(/databases/$(database)/documents/forumThreads/$(postId)).data.userId == request.auth.uid);
-            // Allow non-owners to update like status
-            allow update: if isSignedIn() && (resource.data.userId == request.auth.uid || request.resource.data.diff(resource.data).affectedKeys().hasOnly(['likeCount', 'likedBy']));
-          }
-        }
+      // Only create if the userId field matches the requester
+      allow create: if isSignedIn() && incomingDataOwned();
+
+      // Owner can update/delete their thread
+      // Any signed-in user can update ONLY the stat fields
+      allow update: if isSignedIn() && (
+        isOwnerOfResource() ||
+        request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['likeCount', 'likedBy', 'viewCount', 'viewedBy', 'commentCount'])
+      );
+      allow delete: if isSignedIn() && isOwnerOfResource();
+
+      match /comments/{commentId} {
+        allow read: if isSignedIn();
+
+        allow create: if isSignedIn() && incomingDataOwned();
+
+        // Owner of comment or owner of parent thread can delete
+        allow delete: if isSignedIn() && (
+          isOwnerOfResource() ||
+          get(/databases/$(database)/documents/forumThreads/$(postId)).data.userId == request.auth.uid
+        );
+
+        // Comment owner can update freely; others can only update like fields
+        allow update: if isSignedIn() && (
+          isOwnerOfResource() ||
+          request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['likeCount', 'likedBy'])
+        );
+      }
+    }
 
     // --- Backlog Collection for Deletions ---
     match /deletedforum_backlog/{docId} {
@@ -75,11 +102,11 @@ service cloud.firestore {
 
     // --- Reports Collection ---
     match /reports/{reportId} {
-      allow read: if false;
-      allow create: if isSignedIn();
+      allow read: if false; // Admin only via Cloud Functions
+      allow create: if isSignedIn() && incomingDataOwned();
     }
 
-    // --- Birds & Facts ---
+    // --- Birds & Facts (read-only reference data) ---
     match /birds/{birdId} {
       allow read: if isSignedIn();
       allow write: if false;
@@ -93,26 +120,44 @@ service cloud.firestore {
       }
     }
 
-    // --- Global Collections ---
+    // --- User Bird Sightings (private to owner) ---
     match /userBirds/{sightingId} {
-      allow read: if isSignedIn();
-      allow write: if isSignedIn() && request.resource.data.userId == request.auth.uid;
+      allow read: if isSignedIn() && isOwnerOfResource();
+      allow create: if isSignedIn() && incomingDataOwned();
+      allow update, delete: if isSignedIn() && isOwnerOfResource();
     }
     match /userBirdSightings/{sightingId} {
       allow read: if isSignedIn();
-      allow write: if isSignedIn() && request.resource.data.userId == request.auth.uid;
+      allow create: if isSignedIn() && incomingDataOwned();
+      allow update, delete: if isSignedIn() && isOwnerOfResource();
     }
+
+    // --- Identifications ---
     match /identifications/{idId} {
       allow read: if isSignedIn();
-      allow create: if isSignedIn();
+      allow create: if isSignedIn() && incomingDataOwned();
+      allow update, delete: if isSignedIn() && isOwnerOfResource();
     }
+
+    // --- Locations ---
     match /locations/{locId} {
       allow read: if isSignedIn();
-      allow write: if isSignedIn();
+      allow create: if isSignedIn() && incomingDataOwned();
+      // Only the creator can update/delete their location
+      allow update, delete: if isSignedIn() && isOwnerOfResource();
     }
+
+    // --- Hunter Sightings ---
     match /hunterSightings/{sightingId} {
       allow read: if isSignedIn();
-      allow write: if isSignedIn() && request.resource.data.userId == request.auth.uid;
+      allow create: if isSignedIn() && incomingDataOwned();
+      allow update, delete: if isSignedIn() && isOwnerOfResource();
+    }
+
+    // --- eBird API Sightings (read-only, written by Cloud Functions) ---
+    match /eBirdApiSightings/{sightingId} {
+      allow read: if isSignedIn();
+      allow write: if false;
     }
   }
 }

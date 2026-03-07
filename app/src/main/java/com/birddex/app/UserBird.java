@@ -14,6 +14,7 @@ public class UserBird {
     private String hunterFactsId; // Added for linking to hunter facts
     private boolean isDuplicate; // New field
     private int pointsEarned; // New field
+    private int imageCount; // Track number of associated images
 
     public UserBird() {
         // Required for Firestore deserialization
@@ -29,12 +30,13 @@ public class UserBird {
         this.timeSpotted = timeSpotted;
         this.birdFactsId = birdFactsId;
         this.hunterFactsId = hunterFactsId;
-        this.isDuplicate = false; // Initialize
-        this.pointsEarned = 0;    // Initialize
+        this.isDuplicate = false; 
+        this.pointsEarned = 0;    
+        this.imageCount = 1; // Default to 1
     }
 
     // Full constructor including all fields
-    public UserBird(String id, String userId, String birdSpeciesId, String imageUrl, String locationId, Date timeSpotted, String birdFactsId, String hunterFactsId, boolean isDuplicate, int pointsEarned) {
+    public UserBird(String id, String userId, String birdSpeciesId, String imageUrl, String locationId, Date timeSpotted, String birdFactsId, String hunterFactsId, boolean isDuplicate, int pointsEarned, int imageCount) {
         this.id = id;
         this.userId = userId;
         this.birdSpeciesId = birdSpeciesId;
@@ -45,6 +47,7 @@ public class UserBird {
         this.hunterFactsId = hunterFactsId;
         this.isDuplicate = isDuplicate;
         this.pointsEarned = pointsEarned;
+        this.imageCount = imageCount;
     }
 
     // Getters and setters (required for Firestore)
@@ -72,10 +75,12 @@ public class UserBird {
     public String getHunterFactsId() { return hunterFactsId; }
     public void setHunterFactsId(String hunterFactsId) { this.hunterFactsId = hunterFactsId; }
 
-    // New Getters and Setters for duplicate and points
     public boolean getIsDuplicate() { return isDuplicate; }
     public void setIsDuplicate(boolean isDuplicate) { this.isDuplicate = isDuplicate; }
 
     public int getPointsEarned() { return pointsEarned; }
     public void setPointsEarned(int pointsEarned) { this.pointsEarned = pointsEarned; }
+
+    public int getImageCount() { return imageCount; }
+    public void setImageCount(int imageCount) { this.imageCount = imageCount; }
 }

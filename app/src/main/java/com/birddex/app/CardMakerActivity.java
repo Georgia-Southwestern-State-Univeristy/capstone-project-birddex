@@ -243,6 +243,7 @@ public class CardMakerActivity extends AppCompatActivity {
         userBird.setTimeSpotted(now);
         userBird.setLocationId(locationId);
         userBird.setImageUrl(originalImageUrl);
+        userBird.setImageCount(1); // Track image count for atomic deletion
 
         UserBirdImage userBirdImage = new UserBirdImage();
         userBirdImage.setId(userBirdImageId);

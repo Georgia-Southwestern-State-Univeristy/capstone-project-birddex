@@ -629,11 +629,10 @@ exports.recordPfpChange = onCall({ timeoutSeconds: 15 }, async (request) => {
 });
 
 // ======================================================
-// getGeorgiaBirds (eBird Cache)
+// HELPER: Core Georgia Birds Sync (shared logic)
 // ======================================================
-exports.getGeorgiaBirds = onCall({ secrets: [EBIRD_API_KEY], timeoutSeconds: 60 }, async (request) => {
-    if (!request.auth) throw new HttpsError("unauthenticated", "Authentication required.");
-
+async function _syncGeorgiaBirdsCore() {
+    logger.info("Executing _syncGeorgiaBirdsCore...");
     const ebirdCacheDocRef = db.collection("ebird_ga_cache").doc("data");
 
     try {
@@ -647,118 +646,152 @@ exports.getGeorgiaBirds = onCall({ secrets: [EBIRD_API_KEY], timeoutSeconds: 60 
             (Date.now() - currentCacheDoc.data().lastUpdated < CONFIG.EBIRD_CACHE_TTL_MS) &&
             cachedBirdIds.length > 0;
 
-        let gaCoreBirds = [];
-
-        if (!cacheIsFresh) {
-            const [codesRes, taxonomyRes, observationsRes] = await Promise.all([
-                axios.get("https://api.ebird.org/v2/product/spplist/US-GA", {
-                    headers: { "X-eBirdApiToken": EBIRD_API_KEY.value() },
-                    timeout: 15000
-                }),
-                axios.get("https://api.ebird.org/v2/ref/taxonomy/ebird?fmt=json", { timeout: 15000 }),
-                axios.get("https://api.ebird.org/v2/data/obs/US-GA/recent", {
-                    headers: { "X-eBirdApiToken": EBIRD_API_KEY.value() },
-                    timeout: 15000
-                })
-            ]);
-
-            const gaCodes = codesRes.data;
-            const recentObservations = observationsRes.data;
-
-            const lastSeenMap = new Map();
-            for (const obs of recentObservations) {
-                const ts = new Date(obs.obsDt).getTime();
-                const code = obs.speciesCode;
-                if (typeof obs.lat === "number" && typeof obs.lng === "number" &&
-                    (!lastSeenMap.has(code) || ts > lastSeenMap.get(code).lastSeenTimestampGeorgia)) {
-                    lastSeenMap.set(code, {
-                        lastSeenTimestampGeorgia: ts,
-                        lastSeenLatitudeGeorgia: obs.lat,
-                        lastSeenLongitudeGeorgia: obs.lng,
-                        obsLocName: obs.locName
-                    });
-                }
-            }
-
-            const newBirdsFromEbird = taxonomyRes.data
-                .filter(bird => gaCodes.includes(bird.speciesCode))
-                .map(bird => {
-                    const ls = lastSeenMap.get(bird.speciesCode);
-                    return {
-                        id: bird.speciesCode,
-                        commonName: bird.comName,
-                        scientificName: bird.sciName,
-                        family: bird.familyComName,
-                        species: bird.sciName,
-                        isEndangered: false,
-                        canHunt: false,
-                        lastSeenTimestampGeorgia: ls?.lastSeenTimestampGeorgia || null,
-                        lastSeenLatitudeGeorgia: ls?.lastSeenLatitudeGeorgia || null,
-                        lastSeenLongitudeGeorgia: ls?.lastSeenLongitudeGeorgia || null,
-                        lastSeenLocationIdGeorgia: null
-                    };
-                });
-
-            newBirdsFromEbird.sort((a, b) => a.commonName.localeCompare(b.commonName));
-            const birdIdsToCache = newBirdsFromEbird.map(bird => bird.id);
-
-            // Remove birds no longer in list
-            const removedBirdIds = cachedBirdIds.filter(id => !birdIdsToCache.includes(id));
-            if (removedBirdIds.length > 0) {
-                const deleteBatch = db.batch();
-                removedBirdIds.forEach(birdId => deleteBatch.delete(db.collection("birds").doc(birdId)));
-                await deleteBatch.commit();
-                logger.info(`Removed ${removedBirdIds.length} birds.`);
-            }
-
-            // Batch write birds (400 per batch for safety)
-            for (let i = 0; i < newBirdsFromEbird.length; i += CONFIG.FIRESTORE_BATCH_SIZE) {
-                const batch = db.batch();
-                const chunk = newBirdsFromEbird.slice(i, i + CONFIG.FIRESTORE_BATCH_SIZE);
-                chunk.forEach(bird => {
-                    const birdCoreData = { ...bird };
-                    delete birdCoreData.lastSeenLocationIdGeorgia;
-                    batch.set(db.collection("birds").doc(bird.id), birdCoreData, { merge: true });
-                });
-                await batch.commit();
-            }
-            logger.info("Core birds collection updated.");
-
-            await ebirdCacheDocRef.set({
-                lastUpdated: Date.now(),
-                lastUpdatedReadable: new Date().toLocaleString("en-US", { timeZone: "America/New_York" }),
-                birdIds: birdIdsToCache
-            }, { merge: true });
-
-            // Parallel location updates
-            gaCoreBirds = await Promise.all(newBirdsFromEbird.map(async (bird) => {
-                if (bird.lastSeenLatitudeGeorgia !== null && bird.lastSeenLongitudeGeorgia !== null) {
-                    const ls = lastSeenMap.get(bird.id);
-                    const locationId = await getOrCreateLocation(
-                        bird.lastSeenLatitudeGeorgia,
-                        bird.lastSeenLongitudeGeorgia,
-                        ls?.obsLocName || null,
-                        db
-                    );
-                    await db.collection("birds").doc(bird.id).update({ lastSeenLocationIdGeorgia: locationId });
-                    return { ...bird, lastSeenLocationIdGeorgia: locationId };
-                }
-                return bird;
-            }));
-
-        } else {
-            // Return cached data
-            gaCoreBirds = (await Promise.all(
-                cachedBirdIds.map(id => db.collection("birds").doc(id).get().then(d => d.exists ? d.data() : null))
-            )).filter(Boolean);
-            logger.info("Returning cached core bird data.");
+        if (cacheIsFresh) {
+            logger.info("Georgia bird cache is fresh. Skipping sync.");
+            return { status: "success", message: "Cache is fresh." };
         }
+
+        logger.info("Syncing Georgia birds from eBird API...");
+        const [codesRes, taxonomyRes, observationsRes] = await Promise.all([
+            axios.get("https://api.ebird.org/v2/product/spplist/US-GA", {
+                headers: { "X-eBirdApiToken": EBIRD_API_KEY.value() },
+                timeout: 15000
+            }),
+            axios.get("https://api.ebird.org/v2/ref/taxonomy/ebird?fmt=json", { timeout: 15000 }),
+            axios.get("https://api.ebird.org/v2/data/obs/US-GA/recent", {
+                headers: { "X-eBirdApiToken": EBIRD_API_KEY.value() },
+                timeout: 15000
+            })
+        ]);
+
+        const gaCodes = codesRes.data;
+        const recentObservations = observationsRes.data;
+
+        const lastSeenMap = new Map();
+        for (const obs of recentObservations) {
+            const ts = new Date(obs.obsDt).getTime();
+            const code = obs.speciesCode;
+            if (typeof obs.lat === "number" && typeof obs.lng === "number" &&
+                (!lastSeenMap.has(code) || ts > lastSeenMap.get(code).lastSeenTimestampGeorgia)) {
+                lastSeenMap.set(code, {
+                    lastSeenTimestampGeorgia: ts,
+                    lastSeenLatitudeGeorgia: obs.lat,
+                    lastSeenLongitudeGeorgia: obs.lng,
+                    obsLocName: obs.locName
+                });
+            }
+        }
+
+        const newBirdsFromEbird = taxonomyRes.data
+            .filter(bird => gaCodes.includes(bird.speciesCode))
+            .map(bird => {
+                const ls = lastSeenMap.get(bird.speciesCode);
+                return {
+                    id: bird.speciesCode,
+                    commonName: bird.comName,
+                    scientificName: bird.sciName,
+                    family: bird.familyComName,
+                    species: bird.sciName,
+                    isEndangered: false,
+                    canHunt: false,
+                    lastSeenTimestampGeorgia: ls?.lastSeenTimestampGeorgia || null,
+                    lastSeenLatitudeGeorgia: ls?.lastSeenLatitudeGeorgia || null,
+                    lastSeenLongitudeGeorgia: ls?.lastSeenLongitudeGeorgia || null,
+                    lastSeenLocationIdGeorgia: null
+                };
+            });
+
+        newBirdsFromEbird.sort((a, b) => a.commonName.localeCompare(b.commonName));
+        const birdIdsToCache = newBirdsFromEbird.map(bird => bird.id);
+
+        // Remove birds no longer in list
+        const removedBirdIds = cachedBirdIds.filter(id => !birdIdsToCache.includes(id));
+        if (removedBirdIds.length > 0) {
+            const deleteBatch = db.batch();
+            removedBirdIds.forEach(birdId => deleteBatch.delete(db.collection("birds").doc(birdId)));
+            await deleteBatch.commit();
+            logger.info(`Removed ${removedBirdIds.length} birds.`);
+        }
+
+        // Batch write birds
+        for (let i = 0; i < newBirdsFromEbird.length; i += CONFIG.FIRESTORE_BATCH_SIZE) {
+            const batch = db.batch();
+            const chunk = newBirdsFromEbird.slice(i, i + CONFIG.FIRESTORE_BATCH_SIZE);
+            chunk.forEach(bird => {
+                const birdCoreData = { ...bird };
+                delete birdCoreData.lastSeenLocationIdGeorgia;
+                batch.set(db.collection("birds").doc(bird.id), birdCoreData, { merge: true });
+            });
+            await batch.commit();
+        }
+
+        await ebirdCacheDocRef.set({
+            lastUpdated: Date.now(),
+            lastUpdatedReadable: new Date().toLocaleString("en-US", { timeZone: "America/New_York" }),
+            birdIds: birdIdsToCache
+        }, { merge: true });
+
+        // Parallel location updates
+        await Promise.all(newBirdsFromEbird.map(async (bird) => {
+            if (bird.lastSeenLatitudeGeorgia !== null && bird.lastSeenLongitudeGeorgia !== null) {
+                const ls = lastSeenMap.get(bird.id);
+                const locationId = await getOrCreateLocation(
+                    bird.lastSeenLatitudeGeorgia,
+                    bird.lastSeenLongitudeGeorgia,
+                    ls?.obsLocName || null,
+                    db
+                );
+                await db.collection("birds").doc(bird.id).update({ lastSeenLocationIdGeorgia: locationId });
+            }
+        }));
+
+        logger.info("Georgia birds sync complete.");
+        return { status: "success", count: newBirdsFromEbird.length };
+    } catch (error) {
+        logger.error("Error in _syncGeorgiaBirdsCore:", error);
+        throw error;
+    }
+}
+
+// ======================================================
+// getGeorgiaBirds (Callable version)
+// ======================================================
+exports.getGeorgiaBirds = onCall({ secrets: [EBIRD_API_KEY], timeoutSeconds: 60 }, async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Authentication required.");
+
+    try {
+        await _syncGeorgiaBirdsCore();
+
+        // Fetch and return the list (to maintain backward compatibility with client expectations)
+        const cacheDoc = await db.collection("ebird_ga_cache").doc("data").get();
+        const birdIds = cacheDoc.data()?.birdIds || [];
+
+        const gaCoreBirds = (await Promise.all(
+            birdIds.map(id => db.collection("birds").doc(id).get().then(d => d.exists ? d.data() : null))
+        )).filter(Boolean);
 
         return { birds: gaCoreBirds };
     } catch (error) {
-        logger.error("Error fetching eBird data:", error);
-        throw new HttpsError("internal", `eBird data processing failed: ${error.message}`);
+        logger.error("Callable getGeorgiaBirds failed:", error);
+        throw new HttpsError("internal", `Sync failed: ${error.message}`);
     }
+});
+
+// ======================================================
+// scheduledGetGeorgiaBirds (Scheduled version - Every 72h)
+// ======================================================
+exports.scheduledGetGeorgiaBirds = onSchedule({
+    schedule: "every 72 hours",
+    secrets: [EBIRD_API_KEY],
+    timeoutSeconds: 300
+}, async (event) => {
+    logger.info("Scheduled Georgia birds sync starting.");
+    try {
+        await _syncGeorgiaBirdsCore();
+    } catch (error) {
+        logger.error("Scheduled Georgia birds sync failed:", error);
+    }
+    return null;
 });
 
 // ======================================================

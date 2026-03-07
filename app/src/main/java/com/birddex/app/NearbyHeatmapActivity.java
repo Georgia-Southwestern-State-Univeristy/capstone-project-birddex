@@ -493,9 +493,10 @@ public class NearbyHeatmapActivity extends AppCompatActivity
             }
             tvLikes.setText(String.valueOf(post.getLikeCount()));
 
+            // Update source of truth (likedBy map). 
+            // likeCount is handled by server trigger.
             db.collection("forumThreads").document(post.getId())
-                    .update("likeCount", FieldValue.increment(liked ? -1 : 1),
-                            "likedBy." + userId, liked ? FieldValue.delete() : true)
+                    .update("likedBy." + userId, liked ? FieldValue.delete() : true)
                     .addOnFailureListener(e -> {
                         // Revert on failure
                         post.setLikeCount(currentCount);
@@ -572,17 +573,14 @@ public class NearbyHeatmapActivity extends AppCompatActivity
                     comment.setParentUsername(replyingToComment.getUsername());
                 }
 
-                WriteBatch batch = db.batch();
-                DocumentReference commentRef = db.collection("forumThreads").document(post.getId()).collection("comments").document();
-                batch.set(commentRef, comment);
-                batch.update(db.collection("forumThreads").document(post.getId()), "commentCount", FieldValue.increment(1));
-
-                batch.commit().addOnSuccessListener(aVoid -> {
-                    currentPopupEditText.setText("");
-                    currentPopupEditText.setHint("Write a comment...");
-                    replyingToComment = null;
-                    refreshPopupComments();
-                });
+                // Removed manual commentCount increment. Handled by server trigger.
+                db.collection("forumThreads").document(post.getId()).collection("comments").add(comment)
+                        .addOnSuccessListener(aVoid -> {
+                            currentPopupEditText.setText("");
+                            currentPopupEditText.setHint("Write a comment...");
+                            replyingToComment = null;
+                            refreshPopupComments();
+                        });
             });
         });
 
@@ -721,6 +719,7 @@ public class NearbyHeatmapActivity extends AppCompatActivity
                     batch.set(db.collection("deletedforum_backlog").document(), postBacklog);
                     batch.delete(db.collection("forumThreads").document(post.getId()));
 
+                    // Removed manual commentCount decrement. Handled by server trigger.
                     batch.commit().addOnSuccessListener(aVoid -> {
                         Toast.makeText(this, "Post and comments deleted", Toast.LENGTH_SHORT).show();
                         if (bottomSheetDialog != null) bottomSheetDialog.dismiss();
@@ -950,7 +949,6 @@ public class NearbyHeatmapActivity extends AppCompatActivity
                     .get()
                     .addOnSuccessListener(queryDocumentSnapshots -> {
                         WriteBatch batch = db.batch();
-                        int totalToDelete = queryDocumentSnapshots.size() + 1;
 
                         for (DocumentSnapshot doc : queryDocumentSnapshots) {
                             backlogByUserId(batch, user.getUid(), "comment_reply", doc.getId(), doc.getData());
@@ -962,9 +960,7 @@ public class NearbyHeatmapActivity extends AppCompatActivity
                         batch.delete(db.collection("forumThreads").document(activePost.getId())
                                 .collection("comments").document(comment.getId()));
 
-                        batch.update(db.collection("forumThreads").document(activePost.getId()),
-                                "commentCount", FieldValue.increment(-totalToDelete));
-
+                        // Removed manual commentCount decrement. Handled by server trigger.
                         batch.commit().addOnSuccessListener(aVoid -> {
                             Toast.makeText(this, "Comment deleted", Toast.LENGTH_SHORT).show();
                             refreshPopupComments();
@@ -980,11 +976,10 @@ public class NearbyHeatmapActivity extends AppCompatActivity
 
             db.collection("deletedforum_backlog").add(replyBacklog)
                     .addOnSuccessListener(docRef -> {
+                        // Removed manual commentCount decrement from here too.
                         firebaseManager.deleteForumComment(activePost.getId(), comment.getId(), task -> {
                             if (task.isSuccessful()) {
                                 Toast.makeText(this, "Reply deleted", Toast.LENGTH_SHORT).show();
-                                db.collection("forumThreads").document(activePost.getId())
-                                        .update("commentCount", FieldValue.increment(-1));
                                 refreshPopupComments();
                             }
                         });

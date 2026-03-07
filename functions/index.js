@@ -434,20 +434,31 @@ exports.archiveAndDeleteUser = onCall(async (request) => {
 });
 
 // ======================================================
-// identifyBird (OpenAI)
+// identifyBird (OpenAI) - FIXED: Idempotent version
 // ======================================================
 exports.identifyBird = onCall({ secrets: [OPENAI_API_KEY], timeoutSeconds: 30 }, async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
 
     const userId = request.auth.uid;
     const userRef = db.collection("users").doc(userId);
-    const { image, imageUrl, latitude, longitude, localityName } = request.data;
+    const { image, imageUrl, latitude, longitude, localityName, requestId } = request.data;
+
+    // Use requestId if provided for idempotency, otherwise default to a hash of the image URL or Base64 (fallback)
+    const idempotencyKey = requestId || `IDEN_${admin.firestore.Timestamp.now().toMillis()}`;
+    const eventLogRef = db.collection("processedAIEvents").doc(idempotencyKey);
 
     if (typeof latitude !== "number" || typeof longitude !== "number") {
         throw new HttpsError("invalid-argument", "Latitude and longitude are required numbers.");
     }
 
     try {
+        // Idempotency check FIRST
+        const existingEvent = await eventLogRef.get();
+        if (existingEvent.exists) {
+            logger.info(`identifyBird: Request ${idempotencyKey} already processed. Returning cached result.`);
+            return existingEvent.data().result;
+        }
+
         // Make OpenAI call FIRST (before deducting quota)
         const aiResponse = await axios.post(
             "https://api.openai.com/v1/chat/completions",
@@ -480,9 +491,15 @@ exports.identifyBird = onCall({ secrets: [OPENAI_API_KEY], timeoutSeconds: 30 },
             return { result: "GORE", isVerified: false, isGore: true };
         }
 
-        // Deduct quota after successful OpenAI call
-        let updatedOpenAiRequestsRemaining = 0;
+        // Deduct quota after successful OpenAI call in an idempotent transaction
+        let isVerified = false;
+        let finalIdentification = identification;
+
         await db.runTransaction(async (transaction) => {
+            // Check again inside transaction
+            const eventDoc = await transaction.get(eventLogRef);
+            if (eventDoc.exists) return;
+
             const userDoc = await transaction.get(userRef);
             if (!userDoc.exists) throw new HttpsError("not-found", "User document not found.");
 
@@ -496,15 +513,12 @@ exports.identifyBird = onCall({ secrets: [OPENAI_API_KEY], timeoutSeconds: 30 },
             }
 
             if (currentRequestsRemaining <= 0) {
-                const remainingCooldownMs = openAiCooldownResetTimestamp
-                    ? (openAiCooldownResetTimestamp.getTime() + CONFIG.COOLDOWN_PERIOD_MS - currentTime.getTime())
-                    : 0;
-                throw new HttpsError("resource-exhausted", `AI request limit reached. Try again in ${Math.ceil(remainingCooldownMs / (60 * 1000))} minutes.`);
+                throw new HttpsError("resource-exhausted", "AI request limit reached.");
             }
 
-            updatedOpenAiRequestsRemaining = currentRequestsRemaining - 1;
+            // Deduct request
+            const updatedOpenAiRequestsRemaining = currentRequestsRemaining - 1;
             let newCooldownTimestamp = openAiCooldownResetTimestamp;
-
             if (currentRequestsRemaining === CONFIG.MAX_OPENAI_REQUESTS) {
                 newCooldownTimestamp = admin.firestore.FieldValue.serverTimestamp();
             }
@@ -513,23 +527,26 @@ exports.identifyBird = onCall({ secrets: [OPENAI_API_KEY], timeoutSeconds: 30 },
                 openAiRequestsRemaining: updatedOpenAiRequestsRemaining,
                 openAiCooldownResetTimestamp: newCooldownTimestamp,
             });
+
+            // We can't do the external verification lookups easily inside transaction,
+            // so we handle the quota and event log here.
+            transaction.set(eventLogRef, {
+                userId,
+                processedAt: admin.firestore.FieldValue.serverTimestamp(),
+                // placeholder result, will be updated or just use the log to skip deduction
+            });
         });
 
+        // --- Post-Quota Logic (Verification & Logging) ---
         const aiBirdId = identification.split("ID:")[1]?.split("\n")[0]?.trim() || null;
         const aiCommonName = identification.split("Common Name:")[1]?.split("\n")[0]?.trim() || null;
         const aiScientificName = identification.split("Scientific Name:")[1]?.split("\n")[0]?.trim() || null;
         const aiSpecies = identification.split("Species:")[1]?.split("\n")[0]?.trim() || null;
         const aiFamily = identification.split("Family:")[1]?.split("\n")[0]?.trim() || null;
 
-        if (!aiBirdId || !aiCommonName || !aiScientificName) {
-            throw new HttpsError("internal", "Could not extract bird information from OpenAI response.");
-        }
-
-        let isVerified = false;
         let verifiedBirdData = null;
         let finalBirdId = aiBirdId;
 
-        // Parallel lookups for verification
         const [byIdDoc, byNameSnapshot] = await Promise.all([
             db.collection("birds").doc(aiBirdId).get(),
             (aiCommonName && aiScientificName)
@@ -562,13 +579,16 @@ exports.identifyBird = onCall({ secrets: [OPENAI_API_KEY], timeoutSeconds: 30 },
                 timestamp: admin.firestore.FieldValue.serverTimestamp()
             };
             await db.collection("identifications").add(identificationData);
-
-            identification = `ID: ${finalBirdId}\nCommon Name: ${identificationData.commonName}\nScientific Name: ${identificationData.scientificName}\nSpecies: ${identificationData.species}\nFamily: ${identificationData.family}`;
+            finalIdentification = `ID: ${finalBirdId}\nCommon Name: ${identificationData.commonName}\nScientific Name: ${identificationData.scientificName}\nSpecies: ${identificationData.species}\nFamily: ${identificationData.family}`;
         } else {
-            identification = `ID: Unknown\n` + identification;
+            finalIdentification = `ID: Unknown\n` + identification;
         }
 
-        return { result: identification, isVerified };
+        const finalResult = { result: finalIdentification, isVerified };
+        // Update the log with the final result for future retries
+        await eventLogRef.update({ result: finalResult });
+
+        return finalResult;
     } catch (error) {
         logger.error("OpenAI identification failed:", error);
         if (error instanceof HttpsError) throw error;
@@ -577,21 +597,34 @@ exports.identifyBird = onCall({ secrets: [OPENAI_API_KEY], timeoutSeconds: 30 },
 });
 
 // ======================================================
-// recordPfpChange
+// recordPfpChange - FIXED: Idempotent version
 // ======================================================
 exports.recordPfpChange = onCall({ timeoutSeconds: 15 }, async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Authentication required.");
 
     const userId = request.auth.uid;
     const userRef = db.collection("users").doc(userId);
+    const { changeId } = request.data;
+
+    // Use changeId for idempotency
+    const idempotencyKey = changeId || `PFP_${userId}_${admin.firestore.Timestamp.now().toMillis()}`;
+    const eventLogRef = db.collection("processedEvents").doc(idempotencyKey);
 
     try {
-        let updatedPfpChangesToday = 0;
+        let finalRemaining = 0;
         await db.runTransaction(async (transaction) => {
+            const eventDoc = await transaction.get(eventLogRef);
             const userDoc = await transaction.get(userRef);
-            if (!userDoc.exists) throw new HttpsError("not-found", "User document not found.");
 
+            if (!userDoc.exists) throw new HttpsError("not-found", "User document not found.");
             const userData = userDoc.data();
+
+            if (eventDoc.exists) {
+                logger.info(`recordPfpChange: Change ${idempotencyKey} already processed.`);
+                finalRemaining = userData.pfpChangesToday;
+                return;
+            }
+
             let pfpChangesToday = userData.pfpChangesToday || 0;
             const pfpCooldownResetTimestamp = userData.pfpCooldownResetTimestamp?.toDate() || null;
             const currentTime = new Date();
@@ -601,13 +634,10 @@ exports.recordPfpChange = onCall({ timeoutSeconds: 15 }, async (request) => {
             }
 
             if (pfpChangesToday <= 0) {
-                const remainingCooldownMs = pfpCooldownResetTimestamp
-                    ? (pfpCooldownResetTimestamp.getTime() + CONFIG.COOLDOWN_PERIOD_MS - currentTime.getTime())
-                    : 0;
-                throw new HttpsError("resource-exhausted", `PFP change limit reached. Try again in ${Math.ceil(remainingCooldownMs / (60 * 1000))} minutes.`);
+                throw new HttpsError("resource-exhausted", "PFP change limit reached.");
             }
 
-            updatedPfpChangesToday = pfpChangesToday - 1;
+            finalRemaining = pfpChangesToday - 1;
             let newPfpCooldownResetTimestamp = pfpCooldownResetTimestamp;
 
             if (pfpChangesToday === CONFIG.MAX_PFP_CHANGES) {
@@ -615,12 +645,14 @@ exports.recordPfpChange = onCall({ timeoutSeconds: 15 }, async (request) => {
             }
 
             transaction.update(userRef, {
-                pfpChangesToday: updatedPfpChangesToday,
+                pfpChangesToday: finalRemaining,
                 pfpCooldownResetTimestamp: newPfpCooldownResetTimestamp,
             });
+
+            transaction.set(eventLogRef, { userId, processedAt: admin.firestore.FieldValue.serverTimestamp() });
         });
 
-        return { success: true, pfpChangesToday: updatedPfpChangesToday };
+        return { success: true, pfpChangesToday: finalRemaining };
     } catch (error) {
         logger.error(`Error recording PFP change for user ${userId}:`, error);
         if (error instanceof HttpsError) throw error;
@@ -992,23 +1024,36 @@ exports.onCollectionSlotUpdatedForImageDeletion = onDocumentUpdated("users/{user
 });
 
 // ======================================================
-// HELPER: Update user totals in a transaction
+// HELPER: Update user totals (IDEMPOTENT version)
 // ======================================================
-async function _updateUserTotals(userId, totalBirdsChange, duplicateBirdsChange, totalPointsChange) {
+async function _updateUserTotals(userId, eventId, totalBirdsChange, duplicateBirdsChange, totalPointsChange) {
     const userRef = db.collection("users").doc(userId);
+    const eventLogRef = db.collection("processedEvents").doc(eventId);
+
     try {
         await db.runTransaction(async (transaction) => {
+            const eventDoc = await transaction.get(eventLogRef);
+            if (eventDoc.exists) {
+                logger.info(`Event ${eventId} already processed. Skipping stats update.`);
+                return;
+            }
+
             const userDoc = await transaction.get(userRef);
             if (!userDoc.exists) {
                 logger.error(`_updateUserTotals: User ${userId} not found.`);
                 return;
             }
+
             const { totalBirds = 0, duplicateBirds = 0, totalPoints = 0 } = userDoc.data();
+
             transaction.update(userRef, {
                 totalBirds: Math.max(0, totalBirds + totalBirdsChange),
                 duplicateBirds: Math.max(0, duplicateBirds + duplicateBirdsChange),
                 totalPoints: Math.max(0, totalPoints + totalPointsChange),
             });
+
+            // Mark event as processed
+            transaction.set(eventLogRef, { userId, processedAt: admin.firestore.FieldValue.serverTimestamp() });
         });
     } catch (error) {
         logger.error(`Failed to update totals for user ${userId}:`, error);
@@ -1025,7 +1070,8 @@ exports.onUserBirdCreated = onDocumentCreated("userBirds/{uploadId}", async (eve
         logger.error("onUserBirdCreated: No userId in document.");
         return null;
     }
-    await _updateUserTotals(userId, 1, isDuplicate ? 1 : 0, pointsEarned);
+    // Use the document ID (uploadId) as the unique event key for idempotency
+    await _updateUserTotals(userId, `CREATED_${event.params.uploadId}`, 1, isDuplicate ? 1 : 0, pointsEarned);
     return null;
 });
 
@@ -1039,7 +1085,8 @@ exports.onUserBirdDeleted = onDocumentDeleted("userBirds/{uploadId}", async (eve
         logger.error("onUserBirdDeleted: No userId in document.");
         return null;
     }
-    await _updateUserTotals(userId, -1, isDuplicate ? -1 : 0, -pointsEarned);
+    // Use the document ID (uploadId) as the unique event key for idempotency
+    await _updateUserTotals(userId, `DELETED_${event.params.uploadId}`, -1, isDuplicate ? -1 : 0, -pointsEarned);
     return null;
 });
 
@@ -1172,7 +1219,7 @@ exports.onDeleteUserBirdImage = onDocumentDeleted("users/{userId}/userBirdImage/
     try {
         const batch = db.batch();
 
-        // Delete from storage
+        // 1. Delete from storage
         if (imageUrl && imageUrl.includes("userCollectionImages")) {
             try {
                 const decodedUrl = decodeURIComponent(imageUrl);
@@ -1183,7 +1230,7 @@ exports.onDeleteUserBirdImage = onDocumentDeleted("users/{userId}/userBirdImage/
             }
         }
 
-        // Update collectionSlot
+        // 2. Update collectionSlot
         if (birdId) {
             const collectionSlotSnap = await db.collection("users").doc(userId).collection("collectionSlot")
                 .where("birdId", "==", birdId).get();
@@ -1203,37 +1250,30 @@ exports.onDeleteUserBirdImage = onDocumentDeleted("users/{userId}/userBirdImage/
             }
         }
 
-        // Delete associated sightings
+        // 3. Delete associated sightings
         const sightingsSnap = await db.collection("userBirdSightings")
             .where("userId", "==", userId).where("imageUrl", "==", imageUrl).get();
         sightingsSnap.forEach(doc => batch.delete(doc.ref));
 
         await batch.commit();
 
-        // Atomically check remaining images and update points/totals
+        // 4. ATOMIC CLEANUP OF PARENT USERBIRD (Fixed race condition)
+        const userBirdRef = db.collection("userBirds").doc(userBirdRefId);
+
         await db.runTransaction(async (transaction) => {
-            const remainingImagesSnapshot = await db.collection("users").doc(userId)
-                .collection("userBirdImage").where("userBirdRefId", "==", userBirdRefId).get();
+            const userBirdDoc = await transaction.get(userBirdRef);
+            if (!userBirdDoc.exists) return;
 
-            if (remainingImagesSnapshot.empty) {
-                const userBirdRef = db.collection("userBirds").doc(userBirdRefId);
-                const userBirdDoc = await transaction.get(userBirdRef);
+            const { imageCount = 1, pointsEarned = 0, isDuplicate = false } = userBirdDoc.data();
+            const newImageCount = imageCount - 1;
 
-                if (userBirdDoc.exists) {
-                    const { pointsEarned = 0, isDuplicate = false } = userBirdDoc.data();
-                    const userRef = db.collection("users").doc(userId);
-                    const userDoc = await transaction.get(userRef);
-
-                    if (userDoc.exists) {
-                        const { totalBirds = 0, duplicateBirds = 0, totalPoints = 0 } = userDoc.data();
-                        transaction.update(userRef, {
-                            totalBirds: Math.max(0, totalBirds - 1),
-                            duplicateBirds: Math.max(0, duplicateBirds - (isDuplicate ? 1 : 0)),
-                            totalPoints: Math.max(0, totalPoints - pointsEarned),
-                        });
-                    }
-                    transaction.delete(userBirdRef);
-                }
+            if (newImageCount <= 0) {
+                // Delete parent and decrement user totals (Idempotent call)
+                await _updateUserTotals(userId, `DELETED_USERBIRD_${userBirdRefId}`, -1, isDuplicate ? -1 : 0, -pointsEarned);
+                transaction.delete(userBirdRef);
+            } else {
+                // Just decrement the count
+                transaction.update(userBirdRef, { imageCount: newImageCount });
             }
         });
     } catch (err) {
@@ -1354,12 +1394,58 @@ exports.archiveOldForumPosts = onSchedule({
 });
 
 // ======================================================
-// onCommentCreated — notify on reply or post activity
+// IDEMPOTENT Forum Aggregates (Recalculation triggers)
+// ======================================================
+
+exports.onForumThreadEngagementUpdated = onDocumentUpdated("forumThreads/{threadId}", async (event) => {
+    const beforeData = event.data.before.data();
+    const afterData = event.data.after.data();
+
+    const likedByAfter = afterData.likedBy || {};
+    const viewedByAfter = afterData.viewedBy || {};
+
+    const newLikeCount = Object.keys(likedByAfter).length;
+    const newViewCount = Object.keys(viewedByAfter).length;
+
+    const updates = {};
+    if (newLikeCount !== (afterData.likeCount || 0)) {
+        updates.likeCount = newLikeCount;
+    }
+    if (newViewCount !== (afterData.viewCount || 0)) {
+        updates.viewCount = newViewCount;
+    }
+
+    if (Object.keys(updates).length > 0) {
+        logger.info(`Recalculating engagement for thread ${event.params.threadId}: Likes=${newLikeCount}, Views=${newViewCount}`);
+        await event.data.after.ref.update(updates);
+    }
+    return null;
+});
+
+// ======================================================
+// onCommentCreated — notify on reply or post activity + IDEMPOTENT COUNT
 // ======================================================
 exports.onCommentCreated = onDocumentCreated("forumThreads/{threadId}/comments/{commentId}", async (event) => {
     const commentData = event.data.data();
     const threadId = event.params.threadId;
+    const commentId = event.params.commentId;
     const parentCommentId = commentData.parentCommentId;
+
+    // --- IDEMPOTENT commentCount INCREMENT ---
+    const threadRef = db.collection("forumThreads").doc(threadId);
+    const eventLogRef = db.collection("processedEvents").doc(`COMMENT_INC_${commentId}`);
+
+    try {
+        await db.runTransaction(async (t) => {
+            const eventDoc = await t.get(eventLogRef);
+            if (eventDoc.exists) return;
+
+            t.update(threadRef, { commentCount: admin.firestore.FieldValue.increment(1) });
+            t.set(eventLogRef, { processedAt: admin.firestore.FieldValue.serverTimestamp(), type: "COMMENT_INC" });
+        });
+    } catch (e) {
+        logger.error(`Failed to increment commentCount for thread ${threadId}:`, e);
+    }
 
     try {
         let recipientUserId, title, body, postDoc;
@@ -1404,10 +1490,10 @@ exports.onCommentCreated = onDocumentCreated("forumThreads/{threadId}/comments/{
         if (!parentCommentId) {
             let shouldSend = false;
             await db.runTransaction(async (transaction) => {
-                const threadRef = db.collection("forumThreads").doc(threadId);
-                const threadDoc = await transaction.get(threadRef);
+                const threadRefInner = db.collection("forumThreads").doc(threadId);
+                const threadDoc = await transaction.get(threadRefInner);
                 if (!threadDoc.exists || threadDoc.data().notificationSent === true) return;
-                transaction.update(threadRef, { notificationSent: true });
+                transaction.update(threadRefInner, { notificationSent: true });
                 shouldSend = true;
             });
             if (!shouldSend) return null;
@@ -1424,6 +1510,33 @@ exports.onCommentCreated = onDocumentCreated("forumThreads/{threadId}/comments/{
         }
     } catch (error) {
         logger.error("Error in onCommentCreated:", error);
+    }
+    return null;
+});
+
+// ======================================================
+// onCommentDeleted — IDEMPOTENT COUNT DECREMENT
+// ======================================================
+exports.onCommentDeleted = onDocumentDeleted("forumThreads/{threadId}/comments/{commentId}", async (event) => {
+    const threadId = event.params.threadId;
+    const commentId = event.params.commentId;
+    const threadRef = db.collection("forumThreads").doc(threadId);
+    const eventLogRef = db.collection("processedEvents").doc(`COMMENT_DEC_${commentId}`);
+
+    try {
+        await db.runTransaction(async (t) => {
+            const eventDoc = await t.get(eventLogRef);
+            if (eventDoc.exists) return;
+
+            const threadDoc = await t.get(threadRef);
+            if (threadDoc.exists) {
+                const currentCount = threadDoc.data().commentCount || 0;
+                t.update(threadRef, { commentCount: Math.max(0, currentCount - 1) });
+            }
+            t.set(eventLogRef, { processedAt: admin.firestore.FieldValue.serverTimestamp(), type: "COMMENT_DEC" });
+        });
+    } catch (e) {
+        logger.error(`Failed to decrement commentCount for thread ${threadId}:`, e);
     }
     return null;
 });

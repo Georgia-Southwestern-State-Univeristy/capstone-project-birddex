@@ -43,6 +43,7 @@ import java.io.IOException;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Date;
+import java.util.UUID;
 
 public class EditProfileActivity extends AppCompatActivity implements NetworkMonitor.NetworkStatusListener {
 
@@ -201,7 +202,11 @@ public class EditProfileActivity extends AppCompatActivity implements NetworkMon
             if (pfpChanged) {
                 Log.d(TAG, "PFP changed, showing loading overlay and calling recordPfpChange Cloud Function.");
                 loadingOverlay.setVisibility(View.VISIBLE);
-                firebaseManager.recordPfpChange(new FirebaseManager.PfpChangeLimitListener() {
+                
+                // Idempotency: Generate a unique ID for this specific save attempt
+                String pfpChangeId = UUID.randomUUID().toString();
+                
+                firebaseManager.recordPfpChange(pfpChangeId, new FirebaseManager.PfpChangeLimitListener() {
                     @Override
                     public void onSuccess(int pfpChangesToday, Date pfpCooldownResetTimestamp) { // Updated signature
                         if (isFinishing() || isDestroyed()) return;

@@ -61,6 +61,7 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
     private Runnable timeoutRunnable;
     private static final long IDENTIFICATION_TIMEOUT_MS = 45000; // Increased timeout for upload + AI
     private AtomicBoolean identificationCompleted = new AtomicBoolean(false);
+    private final String requestId = UUID.randomUUID().toString(); // Persistent ID for this specific attempt
 
     @Override
     protected void onCreate(@Nullable Bundle savedInstanceState) {
@@ -248,8 +249,8 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
             return;
         }
 
-        // We pass the base64 for analysis AND the storage URL for logging
-        openAiApi.identifyBirdFromImage(base64Image, downloadUrl, latitude, longitude, localityName, new OpenAiApi.OpenAiCallback() {
+        // We pass the base64 for analysis AND the storage URL for logging AND requestId for idempotency
+        openAiApi.identifyBirdFromImage(base64Image, downloadUrl, latitude, longitude, localityName, requestId, new OpenAiApi.OpenAiCallback() {
             @Override
             public void onSuccess(String response, boolean isVerified, boolean isGore) {
                 if (identificationCompleted.get()) return;

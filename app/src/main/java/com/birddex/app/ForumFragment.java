@@ -297,11 +297,11 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
         }
         adapter.notifyDataSetChanged();
 
-        // Perform actual Firestore update
+        // Perform actual Firestore update: Source of truth only (maps)
+        // Count increment/decrement is now handled by server-side recalculation trigger
         if (currentlyLiked) {
             db.collection("forumThreads").document(post.getId())
-                    .update("likeCount", FieldValue.increment(-1),
-                            "likedBy." + userId, FieldValue.delete())
+                    .update("likedBy." + userId, FieldValue.delete())
                     .addOnFailureListener(e -> {
                         // Revert local state on failure
                         post.setLikeCount(currentCount);
@@ -311,8 +311,7 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
                     });
         } else {
             db.collection("forumThreads").document(post.getId())
-                    .update("likeCount", FieldValue.increment(1),
-                            "likedBy." + userId, true)
+                    .update("likedBy." + userId, true)
                     .addOnFailureListener(e -> {
                         // Revert local state on failure
                         post.setLikeCount(currentCount);
@@ -334,9 +333,9 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
         if (user != null) {
             String userId = user.getUid();
             if (post.getViewedBy() == null || !post.getViewedBy().containsKey(userId)) {
+                // Update only the source of truth (viewedBy map)
                 db.collection("forumThreads").document(post.getId())
-                        .update("viewCount", FieldValue.increment(1),
-                                "viewedBy." + userId, true);
+                        .update("viewedBy." + userId, true);
             }
         }
         openPostDetail(post);

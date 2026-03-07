@@ -394,9 +394,11 @@ public class UserSocialProfileActivity extends AppCompatActivity implements
         }
         adapter.notifyDataSetChanged();
 
+        // Source of truth only (likedBy map).
+        // likeCount is handled by server-side recalculation trigger.
         if (currentlyLiked) {
             db.collection("forumThreads").document(post.getId())
-                    .update("likeCount", FieldValue.increment(-1), "likedBy." + userId, FieldValue.delete())
+                    .update("likedBy." + userId, FieldValue.delete())
                     .addOnFailureListener(e -> {
                         // Revert
                         post.setLikeCount(currentCount);
@@ -405,7 +407,7 @@ public class UserSocialProfileActivity extends AppCompatActivity implements
                     });
         } else {
             db.collection("forumThreads").document(post.getId())
-                    .update("likeCount", FieldValue.increment(1), "likedBy." + userId, true)
+                    .update("likedBy." + userId, true)
                     .addOnFailureListener(e -> {
                         // Revert
                         post.setLikeCount(currentCount);

@@ -143,9 +143,9 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
         hasMarkedAsViewed = true; // Prevent loop
         Map<String, Object> updates = new HashMap<>();
 
-        // Increment view count if user hasn't seen it yet
+        // Source of truth only (viewedBy map).
+        // viewCount increment is now handled by server-side recalculation trigger.
         if (post.getViewedBy() == null || !post.getViewedBy().containsKey(userId)) {
-            updates.put("viewCount", FieldValue.increment(1));
             updates.put("viewedBy." + userId, true);
         }
 
@@ -505,10 +505,11 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
         }
         bindPostToLayout(originalPost);
 
+        // Update Source of Truth only.
+        // likeCount is handled by server trigger.
         if (liked) {
             db.collection("forumThreads").document(postId)
-                    .update("likeCount", FieldValue.increment(-1),
-                            "likedBy." + userId, FieldValue.delete())
+                    .update("likedBy." + userId, FieldValue.delete())
                     .addOnFailureListener(e -> {
                         // Revert on failure
                         originalPost.setLikeCount(currentCount);
@@ -517,8 +518,7 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
                     });
         } else {
             db.collection("forumThreads").document(postId)
-                    .update("likeCount", FieldValue.increment(1),
-                            "likedBy." + userId, true)
+                    .update("likedBy." + userId, true)
                     .addOnFailureListener(e -> {
                         // Revert on failure
                         originalPost.setLikeCount(currentCount);
@@ -614,12 +614,8 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
             comment.setParentUsername(replyingToComment.getUsername());
         }
         
-        WriteBatch batch = db.batch();
-        DocumentReference commentRef = db.collection("forumThreads").document(postId).collection("comments").document();
-        batch.set(commentRef, comment);
-        batch.update(db.collection("forumThreads").document(postId), "commentCount", FieldValue.increment(1));
-        
-        batch.commit()
+        // Removed manual commentCount increment. Handled by server trigger.
+        db.collection("forumThreads").document(postId).collection("comments").add(comment)
                 .addOnSuccessListener(aVoid -> {
                     if (isFinishing() || isDestroyed()) return;
                     binding.etComment.setText("");
@@ -793,7 +789,6 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
                     .get()
                     .addOnSuccessListener(queryDocumentSnapshots -> {
                         WriteBatch batch = db.batch();
-                        int totalToDelete = queryDocumentSnapshots.size() + 1;
 
                         for (DocumentSnapshot doc : queryDocumentSnapshots) {
                             backlogByUserId(batch, user.getUid(), "comment_reply", doc.getId(), doc.getData());
@@ -805,9 +800,7 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
                         batch.delete(db.collection("forumThreads").document(postId)
                                 .collection("comments").document(comment.getId()));
                         
-                        batch.update(db.collection("forumThreads").document(postId), 
-                                "commentCount", FieldValue.increment(-totalToDelete));
-                        
+                        // Removed manual commentCount decrement. Handled by server trigger.
                         batch.commit().addOnSuccessListener(aVoid -> {
                             if (isFinishing() || isDestroyed()) return;
                             Toast.makeText(this, "Comment deleted", Toast.LENGTH_SHORT).show();
@@ -828,12 +821,11 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
 
             db.collection("deletedforum_backlog").add(replyBacklog)
                     .addOnSuccessListener(docRef -> {
+                        // Removed manual commentCount decrement from here too.
                         firebaseManager.deleteForumComment(postId, comment.getId(), task -> {
                             if (task.isSuccessful()) {
                                 if (isFinishing() || isDestroyed()) return;
                                 Toast.makeText(this, "Reply deleted", Toast.LENGTH_SHORT).show();
-                                db.collection("forumThreads").document(postId)
-                                        .update("commentCount", FieldValue.increment(-1));
                                 // Refresh
                                 lastCommentVisible = null;
                                 isLastCommentsPage = false;

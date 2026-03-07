@@ -862,9 +862,8 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
     }
 
     private void openUserProfile(String userId) {
-        Intent intent = new Intent(this, HomeActivity.class);
-        intent.putExtra("target_user_id", userId);
-        intent.setFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+        Intent intent = new Intent(this, UserSocialProfileActivity.class);
+        intent.putExtra(UserSocialProfileActivity.EXTRA_USER_ID, userId);
         startActivity(intent);
     }
 }

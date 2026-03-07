@@ -50,20 +50,22 @@ service cloud.firestore {
     }
 
     // --- Forum Collection ---
-    match /forumThreads/{postId} {
-      allow read: if isSignedIn();
-      allow create: if isSignedIn() && request.resource.data.userId == request.auth.uid;
-      allow update, delete: if isSignedIn() && resource.data.userId == request.auth.uid;
-      allow update: if isSignedIn() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['likeCount', 'likedBy']);
+        match /forumThreads/{postId} {
+          allow read: if isSignedIn();
+          allow create: if isSignedIn() && request.resource.data.userId == request.auth.uid;
+          allow update, delete: if isSignedIn() && resource.data.userId == request.auth.uid;
+          // Allow non-owners to update stats and view tracking
+          allow update: if isSignedIn() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['likeCount', 'likedBy', 'viewCount', 'viewedBy', 'commentCount']);
 
-      match /comments/{commentId} {
-        allow read: if isSignedIn();
-        allow create: if isSignedIn() && request.resource.data.userId == request.auth.uid;
-        // Allow deletion if the user owns the comment OR if they own the parent thread
-        allow delete: if isSignedIn() && (resource.data.userId == request.auth.uid || get(/databases/$(database)/documents/forumThreads/$(postId)).data.userId == request.auth.uid);
-        allow update: if isSignedIn() && (resource.data.userId == request.auth.uid || request.resource.data.diff(resource.data).affectedKeys().hasOnly(['likeCount', 'likedBy']));
-      }
-    }
+          match /comments/{commentId} {
+            allow read: if isSignedIn();
+            allow create: if isSignedIn() && request.resource.data.userId == request.auth.uid;
+            // Allow deletion if the user owns the comment OR if they own the parent thread
+            allow delete: if isSignedIn() && (resource.data.userId == request.auth.uid || get(/databases/$(database)/documents/forumThreads/$(postId)).data.userId == request.auth.uid);
+            // Allow non-owners to update like status
+            allow update: if isSignedIn() && (resource.data.userId == request.auth.uid || request.resource.data.diff(resource.data).affectedKeys().hasOnly(['likeCount', 'likedBy']));
+          }
+        }
 
     // --- Backlog Collection for Deletions ---
     match /deletedforum_backlog/{docId} {

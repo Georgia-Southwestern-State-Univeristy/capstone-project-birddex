@@ -174,6 +174,7 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
         TextView tvLikes = postView.findViewById(R.id.tvLikeCount);
         TextView tvComments = postView.findViewById(R.id.tvCommentCount);
         TextView tvViews = postView.findViewById(R.id.tvViewCount);
+        ImageView ivLikeIcon = postView.findViewById(R.id.ivLikeIcon);
         View btnLike = postView.findViewById(R.id.btnLike);
         View btnOptions = postView.findViewById(R.id.btnPostOptions);
         View btnViewOnMap = postView.findViewById(R.id.btnViewOnMap);
@@ -221,6 +222,14 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
             } else {
                 btnViewOnMap.setVisibility(View.GONE);
             }
+        }
+
+        // Like status icon update
+        FirebaseUser currentUser = mAuth.getCurrentUser();
+        if (currentUser != null && post.getLikedBy() != null && post.getLikedBy().containsKey(currentUser.getUid())) {
+            ivLikeIcon.setImageResource(R.drawable.ic_favorite);
+        } else {
+            ivLikeIcon.setImageResource(R.drawable.ic_favorite_border);
         }
 
         btnLike.setOnClickListener(v -> toggleLike());
@@ -482,16 +491,40 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
         if (user == null || originalPost == null) return;
 
         String userId = user.getUid();
-        boolean liked = originalPost.getLikedBy() != null && originalPost.getLikedBy().containsKey(userId);
+        if (originalPost.getLikedBy() == null) originalPost.setLikedBy(new HashMap<>());
+        boolean liked = originalPost.getLikedBy().containsKey(userId);
+
+        // Optimistic UI update
+        int currentCount = originalPost.getLikeCount();
+        if (liked) {
+            originalPost.setLikeCount(Math.max(0, currentCount - 1));
+            originalPost.getLikedBy().remove(userId);
+        } else {
+            originalPost.setLikeCount(currentCount + 1);
+            originalPost.getLikedBy().put(userId, true);
+        }
+        bindPostToLayout(originalPost);
 
         if (liked) {
             db.collection("forumThreads").document(postId)
                     .update("likeCount", FieldValue.increment(-1),
-                            "likedBy." + userId, FieldValue.delete());
+                            "likedBy." + userId, FieldValue.delete())
+                    .addOnFailureListener(e -> {
+                        // Revert on failure
+                        originalPost.setLikeCount(currentCount);
+                        originalPost.getLikedBy().put(userId, true);
+                        bindPostToLayout(originalPost);
+                    });
         } else {
             db.collection("forumThreads").document(postId)
                     .update("likeCount", FieldValue.increment(1),
-                            "likedBy." + userId, true);
+                            "likedBy." + userId, true)
+                    .addOnFailureListener(e -> {
+                        // Revert on failure
+                        originalPost.setLikeCount(currentCount);
+                        originalPost.getLikedBy().remove(userId);
+                        bindPostToLayout(originalPost);
+                    });
         }
     }
 
@@ -613,16 +646,40 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
         if (user == null) return;
 
         String userId = user.getUid();
-        boolean liked = comment.getLikedBy() != null && comment.getLikedBy().containsKey(userId);
+        if (comment.getLikedBy() == null) comment.setLikedBy(new HashMap<>());
+        boolean liked = comment.getLikedBy().containsKey(userId);
+
+        // Optimistic UI update
+        int currentCount = comment.getLikeCount();
+        if (liked) {
+            comment.setLikeCount(Math.max(0, currentCount - 1));
+            comment.getLikedBy().remove(userId);
+        } else {
+            comment.setLikeCount(currentCount + 1);
+            comment.getLikedBy().put(userId, true);
+        }
+        adapter.notifyDataSetChanged();
 
         if (liked) {
             db.collection("forumThreads").document(postId).collection("comments").document(comment.getId())
                     .update("likeCount", FieldValue.increment(-1),
-                            "likedBy." + userId, FieldValue.delete());
+                            "likedBy." + userId, FieldValue.delete())
+                    .addOnFailureListener(e -> {
+                        // Revert on failure
+                        comment.setLikeCount(currentCount);
+                        comment.getLikedBy().put(userId, true);
+                        adapter.notifyDataSetChanged();
+                    });
         } else {
             db.collection("forumThreads").document(postId).collection("comments").document(comment.getId())
                     .update("likeCount", FieldValue.increment(1),
-                            "likedBy." + userId, true);
+                            "likedBy." + userId, true)
+                    .addOnFailureListener(e -> {
+                        // Revert on failure
+                        comment.setLikeCount(currentCount);
+                        comment.getLikedBy().remove(userId);
+                        adapter.notifyDataSetChanged();
+                    });
         }
     }
 

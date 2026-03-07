@@ -151,7 +151,7 @@ public class ForumPostAdapter extends RecyclerView.Adapter<ForumPostAdapter.Post
             // Like status
             String currentUserId = FirebaseAuth.getInstance().getUid();
             if (currentUserId != null && post.getLikedBy() != null && post.getLikedBy().containsKey(currentUserId)) {
-                ivLikeIcon.setImageResource(R.drawable.ic_favorite_border); // Placeholder - should be filled heart
+                ivLikeIcon.setImageResource(R.drawable.ic_favorite);
             } else {
                 ivLikeIcon.setImageResource(R.drawable.ic_favorite_border);
             }

@@ -51,19 +51,21 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
     private static final String PREFS_NAME = "BirdDexPrefs";
     private static final String KEY_FILTER = "current_filter";
     private static final String KEY_GRAPHIC_CONTENT = "show_graphic_content";
-    
+
     private FragmentForumBinding binding;
     private FirebaseAuth mAuth;
     private FirebaseFirestore db;
     private FirebaseManager firebaseManager;
     private ForumPostAdapter adapter;
-    
+
     private List<ForumPost> postList = new ArrayList<>();
     private DocumentSnapshot lastVisible;
     private boolean isFetching = false;
     private boolean isLastPage = false;
     private String currentFilter = "Recent";
     private List<String> followedIds = new ArrayList<>();
+    // Holds the pending onResume refresh so it can be cancelled in onDestroyView
+    private Runnable pendingRefreshRunnable = null;
 
     @Nullable
     @Override
@@ -85,7 +87,7 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
         setupClickListeners();
         loadUserProfilePicture();
         setupSwipeRefresh();
-        
+
         return view;
     }
 
@@ -142,11 +144,11 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
             String selectedFilter = item.getTitle().toString();
             if (!selectedFilter.equals(currentFilter)) {
                 currentFilter = selectedFilter;
-                
+
                 // Save filter preference
                 SharedPreferences prefs = requireContext().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
                 prefs.edit().putString(KEY_FILTER, currentFilter).apply();
-                
+
                 refreshPosts();
             }
             return true;
@@ -179,7 +181,7 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
         isLastPage = false;
         postList.clear();
         adapter.setPosts(new ArrayList<>());
-        
+
         if ("Following".equals(currentFilter)) {
             fetchFollowedIdsAndLoad();
         } else {
@@ -218,7 +220,7 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
             if (binding != null) binding.swipeRefreshLayout.setRefreshing(false);
             return;
         }
-        
+
         if ("Following".equals(currentFilter) && followedIds.isEmpty()) {
             if (binding != null) binding.swipeRefreshLayout.setRefreshing(false);
             Toast.makeText(getContext(), "You aren't following anyone yet.", Toast.LENGTH_SHORT).show();
@@ -248,10 +250,10 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
         query.get().addOnSuccessListener(value -> {
             if (!isAdded() || binding == null) return;
             binding.swipeRefreshLayout.setRefreshing(false);
-            
+
             if (value != null && !value.isEmpty()) {
                 lastVisible = value.getDocuments().get(value.size() - 1);
-                
+
                 for (DocumentSnapshot doc : value.getDocuments()) {
                     ForumPost post = doc.toObject(ForumPost.class);
                     if (post != null) {
@@ -261,9 +263,9 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
                         }
                     }
                 }
-                
+
                 adapter.setPosts(new ArrayList<>(postList));
-                
+
                 if (value.size() < PAGE_SIZE) {
                     isLastPage = true;
                 }
@@ -345,7 +347,7 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
     public void onOptionsClick(ForumPost post, View view) {
         PopupMenu popup = new PopupMenu(getContext(), view);
         FirebaseUser user = mAuth.getCurrentUser();
-        
+
         if (user != null && post.getUserId().equals(user.getUid())) {
             popup.getMenu().add("Delete");
         }
@@ -419,7 +421,7 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
                 .get()
                 .addOnSuccessListener(queryDocumentSnapshots -> {
                     WriteBatch batch = db.batch();
-                    
+
                     // Archive and delete each comment
                     for (DocumentSnapshot doc : queryDocumentSnapshots) {
                         Map<String, Object> commentBacklog = new HashMap<>();
@@ -429,11 +431,11 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
                         commentBacklog.put("data", doc.getData());
                         commentBacklog.put("deletedBy", userId);
                         commentBacklog.put("deletedAt", FieldValue.serverTimestamp());
-                        
+
                         batch.set(db.collection("deletedforum_backlog").document(), commentBacklog);
                         batch.delete(doc.getReference());
                     }
-                    
+
                     // Final post archive
                     Map<String, Object> postBacklog = new HashMap<>();
                     postBacklog.put("type", "post");
@@ -441,12 +443,12 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
                     postBacklog.put("data", post);
                     postBacklog.put("deletedBy", userId);
                     postBacklog.put("deletedAt", FieldValue.serverTimestamp());
-                    
+
                     batch.set(db.collection("deletedforum_backlog").document(), postBacklog);
-                    
+
                     // Delete the post document itself
                     batch.delete(db.collection("forumThreads").document(post.getId()));
-                    
+
                     batch.commit().addOnSuccessListener(aVoid -> {
                         if (!isAdded()) return;
                         Toast.makeText(getContext(), "Post and comments deleted", Toast.LENGTH_SHORT).show();
@@ -602,13 +604,22 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
     public void onResume() {
         super.onResume();
         if (binding != null) {
-            binding.getRoot().postDelayed(this::refreshPosts, 1500);
+            // Save the runnable reference so onDestroyView can cancel it.
+            // Without this, if the fragment is destroyed during the 1.5s window,
+            // refreshPosts() runs against a null binding and crashes.
+            pendingRefreshRunnable = this::refreshPosts;
+            binding.getRoot().postDelayed(pendingRefreshRunnable, 1500);
         }
     }
 
     @Override
     public void onDestroyView() {
         super.onDestroyView();
+        // Cancel pending refresh to avoid running against a null binding
+        if (binding != null && pendingRefreshRunnable != null) {
+            binding.getRoot().removeCallbacks(pendingRefreshRunnable);
+        }
+        pendingRefreshRunnable = null;
         binding = null;
     }
 }

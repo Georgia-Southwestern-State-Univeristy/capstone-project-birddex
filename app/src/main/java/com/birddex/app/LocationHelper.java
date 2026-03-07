@@ -85,9 +85,13 @@ public class LocationHelper {
                     // Perform reverse geocoding on a background thread
                     geoExecutor.execute(() -> {
                         AddressComponents addressComponents = getAddressDetailsFromLocation(location);
-                        ((Activity) context).runOnUiThread(() -> {
-                            listener.onLocationReceived(location, addressComponents.localityName, addressComponents.state, addressComponents.country);
-                        });
+                        Activity activity = (Activity) context;
+                        if (!activity.isFinishing() && !activity.isDestroyed()) {
+                            activity.runOnUiThread(() -> {
+                                listener.onLocationReceived(location, addressComponents.localityName,
+                                        addressComponents.state, addressComponents.country);
+                            });
+                        }
                     });
                 } else {
                     listener.onLocationError("Last location is null.");
@@ -147,9 +151,13 @@ public class LocationHelper {
                         if (location != null) {
                             geoExecutor.execute(() -> {
                                 AddressComponents addressComponents = getAddressDetailsFromLocation(location);
-                                ((Activity) context).runOnUiThread(() -> {
-                                    listener.onLocationReceived(location, addressComponents.localityName, addressComponents.state, addressComponents.country);
-                                });
+                                Activity activity = (Activity) context;
+                                if (!activity.isFinishing() && !activity.isDestroyed()) {
+                                    activity.runOnUiThread(() -> {
+                                        listener.onLocationReceived(location, addressComponents.localityName,
+                                                addressComponents.state, addressComponents.country);
+                                    });
+                                }
                             });
                         } else {
                             // Fallback to requesting updates if last known is null

@@ -50,8 +50,10 @@ import java.util.Date;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * NearbyFragment displays bird sightings based on the user's current location.
@@ -87,13 +89,17 @@ public class NearbyFragment extends Fragment {
     private boolean isUpdating = false;
     private boolean isSearchDataLoading = false;
     private ExecutorService geoExecutor;
-    
-    // Race condition fixes: using local results instead of global lists
-    private int fetchCount = 0;
+
+    // Race condition fixes: fetchCount uses AtomicInteger so increment+check is atomic
+    // across the two concurrent callbacks (Firestore + eBird).
+    private final AtomicInteger fetchCount = new AtomicInteger(0);
     private final List<Bird> latestFirestoreResults = Collections.synchronizedList(new ArrayList<>());
     private final List<Bird> latestEbirdResults = Collections.synchronizedList(new ArrayList<>());
-    
-    private final List<Bird> searchableBirds = new ArrayList<>();
+
+    // searchableBirds is populated from a Firestore callback (background thread) and read on
+    // the main thread inside openBirdSearchDialog. Using CopyOnWriteArrayList prevents
+    // ConcurrentModificationException during iteration without explicit locking.
+    private final List<Bird> searchableBirds = new CopyOnWriteArrayList<>();
 
     private static final long LOCATION_UPDATE_INTERVAL_MS = 3 * 60 * 1000;
     private static final double SEARCH_RADIUS_METERS = 50000;
@@ -306,7 +312,7 @@ public class NearbyFragment extends Fragment {
     private synchronized void fetchAllNearbyData() {
         if (currentLocation == null) return;
 
-        fetchCount = 0;
+        fetchCount.set(0);
         Log.d(TAG, "Starting dual-fetch from userBirdSightings and eBird...");
 
         if (isAdded() && getActivity() != null) {
@@ -372,9 +378,8 @@ public class NearbyFragment extends Fragment {
         });
     }
 
-    private synchronized void checkIfAllFetched() {
-        fetchCount++;
-        if (fetchCount >= 2) {
+    private void checkIfAllFetched() {
+        if (fetchCount.incrementAndGet() >= 2) {
             processFinalList();
         }
     }
@@ -520,14 +525,12 @@ public class NearbyFragment extends Fragment {
 
     private void cacheSearchBird(Bird bird) {
         if (bird == null || isBlank(bird.getId())) return;
-
-        for (Bird existing : searchableBirds) {
-            if (bird.getId().equals(existing.getId())) {
-                return;
+        synchronized (searchableBirds) {
+            for (Bird existing : searchableBirds) {
+                if (bird.getId().equals(existing.getId())) return;
             }
+            searchableBirds.add(bird);
         }
-
-        searchableBirds.add(bird);
     }
 
     private void openBirdSearchDialog() {

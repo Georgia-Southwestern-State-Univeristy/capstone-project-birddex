@@ -21,7 +21,9 @@ import com.google.firebase.firestore.Query;
 import com.google.firebase.firestore.Source;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
 
 public class SocialActivity extends AppCompatActivity implements UserAdapter.OnUserClickListener {
 
@@ -162,8 +164,8 @@ public class SocialActivity extends AppCompatActivity implements UserAdapter.OnU
 
     private void fetchUserDetails(List<String> userIds) {
         final int totalToFetch = userIds.size();
-        final int[] fetchedCount = {0};
-        final List<User> fetchedUsers = new ArrayList<>();
+        final AtomicInteger fetchedCount = new AtomicInteger(0);
+        final List<User> fetchedUsers = Collections.synchronizedList(new ArrayList<>());
 
         for (String id : userIds) {
             db.collection("users").document(id).get()
@@ -174,9 +176,7 @@ public class SocialActivity extends AppCompatActivity implements UserAdapter.OnU
                             Boolean isDeleted = doc.getBoolean("isDeleted");
                             if (user != null && (isDeleted == null || !isDeleted)) {
                                 user.setId(doc.getId());
-                                synchronized (fetchedUsers) {
-                                    fetchedUsers.add(user);
-                                }
+                                fetchedUsers.add(user);
                             }
                         }
                         checkIfDone(fetchedCount, totalToFetch, fetchedUsers);
@@ -187,13 +187,14 @@ public class SocialActivity extends AppCompatActivity implements UserAdapter.OnU
         }
     }
 
-    private void checkIfDone(int[] count, int total, List<User> fetchedUsers) {
-        count[0]++;
-        if (count[0] >= total) {
-            // Sort fetched users to match original ID order if needed, or just append
-            userList.addAll(fetchedUsers);
-            displayUsers();
-            finishLoad();
+    private void checkIfDone(AtomicInteger count, int total, List<User> fetchedUsers) {
+        if (count.incrementAndGet() >= total) {
+            // All requests finished, update UI on main thread
+            runOnUiThread(() -> {
+                userList.addAll(fetchedUsers);
+                displayUsers();
+                finishLoad();
+            });
         }
     }
 

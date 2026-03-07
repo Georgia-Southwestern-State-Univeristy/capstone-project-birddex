@@ -77,8 +77,13 @@ public class SettingsActivity extends AppCompatActivity {
 
         // Set up click listeners for all buttons
         btnLogout.setOnClickListener(v -> {
+            FirebaseUser currentUser = FirebaseAuth.getInstance().getCurrentUser();
+            String uid = (currentUser != null) ? currentUser.getUid() : null;
+            
             FirebaseAuth.getInstance().signOut();
-            sessionManager.clearSession();
+            if (uid != null) {
+                sessionManager.clearSession(uid);
+            }
             goToWelcomeAndClear();
         });
 
@@ -351,7 +356,7 @@ public class SettingsActivity extends AppCompatActivity {
                     progressDialog.dismiss();
                     if (deleteTask.isSuccessful()) {
                         Toast.makeText(SettingsActivity.this, "Account deleted successfully.", Toast.LENGTH_SHORT).show();
-                        sessionManager.clearSession();
+                        sessionManager.clearSession(user.getUid());
                         goToWelcomeAndClear();
                     } else {
                         Log.e(TAG, "Auth deletion failed", deleteTask.getException());

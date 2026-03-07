@@ -59,7 +59,7 @@ public class LoginActivity extends AppCompatActivity {
 
                             // Create and update session ID to handle single device login
                             SessionManager sessionManager = new SessionManager(LoginActivity.this);
-                            String sessionId = sessionManager.createSession();
+                            String sessionId = sessionManager.createSession(user.getUid());
                             firebaseManager.updateSessionId(user.getUid(), sessionId, task -> {
                                 startActivity(new Intent(LoginActivity.this, HomeActivity.class));
                                 finish(); // Finish current activity to prevent returning on back press.

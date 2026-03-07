@@ -98,10 +98,10 @@ public class BirdDexAppCheck extends Application {
 
                 if (snapshot != null && snapshot.exists()) {
                     String remoteSessionId = snapshot.getString("currentSessionId");
-                    String localSessionId = sessionManager.getSessionId();
+                    String localSessionId = sessionManager.getSessionId(user.getUid());
 
                     if (remoteSessionId != null && localSessionId != null && !remoteSessionId.equals(localSessionId)) {
-                        handleOtherDeviceLogin();
+                        handleOtherDeviceLogin(user.getUid());
                     }
                 }
             });
@@ -115,7 +115,7 @@ public class BirdDexAppCheck extends Application {
         }
     }
 
-    private void handleOtherDeviceLogin() {
+    private void handleOtherDeviceLogin(String uid) {
         stopSessionListener();
         
         if (currentActivity != null && !currentActivity.isFinishing()) {
@@ -124,20 +124,20 @@ public class BirdDexAppCheck extends Application {
                         .setTitle("Logged Out")
                         .setMessage("Someone else has signed into this account. You have been signed out.")
                         .setPositiveButton("OK", (dialog, which) -> {
-                            logoutAndRedirect();
+                            logoutAndRedirect(uid);
                         })
                         .setCancelable(false)
                         .show();
             });
         } else {
             // Fallback if no activity is visible
-            logoutAndRedirect();
+            logoutAndRedirect(uid);
         }
     }
 
-    private void logoutAndRedirect() {
+    private void logoutAndRedirect(String uid) {
         FirebaseAuth.getInstance().signOut();
-        sessionManager.clearSession();
+        sessionManager.clearSession(uid);
         
         Intent intent = new Intent(this, LoginActivity.class);
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);

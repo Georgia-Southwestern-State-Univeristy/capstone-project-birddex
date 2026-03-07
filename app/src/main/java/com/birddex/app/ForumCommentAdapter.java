@@ -220,7 +220,7 @@ public class ForumCommentAdapter extends RecyclerView.Adapter<ForumCommentAdapte
                 tvReplyingTo = itemView.findViewById(R.id.tvReplyingTo);
                 btnOptions = itemView.findViewById(R.id.btnCommentOptions);
                 llActions = itemView.findViewById(R.id.llActions);
-                
+
                 // Replies don't have further nesting or their own reply buttons in this design
                 llActions.setVisibility(View.GONE);
                 rvReplies.setVisibility(View.GONE);

@@ -12,6 +12,7 @@ import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.ArrayAdapter;
+import android.widget.Button;
 import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.ImageButton;
@@ -444,7 +445,15 @@ public class ProfileFragment extends Fragment implements
             Intent intent = new Intent(requireContext(), ViewBirdCardActivity.class);
             intent.putExtra(CollectionCardAdapter.EXTRA_IMAGE_URL, slot.getImageUrl());
             intent.putExtra(CollectionCardAdapter.EXTRA_COMMON_NAME, slot.getCommonName());
+            intent.putExtra(CollectionCardAdapter.EXTRA_SCI_NAME, slot.getScientificName());
+            intent.putExtra(CollectionCardAdapter.EXTRA_STATE, slot.getState());
+            intent.putExtra(CollectionCardAdapter.EXTRA_LOCALITY, slot.getLocality());
             intent.putExtra(CollectionCardAdapter.EXTRA_BIRD_ID, slot.getBirdId());
+
+            if (slot.getTimestamp() != null) {
+                intent.putExtra(CollectionCardAdapter.EXTRA_CAUGHT_TIME, slot.getTimestamp().getTime());
+            }
+
             startActivity(intent);
         }
     }
@@ -456,11 +465,56 @@ public class ProfileFragment extends Fragment implements
 
     private void showFavoritePickerDialog(int position) {
         if (allCollectionSlots.isEmpty()) { Toast.makeText(getContext(), "No cards found.", Toast.LENGTH_SHORT).show(); return; }
+        
+        View dialogView = LayoutInflater.from(requireContext()).inflate(R.layout.dialog_favorite_picker, null);
+        EditText etSearch = dialogView.findViewById(R.id.etSearch);
+        ListView listView = dialogView.findViewById(R.id.listView);
+        Button btnClear = dialogView.findViewById(R.id.btnClear);
+
+        List<CollectionSlot> filteredSlots = new ArrayList<>(allCollectionSlots);
+        ArrayAdapter<String> adapter = new ArrayAdapter<>(requireContext(), android.R.layout.simple_list_item_1, getSlotNames(filteredSlots));
+        listView.setAdapter(adapter);
+
+        AlertDialog dialog = new AlertDialog.Builder(requireContext())
+                .setTitle("Pick Favorite")
+                .setView(dialogView)
+                .setNegativeButton("Cancel", null)
+                .create();
+
+        etSearch.addTextChangedListener(new TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
+            @Override public void onTextChanged(CharSequence s, int start, int before, int count) {
+                filteredSlots.clear();
+                String query = s.toString().toLowerCase();
+                for (CollectionSlot slot : allCollectionSlots) {
+                    if (slot.getCommonName() != null && slot.getCommonName().toLowerCase().contains(query)) {
+                        filteredSlots.add(slot);
+                    }
+                }
+                adapter.clear();
+                adapter.addAll(getSlotNames(filteredSlots));
+                adapter.notifyDataSetChanged();
+            }
+            @Override public void afterTextChanged(Editable s) {}
+        });
+
+        listView.setOnItemClickListener((parent, view, which, id) -> {
+            saveFavoriteSelection(position, filteredSlots.get(which).getId());
+            dialog.dismiss();
+        });
+
+        btnClear.setOnClickListener(v -> {
+            saveFavoriteSelection(position, "");
+            dialog.dismiss();
+        });
+
+        dialog.show();
+    }
+
+    private List<String> getSlotNames(List<CollectionSlot> slots) {
         List<String> names = new ArrayList<>();
-        for (CollectionSlot s : allCollectionSlots) names.add(s.getCommonName());
-        new AlertDialog.Builder(requireContext()).setTitle("Pick Favorite").setItems(names.toArray(new String[0]), (d, which) -> {
-            saveFavoriteSelection(position, allCollectionSlots.get(which).getId());
-        }).show();
+        for (CollectionSlot s : slots) names.add(s.getCommonName());
+        return names;
     }
 
     private void saveFavoriteSelection(int pos, String key) {

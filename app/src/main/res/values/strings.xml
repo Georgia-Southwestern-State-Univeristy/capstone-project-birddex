@@ -17,6 +17,16 @@
     <string name="heatmap_scope_72h">last 72h</string>
     <string name="heatmap_stats">%1$s • User: %2$d • eBird: %3$d</string>
 
+    <!-- Legend Strings -->
+    <string name="legend_heatmap_title">Heatmap (Sightings)</string>
+    <string name="legend_unverified_user_sightings">Unverified User Sightings</string>
+    <string name="legend_verified_user_sightings">Verified User Sightings</string>
+    <string name="legend_verified_sightings">Verified Sightings</string>
+    <string name="legend_chirps_title">Chirps (Recent Posts)</string>
+    <string name="legend_spotted_pin">Spotted Pin</string>
+    <string name="legend_hunted_pin">Hunted Pin</string>
+    <string name="legend_spotted_hunted">Spotted &amp; Hunted</string>
+
     <!-- Settings Strings -->
     <string name="settings_title">Settings</string>
     <string name="label_username">BirdDex User Name</string>

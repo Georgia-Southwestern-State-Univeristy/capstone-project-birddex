@@ -34,7 +34,7 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 
-public class UserSocialProfileActivity extends AppCompatActivity implements 
+public class UserSocialProfileActivity extends AppCompatActivity implements
         ForumPostAdapter.OnPostClickListener,
         FavoritesAdapter.OnFavoriteInteractionListener {
 
@@ -58,10 +58,10 @@ public class UserSocialProfileActivity extends AppCompatActivity implements
     private FirebaseManager firebaseManager;
     private ForumPostAdapter adapter;
     private FavoritesAdapter favoritesAdapter;
-    
+
     private String targetUserId;
     private boolean isFollowing = false;
-    
+
     private List<ForumPost> postList = new ArrayList<>();
     private DocumentSnapshot lastVisible;
     private boolean isFetching = false;
@@ -93,7 +93,7 @@ public class UserSocialProfileActivity extends AppCompatActivity implements
         loadUserDetails();
         checkFollowingStatus();
         setupRecyclerViews();
-        
+
         fetchUserPosts();
     }
 
@@ -151,10 +151,11 @@ public class UserSocialProfileActivity extends AppCompatActivity implements
                 Log.d(TAG, "Tab selected: " + tab.getPosition());
                 applyTabState(tab.getPosition());
             }
+
             @Override public void onTabUnselected(TabLayout.Tab tab) {}
             @Override public void onTabReselected(TabLayout.Tab tab) {}
         });
-        
+
         applyTabState(0);
     }
 
@@ -177,7 +178,7 @@ public class UserSocialProfileActivity extends AppCompatActivity implements
             toolbarParams.setScrollFlags(AppBarLayout.LayoutParams.SCROLL_FLAG_SCROLL | AppBarLayout.LayoutParams.SCROLL_FLAG_ENTER_ALWAYS);
             headerParams.setScrollFlags(AppBarLayout.LayoutParams.SCROLL_FLAG_SCROLL | AppBarLayout.LayoutParams.SCROLL_FLAG_EXIT_UNTIL_COLLAPSED);
         }
-        
+
         toolbar.setLayoutParams(toolbarParams);
         profileHeader.setLayoutParams(headerParams);
     }
@@ -212,7 +213,7 @@ public class UserSocialProfileActivity extends AppCompatActivity implements
                             tvBio.setText(user.getBio() != null && !user.getBio().isEmpty() ? user.getBio() : "No bio yet.");
                             tvFollowerCount.setText(String.valueOf(user.getFollowerCount()));
                             tvFollowingCount.setText(String.valueOf(user.getFollowingCount()));
-                            
+
                             Glide.with(this).load(user.getProfilePictureUrl()).placeholder(R.drawable.ic_profile).into(ivPfp);
 
                             favoriteCardKeys.clear();
@@ -415,14 +416,19 @@ public class UserSocialProfileActivity extends AppCompatActivity implements
     }
 
     @Override public void onCommentClick(ForumPost post) { onPostClick(post); }
-    @Override public void onPostClick(ForumPost post) {
+
+    @Override
+    public void onPostClick(ForumPost post) {
         Log.d(TAG, "Post clicked: " + post.getId());
         Intent intent = new Intent(this, PostDetailActivity.class);
         intent.putExtra(PostDetailActivity.EXTRA_POST_ID, post.getId());
         startActivity(intent);
     }
+
     @Override public void onOptionsClick(ForumPost post, View view) { Log.d(TAG, "Post options clicked."); }
-    @Override public void onUserClick(String userId) {
+
+    @Override
+    public void onUserClick(String userId) {
         if (!userId.equals(targetUserId)) {
             Log.d(TAG, "User in list clicked: " + userId);
             Intent intent = new Intent(this, UserSocialProfileActivity.class);
@@ -430,7 +436,9 @@ public class UserSocialProfileActivity extends AppCompatActivity implements
             startActivity(intent);
         }
     }
-    @Override public void onMapClick(ForumPost post) {
+
+    @Override
+    public void onMapClick(ForumPost post) {
         if (post.getLatitude() != null && post.getLongitude() != null) {
             Log.d(TAG, "Map clicked for post: " + post.getId());
             Intent intent = new Intent(this, NearbyHeatmapActivity.class);
@@ -441,7 +449,8 @@ public class UserSocialProfileActivity extends AppCompatActivity implements
         }
     }
 
-    @Override public void onFavoriteClicked(int position, @Nullable CollectionSlot slot) {
+    @Override
+    public void onFavoriteClicked(int position, @Nullable CollectionSlot slot) {
         if (slot != null) {
             Log.d(TAG, "Favorite card clicked: " + slot.getCommonName());
             Intent intent = new Intent(this, ViewBirdCardActivity.class);
@@ -451,14 +460,18 @@ public class UserSocialProfileActivity extends AppCompatActivity implements
             intent.putExtra(CollectionCardAdapter.EXTRA_STATE, slot.getState());
             intent.putExtra(CollectionCardAdapter.EXTRA_LOCALITY, slot.getLocality());
             intent.putExtra(CollectionCardAdapter.EXTRA_BIRD_ID, slot.getBirdId());
-            if (slot.getTimestamp() != null) intent.putExtra(CollectionCardAdapter.EXTRA_CAUGHT_TIME, slot.getTimestamp().getTime());
+            intent.putExtra(ViewBirdCardActivity.EXTRA_ALLOW_IMAGE_CHANGE, false);
+            if (slot.getTimestamp() != null) {
+                intent.putExtra(CollectionCardAdapter.EXTRA_CAUGHT_TIME, slot.getTimestamp().getTime());
+            }
             startActivity(intent);
         }
     }
 
     @Override public boolean onFavoriteLongPressed(int position, @Nullable CollectionSlot slot) { return false; }
 
-    @Override protected void onDestroy() {
+    @Override
+    protected void onDestroy() {
         super.onDestroy();
         if (userDetailsListener != null) userDetailsListener.remove();
     }

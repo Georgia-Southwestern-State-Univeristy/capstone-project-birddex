@@ -6,6 +6,7 @@ import android.view.View;
 import android.widget.Button;
 import android.widget.ImageButton;
 import android.widget.ImageView;
+import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -27,6 +28,8 @@ import java.util.HashMap;
 import java.util.Map;
 
 public class ViewBirdCardActivity extends AppCompatActivity {
+
+    public static final String EXTRA_ALLOW_IMAGE_CHANGE = "com.birddex.app.extra.ALLOW_IMAGE_CHANGE";
 
     private ImageView imgBird;
     private Button btnChangeCardImage;
@@ -125,14 +128,42 @@ public class ViewBirdCardActivity extends AppCompatActivity {
 
         loadBirdImage(currentImageUrl);
 
+        boolean allowImageChange = getIntent().getBooleanExtra(EXTRA_ALLOW_IMAGE_CHANGE, true);
+
+        if (!allowImageChange) {
+            btnChangeCardImage.setVisibility(View.GONE);
+
+            View parent = (View) btnBirdInfo.getParent();
+            if (parent instanceof LinearLayout) {
+                LinearLayout row = (LinearLayout) parent;
+                row.setWeightSum(1f);
+            }
+
+            LinearLayout.LayoutParams birdInfoParams =
+                    (LinearLayout.LayoutParams) btnBirdInfo.getLayoutParams();
+            birdInfoParams.width = 0;
+            birdInfoParams.weight = 1f;
+            birdInfoParams.setMargins(
+                    0,
+                    birdInfoParams.topMargin,
+                    0,
+                    birdInfoParams.bottomMargin
+            );
+            btnBirdInfo.setLayoutParams(birdInfoParams);
+        }
+
         if (currentBirdId == null || currentBirdId.trim().isEmpty()) {
-            btnChangeCardImage.setEnabled(false);
-            btnChangeCardImage.setText("No Saved Bird ID");
+            if (allowImageChange) {
+                btnChangeCardImage.setEnabled(false);
+                btnChangeCardImage.setText("No Saved Bird ID");
+            }
 
             btnBirdInfo.setEnabled(false);
             btnBirdInfo.setText("No Bird Info");
         } else {
-            btnChangeCardImage.setOnClickListener(v -> openImagePickerForThisBird());
+            if (allowImageChange) {
+                btnChangeCardImage.setOnClickListener(v -> openImagePickerForThisBird());
+            }
             btnBirdInfo.setOnClickListener(v -> openBirdInfoPage());
         }
 

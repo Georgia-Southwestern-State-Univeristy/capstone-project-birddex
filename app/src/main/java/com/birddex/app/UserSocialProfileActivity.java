@@ -31,6 +31,7 @@ import com.google.firebase.firestore.Query;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
 
 public class UserSocialProfileActivity extends AppCompatActivity implements 
@@ -375,13 +376,41 @@ public class UserSocialProfileActivity extends AppCompatActivity implements
     @Override public void onLikeClick(ForumPost post) {
         Log.d(TAG, "Post Liked: " + post.getId());
         FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
-        if (user == null) return;
+        if (user == null || post.getId() == null) return;
+        
         String userId = user.getUid();
-        boolean currentlyLiked = post.getLikedBy() != null && post.getLikedBy().containsKey(userId);
+        if (post.getLikedBy() == null) post.setLikedBy(new HashMap<>());
+        boolean currentlyLiked = post.getLikedBy().containsKey(userId);
+        
+        // Optimistic UI update
+        int currentCount = post.getLikeCount();
         if (currentlyLiked) {
-            db.collection("forumThreads").document(post.getId()).update("likeCount", FieldValue.increment(-1), "likedBy." + userId, FieldValue.delete());
+            post.setLikeCount(Math.max(0, currentCount - 1));
+            post.getLikedBy().remove(userId);
         } else {
-            db.collection("forumThreads").document(post.getId()).update("likeCount", FieldValue.increment(1), "likedBy." + userId, true);
+            post.setLikeCount(currentCount + 1);
+            post.getLikedBy().put(userId, true);
+        }
+        adapter.notifyDataSetChanged();
+
+        if (currentlyLiked) {
+            db.collection("forumThreads").document(post.getId())
+                    .update("likeCount", FieldValue.increment(-1), "likedBy." + userId, FieldValue.delete())
+                    .addOnFailureListener(e -> {
+                        // Revert
+                        post.setLikeCount(currentCount);
+                        post.getLikedBy().put(userId, true);
+                        adapter.notifyDataSetChanged();
+                    });
+        } else {
+            db.collection("forumThreads").document(post.getId())
+                    .update("likeCount", FieldValue.increment(1), "likedBy." + userId, true)
+                    .addOnFailureListener(e -> {
+                        // Revert
+                        post.setLikeCount(currentCount);
+                        post.getLikedBy().remove(userId);
+                        adapter.notifyDataSetChanged();
+                    });
         }
     }
 

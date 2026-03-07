@@ -440,6 +440,8 @@ public class NearbyHeatmapActivity extends AppCompatActivity
         TextView tvComments = postContent.findViewById(R.id.tvCommentCount);
         TextView tvViews = postContent.findViewById(R.id.tvViewCount);
         View btnPostOptions = postContent.findViewById(R.id.btnPostOptions);
+        ImageView ivLikeIcon = postContent.findViewById(R.id.ivLikeIcon);
+        View btnLike = postContent.findViewById(R.id.btnLike);
 
         TextView tvSpottedBadge = postContent.findViewById(R.id.tvSpottedBadge);
         TextView tvHuntedBadge = postContent.findViewById(R.id.tvHuntedBadge);
@@ -465,6 +467,44 @@ public class NearbyHeatmapActivity extends AppCompatActivity
         } else {
             cvImage.setVisibility(View.GONE);
         }
+
+        // Update like icon for post
+        if (user != null && post.getLikedBy() != null && post.getLikedBy().containsKey(user.getUid())) {
+            ivLikeIcon.setImageResource(R.drawable.ic_favorite);
+        } else {
+            ivLikeIcon.setImageResource(R.drawable.ic_favorite_border);
+        }
+
+        btnLike.setOnClickListener(v -> {
+            if (user == null) return;
+            String userId = user.getUid();
+            boolean liked = post.getLikedBy() != null && post.getLikedBy().containsKey(userId);
+            int currentCount = post.getLikeCount();
+
+            if (liked) {
+                post.setLikeCount(Math.max(0, currentCount - 1));
+                post.getLikedBy().remove(userId);
+                ivLikeIcon.setImageResource(R.drawable.ic_favorite_border);
+            } else {
+                post.setLikeCount(currentCount + 1);
+                if (post.getLikedBy() == null) post.setLikedBy(new HashMap<>());
+                post.getLikedBy().put(userId, true);
+                ivLikeIcon.setImageResource(R.drawable.ic_favorite);
+            }
+            tvLikes.setText(String.valueOf(post.getLikeCount()));
+
+            db.collection("forumThreads").document(post.getId())
+                    .update("likeCount", FieldValue.increment(liked ? -1 : 1),
+                            "likedBy." + userId, liked ? FieldValue.delete() : true)
+                    .addOnFailureListener(e -> {
+                        // Revert on failure
+                        post.setLikeCount(currentCount);
+                        if (liked) post.getLikedBy().put(userId, true);
+                        else post.getLikedBy().remove(userId);
+                        tvLikes.setText(String.valueOf(post.getLikeCount()));
+                        ivLikeIcon.setImageResource(liked ? R.drawable.ic_favorite : R.drawable.ic_favorite_border);
+                    });
+        });
 
         postContent.setOnClickListener(v -> {
             Intent intent = new Intent(this, PostDetailActivity.class);
@@ -820,16 +860,40 @@ public class NearbyHeatmapActivity extends AppCompatActivity
         if (user == null || activePost == null) return;
 
         String userId = user.getUid();
-        boolean liked = comment.getLikedBy() != null && comment.getLikedBy().containsKey(userId);
+        if (comment.getLikedBy() == null) comment.setLikedBy(new HashMap<>());
+        boolean liked = comment.getLikedBy().containsKey(userId);
+
+        // Optimistic UI Update
+        int currentCount = comment.getLikeCount();
+        if (liked) {
+            comment.setLikeCount(Math.max(0, currentCount - 1));
+            comment.getLikedBy().remove(userId);
+        } else {
+            comment.setLikeCount(currentCount + 1);
+            comment.getLikedBy().put(userId, true);
+        }
+        if (popupCommentAdapter != null) popupCommentAdapter.notifyDataSetChanged();
 
         if (liked) {
             db.collection("forumThreads").document(activePost.getId()).collection("comments").document(comment.getId())
                     .update("likeCount", FieldValue.increment(-1),
-                            "likedBy." + userId, FieldValue.delete());
+                            "likedBy." + userId, FieldValue.delete())
+                    .addOnFailureListener(e -> {
+                        // Revert on failure
+                        comment.setLikeCount(currentCount);
+                        comment.getLikedBy().put(userId, true);
+                        if (popupCommentAdapter != null) popupCommentAdapter.notifyDataSetChanged();
+                    });
         } else {
             db.collection("forumThreads").document(activePost.getId()).collection("comments").document(comment.getId())
                     .update("likeCount", FieldValue.increment(1),
-                            "likedBy." + userId, true);
+                            "likedBy." + userId, true)
+                    .addOnFailureListener(e -> {
+                        // Revert on failure
+                        comment.setLikeCount(currentCount);
+                        comment.getLikedBy().remove(userId);
+                        if (popupCommentAdapter != null) popupCommentAdapter.notifyDataSetChanged();
+                    });
         }
     }
 

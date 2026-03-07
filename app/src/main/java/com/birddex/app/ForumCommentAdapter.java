@@ -13,6 +13,7 @@ import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
 import com.bumptech.glide.Glide;
+import com.google.firebase.auth.FirebaseAuth;
 
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -26,6 +27,7 @@ public class ForumCommentAdapter extends RecyclerView.Adapter<ForumCommentAdapte
     private List<ForumComment> topLevelComments = new ArrayList<>();
     private OnCommentInteractionListener listener;
     private Set<String> expandedCommentIds = new HashSet<>();
+    private String currentUserId;
 
     public interface OnCommentInteractionListener {
         void onCommentLikeClick(ForumComment comment);
@@ -36,6 +38,7 @@ public class ForumCommentAdapter extends RecyclerView.Adapter<ForumCommentAdapte
 
     public ForumCommentAdapter(OnCommentInteractionListener listener) {
         this.listener = listener;
+        this.currentUserId = FirebaseAuth.getInstance().getUid();
     }
 
     public void setComments(List<ForumComment> comments) {
@@ -61,7 +64,7 @@ public class ForumCommentAdapter extends RecyclerView.Adapter<ForumCommentAdapte
                 .collect(Collectors.toList());
         
         boolean isExpanded = expandedCommentIds.contains(comment.getId());
-        holder.bind(comment, replies, isExpanded, listener, (id, expand) -> {
+        holder.bind(comment, replies, isExpanded, listener, currentUserId, (id, expand) -> {
             if (expand) expandedCommentIds.add(id);
             else expandedCommentIds.remove(id);
             notifyItemChanged(position);
@@ -109,7 +112,7 @@ public class ForumCommentAdapter extends RecyclerView.Adapter<ForumCommentAdapte
             llActions = itemView.findViewById(R.id.llActions);
         }
 
-        public void bind(ForumComment comment, List<ForumComment> replies, boolean isExpanded, OnCommentInteractionListener listener, OnExpandListener expandListener) {
+        public void bind(ForumComment comment, List<ForumComment> replies, boolean isExpanded, OnCommentInteractionListener listener, String currentUserId, OnExpandListener expandListener) {
             tvUsername.setText(comment.getUsername());
             tvText.setText(comment.getText());
             tvLikeCount.setText(String.valueOf(comment.getLikeCount()));
@@ -132,6 +135,13 @@ public class ForumCommentAdapter extends RecyclerView.Adapter<ForumCommentAdapte
                     .placeholder(R.drawable.ic_profile)
                     .into(ivUserPfp);
 
+            // Like status icon update
+            if (currentUserId != null && comment.getLikedBy() != null && comment.getLikedBy().containsKey(currentUserId)) {
+                ivLikeIcon.setImageResource(R.drawable.ic_favorite);
+            } else {
+                ivLikeIcon.setImageResource(R.drawable.ic_favorite_border);
+            }
+
             btnLike.setOnClickListener(v -> listener.onCommentLikeClick(comment));
             btnReply.setOnClickListener(v -> listener.onCommentReplyClick(comment));
             btnOptions.setOnClickListener(v -> listener.onCommentOptionsClick(comment, v));
@@ -146,7 +156,7 @@ public class ForumCommentAdapter extends RecyclerView.Adapter<ForumCommentAdapte
                     
                     rvReplies.setVisibility(View.VISIBLE);
                     rvReplies.setLayoutManager(new LinearLayoutManager(itemView.getContext()));
-                    rvReplies.setAdapter(new ReplyAdapter(replies, listener));
+                    rvReplies.setAdapter(new ReplyAdapter(replies, listener, currentUserId));
                 } else {
                     tvShowReplies.setVisibility(View.VISIBLE);
                     int remainingCount = replies.size() - 1;
@@ -161,7 +171,7 @@ public class ForumCommentAdapter extends RecyclerView.Adapter<ForumCommentAdapte
                     rvReplies.setLayoutManager(new LinearLayoutManager(itemView.getContext()));
                     List<ForumComment> firstReplyOnly = new ArrayList<>();
                     firstReplyOnly.add(replies.get(0));
-                    rvReplies.setAdapter(new ReplyAdapter(firstReplyOnly, listener));
+                    rvReplies.setAdapter(new ReplyAdapter(firstReplyOnly, listener, currentUserId));
                 }
             } else {
                 tvShowReplies.setVisibility(View.GONE);
@@ -173,10 +183,12 @@ public class ForumCommentAdapter extends RecyclerView.Adapter<ForumCommentAdapte
     static class ReplyAdapter extends RecyclerView.Adapter<ReplyAdapter.ReplyViewHolder> {
         private List<ForumComment> replies;
         private OnCommentInteractionListener listener;
+        private String currentUserId;
 
-        ReplyAdapter(List<ForumComment> replies, OnCommentInteractionListener listener) {
+        ReplyAdapter(List<ForumComment> replies, OnCommentInteractionListener listener, String currentUserId) {
             this.replies = replies;
             this.listener = listener;
+            this.currentUserId = currentUserId;
         }
 
         @NonNull
@@ -188,7 +200,7 @@ public class ForumCommentAdapter extends RecyclerView.Adapter<ForumCommentAdapte
 
         @Override
         public void onBindViewHolder(@NonNull ReplyViewHolder holder, int position) {
-            holder.bind(replies.get(position), listener);
+            holder.bind(replies.get(position), listener, currentUserId);
         }
 
         @Override
@@ -202,6 +214,7 @@ public class ForumCommentAdapter extends RecyclerView.Adapter<ForumCommentAdapte
             TextView tvTimestamp;
             TextView tvText;
             LinearLayout btnLike;
+            ImageView ivLikeIcon;
             TextView tvLikeCount;
             RecyclerView rvReplies;
             TextView tvReplyingTo;
@@ -215,6 +228,7 @@ public class ForumCommentAdapter extends RecyclerView.Adapter<ForumCommentAdapte
                 tvTimestamp = itemView.findViewById(R.id.tvCommentTimestamp);
                 tvText = itemView.findViewById(R.id.tvCommentText);
                 btnLike = itemView.findViewById(R.id.btnLikeComment);
+                ivLikeIcon = itemView.findViewById(R.id.ivCommentLikeIcon);
                 tvLikeCount = itemView.findViewById(R.id.tvCommentLikeCount);
                 rvReplies = itemView.findViewById(R.id.rvReplies);
                 tvReplyingTo = itemView.findViewById(R.id.tvReplyingTo);
@@ -226,7 +240,7 @@ public class ForumCommentAdapter extends RecyclerView.Adapter<ForumCommentAdapte
                 rvReplies.setVisibility(View.GONE);
             }
 
-            void bind(ForumComment reply, OnCommentInteractionListener listener) {
+            void bind(ForumComment reply, OnCommentInteractionListener listener, String currentUserId) {
                 tvUsername.setText(reply.getUsername());
                 tvText.setText(reply.getText());
                 tvLikeCount.setText(String.valueOf(reply.getLikeCount()));
@@ -247,6 +261,13 @@ public class ForumCommentAdapter extends RecyclerView.Adapter<ForumCommentAdapte
                         .load(reply.getUserProfilePictureUrl())
                         .placeholder(R.drawable.ic_profile)
                         .into(ivUserPfp);
+
+                // Like status icon update
+                if (currentUserId != null && reply.getLikedBy() != null && reply.getLikedBy().containsKey(currentUserId)) {
+                    ivLikeIcon.setImageResource(R.drawable.ic_favorite);
+                } else {
+                    ivLikeIcon.setImageResource(R.drawable.ic_favorite_border);
+                }
 
                 btnLike.setOnClickListener(v -> listener.onCommentLikeClick(reply));
                 btnOptions.setOnClickListener(v -> listener.onCommentOptionsClick(reply, v));

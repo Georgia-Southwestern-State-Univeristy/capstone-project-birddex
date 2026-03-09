@@ -23,6 +23,7 @@ public class ForumComment {
 
     public ForumComment() {
         // Required for Firestore
+        this.likedBy = new java.util.HashMap<>();
     }
 
     public ForumComment(String threadId, String userId, String username, String userProfilePictureUrl, String text) {
@@ -32,6 +33,7 @@ public class ForumComment {
         this.userProfilePictureUrl = userProfilePictureUrl;
         this.text = text;
         this.likeCount = 0;
+        this.likedBy = new java.util.HashMap<>();
         this.edited = false;
         this.likeNotificationSent = false;
     }

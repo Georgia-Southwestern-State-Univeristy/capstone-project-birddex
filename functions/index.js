@@ -1659,6 +1659,22 @@ exports.onForumThreadEngagementUpdated = onDocumentUpdated("forumThreads/{thread
     return null;
 });
 
+exports.onCommentEngagementUpdated = onDocumentUpdated("forumThreads/{threadId}/comments/{commentId}", async (event) => {
+    const afterData = event.data.after.data();
+    if (!afterData) {
+        logger.info(`Comment engagement updated but no after data for ${event.params.commentId}`);
+        return null;
+    }
+    const likedByAfter = afterData.likedBy || {};
+    const newLikeCount = Object.keys(likedByAfter).length;
+    const currentLikeCount = afterData.likeCount || 0;
+    if (newLikeCount !== currentLikeCount) {
+        logger.info(`Recalculating likes for comment ${event.params.commentId} in thread ${event.params.threadId}: New count = ${newLikeCount}`);
+        await event.data.after.ref.update({ likeCount: newLikeCount });
+    }
+    return null;
+});
+
 // ======================================================
 // onCommentCreated — notify on reply or post activity + IDEMPOTENT COUNT
 // ======================================================

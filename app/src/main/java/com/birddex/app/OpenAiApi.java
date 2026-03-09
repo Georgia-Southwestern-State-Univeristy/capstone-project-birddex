@@ -10,6 +10,12 @@ import java.util.Map;
 import androidx.annotation.Nullable; // Import for Nullable annotation
 
 /**
+/**
+ * for: Interface/model contract used to keep different parts of the app communicating with a shared shape.
+ *
+ * These comments focus on what the actual code blocks are doing so the file is easier to trace
+ * when you are debugging or presenting the app. Only comments were added; runtime logic was not changed.
+ */
  * OpenAiApi is a helper class for interacting with OpenAI's Chat Completions API via Cloud Functions.
  * It sends a Base64 encoded image to a secure server-side function to identify bird species.
  */
@@ -25,6 +31,9 @@ public class OpenAiApi {
         void onFailure(Exception e, String message);
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     */
     public OpenAiApi() {
         // No longer needs OkHttpClient as it uses FirebaseFunctions
     }
@@ -76,6 +85,9 @@ public class OpenAiApi {
                         } else {
                             callback.onFailure(new Exception("Null response"), "Cloud function returned empty result.");
                         }
+                    /**
+                     * Main logic block for this part of the feature.
+                     */
                     } catch (Exception e) {
                         Log.e(TAG, "Error parsing Cloud Function response", e);
                         callback.onFailure(e, "Failed to parse server response.");

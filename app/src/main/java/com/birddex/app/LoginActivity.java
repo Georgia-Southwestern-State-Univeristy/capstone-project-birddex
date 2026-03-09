@@ -17,6 +17,12 @@ import com.google.firebase.auth.FirebaseUser;
  * LoginActivity handles the user authentication process.
  * Fixes: Added isNavigating guard to prevent redundant activity launches.
  */
+/**
+ * LoginActivity: Activity class for one BirdDex screen. It owns screen setup, user actions, and navigation for this part of the app.
+ *
+ * These comments focus on what the actual code blocks are doing so the file is easier to trace
+ * when you are debugging or presenting the app. Only comments were added; runtime logic was not changed.
+ */
 public class LoginActivity extends AppCompatActivity {
 
     private FirebaseManager firebaseManager;
@@ -28,14 +34,26 @@ public class LoginActivity extends AppCompatActivity {
     private View loadingOverlay;
     private boolean isNavigating = false;
 
+    /**
+     * Android calls this when the Activity is first created. This is where the screen usually
+     * inflates its layout, grabs views, creates helpers, and wires listeners.
+     * It grabs layout/view references here so later code can read from them, update them, or
+     * attach listeners.
+     * It wires user actions here, so taps on buttons/cards/menus trigger the next step in the
+     * flow.
+     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
+     * changes.
+     */
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_login);
 
+        // Set up or query the Firebase layer that supplies/stores this feature's data.
         firebaseManager = new FirebaseManager(this);
         signINupValidator = new sign_IN_upValidator();
 
+        // Bind or inflate the UI pieces this method needs before it can update the screen.
         emailEditText = findViewById(R.id.etEmail);
         passwordEditText = findViewById(R.id.etPassword);
         btnLogin = findViewById(R.id.btnLogin);
@@ -44,6 +62,7 @@ public class LoginActivity extends AppCompatActivity {
         TextView tvForgot = findViewById(R.id.tvForgot);
         TextView tvSignUp = findViewById(R.id.tvSignUp);
 
+        // Attach the user interaction that should run when this control is tapped.
         btnLogin.setOnClickListener(v -> {
             if (isNavigating) return;
             if (signINupValidator.validateSignInForm(emailEditText, passwordEditText)) {
@@ -62,6 +81,7 @@ public class LoginActivity extends AppCompatActivity {
                             String sessionId = sessionManager.createSession(user.getUid());
                             firebaseManager.updateSessionId(user.getUid(), sessionId, task -> {
                                 setLoadingState(false);
+                                // Move into the next screen and pass the identifiers/data that screen needs.
                                 startActivity(new Intent(LoginActivity.this, HomeActivity.class));
                                 finish();
                             });
@@ -92,11 +112,18 @@ public class LoginActivity extends AppCompatActivity {
         tvSignUp.setOnClickListener(v -> { if (!isNavigating) startActivity(new Intent(this, SignUpActivity.class)); });
     }
 
+    /**
+     * Updates object/screen state by storing a new value or reconfiguring a dependency.
+     */
     private void setLoadingState(boolean loading) {
         if (loadingOverlay != null) loadingOverlay.setVisibility(loading ? View.VISIBLE : View.GONE);
         if (btnLogin != null) btnLogin.setEnabled(!loading);
     }
 
+    /**
+     * Runs when the screen is leaving the foreground, so it is used to pause work or save
+     * transient state.
+     */
     @Override
     protected void onPause() {
         super.onPause();

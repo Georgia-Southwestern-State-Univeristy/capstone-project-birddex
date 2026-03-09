@@ -23,6 +23,12 @@ import java.util.List;
  * Race Condition fixes:
  *  - Added isNavigating guard for camera launch.
  */
+/**
+ * HomeActivity: Main signed-in container that swaps bottom-nav screens and kicks off app-wide warm-up work.
+ *
+ * These comments focus on what the actual code blocks are doing so the file is easier to trace
+ * when you are debugging or presenting the app. Only comments were added; runtime logic was not changed.
+ */
 public class HomeActivity extends AppCompatActivity implements NetworkMonitor.NetworkStatusListener {
 
     private static final String TAG = "HomeActivity";
@@ -38,16 +44,27 @@ public class HomeActivity extends AppCompatActivity implements NetworkMonitor.Ne
     private boolean isFetchingBirds = false; // Flag to prevent redundant fetches
     private boolean isNavigating = false;
 
+    /**
+     * Android calls this when the Activity is first created. This is where the screen usually
+     * inflates its layout, grabs views, creates helpers, and wires listeners.
+     * It grabs layout/view references here so later code can read from them, update them, or
+     * attach listeners.
+     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
+     * changes.
+     * It also packages extras into an Intent when this flow needs to open another Activity.
+     */
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_home);
 
         // Initialize the bottom navigation bar.
+        // Bind or inflate the UI pieces this method needs before it can update the screen.
         bottomNav = findViewById(R.id.bottomNav);
 
         // Initialize EbirdApi and the bird list
         ebirdApi = new EbirdApi();
+        // Set up or query the Firebase layer that supplies/stores this feature's data.
         firebaseManager = new FirebaseManager(this);
         allGeorgiaBirds = new ArrayList<>();
 
@@ -77,6 +94,7 @@ public class HomeActivity extends AppCompatActivity implements NetworkMonitor.Ne
                 if (isNavigating) return false;
                 isNavigating = true;
                 
+                // Move into the next screen and pass the identifiers/data that screen needs.
                 startActivity(new Intent(HomeActivity.this, ImageUploadActivity.class));
 
                 // Restore highlight to the last non-camera tab (so camera doesn't stay selected)
@@ -106,12 +124,21 @@ public class HomeActivity extends AppCompatActivity implements NetworkMonitor.Ne
         });
     }
 
+    /**
+     * Handles a new Intent delivered to an existing Activity instance.
+     * It also packages extras into an Intent when this flow needs to open another Activity.
+     */
     @Override
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
         handleIntent(intent);
     }
 
+    /**
+     * Central handler that reacts to an event/input and decides what the next app action should
+     * be.
+     * It also packages extras into an Intent when this flow needs to open another Activity.
+     */
     private void handleIntent(Intent intent) {
         if (intent != null && intent.hasExtra("target_user_id")) {
             String targetUserId = intent.getStringExtra("target_user_id");
@@ -121,6 +148,10 @@ public class HomeActivity extends AppCompatActivity implements NetworkMonitor.Ne
         }
     }
 
+    /**
+     * Runs when the screen returns to the foreground, so it often refreshes UI state or restarts
+     * listeners.
+     */
     @Override
     protected void onResume() {
         super.onResume();
@@ -134,6 +165,10 @@ public class HomeActivity extends AppCompatActivity implements NetworkMonitor.Ne
         }
     }
 
+    /**
+     * Runs when the screen is leaving the foreground, so it is used to pause work or save
+     * transient state.
+     */
     @Override
     protected void onPause() {
         super.onPause();
@@ -145,11 +180,18 @@ public class HomeActivity extends AppCompatActivity implements NetworkMonitor.Ne
      * Fetches the core list of Georgia birds in the background.
      * This data can then be used by other fragments as needed.
      */
+    /**
+     * Pulls data from a local source, Firebase, or an external API and prepares it for the UI or
+     * caller.
+     * User-facing feedback is shown here so the user knows whether the action succeeded, failed,
+     * or needs attention.
+     */
     private void fetchCoreGeorgiaBirdList() {
         if (isFetchingBirds) return;
 
         if (!networkMonitor.isConnected()) {
             Log.w(TAG, "Attempted to fetchCoreGeorgiaBirdList but no network in HomeActivity.");
+            // Give the user immediate feedback about the result of this action.
             Toast.makeText(this, "No internet to fetch bird list.", Toast.LENGTH_SHORT).show();
             return;
         }
@@ -179,6 +221,9 @@ public class HomeActivity extends AppCompatActivity implements NetworkMonitor.Ne
      * the fragment is replaced while the activity is in the background (e.g. via network callback).
      * @param fragment The new fragment to display.
      */
+    /**
+     * Main logic block for this part of the feature.
+     */
     private void switchFragment(Fragment fragment) {
         if (isFinishing() || isDestroyed()) return;
 
@@ -189,6 +234,9 @@ public class HomeActivity extends AppCompatActivity implements NetworkMonitor.Ne
     }
 
     // You can add a method here to provide the allGeorgiaBirds list to fragments if they need it
+    /**
+     * Returns the current value/state this class needs somewhere else in the app.
+     */
     public List<JSONObject> getAllGeorgiaBirds() {
         return allGeorgiaBirds;
     }
@@ -196,26 +244,41 @@ public class HomeActivity extends AppCompatActivity implements NetworkMonitor.Ne
     // --- NetworkMonitor Callbacks ---
     // NetworkMonitor callbacks can arrive on a background thread (ConnectivityManager fires
     // onAvailable/onLost on its own executor).  Any UI interaction must be posted to the main thread.
+    /**
+     * Main logic block for this part of the feature.
+     * User-facing feedback is shown here so the user knows whether the action succeeded, failed,
+     * or needs attention.
+     */
     @Override
     public void onNetworkAvailable() {
         Log.d(TAG, "Network became available in HomeActivity.");
         runOnUiThread(() -> {
             if (allGeorgiaBirds.isEmpty()) {
+                // Give the user immediate feedback about the result of this action.
                 Toast.makeText(this, "Internet connection restored. Retrying bird list fetch.", Toast.LENGTH_SHORT).show();
                 fetchCoreGeorgiaBirdList();
             }
         });
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     * User-facing feedback is shown here so the user knows whether the action succeeded, failed,
+     * or needs attention.
+     */
     @Override
     public void onNetworkLost() {
         Log.e(TAG, "Network lost in HomeActivity.");
         runOnUiThread(() ->
+                // Give the user immediate feedback about the result of this action.
                 Toast.makeText(this, "Internet connection lost. Bird data may be incomplete.", Toast.LENGTH_LONG).show()
         );
     }
     /** * Triggers the Cloud Function to ensure the Firestore bird database
      * is synced with eBird. The function uses a 72-hour cache.
+     */
+    /**
+     * Main logic block for this part of the feature.
      */
     private void checkBirdDataSync() {
         firebaseManager.syncGeorgiaBirdList(task -> {

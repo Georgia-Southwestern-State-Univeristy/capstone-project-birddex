@@ -5,6 +5,12 @@ import com.google.firebase.firestore.ServerTimestamp;
 import java.util.HashMap;
 import java.util.Map;
 
+/**
+ * ForumPost: Support/helper/model class used by other BirdDex screens so logic can stay reusable and organized.
+ *
+ * These comments focus on what the actual code blocks are doing so the file is easier to trace
+ * when you are debugging or presenting the app. Only comments were added; runtime logic was not changed.
+ */
 public class ForumPost {
     private String id;
     private String userId;
@@ -33,12 +39,22 @@ public class ForumPost {
     private boolean likeNotificationSent;
     private Timestamp lastViewedAt;
 
+    /**
+     * Constructor that stores incoming dependencies/values so this object starts in a usable
+     * state.
+     */
     public ForumPost() {
         // Required for Firestore
         this.likedBy = new HashMap<>();
         this.viewedBy = new HashMap<>();
     }
 
+    /**
+     * Constructor that stores incoming dependencies/values so this object starts in a usable
+     * state.
+     * Location values are handled here, so this is part of the logic that decides what area/bird
+     * sightings the user sees.
+     */
     public ForumPost(String userId, String username, String userProfilePictureUrl, String message, String birdImageUrl) {
         this.userId = userId;
         this.username = username;

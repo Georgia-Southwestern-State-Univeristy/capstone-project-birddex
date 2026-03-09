@@ -26,6 +26,12 @@ import java.util.concurrent.TimeUnit;
  * WelcomeActivity serves as the entry point of the app.
  * Fixes: Added isNavigating guard to prevent redundant activity launches.
  */
+/**
+ * WelcomeActivity: Activity class for one BirdDex screen. It owns screen setup, user actions, and navigation for this part of the app.
+ *
+ * These comments focus on what the actual code blocks are doing so the file is easier to trace
+ * when you are debugging or presenting the app. Only comments were added; runtime logic was not changed.
+ */
 public class WelcomeActivity extends AppCompatActivity implements NetworkMonitor.NetworkStatusListener {
 
     private static final String TAG = "WelcomeActivity";
@@ -35,10 +41,17 @@ public class WelcomeActivity extends AppCompatActivity implements NetworkMonitor
     private boolean isNavigating = false;
 
     private final ActivityResultLauncher<String> requestPermissionLauncher =
+            /**
+             * Main logic block for this part of the feature.
+             */
             registerForActivityResult(new ActivityResultContracts.RequestPermission(), isGranted -> {
                 proceedToNextActivity();
             });
 
+    /**
+     * Android calls this when the Activity is first created. This is where the screen usually
+     * inflates its layout, grabs views, creates helpers, and wires listeners.
+     */
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -51,6 +64,9 @@ public class WelcomeActivity extends AppCompatActivity implements NetworkMonitor
         setupFCM();
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     */
     private void askNotificationPermission() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) ==
@@ -64,6 +80,9 @@ public class WelcomeActivity extends AppCompatActivity implements NetworkMonitor
         }
     }
 
+    /**
+     * Updates object/screen state by storing a new value or reconfiguring a dependency.
+     */
     private void setupFCM() {
         FirebaseMessaging.getInstance().getToken()
                 .addOnCompleteListener(task -> {
@@ -73,14 +92,27 @@ public class WelcomeActivity extends AppCompatActivity implements NetworkMonitor
                 });
     }
 
+    /**
+     * Applies the latest values to existing UI/data so the screen and backend stay in sync.
+     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
+     * changes.
+     * Part of this method writes changes back to Firestore/storage, so this is where app actions
+     * become permanent.
+     */
     private void updateUserToken(String token) {
         FirebaseUser user = mAuth.getCurrentUser();
         if (user != null) {
+            // Set up or query the Firebase layer that supplies/stores this feature's data.
             FirebaseFirestore.getInstance().collection("users").document(user.getUid())
+                    // Persist the new state so the action is saved outside the current screen.
                     .update("fcmToken", token);
         }
     }
 
+    /**
+     * Runs when the screen returns to the foreground, so it often refreshes UI state or restarts
+     * listeners.
+     */
     @Override
     protected void onResume() {
         super.onResume();
@@ -88,12 +120,20 @@ public class WelcomeActivity extends AppCompatActivity implements NetworkMonitor
         isNavigating = false;
     }
 
+    /**
+     * Runs when the screen is leaving the foreground, so it is used to pause work or save
+     * transient state.
+     */
     @Override
     protected void onPause() {
         super.onPause();
         networkMonitor.unregister();
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     * It also packages extras into an Intent when this flow needs to open another Activity.
+     */
     private synchronized void proceedToNextActivity() {
         if (isTransitioned) return;
         isTransitioned = true;
@@ -105,6 +145,7 @@ public class WelcomeActivity extends AppCompatActivity implements NetworkMonitor
                 mAuth.signOut();
                 showWelcomeScreenLayout();
             } else {
+                // Move into the next screen and pass the identifiers/data that screen needs.
                 startActivity(new Intent(WelcomeActivity.this, HomeActivity.class));
                 finish();
             }
@@ -113,14 +154,25 @@ public class WelcomeActivity extends AppCompatActivity implements NetworkMonitor
         }
     }
 
+    /**
+     * Takes prepared data and presents it on screen or in a dialog/menu.
+     * It grabs layout/view references here so later code can read from them, update them, or
+     * attach listeners.
+     * It wires user actions here, so taps on buttons/cards/menus trigger the next step in the
+     * flow.
+     * It also packages extras into an Intent when this flow needs to open another Activity.
+     */
     private void showWelcomeScreenLayout() {
+        // Bind or inflate the UI pieces this method needs before it can update the screen.
         Button btnSignup = findViewById(R.id.btnSignup);
         TextView tvAlready = findViewById(R.id.tvAlready);
 
         if (btnSignup != null) {
+            // Attach the user interaction that should run when this control is tapped.
             btnSignup.setOnClickListener(v -> {
                 if (isNavigating) return;
                 isNavigating = true;
+                // Move into the next screen and pass the identifiers/data that screen needs.
                 startActivity(new Intent(WelcomeActivity.this, SignUpActivity.class));
             });
         }

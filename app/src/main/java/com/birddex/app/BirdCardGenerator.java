@@ -19,6 +19,12 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.util.Date;
 
+/**
+ * BirdCardGenerator: Support/helper/model class used by other BirdDex screens so logic can stay reusable and organized.
+ *
+ * These comments focus on what the actual code blocks are doing so the file is easier to trace
+ * when you are debugging or presenting the app. Only comments were added; runtime logic was not changed.
+ */
 public class BirdCardGenerator {
 
     public static class BirdCardData {
@@ -77,6 +83,11 @@ public class BirdCardGenerator {
         return v;
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     * Bitmap/rendering work happens here, so this block is shaping the final card/image output
+     * rather than just text data.
+     */
     public static Bitmap renderViewToBitmap(@NonNull Context context, @NonNull View view) {
         DisplayMetrics dm = context.getResources().getDisplayMetrics();
         int targetWidth = dm.widthPixels - dpToPx(context, 48);
@@ -98,6 +109,11 @@ public class BirdCardGenerator {
         return bitmap;
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     * Bitmap/rendering work happens here, so this block is shaping the final card/image output
+     * rather than just text data.
+     */
     public static Bitmap renderViewToBitmap(@NonNull View view) {
         if (view.getWidth() == 0 || view.getHeight() == 0) {
             int widthSpec = View.MeasureSpec.makeMeasureSpec(1080, View.MeasureSpec.AT_MOST);
@@ -131,6 +147,9 @@ public class BirdCardGenerator {
         return outFile;
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     */
     private static int dpToPx(@NonNull Context context, int dp) {
         return Math.round(TypedValue.applyDimension(
                 TypedValue.COMPLEX_UNIT_DIP,

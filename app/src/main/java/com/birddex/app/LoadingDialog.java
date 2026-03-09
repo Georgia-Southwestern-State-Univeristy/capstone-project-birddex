@@ -10,6 +10,12 @@ import android.widget.TextView;
 
 import androidx.annotation.NonNull;
 
+/**
+ * LoadingDialog: Support/helper/model class used by other BirdDex screens so logic can stay reusable and organized.
+ *
+ * These comments focus on what the actual code blocks are doing so the file is easier to trace
+ * when you are debugging or presenting the app. Only comments were added; runtime logic was not changed.
+ */
 public class LoadingDialog extends Dialog {
 
     private TextView tvLoadingText;
@@ -24,10 +30,20 @@ public class LoadingDialog extends Dialog {
     private final Handler handler = new Handler(Looper.getMainLooper());
     private Runnable textCycler;
 
+    /**
+     * Constructor that stores incoming dependencies/values so this object starts in a usable
+     * state.
+     */
     public LoadingDialog(@NonNull Context context) {
         super(context);
     }
 
+    /**
+     * Android calls this when the Activity is first created. This is where the screen usually
+     * inflates its layout, grabs views, creates helpers, and wires listeners.
+     * It grabs layout/view references here so later code can read from them, update them, or
+     * attach listeners.
+     */
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -40,10 +56,14 @@ public class LoadingDialog extends Dialog {
             getWindow().setLayout(android.view.ViewGroup.LayoutParams.MATCH_PARENT, android.view.ViewGroup.LayoutParams.MATCH_PARENT);
         }
 
+        // Bind or inflate the UI pieces this method needs before it can update the screen.
         tvLoadingText = findViewById(R.id.tvLoadingText);
         startTextCycling();
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     */
     private void startTextCycling() {
         textCycler = new Runnable() {
             @Override
@@ -58,6 +78,9 @@ public class LoadingDialog extends Dialog {
         handler.post(textCycler);
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     */
     @Override
     public void dismiss() {
         if (handler != null && textCycler != null) {

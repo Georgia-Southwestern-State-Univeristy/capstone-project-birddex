@@ -10,6 +10,12 @@ import android.util.Log;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 
+/**
+ * NetworkMonitor: Interface/model contract used to keep different parts of the app communicating with a shared shape.
+ *
+ * These comments focus on what the actual code blocks are doing so the file is easier to trace
+ * when you are debugging or presenting the app. Only comments were added; runtime logic was not changed.
+ */
 public class NetworkMonitor {
 
     private static final String TAG = "NetworkMonitor";
@@ -23,6 +29,10 @@ public class NetworkMonitor {
         void onNetworkLost();
     }
 
+    /**
+     * Constructor that stores incoming dependencies/values so this object starts in a usable
+     * state.
+     */
     public NetworkMonitor(Context context, NetworkStatusListener listener) {
         this.connectivityManager = (ConnectivityManager) context.getSystemService(Context.CONNECTIVITY_SERVICE);
         this.listener = listener;
@@ -54,8 +64,14 @@ public class NetworkMonitor {
         updateInitialNetworkStatus();
     }
 
+    /**
+     * Applies the latest values to existing UI/data so the screen and backend stay in sync.
+     * Part of this method writes changes back to Firestore/storage, so this is where app actions
+     * become permanent.
+     */
     private void updateInitialNetworkStatus() {
         if (connectivityManager == null) {
+            // Persist the new state so the action is saved outside the current screen.
             isConnected.set(false);
             return;
         }
@@ -72,10 +88,19 @@ public class NetworkMonitor {
         isConnected.set(currentlyConnected);
     }
 
+    /**
+     * Returns the current value/state this class needs somewhere else in the app.
+     * There is also one-time async data loading here, so success/failure callbacks are important
+     * for the final UI state.
+     */
     public boolean isConnected() {
+        // Kick off an asynchronous one-time read; the callbacks below decide how the UI should react.
         return isConnected.get();
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     */
     public void register() {
         if (connectivityManager != null) {
             NetworkRequest networkRequest = new NetworkRequest.Builder()
@@ -86,6 +111,9 @@ public class NetworkMonitor {
         }
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     */
     public void unregister() {
         if (connectivityManager != null) {
             connectivityManager.unregisterNetworkCallback(networkCallback);

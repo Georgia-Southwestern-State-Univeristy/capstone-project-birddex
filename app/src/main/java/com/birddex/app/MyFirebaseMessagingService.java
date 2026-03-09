@@ -19,11 +19,20 @@ import com.google.firebase.messaging.RemoteMessage;
 import java.util.HashMap;
 import java.util.Map;
 
+/**
+ * MyFirebaseMessagingService: Support/helper/model class used by other BirdDex screens so logic can stay reusable and organized.
+ *
+ * These comments focus on what the actual code blocks are doing so the file is easier to trace
+ * when you are debugging or presenting the app. Only comments were added; runtime logic was not changed.
+ */
 public class MyFirebaseMessagingService extends FirebaseMessagingService {
 
     private static final String TAG = "MyFirebaseMsgService";
     private static final String CHANNEL_ID = "forum_notifications";
 
+    /**
+     * Main logic block for this part of the feature.
+     */
     @Override
     public void onMessageReceived(@NonNull RemoteMessage remoteMessage) {
         super.onMessageReceived(remoteMessage);
@@ -36,6 +45,9 @@ public class MyFirebaseMessagingService extends FirebaseMessagingService {
         }
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     */
     @Override
     public void onNewToken(@NonNull String token) {
         super.onNewToken(token);
@@ -43,14 +55,27 @@ public class MyFirebaseMessagingService extends FirebaseMessagingService {
         updateUserToken(token);
     }
 
+    /**
+     * Applies the latest values to existing UI/data so the screen and backend stay in sync.
+     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
+     * changes.
+     * Part of this method writes changes back to Firestore/storage, so this is where app actions
+     * become permanent.
+     */
     private void updateUserToken(String token) {
         String userId = FirebaseAuth.getInstance().getUid();
         if (userId != null) {
+            // Set up or query the Firebase layer that supplies/stores this feature's data.
             FirebaseFirestore.getInstance().collection("users").document(userId)
+                    // Persist the new state so the action is saved outside the current screen.
                     .update("fcmToken", token);
         }
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     * It also packages extras into an Intent when this flow needs to open another Activity.
+     */
     private void sendNotification(Map<String, String> data) {
         String title = data.get("title");
         String body = data.get("body");

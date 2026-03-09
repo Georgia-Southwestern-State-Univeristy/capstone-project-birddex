@@ -38,6 +38,12 @@ import java.util.Locale;
  * Fixed Race Conditions:
  * 1. Async Fetch Desync: Added fetchGeneration counter.
  */
+/**
+ * ChangeCardImageActivity: Activity class for one BirdDex screen. It owns screen setup, user actions, and navigation for this part of the app.
+ *
+ * These comments focus on what the actual code blocks are doing so the file is easier to trace
+ * when you are debugging or presenting the app. Only comments were added; runtime logic was not changed.
+ */
 public class ChangeCardImageActivity extends AppCompatActivity {
 
     public static final String EXTRA_BIRD_ID = "com.birddex.app.extra.CHANGE_IMAGE_BIRD_ID";
@@ -64,10 +70,21 @@ public class ChangeCardImageActivity extends AppCompatActivity {
     // --- FIXES ---
     private int fetchGeneration = 0;
 
+    /**
+     * Android calls this when the Activity is first created. This is where the screen usually
+     * inflates its layout, grabs views, creates helpers, and wires listeners.
+     * It grabs layout/view references here so later code can read from them, update them, or
+     * attach listeners.
+     * It wires user actions here, so taps on buttons/cards/menus trigger the next step in the
+     * flow.
+     * It prepares or refreshes adapter-backed lists/grids here so the latest model objects are
+     * rendered on screen.
+     */
     @Override
     protected void onCreate(@Nullable Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_change_card_image);
+        // Bind or inflate the UI pieces this method needs before it can update the screen.
         View root = findViewById(R.id.rootChangeCardImage);
         ViewCompat.setOnApplyWindowInsetsListener(root, (v, insets) -> {
             Insets systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars());
@@ -91,6 +108,7 @@ public class ChangeCardImageActivity extends AppCompatActivity {
         tvSubtitle.setText(buildSubtitle());
 
         GridLayoutManager layoutManager = new GridLayoutManager(this, 3);
+        // Hook the data source to the list/grid adapter so model objects can render as UI rows/cards.
         adapter = new ChangeCardImageBrowserAdapter(this::onImageChosen);
         layoutManager.setSpanSizeLookup(new GridLayoutManager.SpanSizeLookup() {
             @Override public int getSpanSize(int position) { return adapter.isHeader(position) ? 3 : 1; }
@@ -99,9 +117,11 @@ public class ChangeCardImageActivity extends AppCompatActivity {
         rvImages.setLayoutManager(layoutManager);
         rvImages.setAdapter(adapter);
 
+        // Attach the user interaction that should run when this control is tapped.
         btnBack.setOnClickListener(v -> finish());
 
         if (isBlank(birdId)) {
+            // Give the user immediate feedback about the result of this action.
             Toast.makeText(this, "No bird ID found.", Toast.LENGTH_SHORT).show();
             finish();
             return;
@@ -110,17 +130,27 @@ public class ChangeCardImageActivity extends AppCompatActivity {
         fetchImages();
     }
 
+    /**
+     * Pulls data from a local source, Firebase, or an external API and prepares it for the UI or
+     * caller.
+     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
+     * changes.
+     * There is also one-time async data loading here, so success/failure callbacks are important
+     * for the final UI state.
+     */
     private void fetchImages() {
         FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
         if (user == null) return;
 
         final int myGen = ++fetchGeneration;
 
+        // Set up or query the Firebase layer that supplies/stores this feature's data.
         FirebaseFirestore.getInstance()
                 .collection("users")
                 .document(user.getUid())
                 .collection("userBirdImage")
                 .whereEqualTo("birdId", birdId)
+                // Kick off an asynchronous one-time read; the callbacks below decide how the UI should react.
                 .get()
                 .addOnSuccessListener(queryDocumentSnapshots -> {
                     if (myGen != fetchGeneration) return;
@@ -174,8 +204,15 @@ public class ChangeCardImageActivity extends AppCompatActivity {
                 });
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     * It also packages extras into an Intent when this flow needs to open another Activity.
+     * User-facing feedback is shown here so the user knows whether the action succeeded, failed,
+     * or needs attention.
+     */
     private void onImageChosen(@NonNull ChangeCardImageBrowserAdapter.BrowserItem item) {
         if (item.isCurrent) {
+            // Give the user immediate feedback about the result of this action.
             Toast.makeText(this, "Already in use.", Toast.LENGTH_SHORT).show();
             return;
         }
@@ -188,11 +225,17 @@ public class ChangeCardImageActivity extends AppCompatActivity {
         finish();
     }
 
+    /**
+     * Applies the latest values to existing UI/data so the screen and backend stay in sync.
+     */
     private void updateEmptyState(boolean isEmpty) {
         tvEmpty.setVisibility(isEmpty ? View.VISIBLE : View.GONE);
         rvImages.setVisibility(isEmpty ? View.GONE : View.VISIBLE);
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     */
     private String buildSubtitle() {
         if (!isBlank(commonName)) return commonName;
         if (!isBlank(scientificName)) return scientificName;
@@ -206,6 +249,9 @@ public class ChangeCardImageActivity extends AppCompatActivity {
         final String imageUrl;
         final Date timestamp;
         final String userBirdRefId;
+        /**
+         * Main logic block for this part of the feature.
+         */
         BrowserPhoto(String imageUrl, Date timestamp, String userBirdRefId) {
             this.imageUrl = imageUrl;
             this.timestamp = timestamp;

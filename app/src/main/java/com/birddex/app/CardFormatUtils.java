@@ -8,6 +8,12 @@ import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
 
+/**
+ * CardFormatUtils: Support/helper/model class used by other BirdDex screens so logic can stay reusable and organized.
+ *
+ * These comments focus on what the actual code blocks are doing so the file is easier to trace
+ * when you are debugging or presenting the app. Only comments were added; runtime logic was not changed.
+ */
 public final class CardFormatUtils {
 
     private static final Map<String, String> STATE_ABBREVIATIONS = new HashMap<>();
@@ -68,6 +74,11 @@ public final class CardFormatUtils {
 
     private CardFormatUtils() {}
 
+    /**
+     * Main logic block for this part of the feature.
+     * Location values are handled here, so this is part of the logic that decides what area/bird
+     * sightings the user sees.
+     */
     public static String formatLocation(@Nullable String state, @Nullable String locality) {
         String cleanLocality = clean(locality);
         String stateAbbrev = abbreviateState(state);
@@ -87,11 +98,17 @@ public final class CardFormatUtils {
         return "Location: --";
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     */
     public static String formatCaughtDate(@Nullable Date date) {
         if (date == null) return "Date caught: --";
         return "Date caught: " + new SimpleDateFormat("MMM d, yyyy", Locale.US).format(date);
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     */
     public static String abbreviateState(@Nullable String state) {
         String cleanState = clean(state);
         if (cleanState.isEmpty()) return "";
@@ -106,6 +123,9 @@ public final class CardFormatUtils {
         return cleanState;
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     */
     private static String clean(@Nullable String value) {
         if (value == null) return "";
         return value.trim().replaceAll("\\s+", " ");

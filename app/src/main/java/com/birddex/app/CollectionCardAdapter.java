@@ -25,6 +25,12 @@ import java.util.Locale;
  * Fixed Race Condition:
  * 1. Navigation Flooding: Added isNavigating guard to prevent opening multiple Detail screens.
  */
+/**
+ * CollectionCardAdapter: Adapter that converts model data into rows/cards for a RecyclerView or similar list UI.
+ *
+ * These comments focus on what the actual code blocks are doing so the file is easier to trace
+ * when you are debugging or presenting the app. Only comments were added; runtime logic was not changed.
+ */
 public class CollectionCardAdapter extends RecyclerView.Adapter<CollectionCardAdapter.VH> {
 
     public static final String EXTRA_IMAGE_URL = "com.birddex.app.extra.IMAGE_URL";
@@ -38,10 +44,17 @@ public class CollectionCardAdapter extends RecyclerView.Adapter<CollectionCardAd
     private final List<CollectionSlot> slots;
     private boolean isNavigating = false;
 
+    /**
+     * Constructor that stores incoming dependencies/values so this object starts in a usable
+     * state.
+     */
     public CollectionCardAdapter(@NonNull List<CollectionSlot> slots) {
         this.slots = slots;
     }
 
+    /**
+     * Updates object/screen state by storing a new value or reconfiguring a dependency.
+     */
     public void setNavigating(boolean navigating) {
         this.isNavigating = navigating;
     }
@@ -50,8 +63,16 @@ public class CollectionCardAdapter extends RecyclerView.Adapter<CollectionCardAd
         CardView cardContainer; View cardInner; TextView txtBirdName; ImageView imgBird;
         TextView txtScientific, txtLocation, txtDateCaught, txtFooter;
 
+        /**
+         * Main logic block for this part of the feature.
+         * It grabs layout/view references here so later code can read from them, update them, or
+         * attach listeners.
+         * Location values are handled here, so this is part of the logic that decides what area/bird
+         * sightings the user sees.
+         */
         VH(@NonNull View itemView) {
             super(itemView);
+            // Bind or inflate the UI pieces this method needs before it can update the screen.
             cardContainer = itemView.findViewById(R.id.cardContainer);
             cardInner = itemView.findViewById(R.id.cardInner);
             txtBirdName = itemView.findViewById(R.id.txtBirdName);
@@ -63,9 +84,17 @@ public class CollectionCardAdapter extends RecyclerView.Adapter<CollectionCardAd
         }
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     * It grabs layout/view references here so later code can read from them, update them, or
+     * attach listeners.
+     * It prepares or refreshes adapter-backed lists/grids here so the latest model objects are
+     * rendered on screen.
+     */
     @NonNull
     @Override
     public VH onCreateViewHolder(@NonNull ViewGroup parent, int viewType) {
+        // Bind or inflate the UI pieces this method needs before it can update the screen.
         View v = LayoutInflater.from(parent.getContext()).inflate(R.layout.view_bird_card, parent, false);
         float density = parent.getResources().getDisplayMetrics().density;
         int spacing = (int) (2 * density);
@@ -78,6 +107,11 @@ public class CollectionCardAdapter extends RecyclerView.Adapter<CollectionCardAd
         return holder;
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     * Location values are handled here, so this is part of the logic that decides what area/bird
+     * sightings the user sees.
+     */
     private void applyCompactCollectionStyle(@NonNull VH holder) {
         float d = holder.itemView.getResources().getDisplayMetrics().density;
         ViewGroup.MarginLayoutParams lp = (ViewGroup.MarginLayoutParams) holder.cardContainer.getLayoutParams();
@@ -98,12 +132,21 @@ public class CollectionCardAdapter extends RecyclerView.Adapter<CollectionCardAd
         ViewGroup.LayoutParams conLp = holder.cardContainer.getLayoutParams(); conLp.height = (int) (245 * d); holder.cardContainer.setLayoutParams(conLp);
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     * It wires user actions here, so taps on buttons/cards/menus trigger the next step in the
+     * flow.
+     * Image loading happens here, which is why placeholder/error behavior for profile
+     * photos/cards/posts usually traces back to this code path.
+     * It also packages extras into an Intent when this flow needs to open another Activity.
+     */
     @Override
     public void onBindViewHolder(@NonNull VH holder, int position) {
         CollectionSlot slot = slots.get(position);
         String url = slot != null ? slot.getImageUrl() : null;
         boolean hasImage = url != null && !url.trim().isEmpty();
 
+        // Attach the user interaction that should run when this control is tapped.
         holder.itemView.setOnClickListener(v -> {
             if (!hasImage || isNavigating) return;
             isNavigating = true;
@@ -112,6 +155,7 @@ public class CollectionCardAdapter extends RecyclerView.Adapter<CollectionCardAd
             i.putExtra(EXTRA_SCI_NAME, slot.getScientificName()); i.putExtra(EXTRA_STATE, slot.getState());
             i.putExtra(EXTRA_LOCALITY, slot.getLocality()); i.putExtra(EXTRA_BIRD_ID, slot.getBirdId());
             if (slot.getTimestamp() != null) i.putExtra(EXTRA_CAUGHT_TIME, slot.getTimestamp().getTime());
+            // Move into the next screen and pass the identifiers/data that screen needs.
             v.getContext().startActivity(i);
         });
 
@@ -121,6 +165,7 @@ public class CollectionCardAdapter extends RecyclerView.Adapter<CollectionCardAd
             holder.txtScientific.setText(!isBlank(s) ? s : "--");
             holder.txtLocation.setText(CardFormatUtils.formatLocation(slot.getState(), slot.getLocality()));
             holder.txtDateCaught.setText(slot.getTimestamp() != null ? new SimpleDateFormat("M/d/yy", Locale.US).format(slot.getTimestamp()) : "--");
+            // Load the image asynchronously so the UI can show remote/local media without blocking the main thread.
             Glide.with(holder.itemView.getContext()).load(url).fitCenter().into(holder.imgBird);
             holder.itemView.setAlpha(1f);
         } else {

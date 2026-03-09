@@ -24,7 +24,18 @@ import okhttp3.Request;
 import okhttp3.Response;
 
 @GlideModule
+/**
+ * BirdDexGlideModule: Support/helper/model class used by other BirdDex screens so logic can stay reusable and organized.
+ *
+ * These comments focus on what the actual code blocks are doing so the file is easier to trace
+ * when you are debugging or presenting the app. Only comments were added; runtime logic was not changed.
+ */
 public class BirdDexGlideModule extends AppGlideModule {
+    /**
+     * Main logic block for this part of the feature.
+     * Image loading happens here, which is why placeholder/error behavior for profile
+     * photos/cards/posts usually traces back to this code path.
+     */
     @Override
     public void registerComponents(@NonNull Context context, @NonNull Glide glide, @NonNull Registry registry) {
         OkHttpClient client = new OkHttpClient.Builder()
@@ -75,6 +86,9 @@ public class BirdDexGlideModule extends AppGlideModule {
         registry.replace(GlideUrl.class, InputStream.class, new OkHttpUrlLoader.Factory(client));
     }
 
+    /**
+     * Returns the current value/state this class needs somewhere else in the app.
+     */
     @Override
     public boolean isManifestParsingEnabled() {
         return false;

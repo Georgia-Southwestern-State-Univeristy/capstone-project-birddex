@@ -58,6 +58,12 @@ import java.util.concurrent.atomic.AtomicInteger;
 /**
  * NearbyFragment displays bird sightings based on the user's current location.
  */
+/**
+ * NearbyFragment: Nearby birds screen that uses location plus bird data to build the local sightings list.
+ *
+ * These comments focus on what the actual code blocks are doing so the file is easier to trace
+ * when you are debugging or presenting the app. Only comments were added; runtime logic was not changed.
+ */
 public class NearbyFragment extends Fragment {
 
     private static final String TAG = "NearbyFragment";
@@ -98,9 +104,20 @@ public class NearbyFragment extends Fragment {
     private static final float MIN_DISTANCE_FOR_FETCH = 1000f;
     private static final int MAX_USER_SIGHTINGS = 500;
 
+    /**
+     * Android calls this to inflate the Fragment's XML and return the root view that will be shown
+     * on screen.
+     * It grabs layout/view references here so later code can read from them, update them, or
+     * attach listeners.
+     * It wires user actions here, so taps on buttons/cards/menus trigger the next step in the
+     * flow.
+     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
+     * changes.
+     */
     @Nullable
     @Override
     public View onCreateView(@NonNull LayoutInflater inflater, @Nullable ViewGroup container, @Nullable Bundle savedInstanceState) {
+        // Bind or inflate the UI pieces this method needs before it can update the screen.
         View v = inflater.inflate(R.layout.fragment_nearby, container, false);
         txtLocation = v.findViewById(R.id.txtLocation);
         rvNearby = v.findViewById(R.id.rvNearby);
@@ -111,9 +128,11 @@ public class NearbyFragment extends Fragment {
         tvNoBirds = v.findViewById(R.id.tvNoBirds);
 
         rvNearby.setLayoutManager(new LinearLayoutManager(requireContext()));
+        // Hook the data source to the list/grid adapter so model objects can render as UI rows/cards.
         adapter = new NearbyAdapter(new ArrayList<>());
         rvNearby.setAdapter(adapter);
 
+        // Set up or query the Firebase layer that supplies/stores this feature's data.
         firebaseManager = new FirebaseManager(requireContext());
         db = FirebaseFirestore.getInstance();
         ebirdApi = new EbirdApi();
@@ -131,6 +150,7 @@ public class NearbyFragment extends Fragment {
             if (Boolean.TRUE.equals(res.get(Manifest.permission.ACCESS_FINE_LOCATION)) || Boolean.TRUE.equals(res.get(Manifest.permission.ACCESS_COARSE_LOCATION))) startLocationUpdates();
         });
 
+        // Attach the user interaction that should run when this control is tapped.
         btnRefresh.setOnClickListener(view -> requestLocationOrLoad(true));
         btnSearch.setOnClickListener(view -> openBirdSearchDialog());
         btnMap.setOnClickListener(view -> openHeatmapScreen());
@@ -139,6 +159,12 @@ public class NearbyFragment extends Fragment {
         return v;
     }
 
+    /**
+     * Runs when the screen returns to the foreground, so it often refreshes UI state or restarts
+     * listeners.
+     * Location values are handled here, so this is part of the logic that decides what area/bird
+     * sightings the user sees.
+     */
     @Override
     public void onResume() {
         super.onResume();
@@ -152,11 +178,21 @@ public class NearbyFragment extends Fragment {
     @Override public void onPause() { super.onPause(); stopLocationUpdates(); }
     @Override public void onDestroyView() { super.onDestroyView(); if (geoExecutor != null) geoExecutor.shutdownNow(); }
 
+    /**
+     * Pulls data from a local source, Firebase, or an external API and prepares it for the UI or
+     * caller.
+     */
     private void loadCachedData() {
         List<Bird> c = cacheManager.getCachedNearbyBirds();
         if (!c.isEmpty()) { adapter.updateList(c); rvNearby.setVisibility(View.VISIBLE); pbLoading.setVisibility(View.GONE); }
     }
 
+    /**
+     * Central handler that reacts to an event/input and decides what the next app action should
+     * be.
+     * Location values are handled here, so this is part of the logic that decides what area/bird
+     * sightings the user sees.
+     */
     private void handleNewLocation(Location l, boolean force) {
         currentLocation = l;
         if (force || lastFetchLocation == null || l.distanceTo(lastFetchLocation) > MIN_DISTANCE_FOR_FETCH) {
@@ -172,6 +208,11 @@ public class NearbyFragment extends Fragment {
         }
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     * Location values are handled here, so this is part of the logic that decides what area/bird
+     * sightings the user sees.
+     */
     private void requestLocationOrLoad(boolean force) {
         if (ContextCompat.checkSelfPermission(requireContext(), Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
             fusedLocationClient.getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, null).addOnSuccessListener(l -> { if (l != null) handleNewLocation(l, force); });
@@ -182,6 +223,11 @@ public class NearbyFragment extends Fragment {
     private void startLocationUpdates() { if (!isUpdating) { try { fusedLocationClient.requestLocationUpdates(locationRequest, locationCallback, Looper.getMainLooper()); isUpdating = true; } catch (SecurityException ignored) {} } }
     private void stopLocationUpdates() { if (isUpdating) { fusedLocationClient.removeLocationUpdates(locationCallback); isUpdating = false; } }
 
+    /**
+     * Returns the current value/state this class needs somewhere else in the app.
+     * Location values are handled here, so this is part of the logic that decides what area/bird
+     * sightings the user sees.
+     */
     private String getCityStateFromLocation(Location location) {
         Geocoder geocoder = new Geocoder(requireContext(), Locale.getDefault());
         try {
@@ -199,16 +245,34 @@ public class NearbyFragment extends Fragment {
         return "Nearby";
     }
 
+    /**
+     * Pulls data from a local source, Firebase, or an external API and prepares it for the UI or
+     * caller.
+     * Part of this method writes changes back to Firestore/storage, so this is where app actions
+     * become permanent.
+     * Location values are handled here, so this is part of the logic that decides what area/bird
+     * sightings the user sees.
+     */
     private synchronized void fetchAllNearbyData() {
         if (currentLocation == null) return;
         final int myGen = ++fetchGeneration;
+        // Persist the new state so the action is saved outside the current screen.
         fetchCount.set(0); latestFirestoreResults.clear(); latestEbirdResults.clear();
         Log.d(TAG, "Starting dual-fetch (gen=" + myGen + ")");
         if (isAdded()) getActivity().runOnUiThread(() -> { if (isAdded()) { pbLoading.setVisibility(View.VISIBLE); rvNearby.setVisibility(View.GONE); tvNoBirds.setVisibility(View.GONE); } });
         loadUserSightingsNearby(myGen); loadEbirdNearby(myGen);
     }
 
+    /**
+     * Pulls data from a local source, Firebase, or an external API and prepares it for the UI or
+     * caller.
+     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
+     * changes.
+     * There is also one-time async data loading here, so success/failure callbacks are important
+     * for the final UI state.
+     */
     private void loadUserSightingsNearby(final int gen) {
+        // Set up or query the Firebase layer that supplies/stores this feature's data.
         db.collection("userBirdSightings").limit(MAX_USER_SIGHTINGS).get().addOnSuccessListener(querySnapshot -> {
             if (gen != fetchGeneration) return;
             for (DocumentSnapshot d : querySnapshot.getDocuments()) { Bird b = mapUserSightingToBird(d); if (isValidSighting(b)) { latestFirestoreResults.add(b); cacheSearchBird(b); } }
@@ -216,6 +280,10 @@ public class NearbyFragment extends Fragment {
         }).addOnFailureListener(e -> { if (gen == fetchGeneration) checkIfAllFetched(gen); });
     }
 
+    /**
+     * Pulls data from a local source, Firebase, or an external API and prepares it for the UI or
+     * caller.
+     */
     private void loadEbirdNearby(final int gen) {
         ebirdApi.fetchCoreGeorgiaBirdList(new EbirdApi.EbirdCoreBirdListCallback() {
             @Override public void onSuccess(List<JSONObject> birdsJson) {
@@ -229,6 +297,9 @@ public class NearbyFragment extends Fragment {
 
     private void checkIfAllFetched(int gen) { if (gen == fetchGeneration && fetchCount.incrementAndGet() >= 2) processFinalList(); }
 
+    /**
+     * Main logic block for this part of the feature.
+     */
     private void processFinalList() {
         List<Bird> combined = new ArrayList<>(latestFirestoreResults); combined.addAll(latestEbirdResults);
         combined.sort((b1, b2) -> {
@@ -240,6 +311,11 @@ public class NearbyFragment extends Fragment {
         if (isAdded()) getActivity().runOnUiThread(() -> { if (isAdded()) { pbLoading.setVisibility(View.GONE); if (combined.isEmpty()) { rvNearby.setVisibility(View.GONE); tvNoBirds.setVisibility(View.VISIBLE); } else { adapter.updateList(combined); tvNoBirds.setVisibility(View.GONE); rvNearby.setVisibility(View.VISIBLE); } } });
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     * Location values are handled here, so this is part of the logic that decides what area/bird
+     * sightings the user sees.
+     */
     private Bird mapUserSightingToBird(DocumentSnapshot d) {
         Bird b = new Bird(); String bid = getStringValue(d, "birdId"); b.setId(bid != null ? bid : d.getId());
         b.setCommonName(getStringValue(d, "commonName")); b.setScientificName(getStringValue(d, "scientificName"));
@@ -249,6 +325,11 @@ public class NearbyFragment extends Fragment {
         return b;
     }
 
+    /**
+     * Returns the current value/state this class needs somewhere else in the app.
+     * Location values are handled here, so this is part of the logic that decides what area/bird
+     * sightings the user sees.
+     */
     private boolean isValidSighting(Bird b) {
         if (b == null || b.getLastSeenLatitudeGeorgia() == null || b.getLastSeenTimestampGeorgia() == null || currentLocation == null) return false;
         if (b.getLastSeenTimestampGeorgia() < System.currentTimeMillis() - SIGHTING_RECENCY_MS) return false;
@@ -256,6 +337,9 @@ public class NearbyFragment extends Fragment {
         return res[0] <= SEARCH_RADIUS_METERS;
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     */
     private Bird parseBirdJson(JSONObject json) {
         Bird b = new Bird(); b.setId(json.optString("id")); b.setCommonName(json.optString("commonName")); b.setScientificName(json.optString("scientificName"));
         if (!json.isNull("lastSeenLatitudeGeorgia")) b.setLastSeenLatitudeGeorgia(json.optDouble("lastSeenLatitudeGeorgia"));
@@ -264,6 +348,9 @@ public class NearbyFragment extends Fragment {
         return b;
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     */
     private void primeSearchableBirds() {
         if (isSearchDataLoading || !searchableBirds.isEmpty()) return;
         isSearchDataLoading = true;
@@ -279,13 +366,26 @@ public class NearbyFragment extends Fragment {
         });
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     */
     private void cacheSearchBird(Bird bird) {
         if (bird == null || isBlank(bird.getId())) return;
         synchronized (searchableBirds) { for (Bird b : searchableBirds) if (bird.getId().equals(b.getId())) return; searchableBirds.add(bird); }
     }
 
+    /**
+     * Moves the user to another screen or flow and passes along the required extras.
+     * It wires user actions here, so taps on buttons/cards/menus trigger the next step in the
+     * flow.
+     * It prepares or refreshes adapter-backed lists/grids here so the latest model objects are
+     * rendered on screen.
+     * User-facing feedback is shown here so the user knows whether the action succeeded, failed,
+     * or needs attention.
+     */
     private void openBirdSearchDialog() {
         if (!isAdded()) return;
+        // Give the user immediate feedback about the result of this action.
         if (searchableBirds.isEmpty()) { primeSearchableBirds(); Toast.makeText(requireContext(), "Loading search data...", Toast.LENGTH_SHORT).show(); return; }
         List<SearchBirdItem> items = new ArrayList<>();
         for (Bird b : searchableBirds) if (!isBlank(b.getId())) items.add(new SearchBirdItem(b.getId(), b.getCommonName() + " (" + b.getScientificName() + ")", b.getCommonName(), b.getScientificName()));
@@ -297,6 +397,7 @@ public class NearbyFragment extends Fragment {
         input.setTextColor(ContextCompat.getColor(requireContext(), R.color.on_page)); input.setHintTextColor(ContextCompat.getColor(requireContext(), R.color.on_page_variant));
         input.setBackground(ContextCompat.getDrawable(requireContext(), R.drawable.bg_input)); input.setDropDownBackgroundDrawable(ContextCompat.getDrawable(requireContext(), R.drawable.bg_white_button));
         input.setPadding(36, 28, 36, 28);
+        // Hook the data source to the list/grid adapter so model objects can render as UI rows/cards.
         input.setAdapter(new ArrayAdapter<>(requireContext(), R.layout.item_bird_search_suggestion, R.id.tvSuggestionText, items));
 
         int p = (int) (16 * requireContext().getResources().getDisplayMetrics().density);
@@ -308,6 +409,7 @@ public class NearbyFragment extends Fragment {
         dialog.setOnShowListener(d -> {
             dialog.getButton(AlertDialog.BUTTON_POSITIVE).setTextColor(ContextCompat.getColor(requireContext(), R.color.on_page));
             dialog.getButton(AlertDialog.BUTTON_NEGATIVE).setTextColor(ContextCompat.getColor(requireContext(), R.color.on_page_variant));
+            // Attach the user interaction that should run when this control is tapped.
             dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
                 String q = input.getText() != null ? input.getText().toString() : "";
                 SearchBirdItem match = findBirdMatch(q, items);
@@ -317,6 +419,9 @@ public class NearbyFragment extends Fragment {
         dialog.show(); input.requestFocus();
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     */
     private SearchBirdItem findBirdMatch(String query, List<SearchBirdItem> items) {
         String normalized = query == null ? "" : query.trim().toLowerCase(Locale.getDefault());
         if (normalized.isEmpty()) return null;
@@ -325,17 +430,29 @@ public class NearbyFragment extends Fragment {
         return null;
     }
 
+    /**
+     * Moves the user to another screen or flow and passes along the required extras.
+     * It also packages extras into an Intent when this flow needs to open another Activity.
+     */
     private void openBirdWikiPage(String id) {
         if (!isAdded() || isBlank(id) || isNavigating) return;
         isNavigating = true;
+        // Move into the next screen and pass the identifiers/data that screen needs.
         startActivity(new Intent(requireContext(), BirdWikiActivity.class).putExtra(BirdWikiActivity.EXTRA_BIRD_ID, id));
     }
 
+    /**
+     * Moves the user to another screen or flow and passes along the required extras.
+     * It also packages extras into an Intent when this flow needs to open another Activity.
+     * Location values are handled here, so this is part of the logic that decides what area/bird
+     * sightings the user sees.
+     */
     private void openHeatmapScreen() {
         if (!isAdded() || isNavigating) return;
         isNavigating = true;
         Intent i = new Intent(requireContext(), NearbyHeatmapActivity.class);
         if (currentLocation != null) { i.putExtra(NearbyHeatmapActivity.EXTRA_CENTER_LAT, currentLocation.getLatitude()); i.putExtra(NearbyHeatmapActivity.EXTRA_CENTER_LNG, currentLocation.getLongitude()); }
+        // Move into the next screen and pass the identifiers/data that screen needs.
         startActivity(i);
     }
 

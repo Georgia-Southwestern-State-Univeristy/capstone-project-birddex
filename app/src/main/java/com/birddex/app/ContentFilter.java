@@ -9,6 +9,12 @@ import java.util.HashSet;
 import java.util.Set;
 import java.util.regex.Pattern;
 
+/**
+ * ContentFilter: Support/helper/model class used by other BirdDex screens so logic can stay reusable and organized.
+ *
+ * These comments focus on what the actual code blocks are doing so the file is easier to trace
+ * when you are debugging or presenting the app. Only comments were added; runtime logic was not changed.
+ */
 public class ContentFilter {
 
     private static final Set<String> NSFW_WORDS = new HashSet<>(Arrays.asList(
@@ -101,6 +107,11 @@ public class ContentFilter {
      * Checks if the given text is safe to post.
      * Shows a Toast message if inappropriate content is found.
      */
+    /**
+     * Returns the current value/state this class needs somewhere else in the app.
+     * User-facing feedback is shown here so the user knows whether the action succeeded, failed,
+     * or needs attention.
+     */
     public static boolean isSafe(Context context, String text, String fieldName) {
         String result = getInappropriateReason(text);
         if (result != null) {
@@ -112,6 +123,7 @@ public class ContentFilter {
             } else {
                 toastMessage = fieldName + " contains " + result + ".";
             }
+            // Give the user immediate feedback about the result of this action.
             Toast.makeText(context, toastMessage, Toast.LENGTH_LONG).show();
             return false;
         }
@@ -120,6 +132,9 @@ public class ContentFilter {
 
     /**
      * Returns a string describing why content is inappropriate, or null if it's safe.
+     */
+    /**
+     * Returns the current value/state this class needs somewhere else in the app.
      */
     public static String getInappropriateReason(String text) {
         if (text == null || text.trim().isEmpty()) return null;
@@ -152,6 +167,9 @@ public class ContentFilter {
         return null;
     }
 
+    /**
+     * Returns the current value/state this class needs somewhere else in the app.
+     */
     private static boolean hasInappropriateLanguage(String input) {
         String normalizedInput = normalize(input);
 
@@ -164,12 +182,18 @@ public class ContentFilter {
         return false;
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     */
     private static boolean checkMatch(String input, String target) {
         if (target.length() < 3) return false;
         String regex = "\\b" + Pattern.quote(target) + "\\b";
         return Pattern.compile(regex).matcher(input).find();
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     */
     private static boolean checkWithBypass(String input, String word) {
         StringBuilder regexBuilder = new StringBuilder("\\b");
         for (int i = 0; i < word.length(); i++) {
@@ -182,6 +206,9 @@ public class ContentFilter {
         return Pattern.compile(regexBuilder.toString()).matcher(input).find();
     }
 
+    /**
+     * Returns the current value/state this class needs somewhere else in the app.
+     */
     private static boolean isWhitelisted(String input, String nsfwWord) {
         for (String white : BIRD_WHITELIST) {
             if (input.contains(white) && white.contains(nsfwWord)) {
@@ -191,6 +218,9 @@ public class ContentFilter {
         return false;
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     */
     private static String normalize(String text) {
         if (text == null) return "";
 
@@ -202,6 +232,9 @@ public class ContentFilter {
         return normalized.replaceAll("(.)\\1+", "$1");
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     */
     public static boolean containsInappropriateContent(String text) {
         return getInappropriateReason(text) != null;
     }

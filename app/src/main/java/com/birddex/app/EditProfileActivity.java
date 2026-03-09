@@ -45,6 +45,12 @@ import java.util.Map;
 import java.util.Date;
 import java.util.UUID;
 
+/**
+ * EditProfileActivity: Screen that edits profile fields and writes the changes back to the user record.
+ *
+ * These comments focus on what the actual code blocks are doing so the file is easier to trace
+ * when you are debugging or presenting the app. Only comments were added; runtime logic was not changed.
+ */
 public class EditProfileActivity extends AppCompatActivity implements NetworkMonitor.NetworkStatusListener {
 
     private static final String TAG = "EditProfileActivity";
@@ -78,16 +84,28 @@ public class EditProfileActivity extends AppCompatActivity implements NetworkMon
     private ActivityResultLauncher<Intent> pickImageLauncher;
     private ActivityResultLauncher<CropImageContractOptions> cropImageLauncher;
 
+    /**
+     * Android calls this when the Activity is first created. This is where the screen usually
+     * inflates its layout, grabs views, creates helpers, and wires listeners.
+     * It grabs layout/view references here so later code can read from them, update them, or
+     * attach listeners.
+     * It wires user actions here, so taps on buttons/cards/menus trigger the next step in the
+     * flow.
+     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
+     * changes.
+     */
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_edit_profile);
 
         mAuth = FirebaseAuth.getInstance();
+        // Set up or query the Firebase layer that supplies/stores this feature's data.
         db = FirebaseFirestore.getInstance();
         storage = FirebaseStorage.getInstance();
         storageRef = storage.getReference();
         firebaseManager = new FirebaseManager(this);
+        // Bind or inflate the UI pieces this method needs before it can update the screen.
         loadingOverlay = findViewById(R.id.loadingOverlay);
         networkMonitor = new NetworkMonitor(this, this);
 
@@ -104,6 +122,7 @@ public class EditProfileActivity extends AppCompatActivity implements NetworkMon
         fetchUserProfileData();
 
         if (initialProfilePictureUrl != null && !initialProfilePictureUrl.isEmpty()) {
+            // Load the image asynchronously so the UI can show remote/local media without blocking the main thread.
             Glide.with(this).load(initialProfilePictureUrl).into(ivPfpPreview);
         } else {
             ivPfpPreview.setImageResource(R.drawable.ic_profile);
@@ -134,6 +153,7 @@ public class EditProfileActivity extends AppCompatActivity implements NetworkMon
             }
         });
 
+        // Attach the user interaction that should run when this control is tapped.
         btnChangePhoto.setOnClickListener(v -> checkPermissionsAndPickImage());
 
         btnSave.setOnClickListener(v -> {
@@ -201,11 +221,20 @@ public class EditProfileActivity extends AppCompatActivity implements NetworkMon
         tvCancel.setOnClickListener(v -> finish());
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     */
     private void resetSaveState() {
         isSaveInProgress = false;
         loadingOverlay.setVisibility(View.GONE);
     }
 
+    /**
+     * Pulls data from a local source, Firebase, or an external API and prepares it for the UI or
+     * caller.
+     * Image loading happens here, which is why placeholder/error behavior for profile
+     * photos/cards/posts usually traces back to this code path.
+     */
     private void fetchUserProfileData() {
         FirebaseUser currentUser = mAuth.getCurrentUser();
         if (currentUser == null) return;
@@ -239,6 +268,7 @@ public class EditProfileActivity extends AppCompatActivity implements NetworkMon
                     }
 
                     if (initialProfilePictureUrl != null && !initialProfilePictureUrl.isEmpty()) {
+                        // Load the image asynchronously so the UI can show remote/local media without blocking the main thread.
                         Glide.with(EditProfileActivity.this).load(initialProfilePictureUrl).into(ivPfpPreview);
                     }
                 }
@@ -246,9 +276,18 @@ public class EditProfileActivity extends AppCompatActivity implements NetworkMon
         });
     }
 
+    /**
+     * Pulls data from a local source, Firebase, or an external API and prepares it for the UI or
+     * caller.
+     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
+     * changes.
+     * There is also one-time async data loading here, so success/failure callbacks are important
+     * for the final UI state.
+     */
     private void fetchPfpChangesRemaining() {
         String uid = mAuth.getUid();
         if (uid == null) return;
+        // Set up or query the Firebase layer that supplies/stores this feature's data.
         db.collection("users").document(uid).get().addOnSuccessListener(doc -> {
             if (isFinishing() || isDestroyed()) return;
             Long rem = doc.getLong("pfpChangesToday");
@@ -259,6 +298,9 @@ public class EditProfileActivity extends AppCompatActivity implements NetworkMon
         });
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     */
     private void checkPermissionsAndPickImage() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_MEDIA_IMAGES) != PackageManager.PERMISSION_GRANTED) {
@@ -271,12 +313,19 @@ public class EditProfileActivity extends AppCompatActivity implements NetworkMon
         }
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     * It also packages extras into an Intent when this flow needs to open another Activity.
+     */
     private void pickImage() {
         Intent intent = new Intent(Intent.ACTION_GET_CONTENT);
         intent.setType("image/*");
         pickImageLauncher.launch(intent);
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     */
     private void startImageCropper(Uri uri) {
         CropImageOptions opt = new CropImageOptions();
         opt.cropShape = CropImageView.CropShape.OVAL;
@@ -284,6 +333,10 @@ public class EditProfileActivity extends AppCompatActivity implements NetworkMon
         cropImageLauncher.launch(new CropImageContractOptions(uri, opt));
     }
 
+    /**
+     * Builds data from the current screen/object state and writes it out to storage, Firebase, or
+     * another service.
+     */
     private void uploadImageToFirebase(Uri uri, String user, String bio) {
         String uid = mAuth.getUid();
         StorageReference ref = storageRef.child("profile_pictures/" + uid + "_" + System.currentTimeMillis() + ".jpg");
@@ -291,6 +344,11 @@ public class EditProfileActivity extends AppCompatActivity implements NetworkMon
                 .addOnFailureListener(e -> resetSaveState());
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     * Bitmap/rendering work happens here, so this block is shaping the final card/image output
+     * rather than just text data.
+     */
     private String encodeImage(Uri uri) {
         try {
             Bitmap bm = (Build.VERSION.SDK_INT >= 28)
@@ -306,6 +364,11 @@ public class EditProfileActivity extends AppCompatActivity implements NetworkMon
         } catch (IOException e) { return null; }
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     * Bitmap/rendering work happens here, so this block is shaping the final card/image output
+     * rather than just text data.
+     */
     private Bitmap scaleBitmap(Bitmap original, int maxSize) {
         int width = original.getWidth();
         int height = original.getHeight();
@@ -314,12 +377,22 @@ public class EditProfileActivity extends AppCompatActivity implements NetworkMon
         return Bitmap.createScaledBitmap(original, (int)(width * ratio), (int)(height * ratio), true);
     }
 
+    /**
+     * Builds data from the current screen/object state and writes it out to storage, Firebase, or
+     * another service.
+     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
+     * changes.
+     * It also packages extras into an Intent when this flow needs to open another Activity.
+     * User-facing feedback is shown here so the user knows whether the action succeeded, failed,
+     * or needs attention.
+     */
     private void saveProfileChanges(String newUsername, String cleanedBio, String finalPfp) {
         // FIX #13: use updateUserProfileAtomic to ensure username uniqueness via Cloud Function
         User user = new User(mAuth.getUid(), null, newUsername, null, null);
         user.setBio(cleanedBio);
         user.setProfilePictureUrl(finalPfp);
 
+        // Set up or query the Firebase layer that supplies/stores this feature's data.
         firebaseManager.updateUserProfileAtomic(user, new FirebaseManager.AuthListener() {
             @Override
             public void onSuccess(com.google.firebase.auth.FirebaseUser u) {
@@ -329,6 +402,7 @@ public class EditProfileActivity extends AppCompatActivity implements NetworkMon
                 finish();
             }
             @Override
+            // Give the user immediate feedback about the result of this action.
             public void onFailure(String err) { resetSaveState(); Toast.makeText(EditProfileActivity.this, "Update failed.", Toast.LENGTH_SHORT).show(); }
             @Override
             public void onUsernameTaken() { resetSaveState(); etUsername.setError("Username taken."); }

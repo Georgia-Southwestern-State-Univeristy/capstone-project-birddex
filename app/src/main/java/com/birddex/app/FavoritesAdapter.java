@@ -22,6 +22,12 @@ import java.util.Date;
 import java.util.List;
 import java.util.Locale;
 
+/**
+ * FavoritesAdapter: Adapter that converts model data into rows/cards for a RecyclerView or similar list UI.
+ *
+ * These comments focus on what the actual code blocks are doing so the file is easier to trace
+ * when you are debugging or presenting the app. Only comments were added; runtime logic was not changed.
+ */
 public class FavoritesAdapter extends RecyclerView.Adapter<FavoritesAdapter.VH> {
 
     public interface OnFavoriteInteractionListener {
@@ -33,11 +39,20 @@ public class FavoritesAdapter extends RecyclerView.Adapter<FavoritesAdapter.VH> 
     private final boolean editable;
     private final OnFavoriteInteractionListener listener;
 
+    /**
+     * Constructor that stores incoming dependencies/values so this object starts in a usable
+     * state.
+     */
     public FavoritesAdapter(boolean editable, @NonNull OnFavoriteInteractionListener listener) {
         this.editable = editable;
         this.listener = listener;
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     * It prepares or refreshes adapter-backed lists/grids here so the latest model objects are
+     * rendered on screen.
+     */
     public void submitList(@NonNull List<CollectionSlot> newItems) {
         items.clear();
         items.addAll(newItems);
@@ -54,8 +69,16 @@ public class FavoritesAdapter extends RecyclerView.Adapter<FavoritesAdapter.VH> 
         TextView txtDateCaught;
         TextView txtFooter;
 
+        /**
+         * Main logic block for this part of the feature.
+         * It grabs layout/view references here so later code can read from them, update them, or
+         * attach listeners.
+         * Location values are handled here, so this is part of the logic that decides what area/bird
+         * sightings the user sees.
+         */
         VH(@NonNull View itemView) {
             super(itemView);
+            // Bind or inflate the UI pieces this method needs before it can update the screen.
             cardContainer = itemView.findViewById(R.id.cardContainer);
             cardInner = itemView.findViewById(R.id.cardInner);
             txtBirdName = itemView.findViewById(R.id.txtBirdName);
@@ -67,15 +90,28 @@ public class FavoritesAdapter extends RecyclerView.Adapter<FavoritesAdapter.VH> 
         }
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     * It grabs layout/view references here so later code can read from them, update them, or
+     * attach listeners.
+     */
     @NonNull
     @Override
     public VH onCreateViewHolder(@NonNull ViewGroup parent, int viewType) {
+        // Bind or inflate the UI pieces this method needs before it can update the screen.
         View v = LayoutInflater.from(parent.getContext()).inflate(R.layout.view_bird_card, parent, false);
         VH holder = new VH(v);
         applyCompactFavoriteStyle(holder);
         return holder;
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     * It prepares or refreshes adapter-backed lists/grids here so the latest model objects are
+     * rendered on screen.
+     * Location values are handled here, so this is part of the logic that decides what area/bird
+     * sightings the user sees.
+     */
     private void applyCompactFavoriteStyle(@NonNull VH holder) {
         float density = holder.itemView.getResources().getDisplayMetrics().density;
 
@@ -127,6 +163,15 @@ public class FavoritesAdapter extends RecyclerView.Adapter<FavoritesAdapter.VH> 
         holder.cardContainer.setLayoutParams(containerLp);
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     * It wires user actions here, so taps on buttons/cards/menus trigger the next step in the
+     * flow.
+     * Image loading happens here, which is why placeholder/error behavior for profile
+     * photos/cards/posts usually traces back to this code path.
+     * Location values are handled here, so this is part of the logic that decides what area/bird
+     * sightings the user sees.
+     */
     @Override
     public void onBindViewHolder(@NonNull VH holder, int position) {
         CollectionSlot slot = items.get(position);
@@ -141,6 +186,7 @@ public class FavoritesAdapter extends RecyclerView.Adapter<FavoritesAdapter.VH> 
             holder.txtLocation.setText(CardFormatUtils.formatLocation(slot.getState(), slot.getLocality()));
             holder.txtDateCaught.setText(formatShortDate(slot.getTimestamp()));
 
+            // Load the image asynchronously so the UI can show remote/local media without blocking the main thread.
             Glide.with(holder.itemView.getContext())
                     .load(slot.getImageUrl())
                     .placeholder(R.drawable.bg_image_placeholder)
@@ -157,20 +203,30 @@ public class FavoritesAdapter extends RecyclerView.Adapter<FavoritesAdapter.VH> 
             holder.itemView.setAlpha(0.94f);
         }
 
+        // Attach the user interaction that should run when this control is tapped.
         holder.itemView.setOnClickListener(v -> listener.onFavoriteClicked(position, slot));
         holder.itemView.setOnLongClickListener(v -> editable && listener.onFavoriteLongPressed(position, slot));
     }
 
+    /**
+     * Returns the current value/state this class needs somewhere else in the app.
+     */
     @Override
     public int getItemCount() {
         return items.size();
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     */
     private String formatShortDate(Date date) {
         if (date == null) return "--";
         return new SimpleDateFormat("M/d/yy", Locale.US).format(date);
     }
 
+    /**
+     * Returns the current value/state this class needs somewhere else in the app.
+     */
     private boolean isBlank(String value) {
         return value == null || value.trim().isEmpty();
     }

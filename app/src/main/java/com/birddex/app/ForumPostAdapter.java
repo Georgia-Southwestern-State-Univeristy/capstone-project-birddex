@@ -18,6 +18,12 @@ import com.google.firebase.auth.FirebaseAuth;
 import java.util.ArrayList;
 import java.util.List;
 
+/**
+ * ForumPostAdapter: Adapter that converts model data into rows/cards for a RecyclerView or similar list UI.
+ *
+ * These comments focus on what the actual code blocks are doing so the file is easier to trace
+ * when you are debugging or presenting the app. Only comments were added; runtime logic was not changed.
+ */
 public class ForumPostAdapter extends RecyclerView.Adapter<ForumPostAdapter.PostViewHolder> {
 
     private List<ForumPost> postList = new ArrayList<>();
@@ -32,28 +38,49 @@ public class ForumPostAdapter extends RecyclerView.Adapter<ForumPostAdapter.Post
         void onMapClick(ForumPost post);
     }
 
+    /**
+     * Constructor that stores incoming dependencies/values so this object starts in a usable
+     * state.
+     */
     public ForumPostAdapter(OnPostClickListener listener) {
         this.listener = listener;
     }
 
+    /**
+     * Updates object/screen state by storing a new value or reconfiguring a dependency.
+     * It prepares or refreshes adapter-backed lists/grids here so the latest model objects are
+     * rendered on screen.
+     */
     public void setPosts(List<ForumPost> posts) {
         this.postList = posts;
         notifyDataSetChanged();
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     * It grabs layout/view references here so later code can read from them, update them, or
+     * attach listeners.
+     */
     @NonNull
     @Override
     public PostViewHolder onCreateViewHolder(@NonNull ViewGroup parent, int viewType) {
+        // Bind or inflate the UI pieces this method needs before it can update the screen.
         View view = LayoutInflater.from(parent.getContext()).inflate(R.layout.item_forum_post, parent, false);
         return new PostViewHolder(view);
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     */
     @Override
     public void onBindViewHolder(@NonNull PostViewHolder holder, int position) {
         ForumPost post = postList.get(position);
         holder.bind(post, listener);
     }
 
+    /**
+     * Returns the current value/state this class needs somewhere else in the app.
+     */
     @Override
     public int getItemCount() {
         return postList.size();
@@ -78,8 +105,14 @@ public class ForumPostAdapter extends RecyclerView.Adapter<ForumPostAdapter.Post
         TextView tvSpottedBadge;
         TextView tvHuntedBadge;
 
+        /**
+         * Main logic block for this part of the feature.
+         * It grabs layout/view references here so later code can read from them, update them, or
+         * attach listeners.
+         */
         public PostViewHolder(@NonNull View itemView) {
             super(itemView);
+            // Bind or inflate the UI pieces this method needs before it can update the screen.
             ivUserProfile = itemView.findViewById(R.id.ivPostUserProfilePicture);
             tvUsername = itemView.findViewById(R.id.tvPostUsername);
             tvTimestamp = itemView.findViewById(R.id.tvPostTimestamp);
@@ -99,6 +132,15 @@ public class ForumPostAdapter extends RecyclerView.Adapter<ForumPostAdapter.Post
             tvHuntedBadge = itemView.findViewById(R.id.tvHuntedBadge);
         }
 
+        /**
+         * Connects already-fetched data to views so the user can see the current state.
+         * It wires user actions here, so taps on buttons/cards/menus trigger the next step in the
+         * flow.
+         * Image loading happens here, which is why placeholder/error behavior for profile
+         * photos/cards/posts usually traces back to this code path.
+         * Location values are handled here, so this is part of the logic that decides what area/bird
+         * sightings the user sees.
+         */
         public void bind(ForumPost post, OnPostClickListener listener) {
             tvUsername.setText(post.getUsername());
             tvMessage.setText(post.getMessage());
@@ -119,6 +161,7 @@ public class ForumPostAdapter extends RecyclerView.Adapter<ForumPostAdapter.Post
                 boolean hasLocation = post.isShowLocation() && post.getLatitude() != null && post.getLongitude() != null;
                 if ((post.isSpotted() || post.isHunted()) && hasLocation) {
                     btnViewOnMap.setVisibility(View.VISIBLE);
+                    // Attach the user interaction that should run when this control is tapped.
                     btnViewOnMap.setOnClickListener(v -> listener.onMapClick(post));
                 } else {
                     btnViewOnMap.setVisibility(View.GONE);
@@ -132,6 +175,7 @@ public class ForumPostAdapter extends RecyclerView.Adapter<ForumPostAdapter.Post
             }
 
             // User Profile Picture
+            // Load the image asynchronously so the UI can show remote/local media without blocking the main thread.
             Glide.with(itemView.getContext())
                     .load(post.getUserProfilePictureUrl())
                     .placeholder(R.drawable.ic_profile)

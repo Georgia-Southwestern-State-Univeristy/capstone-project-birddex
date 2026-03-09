@@ -59,6 +59,12 @@ import java.util.UUID;
  * The CF is called BEFORE the image upload so we don't burn Storage quota on a
  * post that would be rejected anyway.
  */
+/**
+ * CreatePostActivity: Composer screen for creating a new forum post with text, media, and metadata.
+ *
+ * These comments focus on what the actual code blocks are doing so the file is easier to trace
+ * when you are debugging or presenting the app. Only comments were added; runtime logic was not changed.
+ */
 public class CreatePostActivity extends AppCompatActivity {
 
     private static final String TAG = "CreatePostActivity";
@@ -86,14 +92,26 @@ public class CreatePostActivity extends AppCompatActivity {
     private ActivityResultLauncher<Intent> pickImageLauncher;
     private ActivityResultLauncher<CropImageContractOptions> cropImageLauncher;
 
+    /**
+     * Android calls this when the Activity is first created. This is where the screen usually
+     * inflates its layout, grabs views, creates helpers, and wires listeners.
+     * It grabs layout/view references here so later code can read from them, update them, or
+     * attach listeners.
+     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
+     * changes.
+     * There is also one-time async data loading here, so success/failure callbacks are important
+     * for the final UI state.
+     */
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        // Bind or inflate the UI pieces this method needs before it can update the screen.
         binding = ActivityCreatePostBinding.inflate(getLayoutInflater());
         setContentView(binding.getRoot());
 
         mAuth           = FirebaseAuth.getInstance();
         storage         = FirebaseStorage.getInstance();
+        // Set up or query the Firebase layer that supplies/stores this feature's data.
         firebaseManager = new FirebaseManager(this);
         fusedLocationClient = LocationServices.getFusedLocationProviderClient(this);
         loadingOverlay  = findViewById(R.id.loadingOverlay);
@@ -113,6 +131,7 @@ public class CreatePostActivity extends AppCompatActivity {
         if (hasLocationPermission()) fetchLocation();
 
         // Rotation resume: if upload finished but Firestore write didn't, retry it
+        // Kick off an asynchronous one-time read; the callbacks below decide how the UI should react.
         if (viewModel.isPostInProgress.get()) {
             setPostingUi(true);
             if (viewModel.getUploadedImageUrl() != null) {
@@ -129,8 +148,18 @@ public class CreatePostActivity extends AppCompatActivity {
     // UI setup
     // -------------------------------------------------------------------------
 
+    /**
+     * Updates object/screen state by storing a new value or reconfiguring a dependency.
+     * It wires user actions here, so taps on buttons/cards/menus trigger the next step in the
+     * flow.
+     * This method also reads or writes local device preferences so some state survives app
+     * restarts.
+     * Location values are handled here, so this is part of the logic that decides what area/bird
+     * sightings the user sees.
+     */
     private void setupUI() {
         binding.toolbar.setNavigationOnClickListener(v -> finish());
+        // Attach the user interaction that should run when this control is tapped.
         binding.btnSelectImage.setOnClickListener(v -> checkPermissionsAndPickImage());
 
         binding.fabRemoveImage.setOnClickListener(v -> {
@@ -155,16 +184,32 @@ public class CreatePostActivity extends AppCompatActivity {
         }
     }
 
+    /**
+     * Returns the current value/state this class needs somewhere else in the app.
+     * Location values are handled here, so this is part of the logic that decides what area/bird
+     * sightings the user sees.
+     */
     private boolean hasLocationPermission() {
         return ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
                 == PackageManager.PERMISSION_GRANTED;
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     * Location values are handled here, so this is part of the logic that decides what area/bird
+     * sightings the user sees.
+     */
     private void requestLocationPermission() {
         ActivityCompat.requestPermissions(this,
                 new String[]{Manifest.permission.ACCESS_FINE_LOCATION}, REQUEST_LOCATION_PERMISSION);
     }
 
+    /**
+     * Pulls data from a local source, Firebase, or an external API and prepares it for the UI or
+     * caller.
+     * Location values are handled here, so this is part of the logic that decides what area/bird
+     * sightings the user sees.
+     */
     private void fetchLocation() {
         try {
             fusedLocationClient.getLastLocation().addOnSuccessListener(this, location -> {
@@ -178,6 +223,13 @@ public class CreatePostActivity extends AppCompatActivity {
         }
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     * User-facing feedback is shown here so the user knows whether the action succeeded, failed,
+     * or needs attention.
+     * Location values are handled here, so this is part of the logic that decides what area/bird
+     * sightings the user sees.
+     */
     @Override
     public void onRequestPermissionsResult(int rc, @NonNull String[] p, @NonNull int[] gr) {
         super.onRequestPermissionsResult(rc, p, gr);
@@ -185,11 +237,18 @@ public class CreatePostActivity extends AppCompatActivity {
             if (gr.length > 0 && gr[0] == PackageManager.PERMISSION_GRANTED) fetchLocation();
             else {
                 binding.swShowLocation.setChecked(false);
+                // Give the user immediate feedback about the result of this action.
                 Toast.makeText(this, "Permission denied", Toast.LENGTH_SHORT).show();
             }
         }
     }
 
+    /**
+     * Pulls data from a local source, Firebase, or an external API and prepares it for the UI or
+     * caller.
+     * Image loading happens here, which is why placeholder/error behavior for profile
+     * photos/cards/posts usually traces back to this code path.
+     */
     private void loadUserInfo() {
         FirebaseUser user = mAuth.getCurrentUser();
         if (user == null) return;
@@ -199,6 +258,7 @@ public class CreatePostActivity extends AppCompatActivity {
                 currentUsername           = task.getResult().getString("username");
                 currentUserProfilePicUrl  = task.getResult().getString("profilePictureUrl");
                 binding.tvCreatorUsername.setText(currentUsername);
+                // Load the image asynchronously so the UI can show remote/local media without blocking the main thread.
                 Glide.with(this).load(currentUserProfilePicUrl)
                         .placeholder(R.drawable.ic_profile).into(binding.ivCreatorProfilePicture);
             }
@@ -209,6 +269,11 @@ public class CreatePostActivity extends AppCompatActivity {
     // Image picking / cropping
     // -------------------------------------------------------------------------
 
+    /**
+     * Updates object/screen state by storing a new value or reconfiguring a dependency.
+     * Image loading happens here, which is why placeholder/error behavior for profile
+     * photos/cards/posts usually traces back to this code path.
+     */
     private void setupImageLaunchers() {
         pickImageLauncher = registerForActivityResult(
                 new ActivityResultContracts.StartActivityForResult(), r -> {
@@ -225,11 +290,15 @@ public class CreatePostActivity extends AppCompatActivity {
                 binding.ivBirdImagePreview.setVisibility(View.VISIBLE);
                 binding.fabRemoveImage.setVisibility(View.VISIBLE);
                 binding.tvImagePlaceholder.setVisibility(View.GONE);
+                // Load the image asynchronously so the UI can show remote/local media without blocking the main thread.
                 Glide.with(this).load(selectedImageUri).into(binding.ivBirdImagePreview);
             }
         });
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     */
     private void checkPermissionsAndPickImage() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_MEDIA_IMAGES)
@@ -246,10 +315,17 @@ public class CreatePostActivity extends AppCompatActivity {
         }
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     * It also packages extras into an Intent when this flow needs to open another Activity.
+     */
     private void pickImage() {
         pickImageLauncher.launch(new Intent(Intent.ACTION_GET_CONTENT).setType("image/*"));
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     */
     private void startImageCropper(Uri uri) {
         CropImageOptions opt = new CropImageOptions();
         opt.fixAspectRatio = true;
@@ -262,13 +338,24 @@ public class CreatePostActivity extends AppCompatActivity {
     // Post attempt — gated by server-side limit check (Fix POST LIMIT)
     // -------------------------------------------------------------------------
 
+    /**
+     * Main logic block for this part of the feature.
+     * There is also one-time async data loading here, so success/failure callbacks are important
+     * for the final UI state.
+     * Part of this method writes changes back to Firestore/storage, so this is where app actions
+     * become permanent.
+     * User-facing feedback is shown here so the user knows whether the action succeeded, failed,
+     * or needs attention.
+     */
     private void attemptPost() {
+        // Kick off an asynchronous one-time read; the callbacks below decide how the UI should react.
         if (viewModel.isPostInProgress.get() || viewModel.isPostFinished.get()) return;
 
         CharSequence text = binding.etPostMessage.getText();
         String msg = (text != null) ? text.toString().trim() : "";
 
         if (msg.isEmpty() && selectedImageUri == null) {
+            // Give the user immediate feedback about the result of this action.
             Toast.makeText(this, "Please add a message or an image", Toast.LENGTH_SHORT).show();
             return;
         }
@@ -281,6 +368,7 @@ public class CreatePostActivity extends AppCompatActivity {
             return;
         }
 
+        // Persist the new state so the action is saved outside the current screen.
         viewModel.isPostInProgress.set(true);
         setPostingUi(true);
 
@@ -296,7 +384,17 @@ public class CreatePostActivity extends AppCompatActivity {
      * Calls `recordForumPost` CF to atomically claim a daily post slot.
      * Only proceeds to upload/write if the server returns allowed=true.
      */
+    /**
+     * Main logic block for this part of the feature.
+     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
+     * changes.
+     * Part of this method writes changes back to Firestore/storage, so this is where app actions
+     * become permanent.
+     * User-facing feedback is shown here so the user knows whether the action succeeded, failed,
+     * or needs attention.
+     */
     private void checkServerPostLimit(String msg) {
+        // Set up or query the Firebase layer that supplies/stores this feature's data.
         firebaseManager.recordForumPost(new FirebaseManager.ForumPostLimitListener() {
             @Override public void onAllowed(int remaining) {
                 if (isFinishing() || isDestroyed()) return;
@@ -311,8 +409,10 @@ public class CreatePostActivity extends AppCompatActivity {
             }
             @Override public void onLimitReached() {
                 if (isFinishing() || isDestroyed()) return;
+                // Persist the new state so the action is saved outside the current screen.
                 viewModel.isPostInProgress.set(false);
                 setPostingUi(false);
+                // Give the user immediate feedback about the result of this action.
                 Toast.makeText(CreatePostActivity.this,
                         "You've reached your 3 post limit for today. Try again tomorrow!",
                         Toast.LENGTH_LONG).show();
@@ -333,6 +433,14 @@ public class CreatePostActivity extends AppCompatActivity {
     // Upload image then write post
     // -------------------------------------------------------------------------
 
+    /**
+     * Builds data from the current screen/object state and writes it out to storage, Firebase, or
+     * another service.
+     * Part of this method writes changes back to Firestore/storage, so this is where app actions
+     * become permanent.
+     * User-facing feedback is shown here so the user knows whether the action succeeded, failed,
+     * or needs attention.
+     */
     private void uploadImageAndPost(String msg) {
         String id = UUID.randomUUID().toString();
         StorageReference ref = storage.getReference().child("forum_post_images/" + id + ".jpg");
@@ -345,12 +453,24 @@ public class CreatePostActivity extends AppCompatActivity {
                 }))
                 .addOnFailureListener(e -> {
                     if (isFinishing() || isDestroyed()) return;
+                    // Persist the new state so the action is saved outside the current screen.
                     viewModel.isPostInProgress.set(false);
                     setPostingUi(false);
+                    // Give the user immediate feedback about the result of this action.
                     Toast.makeText(this, "Image upload failed", Toast.LENGTH_SHORT).show();
                 });
     }
 
+    /**
+     * Builds data from the current screen/object state and writes it out to storage, Firebase, or
+     * another service.
+     * Part of this method writes changes back to Firestore/storage, so this is where app actions
+     * become permanent.
+     * User-facing feedback is shown here so the user knows whether the action succeeded, failed,
+     * or needs attention.
+     * Location values are handled here, so this is part of the logic that decides what area/bird
+     * sightings the user sees.
+     */
     private void createFirestorePost(String msg, String url) {
         FirebaseUser user = mAuth.getCurrentUser();
         if (user == null) return;
@@ -368,8 +488,10 @@ public class CreatePostActivity extends AppCompatActivity {
         firebaseManager.addForumPost(post, task -> {
             if (isFinishing() || isDestroyed()) return;
             if (task.isSuccessful()) {
+                // Persist the new state so the action is saved outside the current screen.
                 viewModel.isPostFinished.set(true);
                 viewModel.isPostInProgress.set(false);
+                // Give the user immediate feedback about the result of this action.
                 Toast.makeText(this, "Post shared!", Toast.LENGTH_SHORT).show();
                 finish();
             } else {
@@ -384,6 +506,9 @@ public class CreatePostActivity extends AppCompatActivity {
     // UI state
     // -------------------------------------------------------------------------
 
+    /**
+     * Updates object/screen state by storing a new value or reconfiguring a dependency.
+     */
     private void setPostingUi(boolean posting) {
         binding.btnPost.setEnabled(!posting);
         if (loadingOverlay != null) loadingOverlay.setVisibility(posting ? View.VISIBLE : View.GONE);

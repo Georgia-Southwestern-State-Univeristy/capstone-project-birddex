@@ -38,6 +38,12 @@ import java.util.Date;
 import java.util.Locale;
 import java.util.concurrent.ExecutionException;
 
+/**
+ * CameraFragment: Camera capture screen that takes or imports images for identification.
+ *
+ * These comments focus on what the actual code blocks are doing so the file is easier to trace
+ * when you are debugging or presenting the app. Only comments were added; runtime logic was not changed.
+ */
 public class CameraFragment extends Fragment {
 
     private static final String TAG = "BirdDexCam";
@@ -55,9 +61,20 @@ public class CameraFragment extends Fragment {
 
     public CameraFragment() { }
 
+    /**
+     * Android calls this to inflate the Fragment's XML and return the root view that will be shown
+     * on screen.
+     * It grabs layout/view references here so later code can read from them, update them, or
+     * attach listeners.
+     * It wires user actions here, so taps on buttons/cards/menus trigger the next step in the
+     * flow.
+     * User-facing feedback is shown here so the user knows whether the action succeeded, failed,
+     * or needs attention.
+     */
     @Nullable
     @Override
     public View onCreateView(@NonNull LayoutInflater inflater, @Nullable ViewGroup container, @Nullable Bundle savedInstanceState) {
+        // Bind or inflate the UI pieces this method needs before it can update the screen.
         View v = inflater.inflate(R.layout.fragment_camera, container, false);
         previewView = v.findViewById(R.id.previewView);
         btnFlip = v.findViewById(R.id.btnFlip);
@@ -80,12 +97,14 @@ public class CameraFragment extends Fragment {
 
         cameraPermissionLauncher = registerForActivityResult(new ActivityResultContracts.RequestPermission(), granted -> {
             if (granted) startCamera();
+            // Give the user immediate feedback about the result of this action.
             else Toast.makeText(requireContext(), "Camera permission denied.", Toast.LENGTH_LONG).show();
         });
 
         if (ActivityCompat.checkSelfPermission(requireContext(), Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) startCamera();
         else cameraPermissionLauncher.launch(Manifest.permission.CAMERA);
 
+        // Attach the user interaction that should run when this control is tapped.
         btnFlip.setOnClickListener(view -> {
             btnFlip.setEnabled(false);
             lensFacing = (lensFacing == CameraSelector.LENS_FACING_BACK) ? CameraSelector.LENS_FACING_FRONT : CameraSelector.LENS_FACING_BACK;
@@ -113,14 +132,26 @@ public class CameraFragment extends Fragment {
         return v;
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     * There is also one-time async data loading here, so success/failure callbacks are important
+     * for the final UI state.
+     * User-facing feedback is shown here so the user knows whether the action succeeded, failed,
+     * or needs attention.
+     */
     private void startCamera() {
         ListenableFuture<ProcessCameraProvider> future = ProcessCameraProvider.getInstance(requireContext());
         future.addListener(() -> {
+            // Kick off an asynchronous one-time read; the callbacks below decide how the UI should react.
             try { cameraProvider = future.get(); bindCameraUseCases(); }
+            // Give the user immediate feedback about the result of this action.
             catch (ExecutionException | InterruptedException e) { Toast.makeText(requireContext(), "Failed to start camera.", Toast.LENGTH_LONG).show(); }
         }, ContextCompat.getMainExecutor(requireContext()));
     }
 
+    /**
+     * Connects already-fetched data to views so the user can see the current state.
+     */
     private void bindCameraUseCases() {
         if (cameraProvider == null) return;
         cameraProvider.unbindAll();
@@ -134,6 +165,9 @@ public class CameraFragment extends Fragment {
         if (btnFlip != null) btnFlip.setEnabled(true);
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     */
     private void applyFlashState() {
         if (camera == null || imageCapture == null) return;
         if (!camera.getCameraInfo().hasFlashUnit()) { flashState = FlashState.OFF; camera.getCameraControl().enableTorch(false); imageCapture.setFlashMode(ImageCapture.FLASH_MODE_OFF); return; }
@@ -144,6 +178,12 @@ public class CameraFragment extends Fragment {
         }
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     * It also packages extras into an Intent when this flow needs to open another Activity.
+     * User-facing feedback is shown here so the user knows whether the action succeeded, failed,
+     * or needs attention.
+     */
     private void takePhoto() {
         if (imageCapture == null) { btnCapture.setEnabled(true); btnCapture.setAlpha(1f); return; }
         ContentValues values = new ContentValues();
@@ -157,6 +197,7 @@ public class CameraFragment extends Fragment {
             public void onImageSaved(@NonNull ImageCapture.OutputFileResults output) {
                 Uri savedUri = output.getSavedUri();
                 if (savedUri == null) { btnCapture.setEnabled(true); btnCapture.setAlpha(1f); return; }
+                // Move into the next screen and pass the identifiers/data that screen needs.
                 startActivity(new Intent(requireContext(), CropActivity.class).putExtra(CropActivity.EXTRA_IMAGE_URI, savedUri.toString()));
                 // Re-enable button in case user returns to this fragment
                 btnCapture.setEnabled(true);
@@ -167,6 +208,7 @@ public class CameraFragment extends Fragment {
             public void onError(@NonNull ImageCaptureException exc) {
                 btnCapture.setEnabled(true);
                 btnCapture.setAlpha(1f);
+                // Give the user immediate feedback about the result of this action.
                 Toast.makeText(requireContext(), "Capture failed.", Toast.LENGTH_SHORT).show();
             }
         });

@@ -40,6 +40,12 @@ import java.util.Date;
 /**
  * IdentifyingActivity orchestrates the bird identification process.
  */
+/**
+ * IdentifyingActivity: Result screen shown after bird identification; displays the match and lets the user continue with save/collection flows.
+ *
+ * These comments focus on what the actual code blocks are doing so the file is easier to trace
+ * when you are debugging or presenting the app. Only comments were added; runtime logic was not changed.
+ */
 public class IdentifyingActivity extends AppCompatActivity implements LocationHelper.LocationListener, NetworkMonitor.NetworkStatusListener {
 
     private static final String TAG = "IdentifyingActivity";
@@ -67,6 +73,15 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
     private final AtomicBoolean identificationStarted = new AtomicBoolean(false);
     private final String requestId = UUID.randomUUID().toString(); // Persistent ID for this specific attempt
 
+    /**
+     * Android calls this when the Activity is first created. This is where the screen usually
+     * inflates its layout, grabs views, creates helpers, and wires listeners.
+     * It grabs layout/view references here so later code can read from them, update them, or
+     * attach listeners.
+     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
+     * changes.
+     * It also packages extras into an Intent when this flow needs to open another Activity.
+     */
     @Override
     protected void onCreate(@Nullable Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -74,6 +89,7 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
 
         Log.d(TAG, "onCreate: Activity started");
 
+        // Bind or inflate the UI pieces this method needs before it can update the screen.
         ImageView identifyingImageView = findViewById(R.id.identifyingImageView);
         String uriStr = getIntent().getStringExtra("imageUri");
         if (uriStr == null) {
@@ -86,6 +102,7 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
         identifyingImageView.setImageURI(localImageUri);
 
         openAiApi = new OpenAiApi();
+        // Set up or query the Firebase layer that supplies/stores this feature's data.
         firebaseManager = new FirebaseManager(this);
 
         locationHelper = new LocationHelper(this, this);
@@ -113,6 +130,7 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
                         locationHelper.getLastKnownLocation();
                     } else {
                         Log.w(TAG, "Location permissions denied, proceeding without location");
+                        // Give the user immediate feedback about the result of this action.
                         Toast.makeText(this, "Location permissions denied. Proceeding without location.", Toast.LENGTH_LONG).show();
                         startIdentificationFlow(localImageUri, null, null, null, null, null);
                     }
@@ -121,18 +139,31 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
         requestLocationPermissions();
     }
 
+    /**
+     * Runs when the screen returns to the foreground, so it often refreshes UI state or restarts
+     * listeners.
+     */
     @Override
     protected void onResume() {
         super.onResume();
         networkMonitor.register();
     }
 
+    /**
+     * Runs when the screen is leaving the foreground, so it is used to pause work or save
+     * transient state.
+     */
     @Override
     protected void onPause() {
         super.onPause();
         networkMonitor.unregister();
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     * Location values are handled here, so this is part of the logic that decides what area/bird
+     * sightings the user sees.
+     */
     private void requestLocationPermissions() {
         boolean fineLocationGranted = ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED;
         boolean coarseLocationGranted = ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED;
@@ -146,6 +177,11 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
         }
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     * Location values are handled here, so this is part of the logic that decides what area/bird
+     * sightings the user sees.
+     */
     @Override
     public void onLocationReceived(Location location, @Nullable String localityName, @Nullable String state, @Nullable String country) {
         if (isFinishing() || isDestroyed()) return;
@@ -159,15 +195,28 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
         locationHelper.stopLocationUpdates();
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     * Location values are handled here, so this is part of the logic that decides what area/bird
+     * sightings the user sees.
+     */
     public void onLocationReceived(Location location, @Nullable String localityName) {
         onLocationReceived(location, localityName, null, null);
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     * User-facing feedback is shown here so the user knows whether the action succeeded, failed,
+     * or needs attention.
+     * Location values are handled here, so this is part of the logic that decides what area/bird
+     * sightings the user sees.
+     */
     @Override
     public void onLocationError(String errorMessage) {
         if (isFinishing() || isDestroyed()) return;
 
         Log.e(TAG, "onLocationError: " + errorMessage);
+        // Give the user immediate feedback about the result of this action.
         Toast.makeText(this, "Location error: " + errorMessage + ". Proceeding without location.", Toast.LENGTH_LONG).show();
         startIdentificationFlow(localImageUri, null, null, null, null, null);
         locationHelper.stopLocationUpdates();
@@ -183,7 +232,17 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
         }
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
+     * changes.
+     * There is also one-time async data loading here, so success/failure callbacks are important
+     * for the final UI state.
+     * User-facing feedback is shown here so the user knows whether the action succeeded, failed,
+     * or needs attention.
+     */
     private void startIdentificationFlow(Uri imageUri, @Nullable Double latitude, @Nullable Double longitude, @Nullable String localityName, @Nullable String state, @Nullable String country) {
+        // Kick off an asynchronous one-time read; the callbacks below decide how the UI should react.
         if (identificationCompleted.get()) {
             Log.d(TAG, "startIdentificationFlow: Already completed, ignoring");
             return;
@@ -203,6 +262,7 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
 
         Log.d(TAG, "startIdentificationFlow: checking limits");
 
+        // Set up or query the Firebase layer that supplies/stores this feature's data.
         firebaseManager.getOpenAiRequestsRemaining(new FirebaseManager.OpenAiRequestLimitListener() {
             @Override
             public void onCheckComplete(boolean hasRequestsRemaining, int remaining, Date expirationDate) {
@@ -227,6 +287,14 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
         });
     }
 
+    /**
+     * Builds data from the current screen/object state and writes it out to storage, Firebase, or
+     * another service.
+     * There is also one-time async data loading here, so success/failure callbacks are important
+     * for the final UI state.
+     * User-facing feedback is shown here so the user knows whether the action succeeded, failed,
+     * or needs attention.
+     */
     private void uploadImageToIdentificationStorage(Uri imageUri, @Nullable Double latitude, @Nullable Double longitude, @Nullable String localityName, @Nullable String state, @Nullable String country) {
         FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
         if (user == null) {
@@ -241,6 +309,7 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
         Log.d(TAG, "uploadImageToIdentificationStorage: Uploading to " + fileName);
         storageRef.putFile(imageUri)
                 .addOnSuccessListener(taskSnapshot -> {
+                    // Kick off an asynchronous one-time read; the callbacks below decide how the UI should react.
                     if (identificationCompleted.get() || isFinishing() || isDestroyed()) return;
                     storageRef.getDownloadUrl().addOnSuccessListener(downloadUri -> {
                         if (identificationCompleted.get() || isFinishing() || isDestroyed()) return;
@@ -257,6 +326,13 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
                 });
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     * There is also one-time async data loading here, so success/failure callbacks are important
+     * for the final UI state.
+     * User-facing feedback is shown here so the user knows whether the action succeeded, failed,
+     * or needs attention.
+     */
     private void identifyBirdWithUrl(String downloadUrl, @Nullable Double latitude, @Nullable Double longitude, @Nullable String localityName, @Nullable String state, @Nullable String country) {
         Log.d(TAG, "identifyBirdWithUrl: Encoding image for AI analysis...");
         String base64Image = encodeImage(localImageUri); // Still need base64 for the Vision API call
@@ -269,6 +345,7 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
         openAiApi.identifyBirdFromImage(base64Image, downloadUrl, latitude, longitude, localityName, requestId, new OpenAiApi.OpenAiCallback() {
             @Override
             public void onSuccess(String response, boolean isVerified, boolean isGore) {
+                // Kick off an asynchronous one-time read; the callbacks below decide how the UI should react.
                 if (identificationCompleted.get() || isFinishing() || isDestroyed()) return;
                 Log.d(TAG, "OpenAI onSuccess: isVerified=" + isVerified + ", isGore=" + isGore);
 
@@ -293,6 +370,10 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
         });
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     * It also packages extras into an Intent when this flow needs to open another Activity.
+     */
     private void proceedToInfoActivity(String contentStr, @Nullable String downloadUrl, @Nullable Double latitude, @Nullable Double longitude, @Nullable String localityName, @Nullable String state, @Nullable String country) {
         if (identificationCompleted.compareAndSet(false, true)) {
             timeoutHandler.removeCallbacks(timeoutRunnable);
@@ -326,11 +407,17 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
                 intent.putExtra("country", country);
             }
 
+            // Move into the next screen and pass the identifiers/data that screen needs.
             startActivity(intent);
             finish();
         }
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     * Bitmap/rendering work happens here, so this block is shaping the final card/image output
+     * rather than just text data.
+     */
     private String encodeImage(Uri imageUri) {
         try {
             Bitmap bitmap = (Build.VERSION.SDK_INT >= 28) ? ImageDecoder.decodeBitmap(ImageDecoder.createSource(this.getContentResolver(), imageUri)) : MediaStore.Images.Media.getBitmap(this.getContentResolver(), imageUri);
@@ -346,10 +433,16 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
         }
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     * User-facing feedback is shown here so the user knows whether the action succeeded, failed,
+     * or needs attention.
+     */
     private void finishActivityWithToast(String message) {
         if (identificationCompleted.compareAndSet(false, true)) {
             Log.d(TAG, "finishActivityWithToast: " + message);
             if (timeoutHandler != null) timeoutHandler.removeCallbacks(timeoutRunnable);
+            // Give the user immediate feedback about the result of this action.
             Toast.makeText(this, message, Toast.LENGTH_LONG).show();
             finish();
         }

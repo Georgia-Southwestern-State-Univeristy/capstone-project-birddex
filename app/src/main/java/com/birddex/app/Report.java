@@ -3,6 +3,12 @@ package com.birddex.app;
 import com.google.firebase.Timestamp;
 import com.google.firebase.firestore.ServerTimestamp;
 
+/**
+ * Report: Support/helper/model class used by other BirdDex screens so logic can stay reusable and organized.
+ *
+ * These comments focus on what the actual code blocks are doing so the file is easier to trace
+ * when you are debugging or presenting the app. Only comments were added; runtime logic was not changed.
+ */
 public class Report {
     private String id;
     private String targetType; // "post", "comment", or "user"
@@ -12,10 +18,18 @@ public class Report {
     @ServerTimestamp
     private Timestamp timestamp;
 
+    /**
+     * Constructor that stores incoming dependencies/values so this object starts in a usable
+     * state.
+     */
     public Report() {
         // Required for Firestore
     }
 
+    /**
+     * Constructor that stores incoming dependencies/values so this object starts in a usable
+     * state.
+     */
     public Report(String targetType, String targetId, String reporterId, String reason) {
         this.targetType = targetType;
         this.targetId = targetId;

@@ -27,6 +27,12 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * FirebaseManager: Central Firebase helper that hides Firestore, Storage, Auth, and Cloud Function details from the UI screens.
+ *
+ * These comments focus on what the actual code blocks are doing so the file is easier to trace
+ * when you are debugging or presenting the app. Only comments were added; runtime logic was not changed.
+ */
 public class FirebaseManager {
 
     private static final String TAG = "FirebaseManager";
@@ -97,9 +103,16 @@ public class FirebaseManager {
     // Constructor
     // -------------------------------------------------------------------------
 
+    /**
+     * Constructor that stores incoming dependencies/values so this object starts in a usable
+     * state.
+     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
+     * changes.
+     */
     public FirebaseManager(Context context) {
         this.context = context.getApplicationContext();
         mAuth = FirebaseAuth.getInstance();
+        // Set up or query the Firebase layer that supplies/stores this feature's data.
         db = FirebaseFirestore.getInstance();
         mFunctions = FirebaseFunctions.getInstance();
     }
@@ -114,6 +127,12 @@ public class FirebaseManager {
      * Re-routed creation through a more robust sequence:
      * 1. Auth creation (sets the UID)
      * 2. Atomic initializeUser CF (handles username uniqueness via Firestore transaction)
+     */
+    /**
+     * Builds data from the current screen/object state and writes it out to storage, Firebase, or
+     * another service.
+     * Part of this method writes changes back to Firestore/storage, so this is where app actions
+     * become permanent.
      */
     public void createAccount(String username, String email, String password, AuthListener listener) {
         Log.d(TAG, "Attempting to create account for email: " + email);
@@ -135,6 +154,7 @@ public class FirebaseManager {
                                     if (e instanceof FirebaseFunctionsException) {
                                         FirebaseFunctionsException ffe = (FirebaseFunctionsException) e;
                                         if (ffe.getCode() == FirebaseFunctionsException.Code.ALREADY_EXISTS) {
+                                            // Persist the new state so the action is saved outside the current screen.
                                             firebaseUser.delete();
                                             listener.onUsernameTaken();
                                             return;
@@ -152,6 +172,9 @@ public class FirebaseManager {
                 });
     }
 
+    /**
+     * Initializes helpers, adapters, listeners, or default values used by the rest of this file.
+     */
     public void initializeUser(String username, String email, OnCompleteListener<Boolean> listener) {
         Log.d(TAG, "Calling initializeUser Cloud Function for: " + username);
         Map<String, Object> data = new HashMap<>();
@@ -168,6 +191,9 @@ public class FirebaseManager {
         });
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     */
     public void checkUsernameAndEmailAvailability(String username, String email, UsernameAndEmailCheckListener listener) {
         Log.d(TAG, "Checking availability for: " + username + " / " + email);
         Map<String, Object> data = new HashMap<>();
@@ -189,8 +215,16 @@ public class FirebaseManager {
                 });
     }
 
+    /**
+     * Returns the current value/state this class needs somewhere else in the app.
+     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
+     * changes.
+     * There is also one-time async data loading here, so success/failure callbacks are important
+     * for the final UI state.
+     */
     public void getUserProfile(String userId, OnCompleteListener<DocumentSnapshot> listener) {
         Log.d(TAG, "Fetching user profile: " + userId);
+        // Set up or query the Firebase layer that supplies/stores this feature's data.
         db.collection("users").document(userId).get().addOnCompleteListener(task -> {
             if (task.isSuccessful()) Log.d(TAG, "Profile fetch success for: " + userId);
             else Log.e(TAG, "Profile fetch failed for: " + userId, task.getException());
@@ -198,6 +232,9 @@ public class FirebaseManager {
         });
     }
 
+    /**
+     * Returns the current value/state this class needs somewhere else in the app.
+     */
     public void getUsername(String userId, OnCompleteListener<String> listener) {
         Log.d(TAG, "Fetching username for: " + userId);
         getUserProfile(userId, task -> {
@@ -219,6 +256,13 @@ public class FirebaseManager {
         });
     }
 
+    /**
+     * Applies the latest values to existing UI/data so the screen and backend stay in sync.
+     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
+     * changes.
+     * Part of this method writes changes back to Firestore/storage, so this is where app actions
+     * become permanent.
+     */
     public void updateUserProfile(User updatedUser, AuthListener listener) {
         FirebaseUser currentUser = mAuth.getCurrentUser();
         if (currentUser == null) { Log.e(TAG, "Cannot update profile: No user authenticated."); return; }
@@ -228,6 +272,7 @@ public class FirebaseManager {
         if (updatedUser.getProfilePictureUrl() != null) updates.put("profilePictureUrl", updatedUser.getProfilePictureUrl());
         if (updatedUser.getBio() != null) updates.put("bio", updatedUser.getBio());
         if (updatedUser.getEmail() != null) updates.put("email", updatedUser.getEmail());
+        // Set up or query the Firebase layer that supplies/stores this feature's data.
         db.collection("users").document(currentUser.getUid()).update(updates).addOnCompleteListener(task -> {
             if (task.isSuccessful()) {
                 Log.d(TAG, "Profile updated successfully in Firestore.");
@@ -243,6 +288,9 @@ public class FirebaseManager {
     /**
      * FIX #13: Route profile updates (especially username) through the atomic
      * initializeUser Cloud Function to ensure username uniqueness.
+     */
+    /**
+     * Applies the latest values to existing UI/data so the screen and backend stay in sync.
      */
     public void updateUserProfileAtomic(User updatedUser, AuthListener listener) {
         FirebaseUser currentUser = mAuth.getCurrentUser();
@@ -272,15 +320,34 @@ public class FirebaseManager {
                 });
     }
 
+    /**
+     * Applies the latest values to existing UI/data so the screen and backend stay in sync.
+     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
+     * changes.
+     * Part of this method writes changes back to Firestore/storage, so this is where app actions
+     * become permanent.
+     */
     public void updateSessionId(String userId, String sessionId, OnCompleteListener<Void> listener) {
         Log.d(TAG, "Updating session ID for user: " + userId);
+        // Set up or query the Firebase layer that supplies/stores this feature's data.
         db.collection("users").document(userId).update("currentSessionId", sessionId).addOnCompleteListener(listener);
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
+     * changes.
+     * Because it uses a snapshot listener, this method keeps the UI synced with live Firestore
+     * updates instead of doing a one-time read.
+     */
     public ListenerRegistration listenToSessionId(String userId, EventListener<DocumentSnapshot> listener) {
+        // Set up or query the Firebase layer that supplies/stores this feature's data.
         return db.collection("users").document(userId).addSnapshotListener(listener);
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     */
     public void archiveAndDeleteUser(OnCompleteListener<HttpsCallableResult> listener) {
         Log.d(TAG, "Calling archiveAndDeleteUser Cloud Function.");
         mFunctions.getHttpsCallable("archiveAndDeleteUser").call().addOnCompleteListener(task -> {
@@ -290,8 +357,16 @@ public class FirebaseManager {
         });
     }
 
+    /**
+     * Removes data/listeners/items and then updates local state so the UI matches the deletion.
+     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
+     * changes.
+     * Part of this method writes changes back to Firestore/storage, so this is where app actions
+     * become permanent.
+     */
     public void deleteUser(String userId, OnCompleteListener<Void> listener) {
         Log.d(TAG, "Deleting user document: " + userId);
+        // Set up or query the Firebase layer that supplies/stores this feature's data.
         db.collection("users").document(userId).delete().addOnCompleteListener(task -> {
             if (task.isSuccessful()) Log.d(TAG, "User doc deleted.");
             else Log.e(TAG, "User doc deletion failed.", task.getException());
@@ -299,6 +374,9 @@ public class FirebaseManager {
         });
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     */
     public void signIn(String email, String password, AuthListener listener) {
         Log.d(TAG, "Attempting sign in for: " + email);
         mAuth.signInWithEmailAndPassword(email, password).addOnCompleteListener(task -> {
@@ -313,6 +391,9 @@ public class FirebaseManager {
         });
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     */
     public void sendPasswordResetEmail(String email, OnCompleteListener<Void> listener) {
         Log.d(TAG, "Sending password reset to: " + email);
         mAuth.sendPasswordResetEmail(email).addOnCompleteListener(task -> {
@@ -322,6 +403,9 @@ public class FirebaseManager {
         });
     }
 
+    /**
+     * Applies the latest values to existing UI/data so the screen and backend stay in sync.
+     */
     public void updateUserEmail(String newEmail, OnCompleteListener<Void> listener) {
         FirebaseUser user = mAuth.getCurrentUser();
         if (user != null) {
@@ -338,6 +422,9 @@ public class FirebaseManager {
     // LIGHTWEIGHT SERVER-SIDE SYSTEMS
     // -------------------------------------------------------------------------
 
+    /**
+     * Main logic block for this part of the feature.
+     */
     public void followUser(String targetUserId, OnCompleteListener<Void> listener) {
         Log.d(TAG, "Following user: " + targetUserId);
         Map<String, Object> data = new HashMap<>();
@@ -350,6 +437,9 @@ public class FirebaseManager {
         });
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     */
     public void unfollowUser(String targetUserId, OnCompleteListener<Void> listener) {
         Log.d(TAG, "Unfollowing user: " + targetUserId);
         Map<String, Object> data = new HashMap<>();
@@ -362,6 +452,9 @@ public class FirebaseManager {
         });
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     */
     public void addReport(Report report, OnCompleteListener<Void> listener) {
         Log.d(TAG, "Submitting report for target: " + report.getTargetId());
         Map<String, Object> data = new HashMap<>();
@@ -375,6 +468,9 @@ public class FirebaseManager {
         });
     }
 
+    /**
+     * Returns the current value/state this class needs somewhere else in the app.
+     */
     public void getLeaderboard(LeaderboardListener listener) {
         Log.d(TAG, "Fetching leaderboard via Cloud Function.");
         mFunctions.getHttpsCallable("getLeaderboard").call().addOnCompleteListener(task -> {
@@ -444,6 +540,9 @@ public class FirebaseManager {
         data.put("quantity",   quantity != null ? quantity : "1");
         data.put("timestamp",  timestampMs);
 
+        /**
+         * Returns the current value/state this class needs somewhere else in the app.
+         */
         mFunctions.getHttpsCallable("recordBirdSighting").call(data).addOnCompleteListener(task -> {
             if (task.isSuccessful() && task.getResult() != null) {
                 Map<String, Object> res = (Map<String, Object>) task.getResult().getData();
@@ -476,6 +575,9 @@ public class FirebaseManager {
      *
      * @param listener Result callback
      */
+    /**
+     * Main logic block for this part of the feature.
+     */
     public void recordForumPost(ForumPostLimitListener listener) {
         Log.d(TAG, "Calling recordForumPost CF.");
         mFunctions.getHttpsCallable("recordForumPost").call().addOnCompleteListener(task -> {
@@ -503,8 +605,16 @@ public class FirebaseManager {
     // FORUM METHODS
     // -------------------------------------------------------------------------
 
+    /**
+     * Main logic block for this part of the feature.
+     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
+     * changes.
+     * Part of this method writes changes back to Firestore/storage, so this is where app actions
+     * become permanent.
+     */
     public void addForumPost(ForumPost post, OnCompleteListener<Void> listener) {
         Log.d(TAG, "Adding forum post: " + post.getId());
+        // Set up or query the Firebase layer that supplies/stores this feature's data.
         db.collection("forumThreads").document(post.getId()).set(post).addOnCompleteListener(task -> {
             if (task.isSuccessful()) Log.d(TAG, "Post added successfully.");
             else Log.e(TAG, "Failed to add post.", task.getException());
@@ -512,8 +622,16 @@ public class FirebaseManager {
         });
     }
 
+    /**
+     * Applies the latest values to existing UI/data so the screen and backend stay in sync.
+     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
+     * changes.
+     * Part of this method writes changes back to Firestore/storage, so this is where app actions
+     * become permanent.
+     */
     public void updateForumPost(String postId, Map<String, Object> updates, OnCompleteListener<Void> listener) {
         Log.d(TAG, "Updating forum post: " + postId);
+        // Set up or query the Firebase layer that supplies/stores this feature's data.
         db.collection("forumThreads").document(postId).update(updates).addOnCompleteListener(task -> {
             if (task.isSuccessful()) Log.d(TAG, "Post updated successfully.");
             else Log.e(TAG, "Failed to update post.", task.getException());
@@ -521,8 +639,16 @@ public class FirebaseManager {
         });
     }
 
+    /**
+     * Removes data/listeners/items and then updates local state so the UI matches the deletion.
+     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
+     * changes.
+     * Part of this method writes changes back to Firestore/storage, so this is where app actions
+     * become permanent.
+     */
     public void deleteForumPost(String postId, OnCompleteListener<Void> listener) {
         Log.d(TAG, "Deleting forum post: " + postId);
+        // Set up or query the Firebase layer that supplies/stores this feature's data.
         db.collection("forumThreads").document(postId).delete().addOnCompleteListener(task -> {
             if (task.isSuccessful()) Log.d(TAG, "Post deleted.");
             else Log.e(TAG, "Failed to delete post.", task.getException());
@@ -530,8 +656,14 @@ public class FirebaseManager {
         });
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
+     * changes.
+     */
     public void addForumComment(String postId, ForumComment comment, OnCompleteListener<DocumentReference> listener) {
         Log.d(TAG, "Adding comment to post: " + postId);
+        // Set up or query the Firebase layer that supplies/stores this feature's data.
         db.collection("forumThreads").document(postId).collection("comments").add(comment).addOnCompleteListener(task -> {
             if (task.isSuccessful()) Log.d(TAG, "Comment added.");
             else Log.e(TAG, "Failed to add comment.", task.getException());
@@ -539,8 +671,16 @@ public class FirebaseManager {
         });
     }
 
+    /**
+     * Removes data/listeners/items and then updates local state so the UI matches the deletion.
+     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
+     * changes.
+     * Part of this method writes changes back to Firestore/storage, so this is where app actions
+     * become permanent.
+     */
     public void deleteForumComment(String postId, String commentId, OnCompleteListener<Void> listener) {
         Log.d(TAG, "Deleting comment: " + commentId + " from post: " + postId);
+        // Set up or query the Firebase layer that supplies/stores this feature's data.
         db.collection("forumThreads").document(postId).collection("comments").document(commentId).delete().addOnCompleteListener(task -> {
             if (task.isSuccessful()) Log.d(TAG, "Comment deleted.");
             else Log.e(TAG, "Failed to delete comment.", task.getException());
@@ -552,8 +692,16 @@ public class FirebaseManager {
     // BIRD & SIGHTING METHODS
     // -------------------------------------------------------------------------
 
+    /**
+     * Main logic block for this part of the feature.
+     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
+     * changes.
+     * Part of this method writes changes back to Firestore/storage, so this is where app actions
+     * become permanent.
+     */
     public void addBird(Bird bird, OnCompleteListener<Void> listener) {
         Log.d(TAG, "Adding bird: " + bird.getId());
+        // Set up or query the Firebase layer that supplies/stores this feature's data.
         db.collection("birds").document(bird.getId()).set(bird).addOnCompleteListener(task -> {
             if (task.isSuccessful()) Log.d(TAG, "Bird added.");
             else Log.e(TAG, "Failed to add bird.", task.getException());
@@ -561,28 +709,68 @@ public class FirebaseManager {
         });
     }
 
+    /**
+     * Returns the current value/state this class needs somewhere else in the app.
+     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
+     * changes.
+     * There is also one-time async data loading here, so success/failure callbacks are important
+     * for the final UI state.
+     */
     public void getBirdById(String birdId, OnCompleteListener<DocumentSnapshot> listener) {
         Log.d(TAG, "Fetching bird: " + birdId);
+        // Set up or query the Firebase layer that supplies/stores this feature's data.
         db.collection("birds").document(birdId).get().addOnCompleteListener(listener);
     }
 
+    /**
+     * Returns the current value/state this class needs somewhere else in the app.
+     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
+     * changes.
+     * There is also one-time async data loading here, so success/failure callbacks are important
+     * for the final UI state.
+     */
     public void getAllBirds(OnCompleteListener<QuerySnapshot> listener) {
         Log.d(TAG, "Fetching all birds.");
+        // Set up or query the Firebase layer that supplies/stores this feature's data.
         db.collection("birds").get().addOnCompleteListener(listener);
     }
 
+    /**
+     * Applies the latest values to existing UI/data so the screen and backend stay in sync.
+     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
+     * changes.
+     * Part of this method writes changes back to Firestore/storage, so this is where app actions
+     * become permanent.
+     */
     public void updateBird(Bird bird, OnCompleteListener<Void> listener) {
         Log.d(TAG, "Updating bird: " + bird.getId());
+        // Set up or query the Firebase layer that supplies/stores this feature's data.
         db.collection("birds").document(bird.getId()).set(bird).addOnCompleteListener(listener);
     }
 
+    /**
+     * Removes data/listeners/items and then updates local state so the UI matches the deletion.
+     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
+     * changes.
+     * Part of this method writes changes back to Firestore/storage, so this is where app actions
+     * become permanent.
+     */
     public void deleteBird(String birdId, OnCompleteListener<Void> listener) {
         Log.d(TAG, "Deleting bird: " + birdId);
+        // Set up or query the Firebase layer that supplies/stores this feature's data.
         db.collection("birds").document(birdId).delete().addOnCompleteListener(listener);
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
+     * changes.
+     * Part of this method writes changes back to Firestore/storage, so this is where app actions
+     * become permanent.
+     */
     public void addUserBird(UserBird userBird, OnCompleteListener<Void> listener) {
         Log.d(TAG, "Adding userBird sighting: " + userBird.getId());
+        // Set up or query the Firebase layer that supplies/stores this feature's data.
         db.collection("userBirds").document(userBird.getId()).set(userBird).addOnCompleteListener(task -> {
             if (task.isSuccessful()) Log.d(TAG, "userBird added.");
             else Log.e(TAG, "Failed to add userBird.", task.getException());
@@ -590,21 +778,52 @@ public class FirebaseManager {
         });
     }
 
+    /**
+     * Returns the current value/state this class needs somewhere else in the app.
+     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
+     * changes.
+     * There is also one-time async data loading here, so success/failure callbacks are important
+     * for the final UI state.
+     */
     public void getUserBirdById(String userBirdId, OnCompleteListener<DocumentSnapshot> listener) {
         Log.d(TAG, "Fetching userBird: " + userBirdId);
+        // Set up or query the Firebase layer that supplies/stores this feature's data.
         db.collection("userBirds").document(userBirdId).get().addOnCompleteListener(listener);
     }
 
+    /**
+     * Applies the latest values to existing UI/data so the screen and backend stay in sync.
+     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
+     * changes.
+     * Part of this method writes changes back to Firestore/storage, so this is where app actions
+     * become permanent.
+     */
     public void updateUserBird(UserBird userBird, OnCompleteListener<Void> listener) {
         Log.d(TAG, "Updating userBird: " + userBird.getId());
+        // Set up or query the Firebase layer that supplies/stores this feature's data.
         db.collection("userBirds").document(userBird.getId()).set(userBird).addOnCompleteListener(listener);
     }
 
+    /**
+     * Removes data/listeners/items and then updates local state so the UI matches the deletion.
+     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
+     * changes.
+     * Part of this method writes changes back to Firestore/storage, so this is where app actions
+     * become permanent.
+     */
     public void deleteUserBird(String userBirdId, OnCompleteListener<Void> listener) {
         Log.d(TAG, "Deleting userBird: " + userBirdId);
+        // Set up or query the Firebase layer that supplies/stores this feature's data.
         db.collection("userBirds").document(userBirdId).delete().addOnCompleteListener(listener);
     }
 
+    /**
+     * Returns the current value/state this class needs somewhere else in the app.
+     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
+     * changes.
+     * There is also one-time async data loading here, so success/failure callbacks are important
+     * for the final UI state.
+     */
     public Task<QuerySnapshot> getAllUserBirdSightingsForCurrentUser() {
         FirebaseUser currentUser = mAuth.getCurrentUser();
         if (currentUser == null) {
@@ -612,6 +831,7 @@ public class FirebaseManager {
             return Tasks.forException(new IllegalStateException("User not authenticated."));
         }
         Log.d(TAG, "Fetching all sightings for user: " + currentUser.getUid());
+        // Set up or query the Firebase layer that supplies/stores this feature's data.
         return db.collection("userBirdSightings").whereEqualTo("userId", currentUser.getUid()).get();
     }
 
@@ -619,43 +839,107 @@ public class FirebaseManager {
     // COLLECTION SLOT & IMAGE METHODS
     // -------------------------------------------------------------------------
 
+    /**
+     * Main logic block for this part of the feature.
+     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
+     * changes.
+     * Part of this method writes changes back to Firestore/storage, so this is where app actions
+     * become permanent.
+     */
     public void addCollectionSlot(String userId, String collectionSlotId, CollectionSlot collectionSlot, OnCompleteListener<Void> listener) {
         Log.d(TAG, "Adding collection slot: " + collectionSlotId + " for user: " + userId);
+        // Set up or query the Firebase layer that supplies/stores this feature's data.
         db.collection("users").document(userId).collection("collectionSlot").document(collectionSlotId).set(collectionSlot).addOnCompleteListener(listener);
     }
 
+    /**
+     * Returns the current value/state this class needs somewhere else in the app.
+     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
+     * changes.
+     * There is also one-time async data loading here, so success/failure callbacks are important
+     * for the final UI state.
+     */
     public void getCollectionSlotById(String userId, String collectionSlotId, OnCompleteListener<DocumentSnapshot> listener) {
         Log.d(TAG, "Fetching collection slot: " + collectionSlotId);
+        // Set up or query the Firebase layer that supplies/stores this feature's data.
         db.collection("users").document(userId).collection("collectionSlot").document(collectionSlotId).get().addOnCompleteListener(listener);
     }
 
+    /**
+     * Applies the latest values to existing UI/data so the screen and backend stay in sync.
+     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
+     * changes.
+     * Part of this method writes changes back to Firestore/storage, so this is where app actions
+     * become permanent.
+     */
     public void updateCollectionSlot(String userId, CollectionSlot collectionSlot, OnCompleteListener<Void> listener) {
         Log.d(TAG, "Updating collection slot: " + collectionSlot.getId());
+        // Set up or query the Firebase layer that supplies/stores this feature's data.
         db.collection("users").document(userId).collection("collectionSlot").document(collectionSlot.getId()).set(collectionSlot).addOnCompleteListener(listener);
     }
 
+    /**
+     * Removes data/listeners/items and then updates local state so the UI matches the deletion.
+     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
+     * changes.
+     * Part of this method writes changes back to Firestore/storage, so this is where app actions
+     * become permanent.
+     */
     public void deleteCollectionSlot(String userId, String collectionSlotId, OnCompleteListener<Void> listener) {
         Log.d(TAG, "Deleting collection slot: " + collectionSlotId);
+        // Set up or query the Firebase layer that supplies/stores this feature's data.
         db.collection("users").document(userId).collection("collectionSlot").document(collectionSlotId).delete().addOnCompleteListener(listener);
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
+     * changes.
+     * Part of this method writes changes back to Firestore/storage, so this is where app actions
+     * become permanent.
+     */
     public void addUserBirdImage(String userId, String userBirdImageId, UserBirdImage userBirdImage, OnCompleteListener<Void> listener) {
         Log.d(TAG, "Adding bird image record: " + userBirdImageId);
+        // Set up or query the Firebase layer that supplies/stores this feature's data.
         db.collection("users").document(userId).collection("userBirdImage").document(userBirdImageId).set(userBirdImage).addOnCompleteListener(listener);
     }
 
+    /**
+     * Returns the current value/state this class needs somewhere else in the app.
+     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
+     * changes.
+     * There is also one-time async data loading here, so success/failure callbacks are important
+     * for the final UI state.
+     */
     public void getUserBirdImageById(String userId, String userBirdImageId, OnCompleteListener<DocumentSnapshot> listener) {
         Log.d(TAG, "Fetching bird image record: " + userBirdImageId);
+        // Set up or query the Firebase layer that supplies/stores this feature's data.
         db.collection("users").document(userId).collection("userBirdImage").document(userBirdImageId).get().addOnCompleteListener(listener);
     }
 
+    /**
+     * Applies the latest values to existing UI/data so the screen and backend stay in sync.
+     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
+     * changes.
+     * Part of this method writes changes back to Firestore/storage, so this is where app actions
+     * become permanent.
+     */
     public void updateUserBirdImage(String userId, UserBirdImage userBirdImage, OnCompleteListener<Void> listener) {
         Log.d(TAG, "Updating bird image record: " + userBirdImage.getId());
+        // Set up or query the Firebase layer that supplies/stores this feature's data.
         db.collection("users").document(userId).collection("userBirdImage").document(userBirdImage.getId()).set(userBirdImage).addOnCompleteListener(listener);
     }
 
+    /**
+     * Removes data/listeners/items and then updates local state so the UI matches the deletion.
+     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
+     * changes.
+     * Part of this method writes changes back to Firestore/storage, so this is where app actions
+     * become permanent.
+     */
     public void deleteUserBirdImage(String userId, String userBirdImageId, OnCompleteListener<Void> listener) {
         Log.d(TAG, "Deleting bird image record: " + userBirdImageId);
+        // Set up or query the Firebase layer that supplies/stores this feature's data.
         db.collection("users").document(userId).collection("userBirdImage").document(userBirdImageId).delete().addOnCompleteListener(listener);
     }
 
@@ -663,63 +947,159 @@ public class FirebaseManager {
     // BIRD FACTS & MEDIA
     // -------------------------------------------------------------------------
 
+    /**
+     * Main logic block for this part of the feature.
+     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
+     * changes.
+     * Part of this method writes changes back to Firestore/storage, so this is where app actions
+     * become permanent.
+     */
     public void addBirdFact(BirdFact birdFact, OnCompleteListener<Void> listener) {
         Log.d(TAG, "Adding bird fact for: " + birdFact.getId());
+        // Set up or query the Firebase layer that supplies/stores this feature's data.
         db.collection("birdFacts").document(birdFact.getId()).set(birdFact).addOnCompleteListener(listener);
     }
 
+    /**
+     * Returns the current value/state this class needs somewhere else in the app.
+     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
+     * changes.
+     * There is also one-time async data loading here, so success/failure callbacks are important
+     * for the final UI state.
+     */
     public void getBirdFactById(String birdFactsId, OnCompleteListener<DocumentSnapshot> listener) {
         Log.d(TAG, "Fetching bird fact: " + birdFactsId);
+        // Set up or query the Firebase layer that supplies/stores this feature's data.
         db.collection("birdFacts").document(birdFactsId).get().addOnCompleteListener(listener);
     }
 
+    /**
+     * Applies the latest values to existing UI/data so the screen and backend stay in sync.
+     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
+     * changes.
+     * Part of this method writes changes back to Firestore/storage, so this is where app actions
+     * become permanent.
+     */
     public void updateBirdFact(BirdFact birdFact, OnCompleteListener<Void> listener) {
         Log.d(TAG, "Updating bird fact: " + birdFact.getId());
+        // Set up or query the Firebase layer that supplies/stores this feature's data.
         db.collection("birdFacts").document(birdFact.getId()).set(birdFact).addOnCompleteListener(listener);
     }
 
+    /**
+     * Removes data/listeners/items and then updates local state so the UI matches the deletion.
+     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
+     * changes.
+     * Part of this method writes changes back to Firestore/storage, so this is where app actions
+     * become permanent.
+     */
     public void deleteBirdFact(String birdFactsId, OnCompleteListener<Void> listener) {
         Log.d(TAG, "Deleting bird fact: " + birdFactsId);
+        // Set up or query the Firebase layer that supplies/stores this feature's data.
         db.collection("birdFacts").document(birdFactsId).delete().addOnCompleteListener(listener);
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
+     * changes.
+     * Part of this method writes changes back to Firestore/storage, so this is where app actions
+     * become permanent.
+     */
     public void addIdentification(Identification identification, OnCompleteListener<Void> listener) {
         Log.d(TAG, "Adding identification record: " + identification.getId());
+        // Set up or query the Firebase layer that supplies/stores this feature's data.
         db.collection("identifications").document(identification.getId()).set(identification).addOnCompleteListener(listener);
     }
 
+    /**
+     * Returns the current value/state this class needs somewhere else in the app.
+     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
+     * changes.
+     * There is also one-time async data loading here, so success/failure callbacks are important
+     * for the final UI state.
+     */
     public void getIdentificationById(String id, OnCompleteListener<DocumentSnapshot> listener) {
         Log.d(TAG, "Fetching identification: " + id);
+        // Set up or query the Firebase layer that supplies/stores this feature's data.
         db.collection("identifications").document(id).get().addOnCompleteListener(listener);
     }
 
+    /**
+     * Applies the latest values to existing UI/data so the screen and backend stay in sync.
+     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
+     * changes.
+     * Part of this method writes changes back to Firestore/storage, so this is where app actions
+     * become permanent.
+     */
     public void updateIdentification(Identification identification, OnCompleteListener<Void> listener) {
         Log.d(TAG, "Updating identification: " + identification.getId());
+        // Set up or query the Firebase layer that supplies/stores this feature's data.
         db.collection("identifications").document(identification.getId()).set(identification).addOnCompleteListener(listener);
     }
 
+    /**
+     * Removes data/listeners/items and then updates local state so the UI matches the deletion.
+     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
+     * changes.
+     * Part of this method writes changes back to Firestore/storage, so this is where app actions
+     * become permanent.
+     */
     public void deleteIdentification(String id, OnCompleteListener<Void> listener) {
         Log.d(TAG, "Deleting identification: " + id);
+        // Set up or query the Firebase layer that supplies/stores this feature's data.
         db.collection("identifications").document(id).delete().addOnCompleteListener(listener);
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
+     * changes.
+     * Part of this method writes changes back to Firestore/storage, so this is where app actions
+     * become permanent.
+     */
     public void addMedia(Media media, OnCompleteListener<Void> listener) {
         Log.d(TAG, "Adding media record: " + media.getId());
+        // Set up or query the Firebase layer that supplies/stores this feature's data.
         db.collection("media").document(media.getId()).set(media).addOnCompleteListener(listener);
     }
 
+    /**
+     * Returns the current value/state this class needs somewhere else in the app.
+     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
+     * changes.
+     * There is also one-time async data loading here, so success/failure callbacks are important
+     * for the final UI state.
+     */
     public void getMediaById(String id, OnCompleteListener<DocumentSnapshot> listener) {
         Log.d(TAG, "Fetching media: " + id);
+        // Set up or query the Firebase layer that supplies/stores this feature's data.
         db.collection("media").document(id).get().addOnCompleteListener(listener);
     }
 
+    /**
+     * Applies the latest values to existing UI/data so the screen and backend stay in sync.
+     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
+     * changes.
+     * Part of this method writes changes back to Firestore/storage, so this is where app actions
+     * become permanent.
+     */
     public void updateMedia(Media media, OnCompleteListener<Void> listener) {
         Log.d(TAG, "Updating media: " + media.getId());
+        // Set up or query the Firebase layer that supplies/stores this feature's data.
         db.collection("media").document(media.getId()).set(media).addOnCompleteListener(listener);
     }
 
+    /**
+     * Removes data/listeners/items and then updates local state so the UI matches the deletion.
+     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
+     * changes.
+     * Part of this method writes changes back to Firestore/storage, so this is where app actions
+     * become permanent.
+     */
     public void deleteMedia(String id, OnCompleteListener<Void> listener) {
         Log.d(TAG, "Deleting media: " + id);
+        // Set up or query the Firebase layer that supplies/stores this feature's data.
         db.collection("media").document(id).delete().addOnCompleteListener(listener);
     }
 
@@ -727,43 +1107,115 @@ public class FirebaseManager {
     // LOCATIONS & BIRD CARDS
     // -------------------------------------------------------------------------
 
+    /**
+     * Main logic block for this part of the feature.
+     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
+     * changes.
+     * Part of this method writes changes back to Firestore/storage, so this is where app actions
+     * become permanent.
+     * Location values are handled here, so this is part of the logic that decides what area/bird
+     * sightings the user sees.
+     */
     public void addLocation(Location location, OnCompleteListener<Void> listener) {
         Log.d(TAG, "Adding location: " + location.getId());
+        // Set up or query the Firebase layer that supplies/stores this feature's data.
         db.collection("locations").document(location.getId()).set(location).addOnCompleteListener(listener);
     }
 
+    /**
+     * Returns the current value/state this class needs somewhere else in the app.
+     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
+     * changes.
+     * There is also one-time async data loading here, so success/failure callbacks are important
+     * for the final UI state.
+     * Location values are handled here, so this is part of the logic that decides what area/bird
+     * sightings the user sees.
+     */
     public void getLocationById(String id, OnCompleteListener<DocumentSnapshot> listener) {
         Log.d(TAG, "Fetching location: " + id);
+        // Set up or query the Firebase layer that supplies/stores this feature's data.
         db.collection("locations").document(id).get().addOnCompleteListener(listener);
     }
 
+    /**
+     * Applies the latest values to existing UI/data so the screen and backend stay in sync.
+     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
+     * changes.
+     * Part of this method writes changes back to Firestore/storage, so this is where app actions
+     * become permanent.
+     * Location values are handled here, so this is part of the logic that decides what area/bird
+     * sightings the user sees.
+     */
     public void updateLocation(Location location, OnCompleteListener<Void> listener) {
         Log.d(TAG, "Updating location: " + location.getId());
+        // Set up or query the Firebase layer that supplies/stores this feature's data.
         db.collection("locations").document(location.getId()).set(location).addOnCompleteListener(listener);
     }
 
+    /**
+     * Removes data/listeners/items and then updates local state so the UI matches the deletion.
+     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
+     * changes.
+     * Part of this method writes changes back to Firestore/storage, so this is where app actions
+     * become permanent.
+     * Location values are handled here, so this is part of the logic that decides what area/bird
+     * sightings the user sees.
+     */
     public void deleteLocation(String id, OnCompleteListener<Void> listener) {
         Log.d(TAG, "Deleting location: " + id);
+        // Set up or query the Firebase layer that supplies/stores this feature's data.
         db.collection("locations").document(id).delete().addOnCompleteListener(listener);
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
+     * changes.
+     * Part of this method writes changes back to Firestore/storage, so this is where app actions
+     * become permanent.
+     */
     public void addBirdCard(BirdCard birdCard, OnCompleteListener<Void> listener) {
         Log.d(TAG, "Adding bird card: " + birdCard.getId());
+        // Set up or query the Firebase layer that supplies/stores this feature's data.
         db.collection("birdCards").document(birdCard.getId()).set(birdCard).addOnCompleteListener(listener);
     }
 
+    /**
+     * Returns the current value/state this class needs somewhere else in the app.
+     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
+     * changes.
+     * There is also one-time async data loading here, so success/failure callbacks are important
+     * for the final UI state.
+     */
     public void getBirdCardById(String id, OnCompleteListener<DocumentSnapshot> listener) {
         Log.d(TAG, "Fetching bird card: " + id);
+        // Set up or query the Firebase layer that supplies/stores this feature's data.
         db.collection("birdCards").document(id).get().addOnCompleteListener(listener);
     }
 
+    /**
+     * Applies the latest values to existing UI/data so the screen and backend stay in sync.
+     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
+     * changes.
+     * Part of this method writes changes back to Firestore/storage, so this is where app actions
+     * become permanent.
+     */
     public void updateBirdCard(BirdCard birdCard, OnCompleteListener<Void> listener) {
         Log.d(TAG, "Updating bird card: " + birdCard.getId());
+        // Set up or query the Firebase layer that supplies/stores this feature's data.
         db.collection("birdCards").document(birdCard.getId()).set(birdCard).addOnCompleteListener(listener);
     }
 
+    /**
+     * Removes data/listeners/items and then updates local state so the UI matches the deletion.
+     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
+     * changes.
+     * Part of this method writes changes back to Firestore/storage, so this is where app actions
+     * become permanent.
+     */
     public void deleteBirdCard(String id, OnCompleteListener<Void> listener) {
         Log.d(TAG, "Deleting bird card: " + id);
+        // Set up or query the Firebase layer that supplies/stores this feature's data.
         db.collection("birdCards").document(id).delete().addOnCompleteListener(listener);
     }
 
@@ -771,43 +1223,107 @@ public class FirebaseManager {
     // SIGHTINGS & HUNTER SIGHTINGS
     // -------------------------------------------------------------------------
 
+    /**
+     * Main logic block for this part of the feature.
+     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
+     * changes.
+     * Part of this method writes changes back to Firestore/storage, so this is where app actions
+     * become permanent.
+     */
     public void addUserBirdSighting(UserBirdSighting sighting, OnCompleteListener<Void> listener) {
         Log.d(TAG, "Adding user bird sighting: " + sighting.getId());
+        // Set up or query the Firebase layer that supplies/stores this feature's data.
         db.collection("userBirdSightings").document(sighting.getId()).set(sighting).addOnCompleteListener(listener);
     }
 
+    /**
+     * Returns the current value/state this class needs somewhere else in the app.
+     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
+     * changes.
+     * There is also one-time async data loading here, so success/failure callbacks are important
+     * for the final UI state.
+     */
     public void getUserBirdSightingById(String id, OnCompleteListener<DocumentSnapshot> listener) {
         Log.d(TAG, "Fetching user bird sighting: " + id);
+        // Set up or query the Firebase layer that supplies/stores this feature's data.
         db.collection("userBirdSightings").document(id).get().addOnCompleteListener(listener);
     }
 
+    /**
+     * Applies the latest values to existing UI/data so the screen and backend stay in sync.
+     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
+     * changes.
+     * Part of this method writes changes back to Firestore/storage, so this is where app actions
+     * become permanent.
+     */
     public void updateUserBirdSighting(UserBirdSighting sighting, OnCompleteListener<Void> listener) {
         Log.d(TAG, "Updating user bird sighting: " + sighting.getId());
+        // Set up or query the Firebase layer that supplies/stores this feature's data.
         db.collection("userBirdSightings").document(sighting.getId()).set(sighting).addOnCompleteListener(listener);
     }
 
+    /**
+     * Removes data/listeners/items and then updates local state so the UI matches the deletion.
+     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
+     * changes.
+     * Part of this method writes changes back to Firestore/storage, so this is where app actions
+     * become permanent.
+     */
     public void deleteUserBirdSighting(String id, OnCompleteListener<Void> listener) {
         Log.d(TAG, "Deleting user bird sighting: " + id);
+        // Set up or query the Firebase layer that supplies/stores this feature's data.
         db.collection("userBirdSightings").document(id).delete().addOnCompleteListener(listener);
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
+     * changes.
+     * Part of this method writes changes back to Firestore/storage, so this is where app actions
+     * become permanent.
+     */
     public void addHunterSighting(HunterSighting sighting, OnCompleteListener<Void> listener) {
         Log.d(TAG, "Adding hunter sighting: " + sighting.getId());
+        // Set up or query the Firebase layer that supplies/stores this feature's data.
         db.collection("hunterSightings").document(sighting.getId()).set(sighting).addOnCompleteListener(listener);
     }
 
+    /**
+     * Returns the current value/state this class needs somewhere else in the app.
+     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
+     * changes.
+     * There is also one-time async data loading here, so success/failure callbacks are important
+     * for the final UI state.
+     */
     public void getHunterSightingById(String id, OnCompleteListener<DocumentSnapshot> listener) {
         Log.d(TAG, "Fetching hunter sighting: " + id);
+        // Set up or query the Firebase layer that supplies/stores this feature's data.
         db.collection("hunterSightings").document(id).get().addOnCompleteListener(listener);
     }
 
+    /**
+     * Applies the latest values to existing UI/data so the screen and backend stay in sync.
+     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
+     * changes.
+     * Part of this method writes changes back to Firestore/storage, so this is where app actions
+     * become permanent.
+     */
     public void updateHunterSighting(HunterSighting sighting, OnCompleteListener<Void> listener) {
         Log.d(TAG, "Updating hunter sighting: " + sighting.getId());
+        // Set up or query the Firebase layer that supplies/stores this feature's data.
         db.collection("hunterSightings").document(sighting.getId()).set(sighting).addOnCompleteListener(listener);
     }
 
+    /**
+     * Removes data/listeners/items and then updates local state so the UI matches the deletion.
+     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
+     * changes.
+     * Part of this method writes changes back to Firestore/storage, so this is where app actions
+     * become permanent.
+     */
     public void deleteHunterSighting(String id, OnCompleteListener<Void> listener) {
         Log.d(TAG, "Deleting hunter sighting: " + id);
+        // Set up or query the Firebase layer that supplies/stores this feature's data.
         db.collection("hunterSightings").document(id).delete().addOnCompleteListener(listener);
     }
 
@@ -815,18 +1331,42 @@ public class FirebaseManager {
     // REPORTS
     // -------------------------------------------------------------------------
 
+    /**
+     * Returns the current value/state this class needs somewhere else in the app.
+     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
+     * changes.
+     * There is also one-time async data loading here, so success/failure callbacks are important
+     * for the final UI state.
+     */
     public void getReportById(String id, OnCompleteListener<DocumentSnapshot> listener) {
         Log.d(TAG, "Fetching report: " + id);
+        // Set up or query the Firebase layer that supplies/stores this feature's data.
         db.collection("reports").document(id).get().addOnCompleteListener(listener);
     }
 
+    /**
+     * Applies the latest values to existing UI/data so the screen and backend stay in sync.
+     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
+     * changes.
+     * Part of this method writes changes back to Firestore/storage, so this is where app actions
+     * become permanent.
+     */
     public void updateReport(Report report, OnCompleteListener<Void> listener) {
         Log.d(TAG, "Updating report: " + report.getId());
+        // Set up or query the Firebase layer that supplies/stores this feature's data.
         db.collection("reports").document(report.getId()).set(report).addOnCompleteListener(listener);
     }
 
+    /**
+     * Removes data/listeners/items and then updates local state so the UI matches the deletion.
+     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
+     * changes.
+     * Part of this method writes changes back to Firestore/storage, so this is where app actions
+     * become permanent.
+     */
     public void deleteReport(String id, OnCompleteListener<Void> listener) {
         Log.d(TAG, "Deleting report: " + id);
+        // Set up or query the Firebase layer that supplies/stores this feature's data.
         db.collection("reports").document(id).delete().addOnCompleteListener(listener);
     }
 
@@ -834,6 +1374,9 @@ public class FirebaseManager {
     // SYNC & LIMIT HELPERS
     // -------------------------------------------------------------------------
 
+    /**
+     * Main logic block for this part of the feature.
+     */
     public void recordPfpChange(String changeId, PfpChangeLimitListener listener) {
         Log.d(TAG, "Calling recordPfpChange Cloud Function.");
         Map<String, Object> data = new HashMap<>();
@@ -852,6 +1395,9 @@ public class FirebaseManager {
         });
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     */
     public void callOpenAiImageModeration(String base64Image, OpenAiModerationListener listener) {
         Log.d(TAG, "Calling moderatePfpImage Cloud Function.");
         Map<String, Object> data = new HashMap<>();
@@ -871,6 +1417,9 @@ public class FirebaseManager {
         });
     }
 
+    /**
+     * Returns the current value/state this class needs somewhere else in the app.
+     */
     public void getBirdDetailsAndFacts(String birdId, OnCompleteListener<HttpsCallableResult> listener) {
         Log.d(TAG, "Calling getBirdDetailsAndFacts Cloud Function for: " + birdId);
         Map<String, Object> data = new HashMap<>();
@@ -882,9 +1431,17 @@ public class FirebaseManager {
         });
     }
 
+    /**
+     * Returns the current value/state this class needs somewhere else in the app.
+     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
+     * changes.
+     * There is also one-time async data loading here, so success/failure callbacks are important
+     * for the final UI state.
+     */
     public void getOpenAiRequestsRemaining(OpenAiRequestLimitListener listener) {
         if (mAuth.getUid() == null) { Log.e(TAG, "Cannot get OpenAI limits: No user."); return; }
         Log.d(TAG, "Fetching OpenAI limits for: " + mAuth.getUid());
+        // Set up or query the Firebase layer that supplies/stores this feature's data.
         db.collection("users").document(mAuth.getUid()).get().addOnCompleteListener(task -> {
             if (task.isSuccessful() && task.getResult() != null) {
                 DocumentSnapshot doc = task.getResult();
@@ -899,9 +1456,17 @@ public class FirebaseManager {
         });
     }
 
+    /**
+     * Returns the current value/state this class needs somewhere else in the app.
+     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
+     * changes.
+     * There is also one-time async data loading here, so success/failure callbacks are important
+     * for the final UI state.
+     */
     public void getPfpChangesRemaining(PfpChangeLimitListener listener) {
         if (mAuth.getUid() == null) { Log.e(TAG, "Cannot get PFP limits: No user."); return; }
         Log.d(TAG, "Fetching PFP limits for: " + mAuth.getUid());
+        // Set up or query the Firebase layer that supplies/stores this feature's data.
         db.collection("users").document(mAuth.getUid()).get().addOnCompleteListener(task -> {
             if (task.isSuccessful() && task.getResult() != null) {
                 DocumentSnapshot doc = task.getResult();
@@ -916,6 +1481,9 @@ public class FirebaseManager {
         });
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     */
     public void triggerEbirdDataFetch(OnCompleteListener<HttpsCallableResult> listener) {
         Log.d(TAG, "Calling triggerEbirdDataFetch Cloud Function.");
         mFunctions.getHttpsCallable("triggerEbirdDataFetch").call().addOnCompleteListener(task -> {
@@ -925,6 +1493,9 @@ public class FirebaseManager {
         });
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     */
     public void syncGeorgiaBirdList(OnCompleteListener<HttpsCallableResult> listener) {
         Log.d(TAG, "Calling getGeorgiaBirds Cloud Function.");
         mFunctions.getHttpsCallable("getGeorgiaBirds").call().addOnCompleteListener(task -> {
@@ -934,9 +1505,17 @@ public class FirebaseManager {
         });
     }
 
+    /**
+     * Returns the current value/state this class needs somewhere else in the app.
+     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
+     * changes.
+     * There is also one-time async data loading here, so success/failure callbacks are important
+     * for the final UI state.
+     */
     public void isFollowing(String targetUserId, OnCompleteListener<Boolean> listener) {
         if (mAuth.getUid() == null) { listener.onComplete(Tasks.forResult(false)); return; }
         Log.d(TAG, "Checking follow status for: " + targetUserId);
+        // Set up or query the Firebase layer that supplies/stores this feature's data.
         db.collection("users").document(mAuth.getUid()).collection("following").document(targetUserId).get().addOnCompleteListener(task -> {
             boolean isFol = task.isSuccessful() && task.getResult() != null && task.getResult().exists();
             Log.d(TAG, "Follow status result: " + isFol);

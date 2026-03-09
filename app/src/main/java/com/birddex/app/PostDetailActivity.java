@@ -48,6 +48,12 @@ import java.util.Map;
  * PostDetailActivity displays a single forum post and its comments.
  * Fixes: Added isNavigating guard and fixed variable naming bug in toggleLike.
  */
+/**
+ * PostDetailActivity: Detailed post view that loads one post plus its comments/replies and handles interactions.
+ *
+ * These comments focus on what the actual code blocks are doing so the file is easier to trace
+ * when you are debugging or presenting the app. Only comments were added; runtime logic was not changed.
+ */
 public class PostDetailActivity extends AppCompatActivity implements ForumCommentAdapter.OnCommentInteractionListener {
 
     private static final String TAG = "PostDetailActivity";
@@ -80,12 +86,24 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
 
     private boolean isNavigating = false;
 
+    /**
+     * Android calls this when the Activity is first created. This is where the screen usually
+     * inflates its layout, grabs views, creates helpers, and wires listeners.
+     * It grabs layout/view references here so later code can read from them, update them, or
+     * attach listeners.
+     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
+     * changes.
+     * It prepares or refreshes adapter-backed lists/grids here so the latest model objects are
+     * rendered on screen.
+     */
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        // Bind or inflate the UI pieces this method needs before it can update the screen.
         binding = ActivityPostDetailBinding.inflate(getLayoutInflater());
         setContentView(binding.getRoot());
 
+        // Set up or query the Firebase layer that supplies/stores this feature's data.
         db = FirebaseFirestore.getInstance();
         mAuth = FirebaseAuth.getInstance();
         firebaseManager = new FirebaseManager(this);
@@ -100,32 +118,64 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
         fetchComments();
     }
 
+    /**
+     * Runs when the screen returns to the foreground, so it often refreshes UI state or restarts
+     * listeners.
+     */
     @Override
     protected void onResume() {
         super.onResume();
         isNavigating = false;
     }
 
+    /**
+     * Updates object/screen state by storing a new value or reconfiguring a dependency.
+     * It wires user actions here, so taps on buttons/cards/menus trigger the next step in the
+     * flow.
+     */
     private void setupUI() {
         binding.toolbar.setNavigationOnClickListener(v -> finish());
+        // Attach the user interaction that should run when this control is tapped.
         binding.btnSendComment.setOnClickListener(v -> postComment());
     }
 
+    /**
+     * Pulls data from a local source, Firebase, or an external API and prepares it for the UI or
+     * caller.
+     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
+     * changes.
+     * There is also one-time async data loading here, so success/failure callbacks are important
+     * for the final UI state.
+     * Image loading happens here, which is why placeholder/error behavior for profile
+     * photos/cards/posts usually traces back to this code path.
+     */
     private void loadCurrentUser() {
         FirebaseUser user = mAuth.getCurrentUser();
+        // Set up or query the Firebase layer that supplies/stores this feature's data.
         if (user != null) db.collection("users").document(user.getUid()).get()
                 .addOnSuccessListener(doc -> {
                     if (isFinishing() || isDestroyed()) return;
                     if (doc.exists()) {
                         currentUsername = doc.getString("username");
                         currentUserPfpUrl = doc.getString("profilePictureUrl");
+                        // Load the image asynchronously so the UI can show remote/local media without blocking the main thread.
                         Glide.with(this).load(currentUserPfpUrl).placeholder(R.drawable.ic_profile).into(binding.ivCurrentUserPfp);
                     }
                 });
     }
 
+    /**
+     * Pulls data from a local source, Firebase, or an external API and prepares it for the UI or
+     * caller.
+     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
+     * changes.
+     * Because it uses a snapshot listener, this method keeps the UI synced with live Firestore
+     * updates instead of doing a one-time read.
+     */
     private void loadPostDetails() {
+        // Set up or query the Firebase layer that supplies/stores this feature's data.
         db.collection("forumThreads").document(postId)
+                // Listen for real-time Firestore changes so the UI refreshes automatically when backend data changes.
                 .addSnapshotListener(MetadataChanges.INCLUDE, (doc, error) -> {
                     if (isFinishing() || isDestroyed() || error != null || doc == null || !doc.exists()) return;
                     originalPost = doc.toObject(ForumPost.class);
@@ -138,6 +188,14 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
                 });
     }
 
+    /**
+     * Central handler that reacts to an event/input and decides what the next app action should
+     * be.
+     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
+     * changes.
+     * Part of this method writes changes back to Firestore/storage, so this is where app actions
+     * become permanent.
+     */
     private void handleViewTracking(String userId, ForumPost post) {
         hasMarkedAsViewed = true;
         Map<String, Object> updates = new HashMap<>();
@@ -147,12 +205,23 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
             if (post.isLikeNotificationSent()) updates.put("likeNotificationSent", false);
             updates.put("lastViewedAt", FieldValue.serverTimestamp());
         }
+        // Set up or query the Firebase layer that supplies/stores this feature's data.
         if (!updates.isEmpty()) db.collection("forumThreads").document(postId).update(updates);
     }
 
+    /**
+     * Connects already-fetched data to views so the user can see the current state.
+     * It grabs layout/view references here so later code can read from them, update them, or
+     * attach listeners.
+     * It wires user actions here, so taps on buttons/cards/menus trigger the next step in the
+     * flow.
+     * Image loading happens here, which is why placeholder/error behavior for profile
+     * photos/cards/posts usually traces back to this code path.
+     */
     private void bindPostToLayout(ForumPost post) {
         if (isFinishing() || isDestroyed()) return;
         View v = binding.postContent.getRoot();
+        // Bind or inflate the UI pieces this method needs before it can update the screen.
         ((TextView) v.findViewById(R.id.tvPostUsername)).setText(post.getUsername());
         ((TextView) v.findViewById(R.id.tvPostMessage)).setText(post.isEdited() ? post.getMessage() + " (edited)" : post.getMessage());
         ((TextView) v.findViewById(R.id.tvLikeCount)).setText(String.valueOf(post.getLikeCount()));
@@ -164,6 +233,7 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
         if (hu != null) hu.setVisibility(post.isHunted() ? View.VISIBLE : View.GONE);
 
         if (post.getTimestamp() != null) ((TextView) v.findViewById(R.id.tvPostTimestamp)).setText(DateUtils.getRelativeTimeSpanString(post.getTimestamp().toDate().getTime()));
+        // Load the image asynchronously so the UI can show remote/local media without blocking the main thread.
         Glide.with(this).load(post.getUserProfilePictureUrl()).placeholder(R.drawable.ic_profile).into((ImageView) v.findViewById(R.id.ivPostUserProfilePicture));
 
         View cv = v.findViewById(R.id.cvPostImage);
@@ -174,9 +244,11 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
         if (mapBtn != null) {
             if ((post.isSpotted() || post.isHunted()) && post.isShowLocation() && post.getLatitude() != null) {
                 mapBtn.setVisibility(View.VISIBLE);
+                // Attach the user interaction that should run when this control is tapped.
                 mapBtn.setOnClickListener(view -> {
                     if (isNavigating) return;
                     isNavigating = true;
+                    // Move into the next screen and pass the identifiers/data that screen needs.
                     startActivity(new Intent(this, NearbyHeatmapActivity.class).putExtra(NearbyHeatmapActivity.EXTRA_CENTER_LAT, post.getLatitude()).putExtra(NearbyHeatmapActivity.EXTRA_CENTER_LNG, post.getLongitude()).putExtra("extra_post_id", post.getId()));
                 });
             } else mapBtn.setVisibility(View.GONE);
@@ -191,12 +263,20 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
         v.findViewById(R.id.tvPostUsername).setOnClickListener(view -> openProfile(post.getUserId()));
     }
 
+    /**
+     * Moves the user to another screen or flow and passes along the required extras.
+     * It also packages extras into an Intent when this flow needs to open another Activity.
+     */
     private void openProfile(String uid) {
         if (isNavigating) return;
         isNavigating = true;
+        // Move into the next screen and pass the identifiers/data that screen needs.
         startActivity(new Intent(this, UserSocialProfileActivity.class).putExtra(UserSocialProfileActivity.EXTRA_USER_ID, uid));
     }
 
+    /**
+     * Takes prepared data and presents it on screen or in a dialog/menu.
+     */
     private void showPostOptions(ForumPost post, View view) {
         PopupMenu popup = new PopupMenu(this, view);
         FirebaseUser user = mAuth.getCurrentUser();
@@ -214,6 +294,11 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
         popup.show();
     }
 
+    /**
+     * Takes prepared data and presents it on screen or in a dialog/menu.
+     * Location values are handled here, so this is part of the logic that decides what area/bird
+     * sightings the user sees.
+     */
     private void showEditPostDialog(ForumPost post) {
         AlertDialog.Builder b = new AlertDialog.Builder(this);
         b.setTitle("Edit Post");
@@ -227,16 +312,32 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
         b.setNegativeButton("Cancel", null); b.show();
     }
 
+    /**
+     * Applies the latest values to existing UI/data so the screen and backend stay in sync.
+     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
+     * changes.
+     * Part of this method writes changes back to Firestore/storage, so this is where app actions
+     * become permanent.
+     * User-facing feedback is shown here so the user knows whether the action succeeded, failed,
+     * or needs attention.
+     */
     private void updatePost(ForumPost post, String msg, boolean spotted, boolean hunted, boolean loc) {
         if (!ContentFilter.isSafe(this, msg, "Post")) return;
         Map<String, Object> u = new HashMap<>(); u.put("message", msg); u.put("spotted", spotted); u.put("hunted", hunted); u.put("showLocation", loc); u.put("edited", true); u.put("lastEditedAt", FieldValue.serverTimestamp());
+        // Set up or query the Firebase layer that supplies/stores this feature's data.
         db.collection("forumThreads").document(post.getId()).update(u).addOnSuccessListener(v -> Toast.makeText(this, "Updated", Toast.LENGTH_SHORT).show());
     }
 
+    /**
+     * Takes prepared data and presents it on screen or in a dialog/menu.
+     */
     private void showDeleteConfirmation(ForumPost post) {
         new AlertDialog.Builder(this).setTitle("Delete Post").setMessage("Are you sure?").setPositiveButton("Delete", (d, w) -> archiveAndDeletePost(post)).setNegativeButton("Cancel", null).show();
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     */
     private void archiveAndDeletePost(ForumPost post) {
         FirebaseUser user = mAuth.getCurrentUser(); if (user == null) return;
         if (post.getBirdImageUrl() != null && !post.getBirdImageUrl().isEmpty()) {
@@ -247,38 +348,70 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
         } else handleCommentsArchiveAndDeletion(user.getUid(), post);
     }
 
+    /**
+     * Central handler that reacts to an event/input and decides what the next app action should
+     * be.
+     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
+     * changes.
+     * There is also one-time async data loading here, so success/failure callbacks are important
+     * for the final UI state.
+     * Part of this method writes changes back to Firestore/storage, so this is where app actions
+     * become permanent.
+     */
     private void handleCommentsArchiveAndDeletion(String uid, ForumPost post) {
+        // Set up or query the Firebase layer that supplies/stores this feature's data.
         db.collection("forumThreads").document(post.getId()).collection("comments").get().addOnSuccessListener(snap -> {
             WriteBatch b = db.batch();
             for (DocumentSnapshot d : snap) {
                 Map<String, Object> c = new HashMap<>(); c.put("type", "comment_archived_with_post"); c.put("originalId", d.getId()); c.put("postId", post.getId()); c.put("data", d.getData()); c.put("deletedBy", uid); c.put("deletedAt", FieldValue.serverTimestamp());
+                // Persist the new state so the action is saved outside the current screen.
                 b.set(db.collection("deletedforum_backlog").document(), c); b.delete(d.getReference());
             }
             Map<String, Object> p = new HashMap<>(); p.put("type", "post"); p.put("originalId", post.getId()); p.put("data", post); p.put("deletedBy", uid); p.put("deletedAt", FieldValue.serverTimestamp());
             b.set(db.collection("deletedforum_backlog").document(), p); b.delete(db.collection("forumThreads").document(post.getId()));
+            // Give the user immediate feedback about the result of this action.
             b.commit().addOnSuccessListener(v -> { if (!isFinishing()) { Toast.makeText(this, "Deleted", Toast.LENGTH_SHORT).show(); finish(); } });
         }).addOnFailureListener(e -> savePostToBacklogAndFirestore(uid, post));
     }
 
     private interface OnImageArchivedListener { void onSuccess(String url); void onFailure(Exception e); }
 
+    /**
+     * Main logic block for this part of the feature.
+     * Part of this method writes changes back to Firestore/storage, so this is where app actions
+     * become permanent.
+     */
     private void moveImageToArchive(String uid, String pid, String url, OnImageArchivedListener l) {
         FirebaseStorage s = FirebaseStorage.getInstance();
         try {
             StorageReference old = s.getReferenceFromUrl(url);
             StorageReference next = s.getReference().child("archive/forum_post_images/" + uid + "/" + pid + "_" + old.getName());
+            // Persist the new state so the action is saved outside the current screen.
             old.getBytes(10 * 1024 * 1024).addOnSuccessListener(bytes -> next.putBytes(bytes).addOnSuccessListener(ts -> next.getDownloadUrl().addOnSuccessListener(uri -> old.delete().addOnCompleteListener(t -> l.onSuccess(uri.toString()))).addOnFailureListener(l::onFailure)).addOnFailureListener(l::onFailure)).addOnFailureListener(l::onFailure);
         } catch (Exception e) { l.onFailure(e); }
     }
 
+    /**
+     * Builds data from the current screen/object state and writes it out to storage, Firebase, or
+     * another service.
+     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
+     * changes.
+     * Part of this method writes changes back to Firestore/storage, so this is where app actions
+     * become permanent.
+     */
     private void savePostToBacklogAndFirestore(String uid, ForumPost post) {
         WriteBatch b = db.batch();
         Map<String, Object> m = new HashMap<>(); m.put("type", "post"); m.put("originalId", post.getId()); m.put("data", post); m.put("deletedBy", uid); m.put("deletedAt", FieldValue.serverTimestamp());
+        // Set up or query the Firebase layer that supplies/stores this feature's data.
         b.set(db.collection("deletedforum_backlog").document(), m);
+        // Persist the new state so the action is saved outside the current screen.
         b.delete(db.collection("forumThreads").document(post.getId()));
         b.commit().addOnSuccessListener(v -> { if (!isFinishing()) finish(); });
     }
 
+    /**
+     * Takes prepared data and presents it on screen or in a dialog/menu.
+     */
     private void showReportDialog(ForumPost post) {
         String[] rs = {"Inappropriate Language", "Inappropriate Image", "Spam", "Harassment", "Other"};
         new AlertDialog.Builder(this).setTitle("Report Post").setItems(rs, (d, w) -> {
@@ -287,11 +420,24 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
         }).show();
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     * User-facing feedback is shown here so the user knows whether the action succeeded, failed,
+     * or needs attention.
+     */
     private void submitReport(ForumPost post, String reason) {
         FirebaseUser u = mAuth.getCurrentUser(); if (u == null) return;
+        // Give the user immediate feedback about the result of this action.
         firebaseManager.addReport(new Report("post", post.getId(), u.getUid(), reason), t -> { if (t.isSuccessful()) Toast.makeText(this, "Reported", Toast.LENGTH_SHORT).show(); });
     }
 
+    /**
+     * Flips a UI/data state and then updates the screen/backend to match the new value.
+     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
+     * changes.
+     * Part of this method writes changes back to Firestore/storage, so this is where app actions
+     * become permanent.
+     */
     private void toggleLike() {
         if (postLikeInFlight || originalPost == null) return;
         FirebaseUser user = mAuth.getCurrentUser(); if (user == null) return;
@@ -301,10 +447,17 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
         if (liked) { originalPost.setLikeCount(Math.max(0, count - 1)); originalPost.getLikedBy().remove(uid); }
         else { originalPost.setLikeCount(count + 1); if (originalPost.getLikedBy() == null) originalPost.setLikedBy(new HashMap<>()); originalPost.getLikedBy().put(uid, true); }
         bindPostToLayout(originalPost);
+        // Set up or query the Firebase layer that supplies/stores this feature's data.
         db.collection("forumThreads").document(postId).update("likedBy." + uid, liked ? FieldValue.delete() : true).addOnCompleteListener(t -> { postLikeInFlight = false; if (!t.isSuccessful()) { originalPost.setLikeCount(count); if (liked) originalPost.getLikedBy().put(uid, true); else originalPost.getLikedBy().remove(uid); bindPostToLayout(originalPost); } });
     }
 
+    /**
+     * Updates object/screen state by storing a new value or reconfiguring a dependency.
+     * It prepares or refreshes adapter-backed lists/grids here so the latest model objects are
+     * rendered on screen.
+     */
     private void setupCommentsRecyclerView() {
+        // Hook the data source to the list/grid adapter so model objects can render as UI rows/cards.
         adapter = new ForumCommentAdapter(this);
         LinearLayoutManager lm = new LinearLayoutManager(this);
         binding.rvComments.setLayoutManager(lm);
@@ -316,9 +469,18 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
         });
     }
 
+    /**
+     * Pulls data from a local source, Firebase, or an external API and prepares it for the UI or
+     * caller.
+     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
+     * changes.
+     * There is also one-time async data loading here, so success/failure callbacks are important
+     * for the final UI state.
+     */
     private void fetchComments() {
         if (isFetchingComments || isLastCommentsPage) return;
         isFetchingComments = true;
+        // Set up or query the Firebase layer that supplies/stores this feature's data.
         Query q = db.collection("forumThreads").document(postId).collection("comments").orderBy("timestamp", Query.Direction.ASCENDING).limit(COMMENTS_PAGE_SIZE);
         if (lastCommentVisible != null) q = q.startAfter(lastCommentVisible);
         q.get().addOnSuccessListener(val -> {
@@ -333,6 +495,15 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
         }).addOnFailureListener(e -> isFetchingComments = false);
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
+     * changes.
+     * Part of this method writes changes back to Firestore/storage, so this is where app actions
+     * become permanent.
+     * User-facing feedback is shown here so the user knows whether the action succeeded, failed,
+     * or needs attention.
+     */
     private void postComment() {
         String msg = binding.etComment.getText().toString().trim();
         if (msg.isEmpty() || msg.length() > MAX_COMMENT_LENGTH || !ContentFilter.isSafe(this, msg, "Comment")) return;
@@ -340,14 +511,26 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
         binding.btnSendComment.setEnabled(false);
         ForumComment c = new ForumComment(postId, user.getUid(), currentUsername, currentUserPfpUrl, msg);
         if (replyingToComment != null) { c.setParentCommentId(replyingToComment.getId()); c.setParentUsername(replyingToComment.getUsername()); }
+        // Set up or query the Firebase layer that supplies/stores this feature's data.
         String cid = db.collection("forumThreads").document(postId).collection("comments").document().getId();
+        // Persist the new state so the action is saved outside the current screen.
         db.collection("forumThreads").document(postId).collection("comments").document(cid).set(c).addOnSuccessListener(v -> {
             if (isFinishing()) return;
             binding.etComment.setText(""); binding.etComment.setHint("Write a comment..."); replyingToComment = null; binding.btnSendComment.setEnabled(true);
             lastCommentVisible = null; isLastCommentsPage = false; commentList.clear(); fetchComments();
+        // Give the user immediate feedback about the result of this action.
         }).addOnFailureListener(e -> { binding.btnSendComment.setEnabled(true); Toast.makeText(this, "Failed", Toast.LENGTH_SHORT).show(); });
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
+     * changes.
+     * Part of this method writes changes back to Firestore/storage, so this is where app actions
+     * become permanent.
+     * It prepares or refreshes adapter-backed lists/grids here so the latest model objects are
+     * rendered on screen.
+     */
     @Override
     public void onCommentLikeClick(ForumComment comment) {
         FirebaseUser user = mAuth.getCurrentUser(); if (user == null) return;
@@ -361,7 +544,9 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
         else { comment.setLikeCount(count + 1); comment.getLikedBy().put(uid, true); }
         adapter.notifyDataSetChanged();
 
+        // Set up or query the Firebase layer that supplies/stores this feature's data.
         db.collection("forumThreads").document(postId).collection("comments").document(comment.getId())
+                // Persist the new state so the action is saved outside the current screen.
                 .update("likedBy." + uid, liked ? FieldValue.delete() : true)
                 .addOnCompleteListener(t -> {
                     commentLikeInFlight.remove(comment.getId());
@@ -377,6 +562,9 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
         startActivity(new Intent(this, UserSocialProfileActivity.class).putExtra(UserSocialProfileActivity.EXTRA_USER_ID, uid));
     }
 
+    /**
+     * Takes prepared data and presents it on screen or in a dialog/menu.
+     */
     private void showCommentOptions(ForumComment c, View v) {
         PopupMenu popup = new PopupMenu(this, v); FirebaseUser user = mAuth.getCurrentUser();
         if (user != null && c.getUserId().equals(user.getUid())) {
@@ -393,6 +581,9 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
         popup.show();
     }
 
+    /**
+     * Takes prepared data and presents it on screen or in a dialog/menu.
+     */
     private void showEditCommentDialog(ForumComment c) {
         AlertDialog.Builder b = new AlertDialog.Builder(this); b.setTitle("Edit Comment");
         final EditText i = new EditText(this); i.setText(c.getText()); i.setFilters(new InputFilter[]{new InputFilter.LengthFilter(MAX_COMMENT_LENGTH)});
@@ -401,18 +592,40 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
         b.setNegativeButton("Cancel", null); b.show();
     }
 
+    /**
+     * Applies the latest values to existing UI/data so the screen and backend stay in sync.
+     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
+     * changes.
+     * Part of this method writes changes back to Firestore/storage, so this is where app actions
+     * become permanent.
+     */
     private void updateComment(ForumComment c, String msg) {
         if (!ContentFilter.isSafe(this, msg, "Comment")) return;
+        // Set up or query the Firebase layer that supplies/stores this feature's data.
         db.collection("forumThreads").document(postId).collection("comments").document(c.getId()).update("text", msg, "edited", true, "lastEditedAt", FieldValue.serverTimestamp());
     }
 
+    /**
+     * Takes prepared data and presents it on screen or in a dialog/menu.
+     */
     private void showCommentDeleteConfirmation(ForumComment c) {
         new AlertDialog.Builder(this).setTitle("Delete Comment").setMessage("Are you sure?").setPositiveButton("Delete", (d, w) -> deleteCommentAndReplies(c)).setNegativeButton("Cancel", null).show();
     }
 
+    /**
+     * Removes data/listeners/items and then updates local state so the UI matches the deletion.
+     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
+     * changes.
+     * There is also one-time async data loading here, so success/failure callbacks are important
+     * for the final UI state.
+     * Part of this method writes changes back to Firestore/storage, so this is where app actions
+     * become permanent.
+     */
     private void deleteCommentAndReplies(ForumComment c) {
         FirebaseUser user = mAuth.getCurrentUser(); if (user == null) return;
+        // Set up or query the Firebase layer that supplies/stores this feature's data.
         DocumentReference ref = db.collection("forumThreads").document(postId).collection("comments").document(c.getId());
+        // Persist the new state so the action is saved outside the current screen.
         ref.update("deleting", true).addOnSuccessListener(v -> {
             db.collection("forumThreads").document(postId).collection("comments").whereEqualTo("parentCommentId", c.getId()).get().addOnSuccessListener(snap -> {
                 WriteBatch b = db.batch();
@@ -423,11 +636,22 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
         });
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
+     * changes.
+     * Part of this method writes changes back to Firestore/storage, so this is where app actions
+     * become permanent.
+     */
     private void backlogByUserId(WriteBatch b, String uid, String type, String oid, Object data) {
         Map<String, Object> m = new HashMap<>(); m.put("type", type); m.put("originalId", oid); m.put("data", data); m.put("deletedBy", uid); m.put("deletedAt", FieldValue.serverTimestamp());
+        // Set up or query the Firebase layer that supplies/stores this feature's data.
         b.set(db.collection("deletedforum_backlog").document(), m);
     }
 
+    /**
+     * Takes prepared data and presents it on screen or in a dialog/menu.
+     */
     private void showCommentReportDialog(ForumComment c) {
         String[] rs = {"Inappropriate Language", "Spam", "Harassment", "Other"};
         new AlertDialog.Builder(this).setTitle("Report Comment").setItems(rs, (d, w) -> {
@@ -436,11 +660,20 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
         }).show();
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     * User-facing feedback is shown here so the user knows whether the action succeeded, failed,
+     * or needs attention.
+     */
     private void submitCommentReport(ForumComment c, String reason) {
         FirebaseUser u = mAuth.getCurrentUser(); if (u == null) return;
+        // Give the user immediate feedback about the result of this action.
         firebaseManager.addReport(new Report("comment", c.getId(), u.getUid(), reason), t -> { if (t.isSuccessful()) Toast.makeText(this, "Reported", Toast.LENGTH_SHORT).show(); });
     }
 
+    /**
+     * Takes prepared data and presents it on screen or in a dialog/menu.
+     */
     private void showOtherReportDialog(OnReasonEnteredListener l) {
         AlertDialog.Builder b = new AlertDialog.Builder(this); b.setTitle("Report Reason");
         final EditText i = new EditText(this); i.setHint("Specify reason..."); i.setFilters(new InputFilter[]{new InputFilter.LengthFilter(200)});

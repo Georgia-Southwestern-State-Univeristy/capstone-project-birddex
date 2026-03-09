@@ -84,6 +84,12 @@ import java.util.concurrent.ConcurrentHashMap;
  * 2. Stale Fetch: Added fetchGeneration counter.
  * 3. Like Spam: Added postLikeInFlight and commentLikeInFlight guards.
  */
+/**
+ * NearbyHeatmapActivity: Map screen that draws heatmap-style sightings and supports map/filter interactions.
+ *
+ * These comments focus on what the actual code blocks are doing so the file is easier to trace
+ * when you are debugging or presenting the app. Only comments were added; runtime logic was not changed.
+ */
 public class NearbyHeatmapActivity extends AppCompatActivity
         implements OnMapReadyCallback, GoogleMap.OnCircleClickListener, GoogleMap.OnMarkerClickListener, ForumCommentAdapter.OnCommentInteractionListener {
 
@@ -161,15 +167,27 @@ public class NearbyHeatmapActivity extends AppCompatActivity
     private final Set<String> commentLikeInFlight = Collections.newSetFromMap(new ConcurrentHashMap<>());
     private boolean isNavigating = false;
 
+    /**
+     * Android calls this when the Activity is first created. This is where the screen usually
+     * inflates its layout, grabs views, creates helpers, and wires listeners.
+     * It grabs layout/view references here so later code can read from them, update them, or
+     * attach listeners.
+     * It wires user actions here, so taps on buttons/cards/menus trigger the next step in the
+     * flow.
+     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
+     * changes.
+     */
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_nearby_heatmap);
 
+        // Set up or query the Firebase layer that supplies/stores this feature's data.
         db = FirebaseFirestore.getInstance();
         mAuth = FirebaseAuth.getInstance();
         firebaseManager = new FirebaseManager(this);
 
+        // Bind or inflate the UI pieces this method needs before it can update the screen.
         findViewById(R.id.btnBack).setOnClickListener(v -> finish());
         tvMapSubtitle = findViewById(R.id.tvMapSubtitle);
 
@@ -180,15 +198,25 @@ public class NearbyHeatmapActivity extends AppCompatActivity
 
         SupportMapFragment mapFragment = (SupportMapFragment) getSupportFragmentManager().findFragmentById(R.id.map);
         if (mapFragment != null) mapFragment.getMapAsync(this);
+        // Give the user immediate feedback about the result of this action.
         else { Toast.makeText(this, "Map failed to load", Toast.LENGTH_SHORT).show(); finish(); }
     }
 
+    /**
+     * Runs when the screen returns to the foreground, so it often refreshes UI state or restarts
+     * listeners.
+     */
     @Override
     protected void onResume() {
         super.onResume();
         isNavigating = false;
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     * Location values are handled here, so this is part of the logic that decides what area/bird
+     * sightings the user sees.
+     */
     @Override
     public void onMapReady(@NonNull GoogleMap map) {
         googleMap = map;
@@ -233,6 +261,10 @@ public class NearbyHeatmapActivity extends AppCompatActivity
         });
     }
 
+    /**
+     * Pulls data from a local source, Firebase, or an external API and prepares it for the UI or
+     * caller.
+     */
     private void fetchHeatmapData() {
         final int gen = ++fetchGeneration;
         pendingLoads = 4;
@@ -245,17 +277,42 @@ public class NearbyHeatmapActivity extends AppCompatActivity
         loadEbirdApiSightings(gen);
     }
 
+    /**
+     * Pulls data from a local source, Firebase, or an external API and prepares it for the UI or
+     * caller.
+     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
+     * changes.
+     * Location values are handled here, so this is part of the logic that decides what area/bird
+     * sightings the user sees.
+     */
     private void loadForumPins() {
+        // Set up or query the Firebase layer that supplies/stores this feature's data.
         db.collection("forumThreads").whereEqualTo("showLocation", true).get(Source.CACHE).addOnSuccessListener(snap -> {
             if (snap != null && !snap.isEmpty()) processForumPins(snap);
             fetchForumPinsFromServer();
         }).addOnFailureListener(e -> fetchForumPinsFromServer());
     }
 
+    /**
+     * Pulls data from a local source, Firebase, or an external API and prepares it for the UI or
+     * caller.
+     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
+     * changes.
+     * Location values are handled here, so this is part of the logic that decides what area/bird
+     * sightings the user sees.
+     */
     private void fetchForumPinsFromServer() {
+        // Set up or query the Firebase layer that supplies/stores this feature's data.
         db.collection("forumThreads").whereEqualTo("showLocation", true).get(Source.SERVER).addOnSuccessListener(this::processForumPins).addOnFailureListener(e -> Log.e(TAG, "Error", e));
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     * This method also reads or writes local device preferences so some state survives app
+     * restarts.
+     * Location values are handled here, so this is part of the logic that decides what area/bird
+     * sightings the user sees.
+     */
     private void processForumPins(com.google.firebase.firestore.QuerySnapshot snap) {
         clearForumMarkers();
         boolean showGraphic = getSharedPreferences(PREFS_NAME, MODE_PRIVATE).getBoolean(KEY_GRAPHIC_CONTENT, false);
@@ -269,6 +326,13 @@ public class NearbyHeatmapActivity extends AppCompatActivity
         }
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     * Location values are handled here, so this is part of the logic that decides what area/bird
+     * sightings the user sees.
+     * Bitmap/rendering work happens here, so this block is shaping the final card/image output
+     * rather than just text data.
+     */
     private void addPinToMap(ForumPost p) {
         LatLng pos = new LatLng(p.getLatitude(), p.getLongitude());
         StringBuilder status = new StringBuilder();
@@ -286,12 +350,24 @@ public class NearbyHeatmapActivity extends AppCompatActivity
         if (m != null) { m.setTag(p); forumMarkers.add(m); }
     }
 
+    /**
+     * Builds data from the current screen/object state and writes it out to storage, Firebase, or
+     * another service.
+     * Bitmap/rendering work happens here, so this block is shaping the final card/image output
+     * rather than just text data.
+     */
     private BitmapDescriptor createColoredPin(int color) {
         int size = 80; Bitmap bm = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888); Canvas c = new Canvas(bm); Paint p = new Paint();
         p.setColor(color); p.setAntiAlias(true); c.drawCircle(size / 2f, size / 3f, size / 3f, p); c.drawRect(size / 2f - 4, size / 2f, size / 2f + 4, size * 0.9f, p);
         return BitmapDescriptorFactory.fromBitmap(bm);
     }
 
+    /**
+     * Builds data from the current screen/object state and writes it out to storage, Firebase, or
+     * another service.
+     * Bitmap/rendering work happens here, so this block is shaping the final card/image output
+     * rather than just text data.
+     */
     private BitmapDescriptor createDualColorPin() {
         int size = 80; Bitmap bm = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888); Canvas c = new Canvas(bm); Paint p = new Paint(); p.setAntiAlias(true);
         p.setColor(Color.BLUE); c.drawArc(size/6f, 0, size*5/6f, size*2/3f, 90, 180, true, p);
@@ -305,9 +381,20 @@ public class NearbyHeatmapActivity extends AppCompatActivity
 
     @Override public boolean onMarkerClick(@NonNull Marker m) { Object tag = m.getTag(); if (tag instanceof ForumPost) { showPostInBottomSheet((ForumPost) tag); return true; } return false; }
 
+    /**
+     * Takes prepared data and presents it on screen or in a dialog/menu.
+     * It grabs layout/view references here so later code can read from them, update them, or
+     * attach listeners.
+     * It wires user actions here, so taps on buttons/cards/menus trigger the next step in the
+     * flow.
+     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
+     * changes.
+     */
     private void showPostInBottomSheet(ForumPost p) {
+        // Bind or inflate the UI pieces this method needs before it can update the screen.
         activePost = p; BottomSheetDialog dialog = new BottomSheetDialog(this); View view = getLayoutInflater().inflate(R.layout.bottom_sheet_post_view, null); dialog.setContentView(view);
         FirebaseUser user = mAuth.getCurrentUser();
+        // Set up or query the Firebase layer that supplies/stores this feature's data.
         if (user != null && user.getUid().equals(p.getUserId()) && p.isNotificationSent()) db.collection("forumThreads").document(p.getId()).update("notificationSent", false);
 
         View content = view.findViewById(R.id.postContent);
@@ -318,6 +405,7 @@ public class NearbyHeatmapActivity extends AppCompatActivity
         ((TextView) content.findViewById(R.id.tvViewCount)).setText(p.getViewCount() + " views");
 
         if (p.getTimestamp() != null) ((TextView) content.findViewById(R.id.tvPostTimestamp)).setText(DateUtils.getRelativeTimeSpanString(p.getTimestamp().toDate().getTime()));
+        // Load the image asynchronously so the UI can show remote/local media without blocking the main thread.
         Glide.with(this).load(p.getUserProfilePictureUrl()).placeholder(R.drawable.ic_profile).into((ImageView) content.findViewById(R.id.ivPostUserProfilePicture));
 
         ImageView ivBird = content.findViewById(R.id.ivPostBirdImage);
@@ -327,6 +415,7 @@ public class NearbyHeatmapActivity extends AppCompatActivity
         ImageView ivLike = content.findViewById(R.id.ivLikeIcon);
         ivLike.setImageResource((user != null && p.getLikedBy() != null && p.getLikedBy().containsKey(user.getUid())) ? R.drawable.ic_favorite : R.drawable.ic_favorite_border);
 
+        // Attach the user interaction that should run when this control is tapped.
         content.findViewById(R.id.btnLike).setOnClickListener(v -> {
             if (user == null || postLikeInFlight.contains(p.getId())) return;
             postLikeInFlight.add(p.getId());
@@ -381,9 +470,18 @@ public class NearbyHeatmapActivity extends AppCompatActivity
 
     private void refreshPopupComments() { if (activePost == null) return; popupCommentList.clear(); lastPopupCommentVisible = null; isLastPopupCommentsPage = false; fetchPopupComments(activePost.getId(), popupCommentAdapter); }
 
+    /**
+     * Pulls data from a local source, Firebase, or an external API and prepares it for the UI or
+     * caller.
+     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
+     * changes.
+     * There is also one-time async data loading here, so success/failure callbacks are important
+     * for the final UI state.
+     */
     private void fetchPopupComments(String postId, ForumCommentAdapter adapter) {
         if (isFetchingPopupComments || isLastPopupCommentsPage) return;
         isFetchingPopupComments = true;
+        // Set up or query the Firebase layer that supplies/stores this feature's data.
         Query q = db.collection("forumThreads").document(postId).collection("comments").orderBy("timestamp", Query.Direction.ASCENDING).limit(POPUP_COMMENTS_PAGE_SIZE);
         if (lastPopupCommentVisible != null) q = q.startAfter(lastPopupCommentVisible);
         q.get().addOnSuccessListener(val -> {
@@ -397,6 +495,9 @@ public class NearbyHeatmapActivity extends AppCompatActivity
         }).addOnFailureListener(e -> isFetchingPopupComments = false);
     }
 
+    /**
+     * Takes prepared data and presents it on screen or in a dialog/menu.
+     */
     private void showPostOptions(ForumPost p, View v, BottomSheetDialog dialog) {
         PopupMenu popup = new PopupMenu(this, v); FirebaseUser user = mAuth.getCurrentUser();
         if (user != null && p.getUserId().equals(user.getUid())) popup.getMenu().add("Delete");
@@ -409,10 +510,16 @@ public class NearbyHeatmapActivity extends AppCompatActivity
         popup.show();
     }
 
+    /**
+     * Takes prepared data and presents it on screen or in a dialog/menu.
+     */
     private void showDeleteConfirmation(ForumPost p, BottomSheetDialog dialog) {
         new AlertDialog.Builder(this).setTitle("Delete Post").setMessage("Are you sure?").setPositiveButton("Delete", (d, w) -> archiveAndDeletePost(p, dialog)).setNegativeButton("Cancel", null).show();
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     */
     private void archiveAndDeletePost(ForumPost post, BottomSheetDialog dialog) {
         FirebaseUser user = mAuth.getCurrentUser(); if (user == null) return;
         if (post.getBirdImageUrl() != null && !post.getBirdImageUrl().isEmpty()) {
@@ -423,11 +530,23 @@ public class NearbyHeatmapActivity extends AppCompatActivity
         } else handleCommentsArchiveAndDeletion(user.getUid(), post, dialog);
     }
 
+    /**
+     * Central handler that reacts to an event/input and decides what the next app action should
+     * be.
+     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
+     * changes.
+     * There is also one-time async data loading here, so success/failure callbacks are important
+     * for the final UI state.
+     * Part of this method writes changes back to Firestore/storage, so this is where app actions
+     * become permanent.
+     */
     private void handleCommentsArchiveAndDeletion(String uid, ForumPost post, BottomSheetDialog dialog) {
+        // Set up or query the Firebase layer that supplies/stores this feature's data.
         db.collection("forumThreads").document(post.getId()).collection("comments").get().addOnSuccessListener(snap -> {
             WriteBatch b = db.batch();
             for (DocumentSnapshot d : snap) {
                 Map<String, Object> c = new HashMap<>(); c.put("type", "comment_archived_with_post"); c.put("originalId", d.getId()); c.put("postId", post.getId()); c.put("data", d.getData()); c.put("deletedBy", uid); c.put("deletedAt", FieldValue.serverTimestamp());
+                // Persist the new state so the action is saved outside the current screen.
                 b.set(db.collection("deletedforum_backlog").document(), c); b.delete(d.getReference());
             }
             Map<String, Object> pb = new HashMap<>(); pb.put("type", "post"); pb.put("originalId", post.getId()); pb.put("data", post); pb.put("deletedBy", uid); pb.put("deletedAt", FieldValue.serverTimestamp());
@@ -438,32 +557,59 @@ public class NearbyHeatmapActivity extends AppCompatActivity
 
     private interface OnImageArchivedListener { void onSuccess(String url); void onFailure(Exception e); }
 
+    /**
+     * Main logic block for this part of the feature.
+     * Part of this method writes changes back to Firestore/storage, so this is where app actions
+     * become permanent.
+     */
     private void moveImageToArchive(String uid, String pid, String url, OnImageArchivedListener l) {
         FirebaseStorage s = FirebaseStorage.getInstance();
         try {
             StorageReference old = s.getReferenceFromUrl(url);
             StorageReference next = s.getReference().child("archive/forum_post_images/" + uid + "/" + pid + "_" + old.getName());
+            // Persist the new state so the action is saved outside the current screen.
             old.getBytes(10 * 1024 * 1024).addOnSuccessListener(bytes -> next.putBytes(bytes).addOnSuccessListener(ts -> next.getDownloadUrl().addOnSuccessListener(uri -> old.delete().addOnCompleteListener(t -> l.onSuccess(uri.toString()))).addOnFailureListener(l::onFailure)).addOnFailureListener(l::onFailure)).addOnFailureListener(l::onFailure);
         } catch (Exception e) { l.onFailure(e); }
     }
 
+    /**
+     * Builds data from the current screen/object state and writes it out to storage, Firebase, or
+     * another service.
+     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
+     * changes.
+     * Part of this method writes changes back to Firestore/storage, so this is where app actions
+     * become permanent.
+     */
     private void savePostToBacklogAndFirestore(String uid, ForumPost post, BottomSheetDialog dialog) {
         WriteBatch b = db.batch(); Map<String, Object> m = new HashMap<>();
         m.put("type", "post"); m.put("originalId", post.getId()); m.put("data", post); m.put("deletedBy", uid); m.put("deletedAt", FieldValue.serverTimestamp());
+        // Set up or query the Firebase layer that supplies/stores this feature's data.
         b.set(db.collection("deletedforum_backlog").document(), m); b.delete(db.collection("forumThreads").document(post.getId()));
         b.commit().addOnSuccessListener(v -> { if (dialog != null) dialog.dismiss(); loadForumPins(); });
     }
 
+    /**
+     * Takes prepared data and presents it on screen or in a dialog/menu.
+     */
     private void showReportDialog(String type, String id) {
         String[] rs = {"Inappropriate Language", "Spam", "Harassment", "Other"};
         new AlertDialog.Builder(this).setTitle("Report").setItems(rs, (d, w) -> { if (rs[w].equals("Other")) showOtherReportDialog(reason -> submitReport(type, id, reason)); else submitReport(type, id, rs[w]); }).show();
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     * User-facing feedback is shown here so the user knows whether the action succeeded, failed,
+     * or needs attention.
+     */
     private void submitReport(String type, String id, String r) {
         FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser(); if (user == null) return;
+        // Give the user immediate feedback about the result of this action.
         firebaseManager.addReport(new Report(type, id, user.getUid(), r), t -> { if (t.isSuccessful()) Toast.makeText(this, "Reported", Toast.LENGTH_SHORT).show(); });
     }
 
+    /**
+     * Takes prepared data and presents it on screen or in a dialog/menu.
+     */
     private void showOtherReportDialog(OnReasonEnteredListener l) {
         AlertDialog.Builder b = new AlertDialog.Builder(this); b.setTitle("Reason"); final EditText i = new EditText(this); i.setHint("Specify..."); i.setFilters(new InputFilter[]{new InputFilter.LengthFilter(200)});
         FrameLayout c = new FrameLayout(this); FrameLayout.LayoutParams p = new FrameLayout.LayoutParams(-1, -2); p.leftMargin = p.rightMargin = 40; i.setLayoutParams(p); c.addView(i); b.setView(c);
@@ -473,6 +619,15 @@ public class NearbyHeatmapActivity extends AppCompatActivity
 
     private interface OnReasonEnteredListener { void onReasonEntered(String r); }
 
+    /**
+     * Main logic block for this part of the feature.
+     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
+     * changes.
+     * Part of this method writes changes back to Firestore/storage, so this is where app actions
+     * become permanent.
+     * It prepares or refreshes adapter-backed lists/grids here so the latest model objects are
+     * rendered on screen.
+     */
     @Override
     public void onCommentLikeClick(ForumComment c) {
         FirebaseUser user = mAuth.getCurrentUser(); if (user == null || activePost == null || commentLikeInFlight.contains(c.getId())) return;
@@ -484,7 +639,9 @@ public class NearbyHeatmapActivity extends AppCompatActivity
         else { c.setLikeCount(count+1); c.getLikedBy().put(uid, true); }
         if (popupCommentAdapter != null) popupCommentAdapter.notifyDataSetChanged();
 
+        // Set up or query the Firebase layer that supplies/stores this feature's data.
         db.collection("forumThreads").document(activePost.getId()).collection("comments").document(c.getId())
+                // Persist the new state so the action is saved outside the current screen.
                 .update("likedBy." + uid, liked ? FieldValue.delete() : true)
                 .addOnCompleteListener(t -> {
                     commentLikeInFlight.remove(c.getId());
@@ -498,15 +655,29 @@ public class NearbyHeatmapActivity extends AppCompatActivity
     @Override public void onCommentReplyClick(ForumComment c) { replyingToComment = c; if (currentPopupEditText != null) { currentPopupEditText.setHint("Replying to " + c.getUsername() + "..."); currentPopupEditText.requestFocus(); } }
     @Override public void onCommentOptionsClick(ForumComment c, View v) { PopupMenu p = new PopupMenu(this, v); FirebaseUser user = mAuth.getCurrentUser(); if (user != null && c.getUserId().equals(user.getUid())) p.getMenu().add("Delete"); p.getMenu().add("Report"); p.setOnMenuItemClickListener(item -> { if (item.getTitle().equals("Delete")) showCommentDeleteConfirmation(c); else if (item.getTitle().equals("Report")) showReportDialog("comment", c.getId()); return true; }); p.show(); }
 
+    /**
+     * Takes prepared data and presents it on screen or in a dialog/menu.
+     */
     private void showCommentDeleteConfirmation(ForumComment c) {
         new AlertDialog.Builder(this).setTitle("Delete Comment").setMessage("Are you sure?").setPositiveButton("Delete", (d, w) -> deleteCommentAndReplies(c)).setNegativeButton("Cancel", null).show();
     }
 
+    /**
+     * Removes data/listeners/items and then updates local state so the UI matches the deletion.
+     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
+     * changes.
+     * There is also one-time async data loading here, so success/failure callbacks are important
+     * for the final UI state.
+     * Part of this method writes changes back to Firestore/storage, so this is where app actions
+     * become permanent.
+     */
     private void deleteCommentAndReplies(ForumComment c) {
         FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser(); if (user == null || activePost == null) return;
         if (c.getParentCommentId() == null) {
+            // Set up or query the Firebase layer that supplies/stores this feature's data.
             db.collection("forumThreads").document(activePost.getId()).collection("comments").whereEqualTo("parentCommentId", c.getId()).get().addOnSuccessListener(snap -> {
                 WriteBatch b = db.batch();
+                // Persist the new state so the action is saved outside the current screen.
                 for (DocumentSnapshot d : snap) { backlogByUserId(b, user.getUid(), "comment_reply", d.getId(), d.getData()); b.delete(d.getReference()); }
                 backlogByUserId(b, user.getUid(), "comment", c.getId(), c); b.delete(db.collection("forumThreads").document(activePost.getId()).collection("comments").document(c.getId()));
                 b.commit().addOnSuccessListener(v -> refreshPopupComments());
@@ -518,8 +689,16 @@ public class NearbyHeatmapActivity extends AppCompatActivity
         }
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
+     * changes.
+     * Part of this method writes changes back to Firestore/storage, so this is where app actions
+     * become permanent.
+     */
     private void backlogByUserId(WriteBatch b, String uid, String type, String oid, Object data) {
         Map<String, Object> m = new HashMap<>(); m.put("type", type); m.put("originalId", oid); m.put("data", data); m.put("deletedBy", uid); m.put("deletedAt", FieldValue.serverTimestamp());
+        // Set up or query the Firebase layer that supplies/stores this feature's data.
         b.set(db.collection("deletedforum_backlog").document(), m);
     }
 
@@ -529,28 +708,61 @@ public class NearbyHeatmapActivity extends AppCompatActivity
         startActivity(new Intent(this, UserSocialProfileActivity.class).putExtra(UserSocialProfileActivity.EXTRA_USER_ID, uid));
     }
 
+    /**
+     * Pulls data from a local source, Firebase, or an external API and prepares it for the UI or
+     * caller.
+     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
+     * changes.
+     */
     private void loadUserBirdSightings(int gen) {
+        // Set up or query the Firebase layer that supplies/stores this feature's data.
         db.collection("userBirdSightings").limit(500).get(Source.CACHE).addOnSuccessListener(snap -> {
             if (snap != null && !snap.isEmpty()) processSightings(snap, true, gen); else onCollectionFinished(gen);
             fetchUserBirdSightingsFromServer(gen);
         }).addOnFailureListener(e -> { onCollectionFinished(gen); fetchUserBirdSightingsFromServer(gen); });
     }
 
+    /**
+     * Pulls data from a local source, Firebase, or an external API and prepares it for the UI or
+     * caller.
+     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
+     * changes.
+     */
     private void fetchUserBirdSightingsFromServer(int gen) {
+        // Set up or query the Firebase layer that supplies/stores this feature's data.
         db.collection("userBirdSightings").limit(500).get(Source.SERVER).addOnSuccessListener(snap -> processSightings(snap, true, gen)).addOnFailureListener(e -> onCollectionFinished(gen));
     }
 
+    /**
+     * Pulls data from a local source, Firebase, or an external API and prepares it for the UI or
+     * caller.
+     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
+     * changes.
+     */
     private void loadEbirdApiSightings(int gen) {
+        // Set up or query the Firebase layer that supplies/stores this feature's data.
         db.collection("eBirdApiSightings").limit(1000).get(Source.CACHE).addOnSuccessListener(snap -> {
             if (snap != null && !snap.isEmpty()) processSightings(snap, false, gen); else onCollectionFinished(gen);
             fetchEbirdApiSightingsFromServer(gen);
         }).addOnFailureListener(e -> { onCollectionFinished(gen); fetchEbirdApiSightingsFromServer(gen); });
     }
 
+    /**
+     * Pulls data from a local source, Firebase, or an external API and prepares it for the UI or
+     * caller.
+     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
+     * changes.
+     */
     private void fetchEbirdApiSightingsFromServer(int gen) {
+        // Set up or query the Firebase layer that supplies/stores this feature's data.
         db.collection("eBirdApiSightings").limit(1000).get(Source.SERVER).addOnSuccessListener(snap -> processSightings(snap, false, gen)).addOnFailureListener(e -> onCollectionFinished(gen));
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     * Location values are handled here, so this is part of the logic that decides what area/bird
+     * sightings the user sees.
+     */
     private void processSightings(com.google.firebase.firestore.QuerySnapshot snap, boolean user, int gen) {
         if (fetchGeneration != gen) return;
         List<WeightedLatLng> hl = user ? userHeatPoints : eBirdHeatPoints; List<HotspotSighting> hsl = user ? userHotspotSightings : eBirdHotspotSightings;
@@ -563,17 +775,28 @@ public class NearbyHeatmapActivity extends AppCompatActivity
         rebuildHotspotBuckets(); onCollectionFinished(gen);
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     */
     private void onCollectionFinished(int gen) {
         if (fetchGeneration != gen) return;
         pendingLoads--; if (pendingLoads <= 0) renderHeatmaps();
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     * Location values are handled here, so this is part of the logic that decides what area/bird
+     * sightings the user sees.
+     */
     private void rebuildHotspotBuckets() {
         hotspotBuckets.clear();
         for (HotspotSighting s : userHotspotSightings) addToHotspotBucket(s.lat, s.lng, s.birdName, true);
         for (HotspotSighting s : eBirdHotspotSightings) addToHotspotBucket(s.lat, s.lng, s.birdName, false);
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     */
     private void renderHeatmaps() {
         if (googleMap == null) return;
         if (eBirdOverlay != null) { eBirdOverlay.remove(); eBirdOverlay = null; }
@@ -588,6 +811,11 @@ public class NearbyHeatmapActivity extends AppCompatActivity
         else tvMapSubtitle.setText("Heatmap: " + userHeatPoints.size() + " unverified, " + eBirdHeatPoints.size() + " verified");
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     * Location values are handled here, so this is part of the logic that decides what area/bird
+     * sightings the user sees.
+     */
     private void renderHotspotCircles() {
         for (HotspotBucket b : hotspotBuckets.values()) {
             if (b.pointCount == 0) continue;
@@ -600,8 +828,14 @@ public class NearbyHeatmapActivity extends AppCompatActivity
 
     @Override public void onCircleClick(@NonNull Circle c) { HotspotBucket b = circleIdToBucket.get(c.getId()); if (b != null) showBirdListBottomSheet(b); }
 
+    /**
+     * Takes prepared data and presents it on screen or in a dialog/menu.
+     * It grabs layout/view references here so later code can read from them, update them, or
+     * attach listeners.
+     */
     private void showBirdListBottomSheet(@NonNull HotspotBucket b) {
         BottomSheetDialog dialog = new BottomSheetDialog(this); dialog.setContentView(R.layout.bottom_sheet_heatmap_birds);
+        // Bind or inflate the UI pieces this method needs before it can update the screen.
         View bs = dialog.findViewById(com.google.android.material.R.id.design_bottom_sheet);
         if (bs != null) { bs.setBackgroundColor(Color.TRANSPARENT); ViewGroup.LayoutParams p = bs.getLayoutParams(); p.height = (int) (getResources().getDisplayMetrics().heightPixels * 0.58f); bs.setLayoutParams(p); BottomSheetBehavior<View> behavior = BottomSheetBehavior.from(bs); behavior.setState(BottomSheetBehavior.STATE_EXPANDED); }
         ((TextView) dialog.findViewById(R.id.tvSheetSummary)).setText("Unverified: " + b.userCount + "  •  Verified: " + b.eBirdCount);
@@ -617,6 +851,11 @@ public class NearbyHeatmapActivity extends AppCompatActivity
         dialog.show();
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     * Location values are handled here, so this is part of the logic that decides what area/bird
+     * sightings the user sees.
+     */
     private void addToHotspotBucket(double lat, double lng, String name, boolean user) {
         double blat = Math.round(lat / HOTSPOT_BUCKET_SIZE) * HOTSPOT_BUCKET_SIZE, blng = Math.round(lng / HOTSPOT_BUCKET_SIZE) * HOTSPOT_BUCKET_SIZE;
         String key = String.format(Locale.US, "%.4f,%.4f", blat, blng);
@@ -626,6 +865,11 @@ public class NearbyHeatmapActivity extends AppCompatActivity
 
     private String extractBirdName(DocumentSnapshot d) { String n = getAnyString(d, "commonName", "comName", "birdName", "species", "scientificName", "sciName", "speciesCode", "birdId"); return (n == null || n.trim().isEmpty()) ? "Unknown bird" : n.trim().replace("_", " ").replace("-", " "); }
 
+    /**
+     * Main logic block for this part of the feature.
+     * Location values are handled here, so this is part of the logic that decides what area/bird
+     * sightings the user sees.
+     */
     private boolean shouldBeFiltered(double lat, double lng, Long time) {
         if (time != null && (System.currentTimeMillis() - time > SIGHTING_RECENCY_MS)) return true;
         if (currentVisibleBounds != null) return !currentVisibleBounds.contains(new LatLng(lat, lng));

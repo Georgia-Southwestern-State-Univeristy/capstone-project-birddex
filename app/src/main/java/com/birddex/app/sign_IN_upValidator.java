@@ -9,7 +9,7 @@ import android.widget.EditText;
  * These comments focus on what the actual code blocks are doing so the file is easier to trace
  * when you are debugging or presenting the app. Only comments were added; runtime logic was not changed.
  */
- * sign_IN_upValidator is a utility class for validating user input fields in forms.
+ /* sign_IN_upValidator is a utility class for validating user input fields in forms.
  * It provides methods to check for required fields, proper email formatting, 
  * and password length constraints for sign-up, sign-in, and password reset.
  */

@@ -1327,7 +1327,7 @@ async function _updateUserTotals(userId, eventId, totalBirdsChange, duplicateBir
  */
 exports.onUserBirdCreated = onDocumentCreated("userBirds/{uploadId}", async (event) => {
     const userBirdData = event.data.data();
-    const { userId, birdSpeciesId } = userBirdData;
+    const { userId, birdSpeciesId, awardPoints = true } = userBirdData;
     if (!userId) {
         logger.error("onUserBirdCreated: No userId in document.");
         return null;
@@ -1348,7 +1348,7 @@ exports.onUserBirdCreated = onDocumentCreated("userBirds/{uploadId}", async (eve
     // FIX #21b: Compute pointsEarned server-side from the bird's rarity field.
     // Fallback to 0 if the bird doc doesn't exist or has no rarity.
     let pointsEarned = 0;
-    if (birdSpeciesId && !isDuplicate) {
+    if (awardPoints && birdSpeciesId && !isDuplicate) {
         const birdDoc = await db.collection("birds").doc(birdSpeciesId).get();
         if (birdDoc.exists) {
             const rarity = (birdDoc.data().rarity || "").toLowerCase();
@@ -1384,7 +1384,13 @@ exports.onUserBirdDeleted = onDocumentDeleted("userBirds/{uploadId}", async (eve
         return null;
     }
     // Use the document ID (uploadId) as the unique event key for idempotency
-    await _updateUserTotals(userId, `DELETED_${event.params.uploadId}`, -1, isDuplicate ? -1 : 0, -pointsEarned);
+    await _updateUserTotals(
+        userId,
+        `DELETED_${event.params.uploadId}`,
+        -1,
+        isDuplicate ? -1 : 0,
+        0
+    );
     return null;
 });
 
@@ -1601,13 +1607,13 @@ exports.onDeleteUserBirdImage = onDocumentDeleted("users/{userId}/userBirdImage/
         // finds the key already present and exits — preventing the double-decrement.
         if (shouldDeleteAndDecrement) {
             await _updateUserTotals(
-                userId,
-                `DELETED_${userBirdRefId}`,
-                -1,
-                capturedIsDuplicate ? -1 : 0,
-                -capturedPointsEarned
-            );
-        }
+            userId,
+            `DELETED_${userBirdRefId}`,
+            -1,
+            capturedIsDuplicate ? -1 : 0,
+            0
+        );
+    }
     } catch (error) {
         logger.error(`Failed to cleanup for deleted image ${userBirdRefId}:`, error);
     }

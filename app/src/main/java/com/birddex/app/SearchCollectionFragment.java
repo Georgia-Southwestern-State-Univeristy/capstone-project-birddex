@@ -172,7 +172,9 @@ public class SearchCollectionFragment extends Fragment {
             if (isNavigating) return;
             isNavigating = true;
             // Move into the next screen and pass the identifiers/data that screen needs.
-            startActivity(new Intent(getContext(), CropActivity.class).putExtra(CropActivity.EXTRA_IMAGE_URI, uri.toString()));
+            startActivity(new Intent(getContext(), CropActivity.class)
+                    .putExtra(CropActivity.EXTRA_IMAGE_URI, uri.toString())
+                    .putExtra(CropActivity.EXTRA_AWARD_POINTS, false));
         }
     }
 

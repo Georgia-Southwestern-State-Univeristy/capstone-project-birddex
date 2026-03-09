@@ -30,6 +30,7 @@ public class CropActivity extends AppCompatActivity {
 
     // Key for passing the image URI via intent extras.
     public static final String EXTRA_IMAGE_URI = "image_uri";
+    public static final String EXTRA_AWARD_POINTS = "awardPoints";
 
     private CropImageView cropImageView;
     
@@ -93,8 +94,11 @@ public class CropActivity extends AppCompatActivity {
             Uri croppedImageUri = saveBitmapToFile(cropped);
 
             if (croppedImageUri != null) {
+                boolean awardPoints = getIntent().getBooleanExtra(EXTRA_AWARD_POINTS, true);
+
                 Intent intent = new Intent(this, IdentifyingActivity.class);
                 intent.putExtra("imageUri", croppedImageUri.toString());
+                intent.putExtra("awardPoints", awardPoints);
                 // Move into the next screen and pass the identifiers/data that screen needs.
                 startActivity(intent);
                 finish();

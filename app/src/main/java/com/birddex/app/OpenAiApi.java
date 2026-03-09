@@ -16,7 +16,7 @@ import androidx.annotation.Nullable; // Import for Nullable annotation
  * These comments focus on what the actual code blocks are doing so the file is easier to trace
  * when you are debugging or presenting the app. Only comments were added; runtime logic was not changed.
  */
- * OpenAiApi is a helper class for interacting with OpenAI's Chat Completions API via Cloud Functions.
+ /* OpenAiApi is a helper class for interacting with OpenAI's Chat Completions API via Cloud Functions.
  * It sends a Base64 encoded image to a secure server-side function to identify bird species.
  */
 public class OpenAiApi {

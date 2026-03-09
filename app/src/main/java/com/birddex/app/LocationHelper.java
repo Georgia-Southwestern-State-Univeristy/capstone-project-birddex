@@ -26,16 +26,17 @@ import java.util.Locale;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
-/**
+
 /**
  * to: Interface/model contract used to keep different parts of the app communicating with a shared shape.
  *
  * These comments focus on what the actual code blocks are doing so the file is easier to trace
  * when you are debugging or presenting the app. Only comments were added; runtime logic was not changed.
  */
- * Helper class to manage location services, including permission checks,
- * requesting updates, and reverse geocoding.
+/*Helper class to manage location services, including permission checks,
+requesting updates, and reverse geocoding.
  */
+
 public class LocationHelper {
 
     private static final String TAG = "LocationHelper";

@@ -17,7 +17,7 @@ import java.util.Map;
  * These comments focus on what the actual code blocks are doing so the file is easier to trace
  * when you are debugging or presenting the app. Only comments were added; runtime logic was not changed.
  */
- * NuthatchApi is a helper class for interacting with the Nuthatch API via Firebase Cloud Functions.
+ /* NuthatchApi is a helper class for interacting with the Nuthatch API via Firebase Cloud Functions.
  * It searches for bird images by name using a secure server-side function.
  */
 public class NuthatchApi {

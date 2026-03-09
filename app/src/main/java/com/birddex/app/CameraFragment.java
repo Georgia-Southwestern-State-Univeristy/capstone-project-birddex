@@ -198,7 +198,9 @@ public class CameraFragment extends Fragment {
                 Uri savedUri = output.getSavedUri();
                 if (savedUri == null) { btnCapture.setEnabled(true); btnCapture.setAlpha(1f); return; }
                 // Move into the next screen and pass the identifiers/data that screen needs.
-                startActivity(new Intent(requireContext(), CropActivity.class).putExtra(CropActivity.EXTRA_IMAGE_URI, savedUri.toString()));
+                startActivity(new Intent(requireContext(), CropActivity.class)
+                        .putExtra(CropActivity.EXTRA_IMAGE_URI, savedUri.toString())
+                        .putExtra(CropActivity.EXTRA_AWARD_POINTS, true));
                 // Re-enable button in case user returns to this fragment
                 btnCapture.setEnabled(true);
                 btnCapture.setAlpha(1f);

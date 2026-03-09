@@ -37,6 +37,7 @@ public class BirdInfoActivity extends AppCompatActivity {
 
     private RadioGroup rgQuantity;
     private Button btnStore;
+    private boolean awardPoints = true;
     
     // FIX: Guard against double-tap launching multiple activities
     private final AtomicBoolean storeClicked = new AtomicBoolean(false);
@@ -71,6 +72,7 @@ public class BirdInfoActivity extends AppCompatActivity {
         currentScientificName = getIntent().getStringExtra("scientificName");
         currentSpecies = getIntent().getStringExtra("species");
         currentFamily = getIntent().getStringExtra("family");
+        awardPoints = getIntent().getBooleanExtra("awardPoints", true);
 
         currentLatitude = getIntent().hasExtra("latitude") ? getIntent().getDoubleExtra("latitude", 0.0) : null;
         currentLongitude = getIntent().hasExtra("longitude") ? getIntent().getDoubleExtra("longitude", 0.0) : null;
@@ -112,9 +114,12 @@ public class BirdInfoActivity extends AppCompatActivity {
             i.putExtra(CardMakerActivity.EXTRA_FAMILY, currentFamily);
             i.putExtra(CardMakerActivity.EXTRA_QUANTITY, quantity);
             i.putExtra(CardMakerActivity.EXTRA_RECORD_SIGHTING, true);
+            i.putExtra(CardMakerActivity.EXTRA_AWARD_POINTS, awardPoints);
             if (currentLatitude != null) i.putExtra(CardMakerActivity.EXTRA_LATITUDE, currentLatitude);
             if (currentLongitude != null) i.putExtra(CardMakerActivity.EXTRA_LONGITUDE, currentLongitude);
             i.putExtra(CardMakerActivity.EXTRA_COUNTRY, currentCountry);
+
+
 
             // Move into the next screen and pass the identifiers/data that screen needs.
             startActivity(i);

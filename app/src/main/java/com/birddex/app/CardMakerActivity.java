@@ -99,6 +99,8 @@ public class CardMakerActivity extends AppCompatActivity {
     private Double currentLatitude;
     private Double currentLongitude;
     private String currentCountry;
+    public static final String EXTRA_AWARD_POINTS = "awardPoints";
+    private boolean shouldAwardPoints;
 
     /**
      * Android calls this when the Activity is first created. This is where the screen usually
@@ -150,6 +152,8 @@ public class CardMakerActivity extends AppCompatActivity {
         currentLongitude      = getIntent().hasExtra(EXTRA_LONGITUDE)
                 ? getIntent().getDoubleExtra(EXTRA_LONGITUDE, 0.0) : null;
         currentCountry        = getIntent().getStringExtra(EXTRA_COUNTRY);
+
+        shouldAwardPoints = getIntent().getBooleanExtra(EXTRA_AWARD_POINTS, true);
 
         if (originalImageUri == null) {
             // Give the user immediate feedback about the result of this action.
@@ -296,6 +300,7 @@ public class CardMakerActivity extends AppCompatActivity {
             ubData.put("locationId", locationId);
             ubData.put("imageUrl", originalImageUrl);
             ubData.put("imageCount", 1);
+            ubData.put("awardPoints", shouldAwardPoints);
             transaction.set(userBirdRef, ubData);
 
             // --- UserBirdImage ---

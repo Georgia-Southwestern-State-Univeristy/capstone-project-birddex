@@ -399,6 +399,9 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
             intent.putExtra("family", family);
             intent.putExtra("imageUrl", downloadUrl);
 
+            boolean awardPoints = getIntent().getBooleanExtra("awardPoints", true);
+            intent.putExtra("awardPoints", awardPoints);
+
             if (latitude != null) {
                 intent.putExtra("latitude", latitude);
                 intent.putExtra("longitude", longitude);

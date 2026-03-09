@@ -11,6 +11,12 @@ import org.json.JSONObject;
 import java.util.ArrayList;
 import java.util.List;
 
+/**
+ * BirdCacheManager: Support/helper/model class used by other BirdDex screens so logic can stay reusable and organized.
+ *
+ * These comments focus on what the actual code blocks are doing so the file is easier to trace
+ * when you are debugging or presenting the app. Only comments were added; runtime logic was not changed.
+ */
 public class BirdCacheManager {
     private static final String TAG = "BirdCacheManager";
     private static final String PREF_NAME = "BirdDexCache";
@@ -19,10 +25,20 @@ public class BirdCacheManager {
 
     private final SharedPreferences prefs;
 
+    /**
+     * Constructor that stores incoming dependencies/values so this object starts in a usable
+     * state.
+     * This method also reads or writes local device preferences so some state survives app
+     * restarts.
+     */
     public BirdCacheManager(Context context) {
         this.prefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE);
     }
 
+    /**
+     * Builds data from the current screen/object state and writes it out to storage, Firebase, or
+     * another service.
+     */
     public synchronized void saveNearbyBirds(List<Bird> birds) {
         JSONArray array = new JSONArray();
         for (Bird bird : birds) {
@@ -45,6 +61,9 @@ public class BirdCacheManager {
                 .apply();
     }
 
+    /**
+     * Returns the current value/state this class needs somewhere else in the app.
+     */
     public synchronized List<Bird> getCachedNearbyBirds() {
         String json = prefs.getString(KEY_NEARBY_BIRDS, null);
         if (json == null) return new ArrayList<>();
@@ -72,6 +91,9 @@ public class BirdCacheManager {
     /**
      * FIX: synchronized so a concurrent saveNearbyBirds() cannot cause a falsely
      * large stale-age value being read while the timestamp is mid-write.
+     */
+    /**
+     * Returns the current value/state this class needs somewhere else in the app.
      */
     public synchronized long getCacheAge() {
         return System.currentTimeMillis() - prefs.getLong(KEY_NEARBY_TIMESTAMP, 0);

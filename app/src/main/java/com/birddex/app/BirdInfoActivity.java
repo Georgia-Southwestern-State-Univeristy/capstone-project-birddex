@@ -14,6 +14,12 @@ import androidx.appcompat.app.AppCompatActivity;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 
+/**
+ * BirdInfoActivity: Activity class for one BirdDex screen. It owns screen setup, user actions, and navigation for this part of the app.
+ *
+ * These comments focus on what the actual code blocks are doing so the file is easier to trace
+ * when you are debugging or presenting the app. Only comments were added; runtime logic was not changed.
+ */
 public class BirdInfoActivity extends AppCompatActivity {
 
     private String currentImageUriStr;
@@ -35,11 +41,21 @@ public class BirdInfoActivity extends AppCompatActivity {
     // FIX: Guard against double-tap launching multiple activities
     private final AtomicBoolean storeClicked = new AtomicBoolean(false);
 
+    /**
+     * Android calls this when the Activity is first created. This is where the screen usually
+     * inflates its layout, grabs views, creates helpers, and wires listeners.
+     * It grabs layout/view references here so later code can read from them, update them, or
+     * attach listeners.
+     * It wires user actions here, so taps on buttons/cards/menus trigger the next step in the
+     * flow.
+     * It also packages extras into an Intent when this flow needs to open another Activity.
+     */
     @Override
     protected void onCreate(@Nullable Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_bird_info);
 
+        // Bind or inflate the UI pieces this method needs before it can update the screen.
         ImageView birdImageView = findViewById(R.id.birdImageView);
         TextView commonNameTextView = findViewById(R.id.commonNameTextView);
         TextView scientificNameTextView = findViewById(R.id.scientificNameTextView);
@@ -75,6 +91,7 @@ public class BirdInfoActivity extends AppCompatActivity {
                 btnStore.setEnabled(checkedId != -1)
         );
 
+        // Attach the user interaction that should run when this control is tapped.
         btnStore.setOnClickListener(v -> {
             if (!storeClicked.compareAndSet(false, true)) return;
             
@@ -99,6 +116,7 @@ public class BirdInfoActivity extends AppCompatActivity {
             if (currentLongitude != null) i.putExtra(CardMakerActivity.EXTRA_LONGITUDE, currentLongitude);
             i.putExtra(CardMakerActivity.EXTRA_COUNTRY, currentCountry);
 
+            // Move into the next screen and pass the identifiers/data that screen needs.
             startActivity(i);
         });
 
@@ -110,16 +128,29 @@ public class BirdInfoActivity extends AppCompatActivity {
         });
     }
 
+    /**
+     * Runs when the screen returns to the foreground, so it often refreshes UI state or restarts
+     * listeners.
+     * Part of this method writes changes back to Firestore/storage, so this is where app actions
+     * become permanent.
+     */
     @Override
     protected void onResume() {
         super.onResume();
         // Reset guard if returning to this activity
+        // Persist the new state so the action is saved outside the current screen.
         storeClicked.set(false);
     }
 
+    /**
+     * Returns the current value/state this class needs somewhere else in the app.
+     * It grabs layout/view references here so later code can read from them, update them, or
+     * attach listeners.
+     */
     private String getSelectedQuantity() {
         int checkedId = rgQuantity.getCheckedRadioButtonId();
         if (checkedId != -1) {
+            // Bind or inflate the UI pieces this method needs before it can update the screen.
             RadioButton rb = findViewById(checkedId);
             return rb.getText().toString();
         }

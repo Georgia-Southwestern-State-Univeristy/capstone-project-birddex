@@ -18,6 +18,12 @@ import com.google.firebase.auth.FirebaseAuth;
 import com.google.firebase.auth.FirebaseUser;
 import com.google.firebase.firestore.ListenerRegistration;
 
+/**
+ * BirdDexAppCheck: Support/helper/model class used by other BirdDex screens so logic can stay reusable and organized.
+ *
+ * These comments focus on what the actual code blocks are doing so the file is easier to trace
+ * when you are debugging or presenting the app. Only comments were added; runtime logic was not changed.
+ */
 public class BirdDexAppCheck extends Application {
     private static final String TAG = "BirdDexAppCheck";
     private ListenerRegistration sessionListener;
@@ -25,6 +31,12 @@ public class BirdDexAppCheck extends Application {
     private SessionManager sessionManager;
     private Activity currentActivity;
 
+    /**
+     * Android calls this when the Activity is first created. This is where the screen usually
+     * inflates its layout, grabs views, creates helpers, and wires listeners.
+     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
+     * changes.
+     */
     @Override
     public void onCreate() {
         super.onCreate();
@@ -40,6 +52,7 @@ public class BirdDexAppCheck extends Application {
                     PlayIntegrityAppCheckProviderFactory.getInstance());
         }
 
+        // Set up or query the Firebase layer that supplies/stores this feature's data.
         firebaseManager = new FirebaseManager(this);
         sessionManager = new SessionManager(this);
 
@@ -87,6 +100,9 @@ public class BirdDexAppCheck extends Application {
         });
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     */
     private void startSessionListener() {
         FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
         if (user != null && sessionListener == null) {
@@ -108,6 +124,9 @@ public class BirdDexAppCheck extends Application {
         }
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     */
     private void stopSessionListener() {
         if (sessionListener != null) {
             sessionListener.remove();
@@ -115,6 +134,10 @@ public class BirdDexAppCheck extends Application {
         }
     }
 
+    /**
+     * Central handler that reacts to an event/input and decides what the next app action should
+     * be.
+     */
     private void handleOtherDeviceLogin(String uid) {
         stopSessionListener();
         
@@ -135,12 +158,17 @@ public class BirdDexAppCheck extends Application {
         }
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     * It also packages extras into an Intent when this flow needs to open another Activity.
+     */
     private void logoutAndRedirect(String uid) {
         FirebaseAuth.getInstance().signOut();
         sessionManager.clearSession(uid);
         
         Intent intent = new Intent(this, LoginActivity.class);
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
+        // Move into the next screen and pass the identifiers/data that screen needs.
         startActivity(intent);
     }
 }

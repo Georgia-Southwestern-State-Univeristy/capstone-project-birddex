@@ -4,6 +4,12 @@ import com.google.firebase.Timestamp;
 import com.google.firebase.firestore.ServerTimestamp;
 import java.util.Map;
 
+/**
+ * ForumComment: Support/helper/model class used by other BirdDex screens so logic can stay reusable and organized.
+ *
+ * These comments focus on what the actual code blocks are doing so the file is easier to trace
+ * when you are debugging or presenting the app. Only comments were added; runtime logic was not changed.
+ */
 public class ForumComment {
     private String id;
     private String threadId;
@@ -21,11 +27,19 @@ public class ForumComment {
     private Timestamp lastEditedAt;
     private boolean likeNotificationSent;
 
+    /**
+     * Constructor that stores incoming dependencies/values so this object starts in a usable
+     * state.
+     */
     public ForumComment() {
         // Required for Firestore
         this.likedBy = new java.util.HashMap<>();
     }
 
+    /**
+     * Constructor that stores incoming dependencies/values so this object starts in a usable
+     * state.
+     */
     public ForumComment(String threadId, String userId, String username, String userProfilePictureUrl, String text) {
         this.threadId = threadId;
         this.userId = userId;

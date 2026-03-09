@@ -11,6 +11,12 @@ import java.util.HashMap;
 import java.util.Map;
 
 /**
+/**
+ * for: Interface/model contract used to keep different parts of the app communicating with a shared shape.
+ *
+ * These comments focus on what the actual code blocks are doing so the file is easier to trace
+ * when you are debugging or presenting the app. Only comments were added; runtime logic was not changed.
+ */
  * NuthatchApi is a helper class for interacting with the Nuthatch API via Firebase Cloud Functions.
  * It searches for bird images by name using a secure server-side function.
  */
@@ -26,6 +32,9 @@ public class NuthatchApi {
         void onImageNotFound();
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     */
     public NuthatchApi() {
         // No longer needs Volley RequestQueue
     }
@@ -34,6 +43,9 @@ public class NuthatchApi {
      * Searches for a bird by its name using the 'searchBirdImage' Cloud Function.
      * @param searchTerm The name of the bird to search for.
      * @param handler The callback to handle the result.
+     */
+    /**
+     * Main logic block for this part of the feature.
      */
     public void searchNuthatchByName(String searchTerm, SearchResultHandler handler) {
         Map<String, Object> data = new HashMap<>();

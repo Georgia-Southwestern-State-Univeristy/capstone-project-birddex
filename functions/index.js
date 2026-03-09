@@ -1,3 +1,10 @@
+/**
+ * Firebase Functions backend for BirdDex.
+ *
+ * These added notes explain what the specific backend blocks are doing so you can match
+ * Android app actions to the Cloud Function / Firestore logic that supports them.
+ */
+
 // 1. Use the specific v1 auth import for the cleanup trigger
 const functions = require("firebase-functions/v1");
 const { logger } = require("firebase-functions");
@@ -44,6 +51,11 @@ const CONFIG = {
 // ======================================================
 // HELPER: Input Sanitization
 // ======================================================
+/**
+ * Validates/cleans incoming text before the backend trusts it or writes it to Firestore.
+ * Input/permission checks happen here first so invalid requests fail before any expensive
+ * backend work starts.
+ */
 function sanitizeUsername(username) {
     if (!username || typeof username !== "string") {
         throw new HttpsError("invalid-argument", "Username must be a non-empty string.");
@@ -59,6 +71,9 @@ function sanitizeUsername(username) {
     return trimmed;
 }
 
+/**
+ * Validates/cleans incoming text before the backend trusts it or writes it to Firestore.
+ */
 function sanitizeText(text, maxLength = 5000) {
     if (!text || typeof text !== "string") return "";
     const trimmed = text.trim();
@@ -91,6 +106,9 @@ async function getOrCreateLocation(latitude, longitude, localityName, db) {
 // ======================================================
 // HELPER: Delay
 // ======================================================
+/**
+ * Main backend logic block for this Firebase Functions file.
+ */
 function delay(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
@@ -347,6 +365,13 @@ async function getOrCreateAndSaveBirdFacts(birdId, commonName) {
 // ======================================================
 // checkUsernameAndEmailAvailability
 // ======================================================
+/**
+ * Main backend logic block for this Firebase Functions file.
+ * This code reads/writes Firestore documents, so it is part of the persistent backend state
+ * for the app.
+ * Input/permission checks happen here first so invalid requests fail before any expensive
+ * backend work starts.
+ */
 exports.checkUsernameAndEmailAvailability = onCall(async (request) => {
     const { username, email } = request.data;
     const sanitizedUsername = sanitizeUsername(username);
@@ -357,6 +382,7 @@ exports.checkUsernameAndEmailAvailability = onCall(async (request) => {
 
     try {
         const [usernameSnapshot, emailSnapshot] = await Promise.all([
+            // This is where the function touches Firestore documents/collections for the requested action.
             db.collection("users").where("username", "==", sanitizedUsername).limit(1).get(),
             db.collection("users").where("email", "==", email.trim()).limit(1).get()
         ]);
@@ -374,6 +400,13 @@ exports.checkUsernameAndEmailAvailability = onCall(async (request) => {
 // ======================================================
 // initializeUser
 // ======================================================
+/**
+ * Main backend logic block for this Firebase Functions file.
+ * This code reads/writes Firestore documents, so it is part of the persistent backend state
+ * for the app.
+ * Input/permission checks happen here first so invalid requests fail before any expensive
+ * backend work starts.
+ */
 exports.initializeUser = onCall(async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Authentication required.");
 
@@ -381,6 +414,7 @@ exports.initializeUser = onCall(async (request) => {
     const uid = request.auth.uid;
     const sanitizedUsername = sanitizeUsername(username);
 
+    // This is where the function touches Firestore documents/collections for the requested action.
     const userRef = db.collection("users").doc(uid);
     // Dedicated username registry: doc ID = username, guaranteed unique by Firestore
     const usernameRef = db.collection("usernames").doc(sanitizedUsername);
@@ -432,6 +466,11 @@ exports.initializeUser = onCall(async (request) => {
 // ======================================================
 // createUserDocument — on Auth signup
 // ======================================================
+/**
+ * Main backend logic block for this Firebase Functions file.
+ * This code reads/writes Firestore documents, so it is part of the persistent backend state
+ * for the app.
+ */
 exports.createUserDocument = auth.user().onCreate(async (user) => {
     const { uid, email } = user;
     if (!email) {
@@ -440,6 +479,7 @@ exports.createUserDocument = auth.user().onCreate(async (user) => {
     }
 
     try {
+        // This is where the function touches Firestore documents/collections for the requested action.
         await db.collection("users").doc(uid).set({
             email,
             bio: "",
@@ -470,10 +510,18 @@ exports.createUserDocument = auth.user().onCreate(async (user) => {
 //          deleting the source doc (handles crash-between-write-and-delete).
 //      (b) Use a WriteBatch to make the archive-set and user-delete atomic.
 // ======================================================
+/**
+ * Main backend logic block for this Firebase Functions file.
+ * This code reads/writes Firestore documents, so it is part of the persistent backend state
+ * for the app.
+ * Input/permission checks happen here first so invalid requests fail before any expensive
+ * backend work starts.
+ */
 exports.archiveAndDeleteUser = onCall(async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "The function must be called while authenticated.");
 
     const uid = request.auth.uid;
+    // This is where the function touches Firestore documents/collections for the requested action.
     const userRef = db.collection("users").doc(uid);
     const archiveRef = db.collection("usersdeletedAccounts").doc(uid);
     try {
@@ -519,10 +567,20 @@ exports.archiveAndDeleteUser = onCall(async (request) => {
 // ======================================================
 // identifyBird (OpenAI) - FIXED: Idempotent version
 // ======================================================
+/**
+ * Main backend logic block for this Firebase Functions file.
+ * This code reads/writes Firestore documents, so it is part of the persistent backend state
+ * for the app.
+ * It also calls an external API, which is where third-party bird/AI/network data enters the
+ * backend flow.
+ * Input/permission checks happen here first so invalid requests fail before any expensive
+ * backend work starts.
+ */
 exports.identifyBird = onCall({ secrets: [OPENAI_API_KEY], timeoutSeconds: 30 }, async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
 
     const userId = request.auth.uid;
+    // This is where the function touches Firestore documents/collections for the requested action.
     const userRef = db.collection("users").doc(userId);
     const { image, imageUrl, latitude, longitude, localityName, requestId } = request.data;
 
@@ -692,10 +750,18 @@ exports.identifyBird = onCall({ secrets: [OPENAI_API_KEY], timeoutSeconds: 30 },
 // ======================================================
 // recordPfpChange - FIXED: Idempotent version
 // ======================================================
+/**
+ * Main backend logic block for this Firebase Functions file.
+ * This code reads/writes Firestore documents, so it is part of the persistent backend state
+ * for the app.
+ * Input/permission checks happen here first so invalid requests fail before any expensive
+ * backend work starts.
+ */
 exports.recordPfpChange = onCall({ timeoutSeconds: 15 }, async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Authentication required.");
 
     const userId = request.auth.uid;
+    // This is where the function touches Firestore documents/collections for the requested action.
     const userRef = db.collection("users").doc(userId);
     const { changeId } = request.data;
 
@@ -911,6 +977,13 @@ async function _syncGeorgiaBirdsCore() {
 // ======================================================
 // getGeorgiaBirds (Callable version)
 // ======================================================
+/**
+ * Retrieves data from Firestore or an external service and normalizes it for the caller.
+ * This code reads/writes Firestore documents, so it is part of the persistent backend state
+ * for the app.
+ * Input/permission checks happen here first so invalid requests fail before any expensive
+ * backend work starts.
+ */
 exports.getGeorgiaBirds = onCall({ secrets: [EBIRD_API_KEY], timeoutSeconds: 60 }, async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Authentication required.");
 
@@ -918,6 +991,7 @@ exports.getGeorgiaBirds = onCall({ secrets: [EBIRD_API_KEY], timeoutSeconds: 60 
         await _syncGeorgiaBirdsCore();
 
         // Fetch and return the list (to maintain backward compatibility with client expectations)
+        // This is where the function touches Firestore documents/collections for the requested action.
         const cacheDoc = await db.collection("ebird_ga_cache").doc("data").get();
         const birdIds = cacheDoc.data()?.birdIds || [];
 
@@ -935,6 +1009,9 @@ exports.getGeorgiaBirds = onCall({ secrets: [EBIRD_API_KEY], timeoutSeconds: 60 
 // ======================================================
 // scheduledGetGeorgiaBirds (Scheduled version - Every 72h)
 // ======================================================
+/**
+ * Main backend logic block for this Firebase Functions file.
+ */
 exports.scheduledGetGeorgiaBirds = onSchedule({
     schedule: "every 72 hours",
     secrets: [EBIRD_API_KEY],
@@ -952,6 +1029,13 @@ exports.scheduledGetGeorgiaBirds = onSchedule({
 // ======================================================
 // getBirdDetailsAndFacts (lazy on-demand)
 // ======================================================
+/**
+ * Retrieves data from Firestore or an external service and normalizes it for the caller.
+ * This code reads/writes Firestore documents, so it is part of the persistent backend state
+ * for the app.
+ * Input/permission checks happen here first so invalid requests fail before any expensive
+ * backend work starts.
+ */
 exports.getBirdDetailsAndFacts = onCall({ secrets: [OPENAI_API_KEY], timeoutSeconds: 60 }, async (request) => {
     const { birdId } = request.data;
     if (!birdId || typeof birdId !== "string" || birdId.trim().length === 0) {
@@ -959,6 +1043,7 @@ exports.getBirdDetailsAndFacts = onCall({ secrets: [OPENAI_API_KEY], timeoutSeco
     }
 
     try {
+        // This is where the function touches Firestore documents/collections for the requested action.
         const birdDoc = await db.collection("birds").doc(birdId).get();
         if (!birdDoc.exists) throw new HttpsError("not-found", `Bird with ID ${birdId} not found.`);
 
@@ -980,6 +1065,13 @@ exports.getBirdDetailsAndFacts = onCall({ secrets: [OPENAI_API_KEY], timeoutSeco
 // ======================================================
 // searchBirdImage (Nuthatch API)
 // ======================================================
+/**
+ * Main backend logic block for this Firebase Functions file.
+ * It also calls an external API, which is where third-party bird/AI/network data enters the
+ * backend flow.
+ * Input/permission checks happen here first so invalid requests fail before any expensive
+ * backend work starts.
+ */
 exports.searchBirdImage = onCall({ secrets: [NUTHATCH_API_KEY], timeoutSeconds: 15 }, async (request) => {
     try {
         const response = await axios.get(
@@ -997,6 +1089,11 @@ exports.searchBirdImage = onCall({ secrets: [NUTHATCH_API_KEY], timeoutSeconds: 
 // cleanupUserData — on Auth delete (v1)
 // FIXED: Parallel processing of forum threads to prevent timeout
 // ======================================================
+/**
+ * Main backend logic block for this Firebase Functions file.
+ * This code reads/writes Firestore documents, so it is part of the persistent backend state
+ * for the app.
+ */
 exports.cleanupUserData = functions.runWith({
     timeoutSeconds: 300,
     memory: "512MB",
@@ -1005,6 +1102,7 @@ exports.cleanupUserData = functions.runWith({
     logger.info(`Starting cleanup for user: ${uid}`);
 
     try {
+        // This is where the function touches Firestore documents/collections for the requested action.
         const userRef = admin.firestore().collection("users").doc(uid);
         const userDoc = await userRef.get();
 
@@ -1131,6 +1229,11 @@ exports.cleanupUserData = functions.runWith({
 // The second delete is a no-op in Firestore but the surrounding logic (and any future
 // code here) could produce side effects.  Add a processedEvents idempotency guard.
 // ======================================================
+/**
+ * Main backend logic block for this Firebase Functions file.
+ * This code reads/writes Firestore documents, so it is part of the persistent backend state
+ * for the app.
+ */
 exports.onCollectionSlotUpdatedForImageDeletion = onDocumentUpdated("users/{userId}/collectionSlot/{slotId}", async (event) => {
     const beforeData = event.data.before.data();
     const afterData = event.data.after.data();
@@ -1140,6 +1243,7 @@ exports.onCollectionSlotUpdatedForImageDeletion = onDocumentUpdated("users/{user
 
     if (userBirdId && imageUrlBefore && !imageUrlAfter) {
         const slotId = event.params.slotId;
+        // This is where the function touches Firestore documents/collections for the requested action.
         const eventLogRef = db.collection("processedEvents").doc(`SLOT_DEL_${slotId}`);
 
         logger.info(`Starting cleanup for userBirdId: ${userBirdId}`);
@@ -1216,6 +1320,11 @@ async function _updateUserTotals(userId, eventId, totalBirdsChange, duplicateBir
 // Compute pointsEarned server-side from the bird's rarity field in the birds collection,
 // ignoring the client-provided value entirely.
 // ======================================================
+/**
+ * Main backend logic block for this Firebase Functions file.
+ * This code reads/writes Firestore documents, so it is part of the persistent backend state
+ * for the app.
+ */
 exports.onUserBirdCreated = onDocumentCreated("userBirds/{uploadId}", async (event) => {
     const userBirdData = event.data.data();
     const { userId, birdSpeciesId } = userBirdData;
@@ -1227,6 +1336,7 @@ exports.onUserBirdCreated = onDocumentCreated("userBirds/{uploadId}", async (eve
     // FIX #21a: Determine isDuplicate server-side.
     let isDuplicate = false;
     if (birdSpeciesId) {
+        // This is where the function touches Firestore documents/collections for the requested action.
         const existingSnap = await db.collection("userBirds")
             .where("userId", "==", userId)
             .where("birdSpeciesId", "==", birdSpeciesId)
@@ -1263,6 +1373,9 @@ exports.onUserBirdCreated = onDocumentCreated("userBirds/{uploadId}", async (eve
 // ======================================================
 // onUserBirdDeleted
 // ======================================================
+/**
+ * Main backend logic block for this Firebase Functions file.
+ */
 exports.onUserBirdDeleted = onDocumentDeleted("userBirds/{uploadId}", async (event) => {
     const userBirdData = event.data.data();
     const { userId, pointsEarned = 0, isDuplicate = false } = userBirdData;
@@ -1329,6 +1442,9 @@ async function _fetchAndStoreEBirdDataCore() {
 // ======================================================
 // fetchAndStoreEBirdData (scheduled)
 // ======================================================
+/**
+ * Retrieves data from Firestore or an external service and normalizes it for the caller.
+ */
 exports.fetchAndStoreEBirdData = onSchedule({
     schedule: "every 72 hours",
     secrets: [EBIRD_API_KEY],
@@ -1346,6 +1462,9 @@ exports.fetchAndStoreEBirdData = onSchedule({
 // ======================================================
 // triggerEbirdDataFetch (callable, for app warmup)
 // ======================================================
+/**
+ * Main backend logic block for this Firebase Functions file.
+ */
 exports.triggerEbirdDataFetch = onCall({ secrets: [EBIRD_API_KEY], timeoutSeconds: 60 }, async (request) => {
     logger.info("Callable eBird data fetch triggered.");
     try {
@@ -1359,6 +1478,9 @@ exports.triggerEbirdDataFetch = onCall({ secrets: [EBIRD_API_KEY], timeoutSecond
 // ======================================================
 // cleanupUnverifiedUsers (scheduled, every 24h)
 // ======================================================
+/**
+ * Main backend logic block for this Firebase Functions file.
+ */
 exports.cleanupUnverifiedUsers = onSchedule({
     schedule: "every 24 hours",
     timeZone: "America/New_York",
@@ -1392,6 +1514,11 @@ exports.cleanupUnverifiedUsers = onSchedule({
 // ======================================================
 // onDeleteUserBirdImage
 // ======================================================
+/**
+ * Main backend logic block for this Firebase Functions file.
+ * This code reads/writes Firestore documents, so it is part of the persistent backend state
+ * for the app.
+ */
 exports.onDeleteUserBirdImage = onDocumentDeleted("users/{userId}/userBirdImage/{userBirdImageId}", async (event) => {
     const deletedImage = event.data.data();
     const userId = event.params.userId;
@@ -1418,6 +1545,7 @@ exports.onDeleteUserBirdImage = onDocumentDeleted("users/{userId}/userBirdImage/
 
         // 2. Update collectionSlot
         if (birdId) {
+            // This is where the function touches Firestore documents/collections for the requested action.
             const collectionSlotSnap = await db.collection("users").doc(userId).collection("collectionSlot")
                 .where("birdId", "==", birdId).get();
 
@@ -1489,6 +1617,13 @@ exports.onDeleteUserBirdImage = onDocumentDeleted("users/{userId}/userBirdImage/
 // ======================================================
 // moderatePfpImage (OpenAI Vision)
 // ======================================================
+/**
+ * Main backend logic block for this Firebase Functions file.
+ * It also calls an external API, which is where third-party bird/AI/network data enters the
+ * backend flow.
+ * Input/permission checks happen here first so invalid requests fail before any expensive
+ * backend work starts.
+ */
 exports.moderatePfpImage = onCall({ secrets: [OPENAI_API_KEY], timeoutSeconds: 30 }, async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
 
@@ -1551,11 +1686,17 @@ Respond STRICTLY in JSON format with two keys:
 // ======================================================
 // archiveOldForumPosts (scheduled, every 24h)
 // ======================================================
+/**
+ * Main backend logic block for this Firebase Functions file.
+ * This code reads/writes Firestore documents, so it is part of the persistent backend state
+ * for the app.
+ */
 exports.archiveOldForumPosts = onSchedule({
     schedule: "every 24 hours",
     timeZone: "America/New_York",
     timeoutSeconds: 540
 }, async (event) => {
+    // This is where the function touches Firestore documents/collections for the requested action.
     const lockRef = db.collection("schedulerLocks").doc("archiveOldForumPosts");
     const STALE_LOCK_MS = 10 * 60 * 1000; // 10 minutes — release if previous run crashed
 
@@ -1634,6 +1775,9 @@ exports.archiveOldForumPosts = onSchedule({
 // IDEMPOTENT Forum Aggregates (Recalculation triggers)
 // ======================================================
 
+/**
+ * Main backend logic block for this Firebase Functions file.
+ */
 exports.onForumThreadEngagementUpdated = onDocumentUpdated("forumThreads/{threadId}", async (event) => {
     const beforeData = event.data.before.data();
     const afterData = event.data.after.data();
@@ -1659,6 +1803,9 @@ exports.onForumThreadEngagementUpdated = onDocumentUpdated("forumThreads/{thread
     return null;
 });
 
+/**
+ * Main backend logic block for this Firebase Functions file.
+ */
 exports.onCommentEngagementUpdated = onDocumentUpdated("forumThreads/{threadId}/comments/{commentId}", async (event) => {
     const afterData = event.data.after.data();
     if (!afterData) {
@@ -1678,6 +1825,11 @@ exports.onCommentEngagementUpdated = onDocumentUpdated("forumThreads/{threadId}/
 // ======================================================
 // onCommentCreated — notify on reply or post activity + IDEMPOTENT COUNT
 // ======================================================
+/**
+ * Main backend logic block for this Firebase Functions file.
+ * This code reads/writes Firestore documents, so it is part of the persistent backend state
+ * for the app.
+ */
 exports.onCommentCreated = onDocumentCreated("forumThreads/{threadId}/comments/{commentId}", async (event) => {
     const commentData = event.data.data();
     const threadId = event.params.threadId;
@@ -1685,6 +1837,7 @@ exports.onCommentCreated = onDocumentCreated("forumThreads/{threadId}/comments/{
     const parentCommentId = commentData.parentCommentId;
 
     // --- IDEMPOTENT commentCount INCREMENT ---
+    // This is where the function touches Firestore documents/collections for the requested action.
     const threadRef = db.collection("forumThreads").doc(threadId);
     const eventLogRef = db.collection("processedEvents").doc(`COMMENT_INC_${commentId}`);
 
@@ -1770,9 +1923,15 @@ exports.onCommentCreated = onDocumentCreated("forumThreads/{threadId}/comments/{
 // ======================================================
 // onCommentDeleted — IDEMPOTENT COUNT DECREMENT
 // ======================================================
+/**
+ * Main backend logic block for this Firebase Functions file.
+ * This code reads/writes Firestore documents, so it is part of the persistent backend state
+ * for the app.
+ */
 exports.onCommentDeleted = onDocumentDeleted("forumThreads/{threadId}/comments/{commentId}", async (event) => {
     const threadId = event.params.threadId;
     const commentId = event.params.commentId;
+    // This is where the function touches Firestore documents/collections for the requested action.
     const threadRef = db.collection("forumThreads").doc(threadId);
     const eventLogRef = db.collection("processedEvents").doc(`COMMENT_DEC_${commentId}`);
 
@@ -1797,6 +1956,11 @@ exports.onCommentDeleted = onDocumentDeleted("forumThreads/{threadId}/comments/{
 // ======================================================
 // onPostLiked
 // ======================================================
+/**
+ * Main backend logic block for this Firebase Functions file.
+ * This code reads/writes Firestore documents, so it is part of the persistent backend state
+ * for the app.
+ */
 exports.onPostLiked = onDocumentUpdated("forumThreads/{threadId}", async (event) => {
     const beforeData = event.data.before.data();
     const afterData = event.data.after.data();
@@ -1815,6 +1979,7 @@ exports.onPostLiked = onDocumentUpdated("forumThreads/{threadId}", async (event)
 
         if (!shouldSend) return null;
 
+        // This is where the function touches Firestore documents/collections for the requested action.
         const recipientDoc = await db.collection("users").doc(afterData.userId).get();
         if (!recipientDoc.exists) return null;
 
@@ -1852,6 +2017,11 @@ exports.onPostLiked = onDocumentUpdated("forumThreads/{threadId}", async (event)
 // both sent the notification, and both wrote true — resulting in duplicate pushes.
 // Fix: mirror the transaction pattern already used in onPostLiked.
 // ======================================================
+/**
+ * Main backend logic block for this Firebase Functions file.
+ * This code reads/writes Firestore documents, so it is part of the persistent backend state
+ * for the app.
+ */
 exports.onCommentLiked = onDocumentUpdated("forumThreads/{threadId}/comments/{commentId}", async (event) => {
     const beforeData = event.data.before.data();
     const afterData = event.data.after.data();
@@ -1871,6 +2041,7 @@ exports.onCommentLiked = onDocumentUpdated("forumThreads/{threadId}/comments/{co
 
         if (!shouldSend) return null;
 
+        // This is where the function touches Firestore documents/collections for the requested action.
         const recipientDoc = await db.collection("users").doc(afterData.userId).get();
         if (!recipientDoc.exists) return null;
 
@@ -1904,6 +2075,11 @@ exports.onCommentLiked = onDocumentUpdated("forumThreads/{threadId}/comments/{co
 // onUserProfileUpdated — sync PFP + username to forum content
 // FIXED: Added error handling and split collection tasks to prevent total failure
 // ======================================================
+/**
+ * Main backend logic block for this Firebase Functions file.
+ * This code reads/writes Firestore documents, so it is part of the persistent backend state
+ * for the app.
+ */
 exports.onUserProfileUpdated = onDocumentUpdated({
     document: "users/{userId}",
     timeoutSeconds: 540
@@ -2020,8 +2196,14 @@ exports.onUserProfileUpdated = onDocumentUpdated({
 // Fix: (a) Use a WriteBatch so archive-set and user-delete are atomic.
 //      (b) Check usersdeletedAccounts first — if already archived, skip silently.
 // ======================================================
+/**
+ * Main backend logic block for this Firebase Functions file.
+ * This code reads/writes Firestore documents, so it is part of the persistent backend state
+ * for the app.
+ */
 exports.onUserAuthDeleted = auth.user().onDelete(async (user) => {
     const uid = user.uid;
+    // This is where the function touches Firestore documents/collections for the requested action.
     const userRef = db.collection("users").doc(uid);
     const archiveRef = db.collection("usersdeletedAccounts").doc(uid);
     try {
@@ -2055,6 +2237,13 @@ exports.onUserAuthDeleted = auth.user().onDelete(async (user) => {
 // ======================================================
 // NEW: toggleFollow — atomic follow/unfollow
 // ======================================================
+/**
+ * Main backend logic block for this Firebase Functions file.
+ * This code reads/writes Firestore documents, so it is part of the persistent backend state
+ * for the app.
+ * Input/permission checks happen here first so invalid requests fail before any expensive
+ * backend work starts.
+ */
 exports.toggleFollow = onCall(async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Auth required.");
 
@@ -2071,6 +2260,7 @@ exports.toggleFollow = onCall(async (request) => {
         throw new HttpsError("invalid-argument", "Cannot follow yourself.");
     }
 
+    // This is where the function touches Firestore documents/collections for the requested action.
     const followerRef = db.collection("users").doc(followerId);
     const targetRef = db.collection("users").doc(targetUserId);
     const followingDocRef = followerRef.collection("following").doc(targetUserId);
@@ -2098,6 +2288,13 @@ exports.toggleFollow = onCall(async (request) => {
 // ======================================================
 // NEW: submitReport — server-side duplicate check
 // ======================================================
+/**
+ * Main backend logic block for this Firebase Functions file.
+ * This code reads/writes Firestore documents, so it is part of the persistent backend state
+ * for the app.
+ * Input/permission checks happen here first so invalid requests fail before any expensive
+ * backend work starts.
+ */
 exports.submitReport = onCall(async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Auth required.");
 
@@ -2110,6 +2307,7 @@ exports.submitReport = onCall(async (request) => {
 
     // Deterministic ID: one document per (reporter, target) pair
     const reportId = `${reporterId}_${targetId}`;
+    // This is where the function touches Firestore documents/collections for the requested action.
     const reportRef = db.collection("reports").doc(reportId);
 
     try {
@@ -2139,8 +2337,16 @@ exports.submitReport = onCall(async (request) => {
 // ======================================================
 // NEW: getLeaderboard — server-side top 20 by points
 // ======================================================
+/**
+ * Retrieves data from Firestore or an external service and normalizes it for the caller.
+ * This code reads/writes Firestore documents, so it is part of the persistent backend state
+ * for the app.
+ * Input/permission checks happen here first so invalid requests fail before any expensive
+ * backend work starts.
+ */
 exports.getLeaderboard = onCall(async (request) => {
     try {
+        // This is where the function touches Firestore documents/collections for the requested action.
         const snapshot = await db.collection("users")
             .orderBy("totalPoints", "desc")
             .limit(20)
@@ -2255,6 +2461,9 @@ async function _archiveStaleEBirdSightingsCore() {
     }
 }
 
+/**
+ * Main backend logic block for this Firebase Functions file.
+ */
 exports.archiveStaleEBirdSightings = onSchedule({
     schedule: "every 6 hours",
     timeZone: "America/New_York",
@@ -2266,6 +2475,11 @@ exports.archiveStaleEBirdSightings = onSchedule({
     return null;
 });
 
+/**
+ * Main backend logic block for this Firebase Functions file.
+ * Input/permission checks happen here first so invalid requests fail before any expensive
+ * backend work starts.
+ */
 exports.triggerArchiveStaleEBirdSightings = onCall(async (request) => {
     logger.info("Callable archiveStaleEBirdSightings triggered.");
     try { return await _archiveStaleEBirdSightingsCore(); }
@@ -2341,6 +2555,9 @@ async function _archiveStaleUserBirdSightingsCore() {
     }
 }
 
+/**
+ * Main backend logic block for this Firebase Functions file.
+ */
 exports.archiveStaleUserBirdSightings = onSchedule({
     schedule: "every 6 hours",
     timeZone: "America/New_York",
@@ -2352,6 +2569,11 @@ exports.archiveStaleUserBirdSightings = onSchedule({
     return null;
 });
 
+/**
+ * Main backend logic block for this Firebase Functions file.
+ * Input/permission checks happen here first so invalid requests fail before any expensive
+ * backend work starts.
+ */
 exports.triggerArchiveStaleUserBirdSightings = onCall(async (request) => {
     logger.info("Callable archiveStaleUserBirdSightings triggered.");
     try { return await _archiveStaleUserBirdSightingsCore(); }
@@ -2376,6 +2598,13 @@ exports.triggerArchiveStaleUserBirdSightings = onCall(async (request) => {
 // inside a single transaction so concurrent calls for the same
 // user+species cannot both slip through.
 // ======================================================
+/**
+ * Main backend logic block for this Firebase Functions file.
+ * This code reads/writes Firestore documents, so it is part of the persistent backend state
+ * for the app.
+ * Input/permission checks happen here first so invalid requests fail before any expensive
+ * backend work starts.
+ */
 exports.recordBirdSighting = onCall(async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
 
@@ -2402,6 +2631,7 @@ exports.recordBirdSighting = onCall(async (request) => {
     const sightingTimestamp = (typeof clientTimestamp === "number") ? clientTimestamp : now;
 
     const cooldownRef = db
+        // This is where the function touches Firestore documents/collections for the requested action.
         .collection("users").doc(userId)
         .collection("settings").doc("heatmapCooldowns");
 
@@ -2477,6 +2707,13 @@ exports.recordBirdSighting = onCall(async (request) => {
 // Returns: { allowed: true, remaining: N }  — post is permitted
 //          { allowed: false, remaining: 0 } — daily limit reached
 // ======================================================
+/**
+ * Main backend logic block for this Firebase Functions file.
+ * This code reads/writes Firestore documents, so it is part of the persistent backend state
+ * for the app.
+ * Input/permission checks happen here first so invalid requests fail before any expensive
+ * backend work starts.
+ */
 exports.recordForumPost = onCall(async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
 
@@ -2487,6 +2724,7 @@ exports.recordForumPost = onCall(async (request) => {
     const today = new Date().toISOString().slice(0, 10); // e.g. "2026-03-08"
 
     const postLimitRef = db
+        // This is where the function touches Firestore documents/collections for the requested action.
         .collection("users").doc(userId)
         .collection("settings").doc("forumPostLimits");
 

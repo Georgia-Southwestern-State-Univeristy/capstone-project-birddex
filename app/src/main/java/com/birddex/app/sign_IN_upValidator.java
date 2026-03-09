@@ -3,6 +3,12 @@ package com.birddex.app;
 import android.widget.EditText;
 
 /**
+/**
+ * for: Support/helper/model class used by other BirdDex screens so logic can stay reusable and organized.
+ *
+ * These comments focus on what the actual code blocks are doing so the file is easier to trace
+ * when you are debugging or presenting the app. Only comments were added; runtime logic was not changed.
+ */
  * sign_IN_upValidator is a utility class for validating user input fields in forms.
  * It provides methods to check for required fields, proper email formatting, 
  * and password length constraints for sign-up, sign-in, and password reset.
@@ -15,6 +21,9 @@ public class sign_IN_upValidator {
      * @param email EditText for user's email.
      * @param password EditText for user's password.
      * @return true if all fields are valid, false otherwise.
+     */
+    /**
+     * Main logic block for this part of the feature.
      */
     public boolean validateSignUpForm(EditText username, EditText email, EditText password) {
         boolean valid = true;
@@ -65,6 +74,9 @@ public class sign_IN_upValidator {
      * @param password EditText for user's password.
      * @return true if both fields are valid, false otherwise.
      */
+    /**
+     * Main logic block for this part of the feature.
+     */
     public boolean validateSignInForm(EditText email, EditText password) {
         boolean valid = true;
 
@@ -100,6 +112,9 @@ public class sign_IN_upValidator {
      * Validates the field for the Forgot Password form.
      * @param email EditText for user's email.
      * @return true if the email field is valid, false otherwise.
+     */
+    /**
+     * Main logic block for this part of the feature.
      */
     public boolean validateForgotPasswordForm(EditText email) {
         boolean valid = true;

@@ -19,6 +19,12 @@ import com.google.firebase.firestore.Source;
 import java.util.HashMap;
 import java.util.Map;
 
+/**
+ * BirdWikiActivity: Activity class for one BirdDex screen. It owns screen setup, user actions, and navigation for this part of the app.
+ *
+ * These comments focus on what the actual code blocks are doing so the file is easier to trace
+ * when you are debugging or presenting the app. Only comments were added; runtime logic was not changed.
+ */
 public class BirdWikiActivity extends AppCompatActivity {
 
     private static final String TAG = "BirdWikiActivity";
@@ -34,11 +40,21 @@ public class BirdWikiActivity extends AppCompatActivity {
 
     private final Map<String, TextView> factViews = new HashMap<>();
 
+    /**
+     * Android calls this when the Activity is first created. This is where the screen usually
+     * inflates its layout, grabs views, creates helpers, and wires listeners.
+     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
+     * changes.
+     * It also packages extras into an Intent when this flow needs to open another Activity.
+     * User-facing feedback is shown here so the user knows whether the action succeeded, failed,
+     * or needs attention.
+     */
     @Override
     protected void onCreate(@Nullable Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_bird_wiki);
 
+        // Set up or query the Firebase layer that supplies/stores this feature's data.
         db = FirebaseFirestore.getInstance();
         firebaseManager = new FirebaseManager(this);
 
@@ -47,6 +63,7 @@ public class BirdWikiActivity extends AppCompatActivity {
 
         String birdId = getIntent().getStringExtra(EXTRA_BIRD_ID);
         if (isBlank(birdId)) {
+            // Give the user immediate feedback about the result of this action.
             Toast.makeText(this, "Missing birdId for info page.", Toast.LENGTH_LONG).show();
             finish();
             return;
@@ -55,7 +72,13 @@ public class BirdWikiActivity extends AppCompatActivity {
         loadAllData(birdId);
     }
 
+    /**
+     * Connects already-fetched data to views so the user can see the current state.
+     * It grabs layout/view references here so later code can read from them, update them, or
+     * attach listeners.
+     */
     private void bindViews() {
+        // Bind or inflate the UI pieces this method needs before it can update the screen.
         ivBirdHeaderImage = findViewById(R.id.ivBirdHeaderImage);
         tvPageTitle = findViewById(R.id.tvPageTitle);
         tvPageScientificName = findViewById(R.id.tvPageScientificName);
@@ -92,13 +115,22 @@ public class BirdWikiActivity extends AppCompatActivity {
         }
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     * It grabs layout/view references here so later code can read from them, update them, or
+     * attach listeners.
+     */
     private void registerFactView(String key, int viewId) {
+        // Bind or inflate the UI pieces this method needs before it can update the screen.
         TextView tv = findViewById(viewId);
         if (tv != null) {
             factViews.put(key, tv);
         }
     }
 
+    /**
+     * Initializes helpers, adapters, listeners, or default values used by the rest of this file.
+     */
     private void initializePlaceholders() {
         tvPageTitle.setText("Loading...");
         tvPageScientificName.setText("Scientific name");
@@ -109,8 +141,15 @@ public class BirdWikiActivity extends AppCompatActivity {
         }
     }
 
+    /**
+     * Pulls data from a local source, Firebase, or an external API and prepares it for the UI or
+     * caller.
+     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
+     * changes.
+     */
     private void loadAllData(String birdId) {
         // 1. Load Basics (Cache -> Server)
+        // Set up or query the Firebase layer that supplies/stores this feature's data.
         db.collection("birds").document(birdId).get(Source.CACHE)
                 .addOnSuccessListener(doc -> {
                     if (doc.exists()) processBasics(doc);
@@ -137,12 +176,22 @@ public class BirdWikiActivity extends AppCompatActivity {
                 .addOnFailureListener(e -> fetchFactsFromCloudFunction(birdId));
     }
 
+    /**
+     * Pulls data from a local source, Firebase, or an external API and prepares it for the UI or
+     * caller.
+     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
+     * changes.
+     */
     private void fetchBasicsFromServer(String birdId) {
+        // Set up or query the Firebase layer that supplies/stores this feature's data.
         db.collection("birds").document(birdId).get(Source.SERVER)
                 .addOnSuccessListener(this::processBasics)
                 .addOnFailureListener(e -> Log.e(TAG, "Failed to load basics from server", e));
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     */
     private void processBasics(DocumentSnapshot doc) {
         if (isFinishing() || isDestroyed() || !doc.exists()) return;
 
@@ -162,11 +211,21 @@ public class BirdWikiActivity extends AppCompatActivity {
         }
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     */
     private void tvPageScientificScientificName(String name) {
         if (tvPageScientificName != null) tvPageScientificName.setText(name);
     }
 
+    /**
+     * Pulls data from a local source, Firebase, or an external API and prepares it for the UI or
+     * caller.
+     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
+     * changes.
+     */
     private void loadBirdImage(String commonName) {
+        // Set up or query the Firebase layer that supplies/stores this feature's data.
         db.collection("bird_images").document(commonName).get(Source.CACHE)
                 .addOnSuccessListener(doc -> {
                     if (doc.exists()) processImage(doc);
@@ -175,11 +234,23 @@ public class BirdWikiActivity extends AppCompatActivity {
                 .addOnFailureListener(e -> fetchImageFromServer(commonName));
     }
 
+    /**
+     * Pulls data from a local source, Firebase, or an external API and prepares it for the UI or
+     * caller.
+     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
+     * changes.
+     */
     private void fetchImageFromServer(String commonName) {
+        // Set up or query the Firebase layer that supplies/stores this feature's data.
         db.collection("bird_images").document(commonName).get(Source.SERVER)
                 .addOnSuccessListener(this::processImage);
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     * Image loading happens here, which is why placeholder/error behavior for profile
+     * photos/cards/posts usually traces back to this code path.
+     */
     private void processImage(DocumentSnapshot imageDoc) {
         if (isFinishing() || isDestroyed() || !imageDoc.exists()) return;
         String imageUrl = imageDoc.getString("imageUrl");
@@ -190,9 +261,13 @@ public class BirdWikiActivity extends AppCompatActivity {
         }
 
         ivBirdHeaderImage.setVisibility(View.VISIBLE);
+        // Load the image asynchronously so the UI can show remote/local media without blocking the main thread.
         Glide.with(this).load(imageUrl).into(ivBirdHeaderImage);
     }
 
+    /**
+     * Applies the latest values to existing UI/data so the screen and backend stay in sync.
+     */
     private void updateGeneralFactsFromMap(Map<String, Object> data) {
         if (data == null || isFinishing() || isDestroyed()) return;
 
@@ -217,6 +292,9 @@ public class BirdWikiActivity extends AppCompatActivity {
         setFact("avoidDisturbing", getString(data.get("avoidDisturbing")));
     }
 
+    /**
+     * Applies the latest values to existing UI/data so the screen and backend stay in sync.
+     */
     private void updateHunterFactsFromMap(Map<String, Object> data) {
         if (data == null || isFinishing() || isDestroyed()) return;
 
@@ -244,6 +322,10 @@ public class BirdWikiActivity extends AppCompatActivity {
         setFact("georgiaDNRHuntingLink", georgiaDNRHuntingLink);
     }
 
+    /**
+     * Pulls data from a local source, Firebase, or an external API and prepares it for the UI or
+     * caller.
+     */
     private void fetchFactsFromCloudFunction(String birdId) {
         if (isGeneratingFacts || isBlank(birdId)) return;
         isGeneratingFacts = true;
@@ -309,6 +391,9 @@ public class BirdWikiActivity extends AppCompatActivity {
         return isBlank(result) ? "Not available yet." : result;
     }
 
+    /**
+     * Updates object/screen state by storing a new value or reconfiguring a dependency.
+     */
     private void setFact(String key, String value) {
         TextView tv = factViews.get(key);
         if (tv != null) {
@@ -316,14 +401,23 @@ public class BirdWikiActivity extends AppCompatActivity {
         }
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     */
     private String firstNonBlank(String value, String fallback) {
         return isBlank(value) ? fallback : value;
     }
 
+    /**
+     * Returns the current value/state this class needs somewhere else in the app.
+     */
     private boolean isBlank(String value) {
         return value == null || value.trim().isEmpty();
     }
 
+    /**
+     * Returns the current value/state this class needs somewhere else in the app.
+     */
     private String getString(Object val) {
         return val == null ? null : String.valueOf(val);
     }

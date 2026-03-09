@@ -10,13 +10,27 @@ import android.view.animation.AnimationUtils;
 
 import androidx.appcompat.app.AppCompatActivity;
 
+/**
+ * SplashActivity: Very early launch entry point used before handing off to the real loading/login flow.
+ *
+ * These comments focus on what the actual code blocks are doing so the file is easier to trace
+ * when you are debugging or presenting the app. Only comments were added; runtime logic was not changed.
+ */
 public class SplashActivity extends AppCompatActivity {
 
+    /**
+     * Android calls this when the Activity is first created. This is where the screen usually
+     * inflates its layout, grabs views, creates helpers, and wires listeners.
+     * It grabs layout/view references here so later code can read from them, update them, or
+     * attach listeners.
+     * It also packages extras into an Intent when this flow needs to open another Activity.
+     */
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_splash);
 
+        // Bind or inflate the UI pieces this method needs before it can update the screen.
         View splashRoot = findViewById(R.id.splashRoot);
         
         // Load fancy entry animation and fade out
@@ -49,6 +63,7 @@ public class SplashActivity extends AppCompatActivity {
             @Override
             public void onAnimationEnd(Animation animation) {
                 // Transition to LoadingActivity
+                // Move into the next screen and pass the identifiers/data that screen needs.
                 startActivity(new Intent(SplashActivity.this, LoadingActivity.class));
                 finish();
                 // Smooth transition without blinking

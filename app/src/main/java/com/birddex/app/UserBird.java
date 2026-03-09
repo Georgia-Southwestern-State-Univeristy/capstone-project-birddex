@@ -3,6 +3,12 @@ package com.birddex.app;
 import com.google.firebase.firestore.Exclude;
 import java.util.Date;
 
+/**
+ * UserBird: Support/helper/model class used by other BirdDex screens so logic can stay reusable and organized.
+ *
+ * These comments focus on what the actual code blocks are doing so the file is easier to trace
+ * when you are debugging or presenting the app. Only comments were added; runtime logic was not changed.
+ */
 public class UserBird {
     private String id;
     private String userId;
@@ -16,11 +22,19 @@ public class UserBird {
     private int pointsEarned; // New field
     private int imageCount; // Track number of associated images
 
+    /**
+     * Constructor that stores incoming dependencies/values so this object starts in a usable
+     * state.
+     */
     public UserBird() {
         // Required for Firestore deserialization
     }
 
     // Existing constructor updated to initialize new fields
+    /**
+     * Constructor that stores incoming dependencies/values so this object starts in a usable
+     * state.
+     */
     public UserBird(String id, String userId, String birdSpeciesId, String imageUrl, String locationId, Date timeSpotted, String birdFactsId, String hunterFactsId) {
         this.id = id;
         this.userId = userId;
@@ -36,6 +50,10 @@ public class UserBird {
     }
 
     // Full constructor including all fields
+    /**
+     * Constructor that stores incoming dependencies/values so this object starts in a usable
+     * state.
+     */
     public UserBird(String id, String userId, String birdSpeciesId, String imageUrl, String locationId, Date timeSpotted, String birdFactsId, String hunterFactsId, boolean isDuplicate, int pointsEarned, int imageCount) {
         this.id = id;
         this.userId = userId;

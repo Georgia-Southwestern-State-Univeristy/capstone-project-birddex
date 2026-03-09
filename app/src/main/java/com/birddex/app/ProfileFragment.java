@@ -50,6 +50,12 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * ProfileFragment: Current-user profile screen that loads profile data, favorite cards, and the user's posts.
+ *
+ * These comments focus on what the actual code blocks are doing so the file is easier to trace
+ * when you are debugging or presenting the app. Only comments were added; runtime logic was not changed.
+ */
 public class ProfileFragment extends Fragment implements
         FavoritesAdapter.OnFavoriteInteractionListener,
         ForumPostAdapter.OnPostClickListener {
@@ -98,6 +104,9 @@ public class ProfileFragment extends Fragment implements
 
     public ProfileFragment() {}
 
+    /**
+     * Main logic block for this part of the feature.
+     */
     public static ProfileFragment newInstance(String userId) {
         ProfileFragment fragment = new ProfileFragment();
         Bundle args = new Bundle();
@@ -106,10 +115,17 @@ public class ProfileFragment extends Fragment implements
         return fragment;
     }
 
+    /**
+     * Android calls this when the Activity is first created. This is where the screen usually
+     * inflates its layout, grabs views, creates helpers, and wires listeners.
+     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
+     * changes.
+     */
     @Override
     public void onCreate(@Nullable Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         mAuth = FirebaseAuth.getInstance();
+        // Set up or query the Firebase layer that supplies/stores this feature's data.
         db = FirebaseFirestore.getInstance();
         firebaseManager = new FirebaseManager(requireContext());
 
@@ -124,9 +140,18 @@ public class ProfileFragment extends Fragment implements
         });
     }
 
+    /**
+     * Android calls this to inflate the Fragment's XML and return the root view that will be shown
+     * on screen.
+     * It grabs layout/view references here so later code can read from them, update them, or
+     * attach listeners.
+     * It prepares or refreshes adapter-backed lists/grids here so the latest model objects are
+     * rendered on screen.
+     */
     @Nullable
     @Override
     public View onCreateView(@NonNull LayoutInflater inflater, @Nullable ViewGroup container, @Nullable Bundle savedInstanceState) {
+        // Bind or inflate the UI pieces this method needs before it can update the screen.
         View v = inflater.inflate(R.layout.fragment_profile, container, false);
         ivPfp = v.findViewById(R.id.ivPfp);
         tvUsername = v.findViewById(R.id.tvUsername);
@@ -153,6 +178,10 @@ public class ProfileFragment extends Fragment implements
         return v;
     }
 
+    /**
+     * Runs when the screen returns to the foreground, so it often refreshes UI state or restarts
+     * listeners.
+     */
     @Override
     public void onResume() {
         super.onResume();
@@ -161,7 +190,13 @@ public class ProfileFragment extends Fragment implements
         refreshPosts();
     }
 
+    /**
+     * Updates object/screen state by storing a new value or reconfiguring a dependency.
+     * It prepares or refreshes adapter-backed lists/grids here so the latest model objects are
+     * rendered on screen.
+     */
     private void setupRecyclerViews() {
+        // Hook the data source to the list/grid adapter so model objects can render as UI rows/cards.
         favoritesAdapter = new FavoritesAdapter(isCurrentUser, this);
         rvFavoriteCards.setLayoutManager(new GridLayoutManager(requireContext(), 3) { @Override public boolean canScrollVertically() { return false; } });
         rvFavoriteCards.setAdapter(favoritesAdapter);
@@ -179,6 +214,9 @@ public class ProfileFragment extends Fragment implements
         });
     }
 
+    /**
+     * Updates object/screen state by storing a new value or reconfiguring a dependency.
+     */
     private void setupTabs() {
         profileTabLayout.addOnTabSelectedListener(new TabLayout.OnTabSelectedListener() {
             @Override public void onTabSelected(TabLayout.Tab tab) { applyTabState(tab.getPosition()); }
@@ -188,6 +226,9 @@ public class ProfileFragment extends Fragment implements
         applyTabState(0);
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     */
     private void applyTabState(int position) {
         if (!isAdded()) return;
         if (position == 0) {
@@ -200,9 +241,16 @@ public class ProfileFragment extends Fragment implements
         }
     }
 
+    /**
+     * Updates object/screen state by storing a new value or reconfiguring a dependency.
+     * It wires user actions here, so taps on buttons/cards/menus trigger the next step in the
+     * flow.
+     * It also packages extras into an Intent when this flow needs to open another Activity.
+     */
     private void setupUI() {
         if (isCurrentUser) {
             btnEditProfile.setVisibility(View.VISIBLE); btnSettings.setVisibility(View.VISIBLE); btnFollow.setVisibility(View.GONE);
+            // Attach the user interaction that should run when this control is tapped.
             btnSettings.setOnClickListener(v -> { if (!isNavigating) { isNavigating = true; startActivity(new Intent(requireContext(), SettingsActivity.class)); } });
             btnEditProfile.setOnClickListener(v -> {
                 if (isNavigating) return;
@@ -216,26 +264,52 @@ public class ProfileFragment extends Fragment implements
         }
     }
 
+    /**
+     * Updates object/screen state by storing a new value or reconfiguring a dependency.
+     * It wires user actions here, so taps on buttons/cards/menus trigger the next step in the
+     * flow.
+     */
     private void setupSocialCountClicks() {
+        // Attach the user interaction that should run when this control is tapped.
         btnFollowers.setOnClickListener(v -> openSocialScreen(false));
         btnFollowing.setOnClickListener(v -> openSocialScreen(true));
     }
 
+    /**
+     * Moves the user to another screen or flow and passes along the required extras.
+     * It also packages extras into an Intent when this flow needs to open another Activity.
+     */
     private void openSocialScreen(boolean showFollowing) {
         if (profileUserId == null || isNavigating) return;
         isNavigating = true;
+        // Move into the next screen and pass the identifiers/data that screen needs.
         startActivity(new Intent(requireContext(), SocialActivity.class).putExtra(SocialActivity.EXTRA_USER_ID, profileUserId).putExtra(SocialActivity.EXTRA_SHOW_FOLLOWING, showFollowing));
     }
 
+    /**
+     * Pulls data from a local source, Firebase, or an external API and prepares it for the UI or
+     * caller.
+     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
+     * changes.
+     * Because it uses a snapshot listener, this method keeps the UI synced with live Firestore
+     * updates instead of doing a one-time read.
+     */
     private void fetchUserProfile() {
         if (profileUserId == null) return;
         if (profileListener != null) profileListener.remove();
+        // Set up or query the Firebase layer that supplies/stores this feature's data.
         profileListener = db.collection("users").document(profileUserId).addSnapshotListener((snapshot, e) -> {
             if (e != null || snapshot == null || !snapshot.exists() || !isAdded()) return;
             handleUserSnapshot(snapshot);
         });
     }
 
+    /**
+     * Central handler that reacts to an event/input and decides what the next app action should
+     * be.
+     * Image loading happens here, which is why placeholder/error behavior for profile
+     * photos/cards/posts usually traces back to this code path.
+     */
     private void handleUserSnapshot(DocumentSnapshot doc) {
         User user = doc.toObject(User.class); if (user == null) return;
         Log.d(TAG, "handleUserSnapshot — bio: " + user.getBio());
@@ -245,6 +319,7 @@ public class ProfileFragment extends Fragment implements
         tvPoints.setText("Total Points: " + user.getTotalPoints());
         tvFollowerCount.setText(String.valueOf(user.getFollowerCount()));
         tvFollowingCount.setText(String.valueOf(user.getFollowingCount()));
+        // Load the image asynchronously so the UI can show remote/local media without blocking the main thread.
         Glide.with(this)
                 .load((currentProfilePictureUrl != null && !currentProfilePictureUrl.isEmpty()) ? currentProfilePictureUrl : null)
                 .placeholder(R.drawable.ic_profile)
@@ -256,9 +331,18 @@ public class ProfileFragment extends Fragment implements
         loadFavoriteCards();
     }
 
+    /**
+     * Pulls data from a local source, Firebase, or an external API and prepares it for the UI or
+     * caller.
+     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
+     * changes.
+     * There is also one-time async data loading here, so success/failure callbacks are important
+     * for the final UI state.
+     */
     private void loadFavoriteCards() {
         if (profileUserId == null) return;
         final int myGen = ++favoriteFetchGeneration;
+        // Set up or query the Firebase layer that supplies/stores this feature's data.
         db.collection("users").document(profileUserId).collection("collectionSlot").get().addOnSuccessListener(querySnapshot -> {
             if (!isAdded() || myGen != favoriteFetchGeneration) return;
             allCollectionSlots.clear();
@@ -270,6 +354,9 @@ public class ProfileFragment extends Fragment implements
         });
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     */
     private void refreshFavoritesDisplay() {
         while (favoriteCardKeys.size() < FAVORITE_SLOT_COUNT) favoriteCardKeys.add("");
         List<CollectionSlot> favoriteSlots = new ArrayList<>();
@@ -277,12 +364,18 @@ public class ProfileFragment extends Fragment implements
         favoritesAdapter.submitList(favoriteSlots);
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     */
     private CollectionSlot findSlotById(String id) {
         if (id == null || id.isEmpty()) return null;
         for (CollectionSlot slot : allCollectionSlots) if (id.equals(slot.getId())) return slot;
         return null;
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     */
     private void checkFollowingStatus() {
         if (profileUserId == null || isCurrentUser) return;
         firebaseManager.isFollowing(profileUserId, task -> {
@@ -293,6 +386,9 @@ public class ProfileFragment extends Fragment implements
         });
     }
 
+    /**
+     * Flips a UI/data state and then updates the screen/backend to match the new value.
+     */
     private void toggleFollow() {
         btnFollow.setEnabled(false);
         if (isFollowing) {
@@ -310,10 +406,19 @@ public class ProfileFragment extends Fragment implements
         }
     }
 
+    /**
+     * Pulls data from a local source, Firebase, or an external API and prepares it for the UI or
+     * caller.
+     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
+     * changes.
+     * There is also one-time async data loading here, so success/failure callbacks are important
+     * for the final UI state.
+     */
     private void fetchPosts() {
         if (profileUserId == null || isFetching || isLastPage || !isAdded()) return;
         isFetching = true;
         final int myGen = fetchGeneration;
+        // Set up or query the Firebase layer that supplies/stores this feature's data.
         Query query = db.collection("forumThreads").whereEqualTo("userId", profileUserId).orderBy("timestamp", Query.Direction.DESCENDING).limit(PAGE_SIZE);
         if (lastVisible != null) query = query.startAfter(lastVisible);
 
@@ -333,6 +438,9 @@ public class ProfileFragment extends Fragment implements
         }).addOnFailureListener(e -> { if (myGen == fetchGeneration) isFetching = false; });
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     */
     private void refreshPosts() {
         fetchGeneration++;
         isFetching = false; lastVisible = null; isLastPage = false;
@@ -341,6 +449,9 @@ public class ProfileFragment extends Fragment implements
         fetchPosts();
     }
 
+    /**
+     * Updates object/screen state by storing a new value or reconfiguring a dependency.
+     */
     private void setupSwipeRefresh() {
         swipeRefreshLayout.setOnRefreshListener(() -> { fetchUserProfile(); refreshPosts(); swipeRefreshLayout.setRefreshing(false); });
     }
@@ -411,12 +522,23 @@ public class ProfileFragment extends Fragment implements
 
     @Override public boolean onFavoriteLongPressed(int position, @Nullable CollectionSlot slot) { if (!isCurrentUser) return false; showFavoritePickerDialog(position); return true; }
 
+    /**
+     * Takes prepared data and presents it on screen or in a dialog/menu.
+     * It grabs layout/view references here so later code can read from them, update them, or
+     * attach listeners.
+     * It wires user actions here, so taps on buttons/cards/menus trigger the next step in the
+     * flow.
+     * It prepares or refreshes adapter-backed lists/grids here so the latest model objects are
+     * rendered on screen.
+     */
     private void showFavoritePickerDialog(int position) {
         if (allCollectionSlots.isEmpty()) return;
+        // Bind or inflate the UI pieces this method needs before it can update the screen.
         View dv = LayoutInflater.from(requireContext()).inflate(R.layout.dialog_favorite_picker, null);
         EditText et = dv.findViewById(R.id.etSearch); ListView lv = dv.findViewById(R.id.listView); Button clr = dv.findViewById(R.id.btnClear);
         List<CollectionSlot> filtered = new ArrayList<>(allCollectionSlots);
         ArrayAdapter<String> adp = new ArrayAdapter<>(requireContext(), android.R.layout.simple_list_item_1, getSlotNames(filtered));
+        // Hook the data source to the list/grid adapter so model objects can render as UI rows/cards.
         lv.setAdapter(adp);
         AlertDialog dialog = new AlertDialog.Builder(requireContext()).setTitle("Pick Favorite").setView(dv).setNegativeButton("Cancel", null).create();
         et.addTextChangedListener(new android.text.TextWatcher() {
@@ -429,16 +551,27 @@ public class ProfileFragment extends Fragment implements
             @Override public void afterTextChanged(android.text.Editable s) {}
         });
         lv.setOnItemClickListener((parent, view, which, id) -> { saveFavoriteSelection(position, filtered.get(which).getId()); dialog.dismiss(); });
+        // Attach the user interaction that should run when this control is tapped.
         clr.setOnClickListener(v -> { saveFavoriteSelection(position, ""); dialog.dismiss(); });
         dialog.show();
     }
 
     private List<String> getSlotNames(List<CollectionSlot> slots) { List<String> ns = new ArrayList<>(); for (CollectionSlot s : slots) ns.add(s.getCommonName()); return ns; }
 
+    /**
+     * Builds data from the current screen/object state and writes it out to storage, Firebase, or
+     * another service.
+     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
+     * changes.
+     * Part of this method writes changes back to Firestore/storage, so this is where app actions
+     * become permanent.
+     */
     private void saveFavoriteSelection(int pos, String key) {
         while (favoriteCardKeys.size() < FAVORITE_SLOT_COUNT) favoriteCardKeys.add("");
+        // Persist the new state so the action is saved outside the current screen.
         favoriteCardKeys.set(pos, key); refreshFavoritesDisplay();
         if (profileUserId == null) return;
+        // Set up or query the Firebase layer that supplies/stores this feature's data.
         DocumentReference ref = db.collection("users").document(profileUserId);
         db.runTransaction(t -> {
             DocumentSnapshot snap = t.get(ref); List<String> keys = (List<String>) snap.get("favoriteCardKeys");
@@ -451,6 +584,9 @@ public class ProfileFragment extends Fragment implements
 
     private void showDeleteConfirmation(ForumPost post) { new AlertDialog.Builder(requireContext()).setTitle("Delete Post").setPositiveButton("Delete", (d, w) -> firebaseManager.deleteForumPost(post.getId(), t -> refreshPosts())).show(); }
 
+    /**
+     * Takes prepared data and presents it on screen or in a dialog/menu.
+     */
     private void showReportDialog(ForumPost post) {
         String[] rs = {"Inappropriate Language", "Inappropriate Image", "Spam", "Harassment", "Other"};
         new AlertDialog.Builder(requireContext()).setTitle("Report Post").setItems(rs, (d, w) -> {
@@ -459,6 +595,9 @@ public class ProfileFragment extends Fragment implements
         }).show();
     }
 
+    /**
+     * Takes prepared data and presents it on screen or in a dialog/menu.
+     */
     private void showOtherReportDialog(OnReasonEnteredListener l) {
         AlertDialog.Builder b = new AlertDialog.Builder(requireContext()); b.setTitle("Report Reason");
         final EditText i = new EditText(requireContext()); i.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE); i.setHint("Reason..."); i.setFilters(new InputFilter[]{new InputFilter.LengthFilter(200)});
@@ -469,8 +608,14 @@ public class ProfileFragment extends Fragment implements
 
     private interface OnReasonEnteredListener { void onReasonEntered(String r); }
 
+    /**
+     * Main logic block for this part of the feature.
+     * User-facing feedback is shown here so the user knows whether the action succeeded, failed,
+     * or needs attention.
+     */
     private void submitReport(ForumPost post, String r) {
         FirebaseUser u = mAuth.getCurrentUser(); if (u == null) return;
+        // Give the user immediate feedback about the result of this action.
         firebaseManager.addReport(new Report("post", post.getId(), u.getUid(), r), t -> { if (isAdded() && t.isSuccessful()) Toast.makeText(getContext(), "Reported", Toast.LENGTH_SHORT).show(); });
     }
 

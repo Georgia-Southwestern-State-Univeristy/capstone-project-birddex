@@ -5,6 +5,12 @@ import com.google.firebase.firestore.ServerTimestamp;
 
 import java.util.Date;
 
+/**
+ * User: Support/helper/model class used by other BirdDex screens so logic can stay reusable and organized.
+ *
+ * These comments focus on what the actual code blocks are doing so the file is easier to trace
+ * when you are debugging or presenting the app. Only comments were added; runtime logic was not changed.
+ */
 public class User {
     private String id; // This will store the userId, typically the Firebase Auth UID
     private String email;
@@ -23,11 +29,21 @@ public class User {
     private int followerCount; // New field for followers
     private int followingCount; // New field for following
 
+    /**
+     * Constructor that stores incoming dependencies/values so this object starts in a usable
+     * state.
+     */
     public User() {
         // Default constructor required for calls to DataSnapshot.getValue(User.class)
     }
 
     // Constructor updated to reflect the renamed field and new fields
+    /**
+     * Constructor that stores incoming dependencies/values so this object starts in a usable
+     * state.
+     * Location values are handled here, so this is part of the logic that decides what area/bird
+     * sightings the user sees.
+     */
     public User(String id, String email, String username, Date createdAt, String defaultLocationId) {
         this.id = id;
         this.email = email;
@@ -48,6 +64,12 @@ public class User {
     }
 
     // Full constructor including all fields for completeness
+    /**
+     * Constructor that stores incoming dependencies/values so this object starts in a usable
+     * state.
+     * Location values are handled here, so this is part of the logic that decides what area/bird
+     * sightings the user sees.
+     */
     public User(String id, String email, String username, String bio, Date createdAt, String defaultLocationId, int totalBirds, int duplicateBirds, int totalPoints, String profilePictureUrl, int pfpChangesToday, Date pfpCooldownResetTimestamp, int openAiRequestsRemaining, Date openAiCooldownResetTimestamp, int followerCount, int followingCount) {
         this.id = id;
         this.email = email;
@@ -67,76 +89,134 @@ public class User {
         this.followingCount = followingCount;
     }
 
+    /**
+     * Returns the current value/state this class needs somewhere else in the app.
+     */
     @Exclude
     public String getId() {
         return id;
     }
 
+    /**
+     * Updates object/screen state by storing a new value or reconfiguring a dependency.
+     */
     public void setId(String id) {
         this.id = id;
     }
 
+    /**
+     * Returns the current value/state this class needs somewhere else in the app.
+     */
     public String getEmail() {
         return email;
     }
 
+    /**
+     * Updates object/screen state by storing a new value or reconfiguring a dependency.
+     */
     public void setEmail(String email) {
         this.email = email;
     }
 
+    /**
+     * Returns the current value/state this class needs somewhere else in the app.
+     */
     public String getUsername() {
         return username;
     }
 
+    /**
+     * Updates object/screen state by storing a new value or reconfiguring a dependency.
+     */
     public void setUsername(String username) {
         this.username = username;
     }
 
+    /**
+     * Returns the current value/state this class needs somewhere else in the app.
+     */
     public String getBio() {
         return bio;
     }
 
+    /**
+     * Updates object/screen state by storing a new value or reconfiguring a dependency.
+     */
     public void setBio(String bio) {
         this.bio = bio;
     }
 
+    /**
+     * Returns the current value/state this class needs somewhere else in the app.
+     */
     @ServerTimestamp
     public Date getCreatedAt() {
         return createdAt;
     }
 
+    /**
+     * Updates object/screen state by storing a new value or reconfiguring a dependency.
+     */
     public void setCreatedAt(Date createdAt) {
         this.createdAt = createdAt;
     }
 
+    /**
+     * Returns the current value/state this class needs somewhere else in the app.
+     * Location values are handled here, so this is part of the logic that decides what area/bird
+     * sightings the user sees.
+     */
     public String getDefaultLocationId() {
         return defaultLocationId;
     }
 
+    /**
+     * Updates object/screen state by storing a new value or reconfiguring a dependency.
+     * Location values are handled here, so this is part of the logic that decides what area/bird
+     * sightings the user sees.
+     */
     public void setDefaultLocationId(String defaultLocationId) {
         this.defaultLocationId = defaultLocationId;
     }
 
+    /**
+     * Returns the current value/state this class needs somewhere else in the app.
+     */
     public int getTotalBirds() {
         return totalBirds;
     }
 
+    /**
+     * Updates object/screen state by storing a new value or reconfiguring a dependency.
+     */
     public void setTotalBirds(int totalBirds) {
         this.totalBirds = totalBirds;
     }
 
+    /**
+     * Returns the current value/state this class needs somewhere else in the app.
+     */
     public int getDuplicateBirds() {
         return duplicateBirds;
     }
 
+    /**
+     * Updates object/screen state by storing a new value or reconfiguring a dependency.
+     */
     public void setDuplicateBirds(int duplicateBirds) {
         this.duplicateBirds = duplicateBirds;
     }
 
+    /**
+     * Returns the current value/state this class needs somewhere else in the app.
+     */
     public int getTotalPoints() {
         return totalPoints;
     }
 
+    /**
+     * Updates object/screen state by storing a new value or reconfiguring a dependency.
+     */
     public void setTotalPoints(int totalPoints) {
         this.totalPoints = totalPoints;
     }
@@ -145,50 +225,86 @@ public class User {
 
     public void setProfilePictureUrl(String profilePictureUrl) { this.profilePictureUrl = profilePictureUrl; }
 
+    /**
+     * Returns the current value/state this class needs somewhere else in the app.
+     */
     public int getPfpChangesToday() {
         return pfpChangesToday;
     }
 
+    /**
+     * Updates object/screen state by storing a new value or reconfiguring a dependency.
+     */
     public void setPfpChangesToday(int pfpChangesToday) {
         this.pfpChangesToday = pfpChangesToday;
     }
 
+    /**
+     * Returns the current value/state this class needs somewhere else in the app.
+     */
     public Date getPfpCooldownResetTimestamp() {
         return pfpCooldownResetTimestamp;
     }
 
+    /**
+     * Updates object/screen state by storing a new value or reconfiguring a dependency.
+     */
     public void setPfpCooldownResetTimestamp(Date pfpCooldownResetTimestamp) {
         this.pfpCooldownResetTimestamp = pfpCooldownResetTimestamp;
     }
 
+    /**
+     * Returns the current value/state this class needs somewhere else in the app.
+     */
     public int getOpenAiRequestsRemaining() {
         return openAiRequestsRemaining;
     }
 
+    /**
+     * Updates object/screen state by storing a new value or reconfiguring a dependency.
+     */
     public void setOpenAiRequestsRemaining(int openAiRequestsRemaining) {
         this.openAiRequestsRemaining = openAiRequestsRemaining;
     }
 
+    /**
+     * Returns the current value/state this class needs somewhere else in the app.
+     */
     public Date getOpenAiCooldownResetTimestamp() {
         return openAiCooldownResetTimestamp;
     }
 
+    /**
+     * Updates object/screen state by storing a new value or reconfiguring a dependency.
+     */
     public void setOpenAiCooldownResetTimestamp(Date openAiCooldownResetTimestamp) {
         this.openAiCooldownResetTimestamp = openAiCooldownResetTimestamp;
     }
 
+    /**
+     * Returns the current value/state this class needs somewhere else in the app.
+     */
     public int getFollowerCount() {
         return followerCount;
     }
 
+    /**
+     * Updates object/screen state by storing a new value or reconfiguring a dependency.
+     */
     public void setFollowerCount(int followerCount) {
         this.followerCount = followerCount;
     }
 
+    /**
+     * Returns the current value/state this class needs somewhere else in the app.
+     */
     public int getFollowingCount() {
         return followingCount;
     }
 
+    /**
+     * Updates object/screen state by storing a new value or reconfiguring a dependency.
+     */
     public void setFollowingCount(int followingCount) {
         this.followingCount = followingCount;
     }

@@ -27,6 +27,12 @@ import com.google.firebase.auth.FirebaseUser;
  * Fixed Race Conditions:
  * 1. Action Spam: Added isNavigating guard to prevent multiple activity/dialog launches.
  */
+/**
+ * SettingsActivity: Main settings hub for account/preferences actions.
+ *
+ * These comments focus on what the actual code blocks are doing so the file is easier to trace
+ * when you are debugging or presenting the app. Only comments were added; runtime logic was not changed.
+ */
 public class SettingsActivity extends AppCompatActivity {
 
     private TextView tvUserEmail, tvUserName;
@@ -43,6 +49,16 @@ public class SettingsActivity extends AppCompatActivity {
 
     private boolean isNavigating = false;
 
+    /**
+     * Android calls this when the Activity is first created. This is where the screen usually
+     * inflates its layout, grabs views, creates helpers, and wires listeners.
+     * It grabs layout/view references here so later code can read from them, update them, or
+     * attach listeners.
+     * It wires user actions here, so taps on buttons/cards/menus trigger the next step in the
+     * flow.
+     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
+     * changes.
+     */
     @SuppressLint("MissingInflatedId")
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -51,6 +67,7 @@ public class SettingsActivity extends AppCompatActivity {
 
         sharedPreferences = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
 
+        // Bind or inflate the UI pieces this method needs before it can update the screen.
         tvUserEmail = findViewById(R.id.tvUserEmail);
         tvUserName = findViewById(R.id.tvUserName);
         btnNotifications = findViewById(R.id.btnNotifications);
@@ -62,6 +79,7 @@ public class SettingsActivity extends AppCompatActivity {
 
         switchGraphicContent.setChecked(sharedPreferences.getBoolean(KEY_GRAPHIC_CONTENT, false));
 
+        // Set up or query the Firebase layer that supplies/stores this feature's data.
         firebaseManager = new FirebaseManager(this);
         sessionManager = new SessionManager(this);
 
@@ -75,9 +93,11 @@ public class SettingsActivity extends AppCompatActivity {
             loadUserProfile(user);
         });
 
+        // Attach the user interaction that should run when this control is tapped.
         btnNotifications.setOnClickListener(v -> {
             if (isNavigating) return;
             isNavigating = true;
+            // Move into the next screen and pass the identifiers/data that screen needs.
             startActivity(new Intent(this, NotificationsSettingsActivity.class));
         });
 
@@ -108,12 +128,22 @@ public class SettingsActivity extends AppCompatActivity {
         });
     }
 
+    /**
+     * Runs when the screen returns to the foreground, so it often refreshes UI state or restarts
+     * listeners.
+     */
     @Override
     protected void onResume() {
         super.onResume();
         isNavigating = false;
     }
 
+    /**
+     * Pulls data from a local source, Firebase, or an external API and prepares it for the UI or
+     * caller.
+     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
+     * changes.
+     */
     private void loadUserProfile(FirebaseUser user) {
         firebaseManager.getUserProfile(user.getUid(), task -> {
             if (task.isSuccessful() && task.getResult() != null) {
@@ -124,6 +154,7 @@ public class SettingsActivity extends AppCompatActivity {
                     if (currentAuthEmail != null && !currentAuthEmail.equals(userProfile.getEmail())) {
                         Log.d(TAG, "Email mismatch detected. Syncing Firestore with Auth email.");
                         userProfile.setEmail(currentAuthEmail);
+                        // Set up or query the Firebase layer that supplies/stores this feature's data.
                         firebaseManager.updateUserProfile(userProfile, new FirebaseManager.AuthListener() {
                             @Override public void onSuccess(FirebaseUser u) { Log.d(TAG, "Firestore email synced successfully."); }
                             @Override public void onFailure(String errorMessage) { Log.e(TAG, "Failed to sync email to Firestore: " + errorMessage); }
@@ -140,13 +171,21 @@ public class SettingsActivity extends AppCompatActivity {
         });
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     * It also packages extras into an Intent when this flow needs to open another Activity.
+     */
     private void goToWelcomeAndClear() {
         Intent intent = new Intent(SettingsActivity.this, WelcomeActivity.class);
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
+        // Move into the next screen and pass the identifiers/data that screen needs.
         startActivity(intent);
         finish();
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     */
     private void promptForNewEmail() {
         if (isNavigating) return;
         AlertDialog.Builder builder = new AlertDialog.Builder(this);
@@ -174,6 +213,11 @@ public class SettingsActivity extends AppCompatActivity {
         builder.show();
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     * User-facing feedback is shown here so the user knows whether the action succeeded, failed,
+     * or needs attention.
+     */
     private void attemptUpdateEmail(String newEmail) {
         firebaseManager.updateUserEmail(newEmail, authUpdateTask -> {
             if (authUpdateTask.isSuccessful()) {
@@ -188,12 +232,16 @@ public class SettingsActivity extends AppCompatActivity {
                     promptForReauthenticationAndRetry(newEmail);
                 } else {
                     Log.e(TAG, "Failed to initiate email update", exception);
+                    // Give the user immediate feedback about the result of this action.
                     Toast.makeText(SettingsActivity.this, "Failed to initiate update: " + exception.getMessage(), Toast.LENGTH_LONG).show();
                 }
             }
         });
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     */
     private void promptForReauthenticationAndRetry(String newEmail) {
         AlertDialog.Builder builder = new AlertDialog.Builder(this);
         builder.setTitle("Re-authenticate");
@@ -220,6 +268,11 @@ public class SettingsActivity extends AppCompatActivity {
         builder.show();
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     * User-facing feedback is shown here so the user knows whether the action succeeded, failed,
+     * or needs attention.
+     */
     private void reauthenticateUserAndRetryUpdateEmail(String currentPassword, String newEmail) {
         FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
         if (user == null) return;
@@ -231,16 +284,23 @@ public class SettingsActivity extends AppCompatActivity {
                         Log.d(TAG, "Re-authentication successful. Retrying email update.");
                         attemptUpdateEmail(newEmail);
                     } else {
+                        // Give the user immediate feedback about the result of this action.
                         Toast.makeText(SettingsActivity.this, "Re-authentication failed.", Toast.LENGTH_SHORT).show();
                     }
                 });
     }
 
+    /**
+     * Initializes helpers, adapters, listeners, or default values used by the rest of this file.
+     * User-facing feedback is shown here so the user knows whether the action succeeded, failed,
+     * or needs attention.
+     */
     private void initiatePasswordReset() {
         FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
         if (user != null && user.getEmail() != null) {
             firebaseManager.sendPasswordResetEmail(user.getEmail(), task -> {
                 if (task.isSuccessful()) {
+                    // Give the user immediate feedback about the result of this action.
                     Toast.makeText(SettingsActivity.this, "Password reset email sent.", Toast.LENGTH_LONG).show();
                 } else {
                     Toast.makeText(SettingsActivity.this, "Failed to send password reset email.", Toast.LENGTH_SHORT).show();
@@ -249,6 +309,9 @@ public class SettingsActivity extends AppCompatActivity {
         }
     }
 
+    /**
+     * Takes prepared data and presents it on screen or in a dialog/menu.
+     */
     private void showDeleteAccountConfirmation() {
         if (isNavigating) return;
         new AlertDialog.Builder(this)
@@ -259,6 +322,9 @@ public class SettingsActivity extends AppCompatActivity {
                 .show();
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     */
     private void promptForReauthenticationAndDelete() {
         AlertDialog.Builder builder = new AlertDialog.Builder(this);
         builder.setTitle(R.string.dialog_confirm_deletion_title);
@@ -285,6 +351,11 @@ public class SettingsActivity extends AppCompatActivity {
         builder.show();
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     * User-facing feedback is shown here so the user knows whether the action succeeded, failed,
+     * or needs attention.
+     */
     private void reauthenticateAndDeleteAccount(String password) {
         FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
         if (user == null) return;
@@ -293,10 +364,18 @@ public class SettingsActivity extends AppCompatActivity {
         user.reauthenticate(credential)
                 .addOnCompleteListener(reauthTask -> {
                     if (reauthTask.isSuccessful()) processAccountDeletion(user);
+                    // Give the user immediate feedback about the result of this action.
                     else Toast.makeText(SettingsActivity.this, "Re-authentication failed. Incorrect password.", Toast.LENGTH_SHORT).show();
                 });
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     * Part of this method writes changes back to Firestore/storage, so this is where app actions
+     * become permanent.
+     * User-facing feedback is shown here so the user knows whether the action succeeded, failed,
+     * or needs attention.
+     */
     private void processAccountDeletion(FirebaseUser user) {
         if (isNavigating) return;
         isNavigating = true;
@@ -307,9 +386,11 @@ public class SettingsActivity extends AppCompatActivity {
 
         firebaseManager.archiveAndDeleteUser(task -> {
             if (task.isSuccessful()) {
+                // Persist the new state so the action is saved outside the current screen.
                 user.delete().addOnCompleteListener(deleteTask -> {
                     progressDialog.dismiss();
                     if (deleteTask.isSuccessful()) {
+                        // Give the user immediate feedback about the result of this action.
                         Toast.makeText(SettingsActivity.this, "Account deleted successfully.", Toast.LENGTH_SHORT).show();
                         sessionManager.clearSession(user.getUid());
                         goToWelcomeAndClear();

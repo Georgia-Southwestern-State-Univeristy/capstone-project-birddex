@@ -27,6 +27,12 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 /**
+/**
+ * to: Interface/model contract used to keep different parts of the app communicating with a shared shape.
+ *
+ * These comments focus on what the actual code blocks are doing so the file is easier to trace
+ * when you are debugging or presenting the app. Only comments were added; runtime logic was not changed.
+ */
  * Helper class to manage location services, including permission checks,
  * requesting updates, and reverse geocoding.
  */
@@ -54,6 +60,9 @@ public class LocationHelper {
         @Nullable String state;
         @Nullable String country;
 
+        /**
+         * Main logic block for this part of the feature.
+         */
         AddressComponents(@Nullable String localityName, @Nullable String state, @Nullable String country) {
             this.localityName = localityName;
             this.state = state;
@@ -61,6 +70,11 @@ public class LocationHelper {
         }
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     * Location values are handled here, so this is part of the logic that decides what area/bird
+     * sightings the user sees.
+     */
     public LocationHelper(Context context, LocationListener listener) {
         this.context = context;
         this.applicationContext = context.getApplicationContext(); // Get application context
@@ -101,6 +115,11 @@ public class LocationHelper {
     }
 
     // Check if location permissions are granted
+    /**
+     * Main logic block for this part of the feature.
+     * Location values are handled here, so this is part of the logic that decides what area/bird
+     * sightings the user sees.
+     */
     public boolean checkLocationPermissions() {
         boolean fineGranted = ContextCompat.checkSelfPermission(context,
                 Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED;
@@ -110,6 +129,11 @@ public class LocationHelper {
     }
 
     // Request location updates
+    /**
+     * Main logic block for this part of the feature.
+     * Location values are handled here, so this is part of the logic that decides what area/bird
+     * sightings the user sees.
+     */
     public void startLocationUpdates() {
         if (!checkLocationPermissions()) {
             listener.onLocationError("Location permissions not granted.");
@@ -126,6 +150,11 @@ public class LocationHelper {
     }
 
     // Stop location updates
+    /**
+     * Main logic block for this part of the feature.
+     * Location values are handled here, so this is part of the logic that decides what area/bird
+     * sightings the user sees.
+     */
     public void stopLocationUpdates() {
         fusedLocationClient.removeLocationUpdates(locationCallback)
                 .addOnCompleteListener(task -> {
@@ -139,6 +168,11 @@ public class LocationHelper {
     }
 
     // Get the last known location once
+    /**
+     * Returns the current value/state this class needs somewhere else in the app.
+     * Location values are handled here, so this is part of the logic that decides what area/bird
+     * sightings the user sees.
+     */
     public void getLastKnownLocation() {
         if (!checkLocationPermissions()) {
             listener.onLocationError("Location permissions not granted.");
@@ -177,6 +211,11 @@ public class LocationHelper {
     }
 
     // Reverse geocoding helper to get locality, state, and country
+    /**
+     * Returns the current value/state this class needs somewhere else in the app.
+     * Location values are handled here, so this is part of the logic that decides what area/bird
+     * sightings the user sees.
+     */
     private AddressComponents getAddressDetailsFromLocation(Location location) {
         Geocoder geocoder = new Geocoder(applicationContext, Locale.getDefault());
         try {
@@ -195,6 +234,11 @@ public class LocationHelper {
         return new AddressComponents(null, null, null); // Return nulls if geocoding fails
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     * Location values are handled here, so this is part of the logic that decides what area/bird
+     * sightings the user sees.
+     */
     public void shutdown() {
         geoExecutor.shutdown();
         stopLocationUpdates(); // Ensure updates are stopped when helper is no longer needed

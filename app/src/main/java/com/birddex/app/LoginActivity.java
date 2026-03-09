@@ -2,6 +2,7 @@ package com.birddex.app;
 
 import android.content.Intent;
 import android.os.Bundle;
+import android.view.View;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.TextView;
@@ -14,8 +15,7 @@ import com.google.firebase.auth.FirebaseUser;
 
 /**
  * LoginActivity handles the user authentication process.
- * Users can log in with their email and password, navigate to sign up,
- * or initiate a password reset.
+ * Fixes: Added isNavigating guard to prevent redundant activity launches.
  */
 public class LoginActivity extends AppCompatActivity {
 
@@ -24,93 +24,82 @@ public class LoginActivity extends AppCompatActivity {
 
     private EditText emailEditText;
     private EditText passwordEditText;
+    private Button btnLogin;
+    private View loadingOverlay;
+    private boolean isNavigating = false;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_login);
 
-        // Initialize helper classes for Firebase operations and input validation.
-        firebaseManager = new FirebaseManager(this); // Pass 'this' (Context) to FirebaseManager
+        firebaseManager = new FirebaseManager(this);
         signINupValidator = new sign_IN_upValidator();
 
-        // Bind UI components to variables.
         emailEditText = findViewById(R.id.etEmail);
         passwordEditText = findViewById(R.id.etPassword);
+        btnLogin = findViewById(R.id.btnLogin);
+        loadingOverlay = findViewById(R.id.loadingOverlay);
 
-        Button btnLogin = findViewById(R.id.btnLogin);
         TextView tvForgot = findViewById(R.id.tvForgot);
         TextView tvSignUp = findViewById(R.id.tvSignUp);
 
-        // Handle the login button click.
         btnLogin.setOnClickListener(v -> {
-            // Validate the user input using the signINupValidator helper.
+            if (isNavigating) return;
             if (signINupValidator.validateSignInForm(emailEditText, passwordEditText)) {
-                String email = emailEditText.getText().toString();
+                String email = emailEditText.getText().toString().trim();
                 String password = passwordEditText.getText().toString();
                 
-                // Attempt to sign in with Firebase.
+                setLoadingState(true);
                 firebaseManager.signIn(email, password, new FirebaseManager.AuthListener() {
                     @Override
                     public void onSuccess(FirebaseUser user) {
                         if (user != null && user.isEmailVerified()) {
-                            // On successful login and email verified, navigate to the HomeActivity.
-                            Toast.makeText(LoginActivity.this, "Login successful.", Toast.LENGTH_SHORT).show();
-
-                            // Create and update session ID to handle single device login
+                            if (isNavigating) return;
+                            isNavigating = true;
+                            
                             SessionManager sessionManager = new SessionManager(LoginActivity.this);
                             String sessionId = sessionManager.createSession(user.getUid());
                             firebaseManager.updateSessionId(user.getUid(), sessionId, task -> {
+                                setLoadingState(false);
                                 startActivity(new Intent(LoginActivity.this, HomeActivity.class));
-                                finish(); // Finish current activity to prevent returning on back press.
+                                finish();
                             });
-                        } else if (user != null && !user.isEmailVerified()) {
-                            // User logged in, but email is not verified.
-                            // Log out the user and prompt them to verify their email.
+                        } else if (user != null) {
                             FirebaseAuth.getInstance().signOut();
-                            Toast.makeText(LoginActivity.this, "Please verify your email address to log in. A new verification email has been sent. " + getString(R.string.email_verification_expiration_message), Toast.LENGTH_LONG).show();
-                            // Resend the verification email
-                            user.sendEmailVerification()
-                                    .addOnCompleteListener(emailTask -> {
-                                        if (emailTask.isSuccessful()) {
-                                            // Log.d("LoginActivity", "Verification email resent.");
-                                        } else {
-                                            // Log.e("LoginActivity", "Failed to resend verification email.", emailTask.getException());
-                                        }
-                                    });
+                            setLoadingState(false);
+                            Toast.makeText(LoginActivity.this, "Please verify your email address.", Toast.LENGTH_LONG).show();
+                            user.sendEmailVerification();
                         } else {
-                            // Should not happen if onSuccess is called with a null user, but as a safeguard.
-                            Toast.makeText(LoginActivity.this, "Login failed: user not found.", Toast.LENGTH_SHORT).show();
+                            setLoadingState(false);
+                            Toast.makeText(LoginActivity.this, "Login failed.", Toast.LENGTH_SHORT).show();
                         }
                     }
 
                     @Override
                     public void onFailure(String errorMessage) {
-                        // Display error message if login fails.
+                        setLoadingState(false);
                         Toast.makeText(LoginActivity.this, errorMessage, Toast.LENGTH_SHORT).show();
                     }
 
-                    @Override
-                    public void onUsernameTaken() {
-                        // This callback is not used during sign-in.
-                    }
-
-                    @Override
-                    public void onEmailTaken() {
-                        // This callback is not used during sign-in.
-                    }
+                    @Override public void onUsernameTaken() {}
+                    @Override public void onEmailTaken() {}
                 });
             }
         });
 
-        // Navigate to ForgotPasswordActivity.
-        tvForgot.setOnClickListener(v -> {
-            startActivity(new Intent(LoginActivity.this, ForgotPasswordActivity.class));
-        });
+        tvForgot.setOnClickListener(v -> { if (!isNavigating) startActivity(new Intent(this, ForgotPasswordActivity.class)); });
+        tvSignUp.setOnClickListener(v -> { if (!isNavigating) startActivity(new Intent(this, SignUpActivity.class)); });
+    }
 
-        // Navigate to SignUpActivity.
-        tvSignUp.setOnClickListener(v -> {
-            startActivity(new Intent(LoginActivity.this, SignUpActivity.class));
-        });
+    private void setLoadingState(boolean loading) {
+        if (loadingOverlay != null) loadingOverlay.setVisibility(loading ? View.VISIBLE : View.GONE);
+        if (btnLogin != null) btnLogin.setEnabled(!loading);
+    }
+
+    @Override
+    protected void onPause() {
+        super.onPause();
+        if (loadingOverlay != null) loadingOverlay.setVisibility(View.GONE);
     }
 }

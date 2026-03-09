@@ -19,12 +19,28 @@ service cloud.firestore {
       return request.auth != null && request.resource.data.userId == request.auth.uid;
     }
 
+    // Fields that only Cloud Functions should ever write.
+    // If any of these are in the incoming diff, block the client write.
+    function onlyClientProfileFields() {
+      return !request.resource.data.diff(resource.data).affectedKeys()
+        .hasAny([
+          'totalPoints', 'totalBirds', 'duplicateBirds',
+          'openAiRequestsRemaining', 'openAiCooldownResetTimestamp',
+          'pfpChangesToday', 'pfpCooldownResetTimestamp',
+          'followerCount', 'followingCount',
+          'profileSyncStatus', 'profileSyncStartedAt', 'profileSyncCompletedAt',
+          'currentSessionId'
+        ]);
+    }
+
     // --- Users Collection ---
     match /users/{userId} {
       // Any signed-in user can read public profiles
       allow read: if isSignedIn();
-      // Only owner can update their own profile
-      allow update: if isOwner(userId);
+
+      // Owner can update their own profile, but cannot touch CF-managed fields
+      allow update: if isOwner(userId) && onlyClientProfileFields();
+
       // Creation/deletion handled by Cloud Functions only
       allow create, delete: if false;
 
@@ -52,10 +68,24 @@ service cloud.firestore {
         allow write: if isOwner(userId);
       }
 
-      // --- Settings (private to owner only) ---
-      match /settings/{docId} {
+      // --- Collection Metadata (counter, etc.) ---
+      match /collectionMeta/{docId} {
         allow read, write: if isOwner(userId);
       }
+
+      // --- Settings (CF-managed: cooldowns, post limits, PFP limits) ---
+      // Clients can read their own settings (e.g. to display PFP changes remaining)
+      // but cannot write — all writes go through Cloud Functions.
+      match /settings/{docId} {
+        allow read: if isOwner(userId);
+        allow write: if false; // Cloud Functions only
+      }
+    }
+
+    // --- Usernames (Global Registry for Uniqueness) ---
+    match /usernames/{username} {
+      allow read: if true;
+      allow write: if false; // Cloud Functions (initializeUser) only
     }
 
     // --- Forum Collection ---
@@ -65,8 +95,8 @@ service cloud.firestore {
       // Only create if the userId field matches the requester
       allow create: if isSignedIn() && incomingDataOwned();
 
-      // Owner can update/delete their thread
-      // Any signed-in user can update ONLY the stat fields
+      // Owner can update/delete their thread.
+      // Any signed-in user can update ONLY the engagement stat fields.
       allow update: if isSignedIn() && (
         isOwnerOfResource() ||
         request.resource.data.diff(resource.data).affectedKeys()
@@ -120,22 +150,22 @@ service cloud.firestore {
       }
     }
 
-    // --- User Bird Sightings (private to owner) ---
+    // --- User Bird Sightings (written by recordBirdSighting CF only) ---
     match /userBirds/{sightingId} {
       allow read: if isSignedIn() && isOwnerOfResource();
       allow create: if isSignedIn() && incomingDataOwned();
       allow update, delete: if isSignedIn() && isOwnerOfResource();
     }
     match /userBirdSightings/{sightingId} {
+      // Anyone signed in can read (powers the heatmap for all users)
       allow read: if isSignedIn();
-      allow create: if isSignedIn() && incomingDataOwned();
-      allow update, delete: if isSignedIn() && isOwnerOfResource();
+      // Writes are CF-only — recordBirdSighting CF uses admin SDK
+      allow write: if false;
     }
 
     // --- Identifications (Internal logging only) ---
     match /identifications/{idId} {
-      // Total lockdown: only Cloud Functions (Admin) can touch this
-      allow read, write: if false;
+      allow read, write: if false; // Cloud Functions only
     }
 
     // --- Locations ---
@@ -144,7 +174,7 @@ service cloud.firestore {
       allow create: if isSignedIn();
 
       // Allow updates ONLY if the coordinates haven't changed.
-      // This lets the app refresh the locality name but stops hackers from
+      // This lets the app refresh the locality name but stops clients from
       // changing the actual physical location of a known ID.
       allow update: if isSignedIn() &&
         request.resource.data.latitude == resource.data.latitude &&
@@ -164,6 +194,22 @@ service cloud.firestore {
     match /eBirdApiSightings/{sightingId} {
       allow read: if isSignedIn();
       allow write: if false;
+    }
+
+    // --- Idempotency & Scheduler Locks ---
+    match /processedEvents/{eventId} {
+      allow read, write: if false; // Cloud Functions only
+    }
+    match /processedAIEvents/{eventId} {
+      allow read, write: if false; // Cloud Functions only
+    }
+    match /schedulerLocks/{lockId} {
+      allow read, write: if false; // Cloud Functions only
+    }
+
+    // --- Archived / Deleted Accounts ---
+    match /usersdeletedAccounts/{userId} {
+      allow read, write: if false; // Cloud Functions only
     }
   }
 }

@@ -32,6 +32,12 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 
+/**
+ * ChangeCardImageActivity lets the user browse and select a different photo
+ * for a bird species in their collection.
+ * Fixed Race Conditions:
+ * 1. Async Fetch Desync: Added fetchGeneration counter.
+ */
 public class ChangeCardImageActivity extends AppCompatActivity {
 
     public static final String EXTRA_BIRD_ID = "com.birddex.app.extra.CHANGE_IMAGE_BIRD_ID";
@@ -55,6 +61,9 @@ public class ChangeCardImageActivity extends AppCompatActivity {
     private String commonName;
     private String scientificName;
 
+    // --- FIXES ---
+    private int fetchGeneration = 0;
+
     @Override
     protected void onCreate(@Nullable Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -62,20 +71,8 @@ public class ChangeCardImageActivity extends AppCompatActivity {
         View root = findViewById(R.id.rootChangeCardImage);
         ViewCompat.setOnApplyWindowInsetsListener(root, (v, insets) -> {
             Insets systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars());
-
-            int extraTop = (int) TypedValue.applyDimension(
-                    TypedValue.COMPLEX_UNIT_DIP,
-                    6,
-                    getResources().getDisplayMetrics()
-            );
-
-            v.setPadding(
-                    v.getPaddingLeft(),
-                    systemBars.top + extraTop,
-                    v.getPaddingRight(),
-                    v.getPaddingBottom()
-            );
-
+            int extraTop = (int) TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, 6, getResources().getDisplayMetrics());
+            v.setPadding(v.getPaddingLeft(), systemBars.top + extraTop, v.getPaddingRight(), v.getPaddingBottom());
             return insets;
         });
 
@@ -96,10 +93,7 @@ public class ChangeCardImageActivity extends AppCompatActivity {
         GridLayoutManager layoutManager = new GridLayoutManager(this, 3);
         adapter = new ChangeCardImageBrowserAdapter(this::onImageChosen);
         layoutManager.setSpanSizeLookup(new GridLayoutManager.SpanSizeLookup() {
-            @Override
-            public int getSpanSize(int position) {
-                return adapter.isHeader(position) ? 3 : 1;
-            }
+            @Override public int getSpanSize(int position) { return adapter.isHeader(position) ? 3 : 1; }
         });
 
         rvImages.setLayoutManager(layoutManager);
@@ -108,7 +102,7 @@ public class ChangeCardImageActivity extends AppCompatActivity {
         btnBack.setOnClickListener(v -> finish());
 
         if (isBlank(birdId)) {
-            Toast.makeText(this, "No bird ID found for this card.", Toast.LENGTH_SHORT).show();
+            Toast.makeText(this, "No bird ID found.", Toast.LENGTH_SHORT).show();
             finish();
             return;
         }
@@ -118,11 +112,9 @@ public class ChangeCardImageActivity extends AppCompatActivity {
 
     private void fetchImages() {
         FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
-        if (user == null) {
-            Toast.makeText(this, "No user logged in.", Toast.LENGTH_SHORT).show();
-            finish();
-            return;
-        }
+        if (user == null) return;
+
+        final int myGen = ++fetchGeneration;
 
         FirebaseFirestore.getInstance()
                 .collection("users")
@@ -131,6 +123,8 @@ public class ChangeCardImageActivity extends AppCompatActivity {
                 .whereEqualTo("birdId", birdId)
                 .get()
                 .addOnSuccessListener(queryDocumentSnapshots -> {
+                    if (myGen != fetchGeneration) return;
+
                     List<BrowserPhoto> photos = new ArrayList<>();
                     LinkedHashSet<String> seenUrls = new LinkedHashSet<>();
 
@@ -154,9 +148,7 @@ public class ChangeCardImageActivity extends AppCompatActivity {
                         return;
                     }
 
-                    Collections.sort(photos, (a, b) ->
-                            Long.compare(getTime(b.timestamp), getTime(a.timestamp))
-                    );
+                    Collections.sort(photos, (a, b) -> Long.compare(getTime(b.timestamp), getTime(a.timestamp)));
 
                     List<ChangeCardImageBrowserAdapter.BrowserItem> items = new ArrayList<>();
                     SimpleDateFormat headerFormat = new SimpleDateFormat("MMMM yyyy", Locale.US);
@@ -164,43 +156,27 @@ public class ChangeCardImageActivity extends AppCompatActivity {
 
                     String lastHeader = null;
                     for (BrowserPhoto photo : photos) {
-                        String headerTitle = photo.timestamp != null
-                                ? headerFormat.format(photo.timestamp)
-                                : "Unknown Date";
-
+                        String headerTitle = photo.timestamp != null ? headerFormat.format(photo.timestamp) : "Unknown Date";
                         if (!headerTitle.equals(lastHeader)) {
                             items.add(ChangeCardImageBrowserAdapter.BrowserItem.createHeader(headerTitle));
                             lastHeader = headerTitle;
                         }
-
-                        String dateLabel = photo.timestamp != null
-                                ? dateFormat.format(photo.timestamp)
-                                : "Unknown date";
-
-                        boolean isCurrent = currentImageUrl != null
-                                && currentImageUrl.equals(photo.imageUrl);
-
-                        items.add(ChangeCardImageBrowserAdapter.BrowserItem.createPhoto(
-                                photo.imageUrl,
-                                dateLabel,
-                                photo.timestamp,
-                                photo.userBirdRefId,
-                                isCurrent
-                        ));
+                        String dateLabel = photo.timestamp != null ? dateFormat.format(photo.timestamp) : "Unknown date";
+                        boolean isCurrent = currentImageUrl != null && currentImageUrl.equals(photo.imageUrl);
+                        items.add(ChangeCardImageBrowserAdapter.BrowserItem.createPhoto(photo.imageUrl, dateLabel, photo.timestamp, photo.userBirdRefId, isCurrent));
                     }
 
                     adapter.submitList(items);
                     updateEmptyState(items.isEmpty());
                 })
                 .addOnFailureListener(e -> {
-                    Toast.makeText(this, "Failed to load stored images.", Toast.LENGTH_SHORT).show();
-                    updateEmptyState(true);
+                    if (myGen == fetchGeneration) updateEmptyState(true);
                 });
     }
 
     private void onImageChosen(@NonNull ChangeCardImageBrowserAdapter.BrowserItem item) {
         if (item.isCurrent) {
-            Toast.makeText(this, "That image is already being used.", Toast.LENGTH_SHORT).show();
+            Toast.makeText(this, "Already in use.", Toast.LENGTH_SHORT).show();
             return;
         }
 
@@ -213,33 +189,23 @@ public class ChangeCardImageActivity extends AppCompatActivity {
     }
 
     private void updateEmptyState(boolean isEmpty) {
-        tvEmpty.setVisibility(isEmpty ? TextView.VISIBLE : TextView.GONE);
-        rvImages.setVisibility(isEmpty ? RecyclerView.GONE : RecyclerView.VISIBLE);
+        tvEmpty.setVisibility(isEmpty ? View.VISIBLE : View.GONE);
+        rvImages.setVisibility(isEmpty ? View.GONE : View.VISIBLE);
     }
 
     private String buildSubtitle() {
-        if (!isBlank(commonName)) {
-            return commonName;
-        }
-        if (!isBlank(scientificName)) {
-            return scientificName;
-        }
+        if (!isBlank(commonName)) return commonName;
+        if (!isBlank(scientificName)) return scientificName;
         return "Your saved photos";
     }
 
-    private long getTime(Date date) {
-        return date == null ? 0L : date.getTime();
-    }
-
-    private boolean isBlank(String value) {
-        return value == null || value.trim().isEmpty();
-    }
+    private long getTime(Date date) { return date == null ? 0L : date.getTime(); }
+    private boolean isBlank(String value) { return value == null || value.trim().isEmpty(); }
 
     private static class BrowserPhoto {
         final String imageUrl;
         final Date timestamp;
         final String userBirdRefId;
-
         BrowserPhoto(String imageUrl, Date timestamp, String userBirdRefId) {
             this.imageUrl = imageUrl;
             this.timestamp = timestamp;

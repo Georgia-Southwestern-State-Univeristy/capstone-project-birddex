@@ -1,12 +1,9 @@
 package com.birddex.app;
 
 import android.content.Intent;
-import android.content.SharedPreferences;
 import android.os.Bundle;
-import android.text.Editable;
 import android.text.InputFilter;
 import android.text.InputType;
-import android.text.TextWatcher;
 import android.util.Log;
 import android.view.LayoutInflater;
 import android.view.View;
@@ -16,7 +13,6 @@ import android.widget.Button;
 import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.ImageButton;
-import android.widget.LinearLayout;
 import android.widget.ListView;
 import android.widget.PopupMenu;
 import android.widget.TextView;
@@ -42,19 +38,16 @@ import com.google.android.material.imageview.ShapeableImageView;
 import com.google.android.material.tabs.TabLayout;
 import com.google.firebase.auth.FirebaseAuth;
 import com.google.firebase.auth.FirebaseUser;
+import com.google.firebase.firestore.DocumentReference;
 import com.google.firebase.firestore.DocumentSnapshot;
 import com.google.firebase.firestore.FieldValue;
 import com.google.firebase.firestore.FirebaseFirestore;
 import com.google.firebase.firestore.ListenerRegistration;
 import com.google.firebase.firestore.Query;
-import com.google.firebase.firestore.SetOptions;
 
-import java.text.SimpleDateFormat;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 
 public class ProfileFragment extends Fragment implements
@@ -65,7 +58,6 @@ public class ProfileFragment extends Fragment implements
     private static final String ARG_USER_ID = "arg_user_id";
     private static final int PAGE_SIZE = 20;
     private static final int FAVORITE_SLOT_COUNT = 3;
-    private static final String FAVORITES_PREFS = "profile_favorite_cards";
 
     private ShapeableImageView ivPfp;
     private TextView tvUsername, tvPoints, tvBio, tvFollowerCount, tvFollowingCount, tvProfileTabEmpty;
@@ -100,8 +92,11 @@ public class ProfileFragment extends Fragment implements
     private ActivityResultLauncher<Intent> editProfileLauncher;
     private ListenerRegistration profileListener;
 
-    public ProfileFragment() {
-    }
+    private boolean isNavigating = false;
+    private int fetchGeneration = 0;
+    private int favoriteFetchGeneration = 0;
+
+    public ProfileFragment() {}
 
     public static ProfileFragment newInstance(String userId) {
         ProfileFragment fragment = new ProfileFragment();
@@ -118,35 +113,21 @@ public class ProfileFragment extends Fragment implements
         db = FirebaseFirestore.getInstance();
         firebaseManager = new FirebaseManager(requireContext());
 
-        if (getArguments() != null) {
-            profileUserId = getArguments().getString(ARG_USER_ID);
-        }
-
+        if (getArguments() != null) profileUserId = getArguments().getString(ARG_USER_ID);
         FirebaseUser user = mAuth.getCurrentUser();
         if (profileUserId == null || (user != null && profileUserId.equals(user.getUid()))) {
             profileUserId = user != null ? user.getUid() : null;
             isCurrentUser = true;
-        } else {
-            isCurrentUser = false;
-        }
+        } else isCurrentUser = false;
 
-        editProfileLauncher = registerForActivityResult(
-                new ActivityResultContracts.StartActivityForResult(),
-                result -> {
-                    if (result.getResultCode() == AppCompatActivity.RESULT_OK) {
-                        Log.d(TAG, "Edit profile result OK.");
-                        fetchUserProfile();
-                    }
-                }
-        );
-        Log.d(TAG, "Profile created for UID: " + profileUserId);
+        editProfileLauncher = registerForActivityResult(new ActivityResultContracts.StartActivityForResult(), result -> {
+        });
     }
 
     @Nullable
     @Override
     public View onCreateView(@NonNull LayoutInflater inflater, @Nullable ViewGroup container, @Nullable Bundle savedInstanceState) {
         View v = inflater.inflate(R.layout.fragment_profile, container, false);
-
         ivPfp = v.findViewById(R.id.ivPfp);
         tvUsername = v.findViewById(R.id.tvUsername);
         tvPoints = v.findViewById(R.id.tvPoints);
@@ -158,60 +139,41 @@ public class ProfileFragment extends Fragment implements
         btnEditProfile = v.findViewById(R.id.btnEditProfile);
         btnFollowers = v.findViewById(R.id.btnFollowers);
         btnFollowing = v.findViewById(R.id.btnFollowing);
-
         profileTabLayout = v.findViewById(R.id.profileTabLayout);
         tvProfileTabEmpty = v.findViewById(R.id.tvProfileTabEmpty);
         rvFavoriteCards = v.findViewById(R.id.rvFavoriteCards);
         rvProfilePosts = v.findViewById(R.id.rvProfilePosts);
         swipeRefreshLayout = v.findViewById(R.id.swipeRefreshLayout);
 
-        // Disable dragging on AppBarLayout to prevent unwanted scrolling
-        AppBarLayout appBarLayout = v.findViewById(R.id.profileAppBar);
-        if (appBarLayout.getLayoutParams() instanceof CoordinatorLayout.LayoutParams) {
-            CoordinatorLayout.LayoutParams params = (CoordinatorLayout.LayoutParams) appBarLayout.getLayoutParams();
-            AppBarLayout.Behavior behavior = new AppBarLayout.Behavior();
-            behavior.setDragCallback(new AppBarLayout.Behavior.DragCallback() {
-                @Override
-                public boolean canDrag(@NonNull AppBarLayout appBarLayout) {
-                    return false;
-                }
-            });
-            params.setBehavior(behavior);
-        }
-
         setupRecyclerViews();
         setupTabs();
         setupUI();
         setupSocialCountClicks();
         setupSwipeRefresh();
-
         return v;
+    }
+
+    @Override
+    public void onResume() {
+        super.onResume();
+        isNavigating = false;
+        if (profileListener == null) fetchUserProfile();
+        refreshPosts();
     }
 
     private void setupRecyclerViews() {
         favoritesAdapter = new FavoritesAdapter(isCurrentUser, this);
-        rvFavoriteCards.setLayoutManager(new GridLayoutManager(requireContext(), 3) {
-            @Override
-            public boolean canScrollVertically() {
-                return false;
-            }
-        });
+        rvFavoriteCards.setLayoutManager(new GridLayoutManager(requireContext(), 3) { @Override public boolean canScrollVertically() { return false; } });
         rvFavoriteCards.setAdapter(favoritesAdapter);
 
         postsAdapter = new ForumPostAdapter(this);
         rvProfilePosts.setLayoutManager(new LinearLayoutManager(requireContext()));
         rvProfilePosts.setAdapter(postsAdapter);
-
         rvProfilePosts.addOnScrollListener(new RecyclerView.OnScrollListener() {
-            @Override
-            public void onScrolled(@NonNull RecyclerView recyclerView, int dx, int dy) {
-                if (dy > 0) {
+            @Override public void onScrolled(@NonNull RecyclerView rv, int dx, int dy) {
+                if (dy > 0 && !isFetching && !isLastPage) {
                     LinearLayoutManager lm = (LinearLayoutManager) rvProfilePosts.getLayoutManager();
-                    if (lm != null && !isFetching && !isLastPage) {
-                        if (lm.getChildCount() + lm.findFirstVisibleItemPosition() >= lm.getItemCount()) {
-                            fetchPosts();
-                        }
-                    }
+                    if (lm != null && lm.getChildCount() + lm.findFirstVisibleItemPosition() >= lm.getItemCount()) fetchPosts();
                 }
             }
         });
@@ -219,18 +181,9 @@ public class ProfileFragment extends Fragment implements
 
     private void setupTabs() {
         profileTabLayout.addOnTabSelectedListener(new TabLayout.OnTabSelectedListener() {
-            @Override
-            public void onTabSelected(TabLayout.Tab tab) {
-                applyTabState(tab.getPosition());
-            }
-
-            @Override
-            public void onTabUnselected(TabLayout.Tab tab) {
-            }
-
-            @Override
-            public void onTabReselected(TabLayout.Tab tab) {
-            }
+            @Override public void onTabSelected(TabLayout.Tab tab) { applyTabState(tab.getPosition()); }
+            @Override public void onTabUnselected(TabLayout.Tab tab) {}
+            @Override public void onTabReselected(TabLayout.Tab tab) {}
         });
         applyTabState(0);
     }
@@ -238,9 +191,7 @@ public class ProfileFragment extends Fragment implements
     private void applyTabState(int position) {
         if (!isAdded()) return;
         if (position == 0) {
-            rvFavoriteCards.setVisibility(View.VISIBLE);
-            rvProfilePosts.setVisibility(View.GONE);
-            tvProfileTabEmpty.setVisibility(View.GONE);
+            rvFavoriteCards.setVisibility(View.VISIBLE); rvProfilePosts.setVisibility(View.GONE); tvProfileTabEmpty.setVisibility(View.GONE);
         } else {
             rvFavoriteCards.setVisibility(View.GONE);
             rvProfilePosts.setVisibility(postList.isEmpty() ? View.GONE : View.VISIBLE);
@@ -251,21 +202,15 @@ public class ProfileFragment extends Fragment implements
 
     private void setupUI() {
         if (isCurrentUser) {
-            btnEditProfile.setVisibility(View.VISIBLE);
-            btnSettings.setVisibility(View.VISIBLE);
-            btnFollow.setVisibility(View.GONE);
-            btnSettings.setOnClickListener(v -> startActivity(new Intent(requireContext(), SettingsActivity.class)));
+            btnEditProfile.setVisibility(View.VISIBLE); btnSettings.setVisibility(View.VISIBLE); btnFollow.setVisibility(View.GONE);
+            btnSettings.setOnClickListener(v -> { if (!isNavigating) { isNavigating = true; startActivity(new Intent(requireContext(), SettingsActivity.class)); } });
             btnEditProfile.setOnClickListener(v -> {
-                Intent intent = new Intent(requireContext(), EditProfileActivity.class);
-                intent.putExtra("username", currentUsername);
-                intent.putExtra("bio", currentBio);
-                intent.putExtra("profilePictureUrl", currentProfilePictureUrl);
-                editProfileLauncher.launch(intent);
+                if (isNavigating) return;
+                isNavigating = true;
+                editProfileLauncher.launch(new Intent(requireContext(), EditProfileActivity.class).putExtra("username", currentUsername).putExtra("bio", currentBio).putExtra("profilePictureUrl", currentProfilePictureUrl));
             });
         } else {
-            btnEditProfile.setVisibility(View.GONE);
-            btnSettings.setVisibility(View.GONE);
-            btnFollow.setVisibility(View.VISIBLE);
+            btnEditProfile.setVisibility(View.GONE); btnSettings.setVisibility(View.GONE); btnFollow.setVisibility(View.VISIBLE);
             btnFollow.setOnClickListener(v -> toggleFollow());
             checkFollowingStatus();
         }
@@ -277,90 +222,64 @@ public class ProfileFragment extends Fragment implements
     }
 
     private void openSocialScreen(boolean showFollowing) {
-        if (profileUserId == null) return;
-        Intent intent = new Intent(requireContext(), SocialActivity.class);
-        intent.putExtra(SocialActivity.EXTRA_USER_ID, profileUserId);
-        intent.putExtra(SocialActivity.EXTRA_SHOW_FOLLOWING, showFollowing);
-        startActivity(intent);
+        if (profileUserId == null || isNavigating) return;
+        isNavigating = true;
+        startActivity(new Intent(requireContext(), SocialActivity.class).putExtra(SocialActivity.EXTRA_USER_ID, profileUserId).putExtra(SocialActivity.EXTRA_SHOW_FOLLOWING, showFollowing));
     }
 
     private void fetchUserProfile() {
         if (profileUserId == null) return;
         if (profileListener != null) profileListener.remove();
-        Log.d(TAG, "Listening to profile updates for: " + profileUserId);
-        profileListener = db.collection("users").document(profileUserId)
-                .addSnapshotListener((snapshot, e) -> {
-                    if (e != null) {
-                        Log.e(TAG, "Profile listen failed.", e);
-                        return;
-                    }
-                    if (snapshot != null && snapshot.exists() && isAdded())
-                        handleUserSnapshot(snapshot);
-                });
+        profileListener = db.collection("users").document(profileUserId).addSnapshotListener((snapshot, e) -> {
+            if (e != null || snapshot == null || !snapshot.exists() || !isAdded()) return;
+            handleUserSnapshot(snapshot);
+        });
     }
 
     private void handleUserSnapshot(DocumentSnapshot doc) {
-        User user = doc.toObject(User.class);
-        if (user == null) return;
-
-        currentUsername = user.getUsername();
-        currentBio = user.getBio();
-        currentProfilePictureUrl = user.getProfilePictureUrl();
-
+        User user = doc.toObject(User.class); if (user == null) return;
+        Log.d(TAG, "handleUserSnapshot — bio: " + user.getBio());
+        currentUsername = user.getUsername(); currentBio = user.getBio(); currentProfilePictureUrl = user.getProfilePictureUrl();
         tvUsername.setText(currentUsername != null ? currentUsername : "User");
         tvBio.setText(currentBio != null && !currentBio.isEmpty() ? currentBio : "No bio yet.");
         tvPoints.setText("Total Points: " + user.getTotalPoints());
         tvFollowerCount.setText(String.valueOf(user.getFollowerCount()));
         tvFollowingCount.setText(String.valueOf(user.getFollowingCount()));
-
-        if (currentProfilePictureUrl != null && !currentProfilePictureUrl.isEmpty()) {
-            Glide.with(this).load(currentProfilePictureUrl).placeholder(R.drawable.ic_profile).into(ivPfp);
-        } else {
-            ivPfp.setImageResource(R.drawable.ic_profile);
-        }
-
+        Glide.with(this)
+                .load((currentProfilePictureUrl != null && !currentProfilePictureUrl.isEmpty()) ? currentProfilePictureUrl : null)
+                .placeholder(R.drawable.ic_profile)
+                .error(R.drawable.ic_profile)
+                .into(ivPfp);
         favoriteCardKeys.clear();
         List<String> cloudKeys = (List<String>) doc.get("favoriteCardKeys");
         if (cloudKeys != null) favoriteCardKeys.addAll(cloudKeys);
-
         loadFavoriteCards();
     }
 
     private void loadFavoriteCards() {
         if (profileUserId == null) return;
-        db.collection("users").document(profileUserId).collection("collectionSlot").get()
-                .addOnSuccessListener(querySnapshot -> {
-                    if (!isAdded()) return;
-                    allCollectionSlots.clear();
-                    for (DocumentSnapshot doc : querySnapshot.getDocuments()) {
-                        CollectionSlot slot = doc.toObject(CollectionSlot.class);
-                        if (slot != null) {
-                            slot.setId(doc.getId());
-                            allCollectionSlots.add(slot);
-                        }
-                    }
-                    refreshFavoritesDisplay();
-                });
+        final int myGen = ++favoriteFetchGeneration;
+        db.collection("users").document(profileUserId).collection("collectionSlot").get().addOnSuccessListener(querySnapshot -> {
+            if (!isAdded() || myGen != favoriteFetchGeneration) return;
+            allCollectionSlots.clear();
+            for (DocumentSnapshot doc : querySnapshot.getDocuments()) {
+                CollectionSlot slot = doc.toObject(CollectionSlot.class);
+                if (slot != null) { slot.setId(doc.getId()); allCollectionSlots.add(slot); }
+            }
+            refreshFavoritesDisplay();
+        });
     }
 
     private void refreshFavoritesDisplay() {
-        ensureFavoriteSize();
-        List<CollectionSlot> favoriteSlots = new ArrayList<>();
-        for (int i = 0; i < FAVORITE_SLOT_COUNT; i++) {
-            favoriteSlots.add(findSlotById(favoriteCardKeys.get(i)));
-        }
-        favoritesAdapter.submitList(favoriteSlots);
-    }
-
-    private void ensureFavoriteSize() {
         while (favoriteCardKeys.size() < FAVORITE_SLOT_COUNT) favoriteCardKeys.add("");
+        List<CollectionSlot> favoriteSlots = new ArrayList<>();
+        for (int i = 0; i < FAVORITE_SLOT_COUNT; i++) favoriteSlots.add(findSlotById(favoriteCardKeys.get(i)));
+        favoritesAdapter.submitList(favoriteSlots);
     }
 
     private CollectionSlot findSlotById(String id) {
         if (id == null || id.isEmpty()) return null;
-        for (CollectionSlot slot : allCollectionSlots) {
-            if (id.equals(slot.getId())) return slot;
-        }
+        for (CollectionSlot slot : allCollectionSlots) if (id.equals(slot.getId())) return slot;
         return null;
     }
 
@@ -380,21 +299,13 @@ public class ProfileFragment extends Fragment implements
             firebaseManager.unfollowUser(profileUserId, task -> {
                 if (!isAdded()) return;
                 btnFollow.setEnabled(true);
-                if (task.isSuccessful()) {
-                    isFollowing = false;
-                    btnFollow.setText("Follow");
-                    refreshPosts();
-                }
+                if (task.isSuccessful()) { isFollowing = false; btnFollow.setText("Follow"); refreshPosts(); }
             });
         } else {
             firebaseManager.followUser(profileUserId, task -> {
                 if (!isAdded()) return;
                 btnFollow.setEnabled(true);
-                if (task.isSuccessful()) {
-                    isFollowing = true;
-                    btnFollow.setText("Following");
-                    refreshPosts();
-                }
+                if (task.isSuccessful()) { isFollowing = true; btnFollow.setText("Following"); refreshPosts(); }
             });
         }
     }
@@ -402,78 +313,67 @@ public class ProfileFragment extends Fragment implements
     private void fetchPosts() {
         if (profileUserId == null || isFetching || isLastPage || !isAdded()) return;
         isFetching = true;
+        final int myGen = fetchGeneration;
         Query query = db.collection("forumThreads").whereEqualTo("userId", profileUserId).orderBy("timestamp", Query.Direction.DESCENDING).limit(PAGE_SIZE);
         if (lastVisible != null) query = query.startAfter(lastVisible);
 
         query.get().addOnSuccessListener(value -> {
-            if (!isAdded()) return;
+            if (!isAdded() || myGen != fetchGeneration) return;
             if (value != null && !value.isEmpty()) {
                 lastVisible = value.getDocuments().get(value.size() - 1);
                 for (DocumentSnapshot doc : value.getDocuments()) {
                     ForumPost post = doc.toObject(ForumPost.class);
-                    if (post != null) {
-                        post.setId(doc.getId());
-                        postList.add(post);
-                    }
+                    if (post != null) { post.setId(doc.getId()); postList.add(post); }
                 }
                 postsAdapter.setPosts(new ArrayList<>(postList));
                 if (value.size() < PAGE_SIZE) isLastPage = true;
-            } else {
-                isLastPage = true;
-            }
+            } else isLastPage = true;
             isFetching = false;
             applyTabState(profileTabLayout.getSelectedTabPosition());
-        }).addOnFailureListener(e -> {
-            isFetching = false;
-            Log.e(TAG, "Post fetch failed.", e);
-        });
+        }).addOnFailureListener(e -> { if (myGen == fetchGeneration) isFetching = false; });
     }
 
     private void refreshPosts() {
-        isFetching = false;
-        lastVisible = null;
-        isLastPage = false;
+        fetchGeneration++;
+        isFetching = false; lastVisible = null; isLastPage = false;
         postList.clear();
         if (postsAdapter != null) postsAdapter.setPosts(new ArrayList<>());
         fetchPosts();
     }
 
     private void setupSwipeRefresh() {
-        swipeRefreshLayout.setOnRefreshListener(() -> {
-            fetchUserProfile();
-            refreshPosts();
-            // The snapshot listener and post fetch are async; stop the spinner after a
-            // short grace period so it doesn't spin forever if the user is offline.
-            swipeRefreshLayout.postDelayed(() -> {
-                if (isAdded() && swipeRefreshLayout != null) {
-                    swipeRefreshLayout.setRefreshing(false);
-                }
-            }, 3000);
-        });
+        swipeRefreshLayout.setOnRefreshListener(() -> { fetchUserProfile(); refreshPosts(); swipeRefreshLayout.setRefreshing(false); });
     }
 
-    @Override
-    public void onLikeClick(ForumPost post) {
-        Log.d(TAG, "Like: " + post.getId());
+    @Override public void onLikeClick(ForumPost post) {
+        FirebaseUser u = mAuth.getCurrentUser();
+        if (u == null || post.getId() == null) return;
+        String uid = u.getUid();
+        if (post.getLikedBy() == null) post.setLikedBy(new HashMap<>());
+        boolean liked = post.getLikedBy().containsKey(uid);
+        int count = post.getLikeCount();
+
+        if (liked) { post.setLikeCount(Math.max(0, count - 1)); post.getLikedBy().remove(uid); }
+        else { post.setLikeCount(count + 1); post.getLikedBy().put(uid, true); }
+        postsAdapter.notifyDataSetChanged();
+
+        db.collection("forumThreads").document(post.getId()).update("likedBy." + uid, liked ? FieldValue.delete() : true)
+                .addOnFailureListener(e -> {
+                    post.setLikeCount(count); if (liked) post.getLikedBy().put(uid, true); else post.getLikedBy().remove(uid);
+                    postsAdapter.notifyDataSetChanged();
+                });
     }
 
-    @Override
-    public void onCommentClick(ForumPost post) {
-        onPostClick(post);
+    @Override public void onCommentClick(ForumPost post) { onPostClick(post); }
+    @Override public void onPostClick(ForumPost post) {
+        if (isNavigating) return;
+        isNavigating = true;
+        startActivity(new Intent(requireContext(), PostDetailActivity.class).putExtra(PostDetailActivity.EXTRA_POST_ID, post.getId()));
     }
 
-    @Override
-    public void onPostClick(ForumPost post) {
-        Intent intent = new Intent(requireContext(), PostDetailActivity.class);
-        intent.putExtra(PostDetailActivity.EXTRA_POST_ID, post.getId());
-        startActivity(intent);
-    }
-
-    @Override
-    public void onOptionsClick(ForumPost post, View view) {
+    @Override public void onOptionsClick(ForumPost post, View view) {
         PopupMenu popup = new PopupMenu(requireContext(), view);
-        FirebaseUser user = mAuth.getCurrentUser();
-        if (user != null && user.getUid().equals(post.getUserId())) popup.getMenu().add("Delete");
+        if (mAuth.getUid() != null && mAuth.getUid().equals(post.getUserId())) popup.getMenu().add("Delete");
         popup.getMenu().add("Report");
         popup.setOnMenuItemClickListener(item -> {
             if (item.getTitle().equals("Delete")) showDeleteConfirmation(post);
@@ -483,155 +383,96 @@ public class ProfileFragment extends Fragment implements
         popup.show();
     }
 
-    @Override
-    public void onUserClick(String userId) {
-        if (!userId.equals(profileUserId)) {
-            Intent intent = new Intent(requireContext(), UserSocialProfileActivity.class);
-            intent.putExtra(UserSocialProfileActivity.EXTRA_USER_ID, userId);
-            startActivity(intent);
-        }
+    @Override public void onUserClick(String userId) {
+        if (isNavigating || userId.equals(profileUserId)) return;
+        isNavigating = true;
+        startActivity(new Intent(requireContext(), UserSocialProfileActivity.class).putExtra(UserSocialProfileActivity.EXTRA_USER_ID, userId));
     }
 
-    @Override
-    public void onMapClick(ForumPost post) {
-        if (post.getLatitude() != null && post.getLongitude() != null) {
-            Intent intent = new Intent(requireContext(), NearbyHeatmapActivity.class);
-            intent.putExtra(NearbyHeatmapActivity.EXTRA_CENTER_LAT, post.getLatitude());
-            intent.putExtra(NearbyHeatmapActivity.EXTRA_CENTER_LNG, post.getLongitude());
-            intent.putExtra("extra_post_id", post.getId());
-            startActivity(intent);
-        }
+    @Override public void onMapClick(ForumPost post) {
+        if (isNavigating || post.getLatitude() == null) return;
+        isNavigating = true;
+        startActivity(new Intent(requireContext(), NearbyHeatmapActivity.class).putExtra(NearbyHeatmapActivity.EXTRA_CENTER_LAT, post.getLatitude()).putExtra(NearbyHeatmapActivity.EXTRA_CENTER_LNG, post.getLongitude()).putExtra("extra_post_id", post.getId()));
     }
 
-    @Override
-    public void onFavoriteClicked(int position, @Nullable CollectionSlot slot) {
-        if (slot == null) {
-            if (isCurrentUser) showFavoritePickerDialog(position);
-        } else {
+    @Override public void onFavoriteClicked(int position, @Nullable CollectionSlot slot) {
+        if (slot == null) { if (isCurrentUser) showFavoritePickerDialog(position); }
+        else {
+            if (isNavigating) return;
+            isNavigating = true;
             Intent intent = new Intent(requireContext(), ViewBirdCardActivity.class);
-            intent.putExtra(CollectionCardAdapter.EXTRA_IMAGE_URL, slot.getImageUrl());
-            intent.putExtra(CollectionCardAdapter.EXTRA_COMMON_NAME, slot.getCommonName());
-            intent.putExtra(CollectionCardAdapter.EXTRA_SCI_NAME, slot.getScientificName());
-            intent.putExtra(CollectionCardAdapter.EXTRA_STATE, slot.getState());
-            intent.putExtra(CollectionCardAdapter.EXTRA_LOCALITY, slot.getLocality());
-            intent.putExtra(CollectionCardAdapter.EXTRA_BIRD_ID, slot.getBirdId());
-
-            if (slot.getTimestamp() != null) {
-                intent.putExtra(CollectionCardAdapter.EXTRA_CAUGHT_TIME, slot.getTimestamp().getTime());
-            }
-
+            intent.putExtra(CollectionCardAdapter.EXTRA_IMAGE_URL, slot.getImageUrl()); intent.putExtra(CollectionCardAdapter.EXTRA_COMMON_NAME, slot.getCommonName());
+            intent.putExtra(CollectionCardAdapter.EXTRA_SCI_NAME, slot.getScientificName()); intent.putExtra(CollectionCardAdapter.EXTRA_STATE, slot.getState());
+            intent.putExtra(CollectionCardAdapter.EXTRA_LOCALITY, slot.getLocality()); intent.putExtra(CollectionCardAdapter.EXTRA_BIRD_ID, slot.getBirdId());
+            if (slot.getTimestamp() != null) intent.putExtra(CollectionCardAdapter.EXTRA_CAUGHT_TIME, slot.getTimestamp().getTime());
             startActivity(intent);
         }
     }
 
-    @Override
-    public boolean onFavoriteLongPressed(int position, @Nullable CollectionSlot slot) {
-        if (!isCurrentUser) return false;
-        showFavoritePickerDialog(position);
-        return true;
-    }
+    @Override public boolean onFavoriteLongPressed(int position, @Nullable CollectionSlot slot) { if (!isCurrentUser) return false; showFavoritePickerDialog(position); return true; }
 
     private void showFavoritePickerDialog(int position) {
-        if (allCollectionSlots.isEmpty()) {
-            Toast.makeText(getContext(), "No cards found.", Toast.LENGTH_SHORT).show();
-            return;
-        }
-
-        View dialogView = LayoutInflater.from(requireContext()).inflate(R.layout.dialog_favorite_picker, null);
-        EditText etSearch = dialogView.findViewById(R.id.etSearch);
-        ListView listView = dialogView.findViewById(R.id.listView);
-        Button btnClear = dialogView.findViewById(R.id.btnClear);
-
-        List<CollectionSlot> filteredSlots = new ArrayList<>(allCollectionSlots);
-        ArrayAdapter<String> adapter = new ArrayAdapter<>(requireContext(), android.R.layout.simple_list_item_1, getSlotNames(filteredSlots));
-        listView.setAdapter(adapter);
-
-        AlertDialog dialog = new AlertDialog.Builder(requireContext())
-                .setTitle("Pick Favorite")
-                .setView(dialogView)
-                .setNegativeButton("Cancel", null)
-                .create();
-
-        etSearch.addTextChangedListener(new TextWatcher() {
-            @Override
-            public void beforeTextChanged(CharSequence s, int start, int count, int after) {
+        if (allCollectionSlots.isEmpty()) return;
+        View dv = LayoutInflater.from(requireContext()).inflate(R.layout.dialog_favorite_picker, null);
+        EditText et = dv.findViewById(R.id.etSearch); ListView lv = dv.findViewById(R.id.listView); Button clr = dv.findViewById(R.id.btnClear);
+        List<CollectionSlot> filtered = new ArrayList<>(allCollectionSlots);
+        ArrayAdapter<String> adp = new ArrayAdapter<>(requireContext(), android.R.layout.simple_list_item_1, getSlotNames(filtered));
+        lv.setAdapter(adp);
+        AlertDialog dialog = new AlertDialog.Builder(requireContext()).setTitle("Pick Favorite").setView(dv).setNegativeButton("Cancel", null).create();
+        et.addTextChangedListener(new android.text.TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
+            @Override public void onTextChanged(CharSequence s, int start, int before, int count) {
+                filtered.clear(); String q = s.toString().toLowerCase();
+                for (CollectionSlot sl : allCollectionSlots) if (sl.getCommonName() != null && sl.getCommonName().toLowerCase().contains(q)) filtered.add(sl);
+                adp.clear(); adp.addAll(getSlotNames(filtered)); adp.notifyDataSetChanged();
             }
-
-            @Override
-            public void onTextChanged(CharSequence s, int start, int before, int count) {
-                filteredSlots.clear();
-                String query = s.toString().toLowerCase();
-                for (CollectionSlot slot : allCollectionSlots) {
-                    if (slot.getCommonName() != null && slot.getCommonName().toLowerCase().contains(query)) {
-                        filteredSlots.add(slot);
-                    }
-                }
-                adapter.clear();
-                adapter.addAll(getSlotNames(filteredSlots));
-                adapter.notifyDataSetChanged();
-            }
-
-            @Override
-            public void afterTextChanged(Editable s) {
-            }
+            @Override public void afterTextChanged(android.text.Editable s) {}
         });
-
-        listView.setOnItemClickListener((parent, view, which, id) -> {
-            saveFavoriteSelection(position, filteredSlots.get(which).getId());
-            dialog.dismiss();
-        });
-
-        btnClear.setOnClickListener(v -> {
-            saveFavoriteSelection(position, "");
-            dialog.dismiss();
-        });
-
+        lv.setOnItemClickListener((parent, view, which, id) -> { saveFavoriteSelection(position, filtered.get(which).getId()); dialog.dismiss(); });
+        clr.setOnClickListener(v -> { saveFavoriteSelection(position, ""); dialog.dismiss(); });
         dialog.show();
     }
 
-    private List<String> getSlotNames(List<CollectionSlot> slots) {
-        List<String> names = new ArrayList<>();
-        for (CollectionSlot s : slots) names.add(s.getCommonName());
-        return names;
-    }
+    private List<String> getSlotNames(List<CollectionSlot> slots) { List<String> ns = new ArrayList<>(); for (CollectionSlot s : slots) ns.add(s.getCommonName()); return ns; }
 
     private void saveFavoriteSelection(int pos, String key) {
-        ensureFavoriteSize();
-        favoriteCardKeys.set(pos, key);
-        db.collection("users").document(profileUserId).update("favoriteCardKeys", favoriteCardKeys);
-        refreshFavoritesDisplay();
-    }
-
-    private void showDeleteConfirmation(ForumPost post) {
-        new AlertDialog.Builder(requireContext()).setTitle("Delete Post").setPositiveButton("Delete", (d, w) -> {
-            firebaseManager.deleteForumPost(post.getId(), t -> refreshPosts());
-        }).show();
-    }
-
-    private void showReportDialog(ForumPost post) {
-        firebaseManager.addReport(new Report("post", post.getId(), mAuth.getUid(), "Inappropriate Content"), t -> {
-            Toast.makeText(getContext(), "Reported", Toast.LENGTH_SHORT).show();
+        while (favoriteCardKeys.size() < FAVORITE_SLOT_COUNT) favoriteCardKeys.add("");
+        favoriteCardKeys.set(pos, key); refreshFavoritesDisplay();
+        if (profileUserId == null) return;
+        DocumentReference ref = db.collection("users").document(profileUserId);
+        db.runTransaction(t -> {
+            DocumentSnapshot snap = t.get(ref); List<String> keys = (List<String>) snap.get("favoriteCardKeys");
+            keys = (keys == null) ? new ArrayList<>() : new ArrayList<>(keys);
+            while (keys.size() < FAVORITE_SLOT_COUNT) keys.add("");
+            keys.set(pos, key); t.update(ref, "favoriteCardKeys", keys);
+            return null;
         });
     }
 
-    @Override
-    public void onResume() {
-        super.onResume();
-        // Only re-attach the profile listener if it's not already active.
-        // Unconditionally removing + re-adding in onResume creates a small window
-        // where no listener is registered (listener gap race condition).
-        if (profileListener == null) {
-            fetchUserProfile();
-        }
-        refreshPosts();
+    private void showDeleteConfirmation(ForumPost post) { new AlertDialog.Builder(requireContext()).setTitle("Delete Post").setPositiveButton("Delete", (d, w) -> firebaseManager.deleteForumPost(post.getId(), t -> refreshPosts())).show(); }
+
+    private void showReportDialog(ForumPost post) {
+        String[] rs = {"Inappropriate Language", "Inappropriate Image", "Spam", "Harassment", "Other"};
+        new AlertDialog.Builder(requireContext()).setTitle("Report Post").setItems(rs, (d, w) -> {
+            if (rs[w].equals("Other")) showOtherReportDialog(reason -> submitReport(post, reason));
+            else submitReport(post, rs[w]);
+        }).show();
     }
 
-    @Override
-    public void onStop() {
-        super.onStop();
-        if (profileListener != null) {
-            profileListener.remove();
-            profileListener = null; // ← allow onResume() guard to re-register
-        }
+    private void showOtherReportDialog(OnReasonEnteredListener l) {
+        AlertDialog.Builder b = new AlertDialog.Builder(requireContext()); b.setTitle("Report Reason");
+        final EditText i = new EditText(requireContext()); i.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE); i.setHint("Reason..."); i.setFilters(new InputFilter[]{new InputFilter.LengthFilter(200)});
+        FrameLayout c = new FrameLayout(requireContext()); FrameLayout.LayoutParams p = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT); p.leftMargin = p.rightMargin = 40; i.setLayoutParams(p); c.addView(i); b.setView(c);
+        b.setPositiveButton("Submit", (d, w) -> { String r = i.getText().toString().trim(); if (!r.isEmpty()) l.onReasonEntered(r); });
+        b.setNegativeButton("Cancel", (d, w) -> d.cancel()); b.show();
     }
+
+    private interface OnReasonEnteredListener { void onReasonEntered(String r); }
+
+    private void submitReport(ForumPost post, String r) {
+        FirebaseUser u = mAuth.getCurrentUser(); if (u == null) return;
+        firebaseManager.addReport(new Report("post", post.getId(), u.getUid(), r), t -> { if (isAdded() && t.isSuccessful()) Toast.makeText(getContext(), "Reported", Toast.LENGTH_SHORT).show(); });
+    }
+
+    @Override public void onStop() { super.onStop(); if (profileListener != null) { profileListener.remove(); profileListener = null; } }
 }

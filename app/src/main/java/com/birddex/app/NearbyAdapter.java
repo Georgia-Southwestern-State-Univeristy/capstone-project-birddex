@@ -1,5 +1,6 @@
 package com.birddex.app;
 
+import android.content.Intent;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
@@ -16,12 +17,22 @@ import java.util.Date;
 import java.util.List;
 import java.util.Locale;
 
+/**
+ * NearbyAdapter displays bird sightings in a list.
+ * Fixed Race Condition:
+ * 1. Navigation Flooding: Added isNavigating guard.
+ */
 public class NearbyAdapter extends RecyclerView.Adapter<NearbyAdapter.NearbyViewHolder> {
 
     private List<Bird> birdList;
+    private boolean isNavigating = false;
 
     public NearbyAdapter(List<Bird> birdList) {
         this.birdList = birdList;
+    }
+
+    public void setNavigating(boolean navigating) {
+        this.isNavigating = navigating;
     }
 
     @NonNull
@@ -44,11 +55,17 @@ public class NearbyAdapter extends RecyclerView.Adapter<NearbyAdapter.NearbyView
             holder.tvTimestamp.setText("Time unknown");
         }
 
-        // Using a placeholder image for now, as Bird class doesn't seem to have a picture URL yet.
-        // You can update this later when you add an image URL to your Bird model or fetch it from elsewhere.
         Glide.with(holder.itemView.getContext())
                 .load(R.drawable.bird_image)
                 .into(holder.ivBirdImage);
+
+        holder.itemView.setOnClickListener(v -> {
+            if (isNavigating) return;
+            isNavigating = true;
+            Intent intent = new Intent(v.getContext(), BirdWikiActivity.class);
+            intent.putExtra(BirdWikiActivity.EXTRA_BIRD_ID, bird.getId());
+            v.getContext().startActivity(intent);
+        });
     }
 
     @Override

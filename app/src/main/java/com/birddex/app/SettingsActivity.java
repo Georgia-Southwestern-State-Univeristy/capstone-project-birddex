@@ -22,6 +22,11 @@ import com.google.firebase.auth.FirebaseAuth;
 import com.google.firebase.auth.FirebaseAuthRecentLoginRequiredException;
 import com.google.firebase.auth.FirebaseUser;
 
+/**
+ * SettingsActivity handles user settings and account management.
+ * Fixed Race Conditions:
+ * 1. Action Spam: Added isNavigating guard to prevent multiple activity/dialog launches.
+ */
 public class SettingsActivity extends AppCompatActivity {
 
     private TextView tvUserEmail, tvUserName;
@@ -36,6 +41,8 @@ public class SettingsActivity extends AppCompatActivity {
     private static final String PREFS_NAME = "BirdDexPrefs";
     private static final String KEY_GRAPHIC_CONTENT = "show_graphic_content";
 
+    private boolean isNavigating = false;
+
     @SuppressLint("MissingInflatedId")
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -44,7 +51,6 @@ public class SettingsActivity extends AppCompatActivity {
 
         sharedPreferences = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
 
-        // Initialize UI components
         tvUserEmail = findViewById(R.id.tvUserEmail);
         tvUserName = findViewById(R.id.tvUserName);
         btnNotifications = findViewById(R.id.btnNotifications);
@@ -54,7 +60,6 @@ public class SettingsActivity extends AppCompatActivity {
         btnDeleteAccount = findViewById(R.id.btnDeleteAccount);
         switchGraphicContent = findViewById(R.id.switchGraphicContent);
 
-        // Set initial switch state
         switchGraphicContent.setChecked(sharedPreferences.getBoolean(KEY_GRAPHIC_CONTENT, false));
 
         firebaseManager = new FirebaseManager(this);
@@ -66,20 +71,22 @@ public class SettingsActivity extends AppCompatActivity {
             return;
         }
 
-        // NEW: Reload user to check for verification status and sync Firestore email
         user.reload().addOnCompleteListener(task -> {
             loadUserProfile(user);
         });
 
         btnNotifications.setOnClickListener(v -> {
+            if (isNavigating) return;
+            isNavigating = true;
             startActivity(new Intent(this, NotificationsSettingsActivity.class));
         });
 
-        // Set up click listeners for all buttons
         btnLogout.setOnClickListener(v -> {
+            if (isNavigating) return;
+            isNavigating = true;
             FirebaseUser currentUser = FirebaseAuth.getInstance().getCurrentUser();
             String uid = (currentUser != null) ? currentUser.getUid() : null;
-            
+
             FirebaseAuth.getInstance().signOut();
             if (uid != null) {
                 sessionManager.clearSession(uid);
@@ -87,63 +94,41 @@ public class SettingsActivity extends AppCompatActivity {
             goToWelcomeAndClear();
         });
 
-
-        btnUpdateEmail.setOnClickListener(v -> {
-            promptForNewEmail();
-        });
-
-        tvUserEmail.setOnClickListener(v -> {
-            promptForNewEmail();
-        });
-
+        btnUpdateEmail.setOnClickListener(v -> promptForNewEmail());
+        tvUserEmail.setOnClickListener(v -> promptForNewEmail());
         btnChangePassword.setOnClickListener(v -> {
             initiatePasswordReset();
             Toast.makeText(SettingsActivity.this, "Please check your email to update your password.", Toast.LENGTH_LONG).show();
         });
 
-        btnDeleteAccount.setOnClickListener(v -> {
-            showDeleteAccountConfirmation();
-        });
+        btnDeleteAccount.setOnClickListener(v -> showDeleteAccountConfirmation());
 
         switchGraphicContent.setOnCheckedChangeListener((buttonView, isChecked) -> {
             sharedPreferences.edit().putBoolean(KEY_GRAPHIC_CONTENT, isChecked).apply();
         });
     }
 
-    /**
-     * NEW: Centralized method to load user profile and sync Auth email with Firestore.
-     */
+    @Override
+    protected void onResume() {
+        super.onResume();
+        isNavigating = false;
+    }
+
     private void loadUserProfile(FirebaseUser user) {
         firebaseManager.getUserProfile(user.getUid(), task -> {
             if (task.isSuccessful() && task.getResult() != null) {
                 User userProfile = task.getResult().toObject(User.class);
                 if (userProfile != null) {
                     tvUserName.setText(userProfile.getUsername());
-
-                    // Sync Firestore email if the Auth email has been updated and verified
                     String currentAuthEmail = user.getEmail();
                     if (currentAuthEmail != null && !currentAuthEmail.equals(userProfile.getEmail())) {
                         Log.d(TAG, "Email mismatch detected. Syncing Firestore with Auth email.");
                         userProfile.setEmail(currentAuthEmail);
                         firebaseManager.updateUserProfile(userProfile, new FirebaseManager.AuthListener() {
-                            @Override
-                            public void onSuccess(FirebaseUser user) {
-                                Log.d(TAG, "Firestore email synced successfully.");
-                            }
-
-                            @Override
-                            public void onFailure(String errorMessage) {
-                                Log.e(TAG, "Failed to sync email to Firestore: " + errorMessage);
-                            }
-
-                            @Override
-                            public void onUsernameTaken() {
-                            }
-
-                            @Override
-                            public void onEmailTaken() {
-
-                            }
+                            @Override public void onSuccess(FirebaseUser u) { Log.d(TAG, "Firestore email synced successfully."); }
+                            @Override public void onFailure(String errorMessage) { Log.e(TAG, "Failed to sync email to Firestore: " + errorMessage); }
+                            @Override public void onUsernameTaken() {}
+                            @Override public void onEmailTaken() {}
                         });
                     }
                     tvUserEmail.setText(currentAuthEmail != null ? currentAuthEmail : userProfile.getEmail());
@@ -162,10 +147,8 @@ public class SettingsActivity extends AppCompatActivity {
         finish();
     }
 
-    /**
-     * Displays a dialog to prompt the user for a new email address.
-     */
     private void promptForNewEmail() {
+        if (isNavigating) return;
         AlertDialog.Builder builder = new AlertDialog.Builder(this);
         builder.setTitle("Update Email");
         builder.setMessage("Enter your new email address. A verification link will be sent to the new email.");
@@ -176,10 +159,7 @@ public class SettingsActivity extends AppCompatActivity {
 
         LinearLayout layout = new LinearLayout(this);
         layout.setOrientation(LinearLayout.VERTICAL);
-        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-        );
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, -2);
         int margin = (int) (16 * getResources().getDisplayMetrics().density);
         params.setMargins(margin, 0, margin, 0);
         emailInput.setLayoutParams(params);
@@ -188,22 +168,15 @@ public class SettingsActivity extends AppCompatActivity {
 
         builder.setPositiveButton("Update", (dialog, which) -> {
             String newEmail = emailInput.getText().toString().trim();
-            if (!newEmail.isEmpty()) {
-                attemptUpdateEmail(newEmail);
-            }
+            if (!newEmail.isEmpty()) attemptUpdateEmail(newEmail);
         });
         builder.setNegativeButton("Cancel", (dialog, which) -> dialog.cancel());
         builder.show();
     }
 
-    /**
-     * CHANGED: Initiates the email update flow using verification email.
-     */
-
     private void attemptUpdateEmail(String newEmail) {
         firebaseManager.updateUserEmail(newEmail, authUpdateTask -> {
             if (authUpdateTask.isSuccessful()) {
-                // Email update finalized only AFTER user verifies. No immediate Firestore update here.
                 new AlertDialog.Builder(this)
                         .setTitle("Verification Sent")
                         .setMessage("A verification link has been sent to " + newEmail + ". Please click it to finalize the update. Your profile will sync once verified.")
@@ -221,7 +194,6 @@ public class SettingsActivity extends AppCompatActivity {
         });
     }
 
-    //UI Layer Input
     private void promptForReauthenticationAndRetry(String newEmail) {
         AlertDialog.Builder builder = new AlertDialog.Builder(this);
         builder.setTitle("Re-authenticate");
@@ -233,10 +205,7 @@ public class SettingsActivity extends AppCompatActivity {
 
         LinearLayout layout = new LinearLayout(this);
         layout.setOrientation(LinearLayout.VERTICAL);
-        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-        );
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, -2);
         int margin = (int) (16 * getResources().getDisplayMetrics().density);
         params.setMargins(margin, 0, margin, 0);
         passwordInput.setLayoutParams(params);
@@ -245,15 +214,12 @@ public class SettingsActivity extends AppCompatActivity {
 
         builder.setPositiveButton("Verify", (dialog, which) -> {
             String password = passwordInput.getText().toString().trim();
-            if (!password.isEmpty()) {
-                reauthenticateUserAndRetryUpdateEmail(password, newEmail);
-            }
+            if (!password.isEmpty()) reauthenticateUserAndRetryUpdateEmail(password, newEmail);
         });
         builder.setNegativeButton("Cancel", (dialog, which) -> dialog.cancel());
         builder.show();
     }
 
-    //Logic & Security Layer
     private void reauthenticateUserAndRetryUpdateEmail(String currentPassword, String newEmail) {
         FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
         if (user == null) return;
@@ -275,7 +241,7 @@ public class SettingsActivity extends AppCompatActivity {
         if (user != null && user.getEmail() != null) {
             firebaseManager.sendPasswordResetEmail(user.getEmail(), task -> {
                 if (task.isSuccessful()) {
-                    Toast.makeText(SettingsActivity.this, "Password reset email sent.", Toast.LENGTH_SHORT).show();
+                    Toast.makeText(SettingsActivity.this, "Password reset email sent.", Toast.LENGTH_LONG).show();
                 } else {
                     Toast.makeText(SettingsActivity.this, "Failed to send password reset email.", Toast.LENGTH_SHORT).show();
                 }
@@ -284,12 +250,11 @@ public class SettingsActivity extends AppCompatActivity {
     }
 
     private void showDeleteAccountConfirmation() {
+        if (isNavigating) return;
         new AlertDialog.Builder(this)
                 .setTitle(R.string.dialog_delete_account_title)
                 .setMessage(R.string.dialog_delete_account_message)
-                .setPositiveButton("Delete", (dialog, which) -> {
-                    promptForReauthenticationAndDelete();
-                })
+                .setPositiveButton("Delete", (dialog, which) -> promptForReauthenticationAndDelete())
                 .setNegativeButton("Cancel", null)
                 .show();
     }
@@ -305,10 +270,7 @@ public class SettingsActivity extends AppCompatActivity {
 
         LinearLayout layout = new LinearLayout(this);
         layout.setOrientation(LinearLayout.VERTICAL);
-        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-        );
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, -2);
         int margin = (int) (16 * getResources().getDisplayMetrics().density);
         params.setMargins(margin, 0, margin, 0);
         passwordInput.setLayoutParams(params);
@@ -317,9 +279,7 @@ public class SettingsActivity extends AppCompatActivity {
 
         builder.setPositiveButton("Confirm Delete", (dialog, which) -> {
             String password = passwordInput.getText().toString().trim();
-            if (!password.isEmpty()) {
-                reauthenticateAndDeleteAccount(password);
-            }
+            if (!password.isEmpty()) reauthenticateAndDeleteAccount(password);
         });
         builder.setNegativeButton("Cancel", (dialog, which) -> dialog.cancel());
         builder.show();
@@ -332,26 +292,21 @@ public class SettingsActivity extends AppCompatActivity {
         AuthCredential credential = EmailAuthProvider.getCredential(user.getEmail(), password);
         user.reauthenticate(credential)
                 .addOnCompleteListener(reauthTask -> {
-                    if (reauthTask.isSuccessful()) {
-                        // This calls the method below
-                        processAccountDeletion(user);
-                    } else {
-                        Toast.makeText(SettingsActivity.this, "Re-authentication failed. Incorrect password.", Toast.LENGTH_SHORT).show();
-                    }
+                    if (reauthTask.isSuccessful()) processAccountDeletion(user);
+                    else Toast.makeText(SettingsActivity.this, "Re-authentication failed. Incorrect password.", Toast.LENGTH_SHORT).show();
                 });
     }
 
     private void processAccountDeletion(FirebaseUser user) {
-        // Show a loading dialog so the user knows the process is happening on the server
+        if (isNavigating) return;
+        isNavigating = true;
         AlertDialog progressDialog = new AlertDialog.Builder(this)
                 .setMessage("Archiving and deleting account... Please wait.")
                 .setCancelable(false)
                 .show();
 
-        // 1. Call the Cloud Function (index.js) to archive data to 'usersdeletedAccounts'
         firebaseManager.archiveAndDeleteUser(task -> {
             if (task.isSuccessful()) {
-                // 2. Archive successful, now delete the Firebase Auth record
                 user.delete().addOnCompleteListener(deleteTask -> {
                     progressDialog.dismiss();
                     if (deleteTask.isSuccessful()) {
@@ -359,14 +314,16 @@ public class SettingsActivity extends AppCompatActivity {
                         sessionManager.clearSession(user.getUid());
                         goToWelcomeAndClear();
                     } else {
+                        isNavigating = false;
                         Log.e(TAG, "Auth deletion failed", deleteTask.getException());
-                        Toast.makeText(SettingsActivity.this, "Data archived, but failed to remove login: " + deleteTask.getException().getMessage(), Toast.LENGTH_LONG).show();
+                        Toast.makeText(SettingsActivity.this, "Data archived, but failed to remove login.", Toast.LENGTH_LONG).show();
                     }
                 });
             } else {
+                isNavigating = false;
                 progressDialog.dismiss();
                 Log.e(TAG, "Cloud Function Archive Error: ", task.getException());
-                Toast.makeText(SettingsActivity.this, "Failed to archive account data. Please check your connection and try again.", Toast.LENGTH_LONG).show();
+                Toast.makeText(SettingsActivity.this, "Failed to archive account data.", Toast.LENGTH_LONG).show();
             }
         });
     }

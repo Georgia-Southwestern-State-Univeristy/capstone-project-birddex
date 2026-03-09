@@ -14,12 +14,15 @@ import com.google.firebase.auth.FirebaseUser;
 
 /**
  * SignUpActivity handles the user registration process.
+ * Fixes: Added isNavigating guard to prevent redundant activity launches.
  */
 public class SignUpActivity extends AppCompatActivity {
 
     private FirebaseManager firebaseManager;
     private sign_IN_upValidator signINupValidator;
     private View loadingOverlay;
+    private Button btnSignUp;
+    private boolean isNavigating = false;
 
     private EditText usernameEditText;
     private EditText emailEditText;
@@ -38,51 +41,61 @@ public class SignUpActivity extends AppCompatActivity {
         emailEditText = findViewById(R.id.etEmail);
         passwordEditText = findViewById(R.id.etPassword);
 
-        Button btnSignUp = findViewById(R.id.btnSignUp);
+        btnSignUp = findViewById(R.id.btnSignUp);
         TextView tvAlready = findViewById(R.id.tvAlready);
 
         btnSignUp.setOnClickListener(v -> {
+            if (isNavigating) return;
             if (signINupValidator.validateSignUpForm(usernameEditText, emailEditText, passwordEditText)) {
-                String username = usernameEditText.getText().toString();
-                String email = emailEditText.getText().toString();
+                String username = usernameEditText.getText().toString().trim();
+                String email = emailEditText.getText().toString().trim();
                 String password = passwordEditText.getText().toString();
                 
-                loadingOverlay.setVisibility(View.VISIBLE);
+                setLoadingState(true);
                 firebaseManager.createAccount(username, email, password, new FirebaseManager.AuthListener() {
                     @Override
                     public void onSuccess(FirebaseUser user) {
-                        loadingOverlay.setVisibility(View.GONE);
-                        Toast.makeText(SignUpActivity.this, "Sign up successful. Please verify your email. " + getString(R.string.email_verification_expiration_message), Toast.LENGTH_LONG).show();
+                        if (isNavigating) return;
+                        isNavigating = true;
+                        
+                        setLoadingState(false);
+                        Toast.makeText(SignUpActivity.this, "Sign up successful. Please verify your email.", Toast.LENGTH_LONG).show();
                         startActivity(new Intent(SignUpActivity.this, SignUpCompleteActivity.class));
                         finish();
                     }
 
                     @Override
                     public void onFailure(String errorMessage) {
-                        loadingOverlay.setVisibility(View.GONE);
+                        setLoadingState(false);
                         Toast.makeText(SignUpActivity.this, errorMessage, Toast.LENGTH_SHORT).show();
                     }
 
                     @Override
                     public void onUsernameTaken() { 
-                        loadingOverlay.setVisibility(View.GONE);
+                        setLoadingState(false);
                         usernameEditText.setError("Username already taken.");
                     }
 
                     @Override
                     public void onEmailTaken() {
-                        loadingOverlay.setVisibility(View.GONE);
+                        setLoadingState(false);
                         emailEditText.setError("Email already taken.");
-                        Toast.makeText(SignUpActivity.this, "Email is already taken.", Toast.LENGTH_SHORT).show();
                     }
                 });
             }
         });
 
         tvAlready.setOnClickListener(v -> {
-            startActivity(new Intent(SignUpActivity.this, LoginActivity.class));
-            finish();
+            if (!isNavigating) {
+                startActivity(new Intent(SignUpActivity.this, LoginActivity.class));
+                finish();
+            }
         });
+    }
+
+    private void setLoadingState(boolean loading) {
+        if (loadingOverlay != null) loadingOverlay.setVisibility(loading ? View.VISIBLE : View.GONE);
+        if (btnSignUp != null) btnSignUp.setEnabled(!loading);
     }
 
     @Override

@@ -35,6 +35,10 @@ public class FirebaseManager {
     private final FirebaseFunctions mFunctions;
     private Context context;
 
+    // -------------------------------------------------------------------------
+    // Interfaces
+    // -------------------------------------------------------------------------
+
     public interface AuthListener {
         void onSuccess(FirebaseUser user);
         void onFailure(String errorMessage);
@@ -68,6 +72,31 @@ public class FirebaseManager {
         void onError(String error);
     }
 
+    /**
+     * Callback for recordBirdSighting CF.
+     * onCooldown() is called when the same species was already recorded within 24 h —
+     * the bird is still saved to the collection, just not the heatmap.
+     */
+    public interface BirdSightingListener {
+        void onRecorded();
+        void onCooldown();
+        void onFailure(String errorMessage);
+    }
+
+    /**
+     * Callback for recordForumPost CF.
+     * onLimitReached() is called when the user has already posted 3 times today.
+     */
+    public interface ForumPostLimitListener {
+        void onAllowed(int remaining);
+        void onLimitReached();
+        void onFailure(String errorMessage);
+    }
+
+    // -------------------------------------------------------------------------
+    // Constructor
+    // -------------------------------------------------------------------------
+
     public FirebaseManager(Context context) {
         this.context = context.getApplicationContext();
         mAuth = FirebaseAuth.getInstance();
@@ -75,64 +104,52 @@ public class FirebaseManager {
         mFunctions = FirebaseFunctions.getInstance();
     }
 
-    // --- AUTH & USER PROFILE ---
+    // -------------------------------------------------------------------------
+    // AUTH & USER PROFILE
+    // -------------------------------------------------------------------------
 
+    /**
+     * FIX #25: Sequential client-side check followed by Auth creation followed by
+     * Firestore initialization had a race condition where a username could be stolen.
+     * Re-routed creation through a more robust sequence:
+     * 1. Auth creation (sets the UID)
+     * 2. Atomic initializeUser CF (handles username uniqueness via Firestore transaction)
+     */
     public void createAccount(String username, String email, String password, AuthListener listener) {
-        Log.d(TAG, "Attempting to create account for username: " + username + ", email: " + email);
-        checkUsernameAndEmailAvailability(username, email, new UsernameAndEmailCheckListener() {
-            @Override
-            public void onCheckComplete(boolean isUsernameAvailable, boolean isEmailAvailable) {
-                if (!isUsernameAvailable) {
-                    Log.w(TAG, "Username taken: " + username);
-                    listener.onUsernameTaken();
-                    return;
-                }
-                if (!isEmailAvailable) {
-                    Log.w(TAG, "Email taken: " + email);
-                    listener.onEmailTaken();
-                    return;
-                }
-
-                mAuth.createUserWithEmailAndPassword(email, password)
-                        .addOnCompleteListener(authTask -> {
-                            if (authTask.isSuccessful()) {
-                                FirebaseUser firebaseUser = mAuth.getCurrentUser();
-                                if (firebaseUser != null) {
-                                    Log.d(TAG, "Auth user created successfully: " + firebaseUser.getUid());
-                                    firebaseUser.sendEmailVerification()
-                                            .addOnCompleteListener(emailTask -> {
-                                                if (emailTask.isSuccessful()) {
-                                                    Log.d(TAG, "Email verification sent to: " + email);
-                                                } else {
-                                                    Log.e(TAG, "Failed to send email verification.", emailTask.getException());
-                                                }
-                                            });
-
-                                    initializeUser(username, email, task -> {
-                                        if (task.isSuccessful()) {
-                                            Log.d(TAG, "User document initialized via Cloud Function.");
-                                            listener.onSuccess(firebaseUser);
-                                        } else {
-                                            String error = (task.getException() != null ? task.getException().getMessage() : "Unknown error during initialization.");
-                                            Log.e(TAG, "Failed to initialize user document: " + error);
-                                            listener.onFailure("Init failed: " + error);
+        Log.d(TAG, "Attempting to create account for email: " + email);
+        mAuth.createUserWithEmailAndPassword(email, password)
+                .addOnCompleteListener(authTask -> {
+                    if (authTask.isSuccessful()) {
+                        FirebaseUser firebaseUser = mAuth.getCurrentUser();
+                        if (firebaseUser != null) {
+                            Log.d(TAG, "Auth user created: " + firebaseUser.getUid());
+                            firebaseUser.sendEmailVerification()
+                                    .addOnCompleteListener(eTask -> Log.d(TAG, "Verification sent: " + eTask.isSuccessful()));
+                            initializeUser(username, email, task -> {
+                                if (task.isSuccessful()) {
+                                    Log.d(TAG, "User profile initialized atomically.");
+                                    listener.onSuccess(firebaseUser);
+                                } else {
+                                    Exception e = task.getException();
+                                    Log.e(TAG, "Failed to initialize user document.", e);
+                                    if (e instanceof FirebaseFunctionsException) {
+                                        FirebaseFunctionsException ffe = (FirebaseFunctionsException) e;
+                                        if (ffe.getCode() == FirebaseFunctionsException.Code.ALREADY_EXISTS) {
+                                            firebaseUser.delete();
+                                            listener.onUsernameTaken();
+                                            return;
                                         }
-                                    });
+                                    }
+                                    listener.onFailure("Profile setup failed. Please try again.");
                                 }
-                            } else {
-                                String error = authTask.getException() != null ? authTask.getException().getMessage() : "Sign up failed.";
-                                Log.e(TAG, "Firebase Auth account creation failed: " + error);
-                                listener.onFailure(error);
-                            }
-                        });
-            }
-
-            @Override
-            public void onFailure(String errorMessage) {
-                Log.e(TAG, "Availability check failed: " + errorMessage);
-                listener.onFailure(errorMessage);
-            }
-        });
+                            });
+                        }
+                    } else {
+                        String error = authTask.getException() != null ? authTask.getException().getMessage() : "Sign up failed.";
+                        Log.e(TAG, "Firebase Auth failed: " + error);
+                        listener.onFailure(error);
+                    }
+                });
     }
 
     public void initializeUser(String username, String email, OnCompleteListener<Boolean> listener) {
@@ -162,7 +179,7 @@ public class FirebaseManager {
                         Map<String, Object> res = (Map<String, Object>) task.getResult().getData();
                         boolean uAvail = (Boolean) res.get("isUsernameAvailable");
                         boolean eAvail = (Boolean) res.get("isEmailAvailable");
-                        Log.d(TAG, "Availability check result - Username: " + uAvail + ", Email: " + eAvail);
+                        Log.d(TAG, "Availability check - Username: " + uAvail + ", Email: " + eAvail);
                         listener.onCheckComplete(uAvail, eAvail);
                     } else {
                         String error = task.getException() != null ? task.getException().getMessage() : "Check failed.";
@@ -204,16 +221,13 @@ public class FirebaseManager {
 
     public void updateUserProfile(User updatedUser, AuthListener listener) {
         FirebaseUser currentUser = mAuth.getCurrentUser();
-        if (currentUser == null) {
-            Log.e(TAG, "Cannot update profile: No user authenticated.");
-            return;
-        }
+        if (currentUser == null) { Log.e(TAG, "Cannot update profile: No user authenticated."); return; }
         Log.d(TAG, "Updating profile for: " + currentUser.getUid());
         Map<String, Object> updates = new HashMap<>();
         if (updatedUser.getUsername() != null) updates.put("username", updatedUser.getUsername());
         if (updatedUser.getProfilePictureUrl() != null) updates.put("profilePictureUrl", updatedUser.getProfilePictureUrl());
         if (updatedUser.getBio() != null) updates.put("bio", updatedUser.getBio());
-
+        if (updatedUser.getEmail() != null) updates.put("email", updatedUser.getEmail());
         db.collection("users").document(currentUser.getUid()).update(updates).addOnCompleteListener(task -> {
             if (task.isSuccessful()) {
                 Log.d(TAG, "Profile updated successfully in Firestore.");
@@ -224,6 +238,38 @@ public class FirebaseManager {
                 listener.onFailure(error);
             }
         });
+    }
+
+    /**
+     * FIX #13: Route profile updates (especially username) through the atomic
+     * initializeUser Cloud Function to ensure username uniqueness.
+     */
+    public void updateUserProfileAtomic(User updatedUser, AuthListener listener) {
+        FirebaseUser currentUser = mAuth.getCurrentUser();
+        if (currentUser == null) { Log.e(TAG, "Cannot update profile: No user authenticated."); return; }
+        Map<String, Object> data = new HashMap<>();
+        data.put("username", updatedUser.getUsername());
+        data.put("bio", updatedUser.getBio());
+        data.put("profilePictureUrl", updatedUser.getProfilePictureUrl());
+        mFunctions.getHttpsCallable("initializeUser").call(data)
+                .addOnCompleteListener(task -> {
+                    if (task.isSuccessful()) {
+                        Log.d(TAG, "Profile updated atomically via initializeUser CF.");
+                        listener.onSuccess(currentUser);
+                    } else {
+                        Exception e = task.getException();
+                        if (e instanceof FirebaseFunctionsException) {
+                            FirebaseFunctionsException ffe = (FirebaseFunctionsException) e;
+                            if (ffe.getCode() == FirebaseFunctionsException.Code.ALREADY_EXISTS) {
+                                listener.onUsernameTaken();
+                                return;
+                            }
+                        }
+                        String error = e != null ? e.getMessage() : "Update failed.";
+                        Log.e(TAG, "Atomic profile update failed: " + error);
+                        listener.onFailure(error);
+                    }
+                });
     }
 
     public void updateSessionId(String userId, String sessionId, OnCompleteListener<Void> listener) {
@@ -288,7 +334,9 @@ public class FirebaseManager {
         }
     }
 
-    // --- LIGHTWEIGHT SERVER-SIDE SYSTEMS ---
+    // -------------------------------------------------------------------------
+    // LIGHTWEIGHT SERVER-SIDE SYSTEMS
+    // -------------------------------------------------------------------------
 
     public void followUser(String targetUserId, OnCompleteListener<Void> listener) {
         Log.d(TAG, "Following user: " + targetUserId);
@@ -342,7 +390,118 @@ public class FirebaseManager {
         });
     }
 
-    // --- FORUM METHODS ---
+    // -------------------------------------------------------------------------
+    // SIGHTING & POST LIMIT CFs
+    // -------------------------------------------------------------------------
+
+    /**
+     * Calls the `recordBirdSighting` Cloud Function.
+     *
+     * The CF enforces 1 sighting per user per species per 24 h using a server-side
+     * Firestore transaction. All fields are written atomically — the cooldown timestamp
+     * and the userBirdSightings doc are committed in one operation, so there is no
+     * window where a concurrent call for the same user+species can slip through.
+     *
+     * onCooldown() is non-fatal: the bird is already saved to the user's collection.
+     * The heatmap contribution is simply skipped until the cooldown expires.
+     *
+     * @param birdId        Species code / bird document ID
+     * @param commonName    Display name (stored in the sighting doc)
+     * @param userBirdId    The userBirds doc ID created in the preceding atomic transaction
+     * @param latitude      GPS latitude (0.0 if unavailable)
+     * @param longitude     GPS longitude (0.0 if unavailable)
+     * @param state         State string (may be null)
+     * @param locality      Locality string (may be null)
+     * @param country       Country code, e.g. "US" (may be null)
+     * @param quantity      Quantity string, e.g. "1" (may be null)
+     * @param timestampMs   Epoch ms of the sighting (use System.currentTimeMillis() if unsure)
+     * @param listener      Result callback
+     */
+    public void recordBirdSighting(
+            String birdId,
+            String commonName,
+            String userBirdId,
+            double latitude,
+            double longitude,
+            String state,
+            String locality,
+            String country,
+            String quantity,
+            long timestampMs,
+            BirdSightingListener listener) {
+
+        Log.d(TAG, "Calling recordBirdSighting CF for birdId=" + birdId);
+
+        Map<String, Object> data = new HashMap<>();
+        data.put("birdId",     birdId);
+        data.put("commonName", commonName != null ? commonName : "");
+        data.put("userBirdId", userBirdId != null ? userBirdId : "");
+        data.put("latitude",   latitude);
+        data.put("longitude",  longitude);
+        data.put("state",      state    != null ? state    : "");
+        data.put("locality",   locality != null ? locality : "");
+        data.put("country",    country  != null ? country  : "US");
+        data.put("quantity",   quantity != null ? quantity : "1");
+        data.put("timestamp",  timestampMs);
+
+        mFunctions.getHttpsCallable("recordBirdSighting").call(data).addOnCompleteListener(task -> {
+            if (task.isSuccessful() && task.getResult() != null) {
+                Map<String, Object> res = (Map<String, Object>) task.getResult().getData();
+                boolean recorded = res != null && Boolean.TRUE.equals(res.get("recorded"));
+                if (recorded) {
+                    Log.d(TAG, "recordBirdSighting: sighting recorded for birdId=" + birdId);
+                    listener.onRecorded();
+                } else {
+                    Log.d(TAG, "recordBirdSighting: cooldown active for birdId=" + birdId);
+                    listener.onCooldown();
+                }
+            } else {
+                String error = task.getException() != null ? task.getException().getMessage() : "recordBirdSighting failed.";
+                Log.e(TAG, "recordBirdSighting CF failed: " + error);
+                listener.onFailure(error);
+            }
+        });
+    }
+
+    /**
+     * Calls the `recordForumPost` Cloud Function.
+     *
+     * The CF enforces 3 posts per user per UTC calendar day using a server-side
+     * Firestore transaction. The count resets automatically at midnight UTC.
+     * Concurrent taps cannot both slip through because the read+increment
+     * happen atomically inside a single transaction.
+     *
+     * Call this BEFORE uploading any image or writing the post doc so that
+     * Storage quota is not burned on a post that will be rejected.
+     *
+     * @param listener Result callback
+     */
+    public void recordForumPost(ForumPostLimitListener listener) {
+        Log.d(TAG, "Calling recordForumPost CF.");
+        mFunctions.getHttpsCallable("recordForumPost").call().addOnCompleteListener(task -> {
+            if (task.isSuccessful() && task.getResult() != null) {
+                Map<String, Object> res = (Map<String, Object>) task.getResult().getData();
+                boolean allowed = res != null && Boolean.TRUE.equals(res.get("allowed"));
+                if (allowed) {
+                    int remaining = res.get("remaining") != null
+                            ? ((Number) res.get("remaining")).intValue() : 0;
+                    Log.d(TAG, "recordForumPost: allowed, remaining=" + remaining);
+                    listener.onAllowed(remaining);
+                } else {
+                    Log.d(TAG, "recordForumPost: daily limit reached.");
+                    listener.onLimitReached();
+                }
+            } else {
+                String error = task.getException() != null ? task.getException().getMessage() : "recordForumPost failed.";
+                Log.e(TAG, "recordForumPost CF failed: " + error);
+                listener.onFailure(error);
+            }
+        });
+    }
+
+    // -------------------------------------------------------------------------
+    // FORUM METHODS
+    // -------------------------------------------------------------------------
 
     public void addForumPost(ForumPost post, OnCompleteListener<Void> listener) {
         Log.d(TAG, "Adding forum post: " + post.getId());
@@ -389,7 +548,9 @@ public class FirebaseManager {
         });
     }
 
-    // --- BIRD & SIGHTING METHODS ---
+    // -------------------------------------------------------------------------
+    // BIRD & SIGHTING METHODS
+    // -------------------------------------------------------------------------
 
     public void addBird(Bird bird, OnCompleteListener<Void> listener) {
         Log.d(TAG, "Adding bird: " + bird.getId());
@@ -454,7 +615,9 @@ public class FirebaseManager {
         return db.collection("userBirdSightings").whereEqualTo("userId", currentUser.getUid()).get();
     }
 
-    // --- COLLECTION SLOT & IMAGE METHODS ---
+    // -------------------------------------------------------------------------
+    // COLLECTION SLOT & IMAGE METHODS
+    // -------------------------------------------------------------------------
 
     public void addCollectionSlot(String userId, String collectionSlotId, CollectionSlot collectionSlot, OnCompleteListener<Void> listener) {
         Log.d(TAG, "Adding collection slot: " + collectionSlotId + " for user: " + userId);
@@ -496,7 +659,9 @@ public class FirebaseManager {
         db.collection("users").document(userId).collection("userBirdImage").document(userBirdImageId).delete().addOnCompleteListener(listener);
     }
 
-    // --- BIRD FACTS & MEDIA ---
+    // -------------------------------------------------------------------------
+    // BIRD FACTS & MEDIA
+    // -------------------------------------------------------------------------
 
     public void addBirdFact(BirdFact birdFact, OnCompleteListener<Void> listener) {
         Log.d(TAG, "Adding bird fact for: " + birdFact.getId());
@@ -558,7 +723,9 @@ public class FirebaseManager {
         db.collection("media").document(id).delete().addOnCompleteListener(listener);
     }
 
-    // --- LOCATIONS & BIRD CARDS ---
+    // -------------------------------------------------------------------------
+    // LOCATIONS & BIRD CARDS
+    // -------------------------------------------------------------------------
 
     public void addLocation(Location location, OnCompleteListener<Void> listener) {
         Log.d(TAG, "Adding location: " + location.getId());
@@ -600,7 +767,9 @@ public class FirebaseManager {
         db.collection("birdCards").document(id).delete().addOnCompleteListener(listener);
     }
 
-    // --- SIGHTINGS & HUNTER SIGHTINGS ---
+    // -------------------------------------------------------------------------
+    // SIGHTINGS & HUNTER SIGHTINGS
+    // -------------------------------------------------------------------------
 
     public void addUserBirdSighting(UserBirdSighting sighting, OnCompleteListener<Void> listener) {
         Log.d(TAG, "Adding user bird sighting: " + sighting.getId());
@@ -642,7 +811,9 @@ public class FirebaseManager {
         db.collection("hunterSightings").document(id).delete().addOnCompleteListener(listener);
     }
 
-    // --- REPORTS ---
+    // -------------------------------------------------------------------------
+    // REPORTS
+    // -------------------------------------------------------------------------
 
     public void getReportById(String id, OnCompleteListener<DocumentSnapshot> listener) {
         Log.d(TAG, "Fetching report: " + id);
@@ -659,7 +830,9 @@ public class FirebaseManager {
         db.collection("reports").document(id).delete().addOnCompleteListener(listener);
     }
 
-    // --- SYNC & LIMIT HELPERS ---
+    // -------------------------------------------------------------------------
+    // SYNC & LIMIT HELPERS
+    // -------------------------------------------------------------------------
 
     public void recordPfpChange(String changeId, PfpChangeLimitListener listener) {
         Log.d(TAG, "Calling recordPfpChange Cloud Function.");
@@ -710,10 +883,7 @@ public class FirebaseManager {
     }
 
     public void getOpenAiRequestsRemaining(OpenAiRequestLimitListener listener) {
-        if (mAuth.getUid() == null) {
-            Log.e(TAG, "Cannot get OpenAI limits: No user.");
-            return;
-        }
+        if (mAuth.getUid() == null) { Log.e(TAG, "Cannot get OpenAI limits: No user."); return; }
         Log.d(TAG, "Fetching OpenAI limits for: " + mAuth.getUid());
         db.collection("users").document(mAuth.getUid()).get().addOnCompleteListener(task -> {
             if (task.isSuccessful() && task.getResult() != null) {
@@ -730,10 +900,7 @@ public class FirebaseManager {
     }
 
     public void getPfpChangesRemaining(PfpChangeLimitListener listener) {
-        if (mAuth.getUid() == null) {
-            Log.e(TAG, "Cannot get PFP limits: No user.");
-            return;
-        }
+        if (mAuth.getUid() == null) { Log.e(TAG, "Cannot get PFP limits: No user."); return; }
         Log.d(TAG, "Fetching PFP limits for: " + mAuth.getUid());
         db.collection("users").document(mAuth.getUid()).get().addOnCompleteListener(task -> {
             if (task.isSuccessful() && task.getResult() != null) {
@@ -768,10 +935,7 @@ public class FirebaseManager {
     }
 
     public void isFollowing(String targetUserId, OnCompleteListener<Boolean> listener) {
-        if (mAuth.getUid() == null) {
-            listener.onComplete(Tasks.forResult(false));
-            return;
-        }
+        if (mAuth.getUid() == null) { listener.onComplete(Tasks.forResult(false)); return; }
         Log.d(TAG, "Checking follow status for: " + targetUserId);
         db.collection("users").document(mAuth.getUid()).collection("following").document(targetUserId).get().addOnCompleteListener(task -> {
             boolean isFol = task.isSuccessful() && task.getResult() != null && task.getResult().exists();

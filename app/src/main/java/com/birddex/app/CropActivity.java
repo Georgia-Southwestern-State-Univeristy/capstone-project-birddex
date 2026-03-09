@@ -14,6 +14,7 @@ import com.canhub.cropper.CropImageView;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * CropActivity provides an interface for the user to crop an image before identification.
@@ -25,6 +26,9 @@ public class CropActivity extends AppCompatActivity {
     public static final String EXTRA_IMAGE_URI = "image_uri";
 
     private CropImageView cropImageView;
+    
+    // FIX: Guard against double-tap starting multiple identification flows
+    private final AtomicBoolean identifyClicked = new AtomicBoolean(false);
 
     @Override
     protected void onCreate(@Nullable Bundle savedInstanceState) {
@@ -57,10 +61,14 @@ public class CropActivity extends AppCompatActivity {
 
         // Handle the identify button click: get the cropped bitmap, save it, and move to identification.
         btnIdentify.setOnClickListener(v -> {
+            if (!identifyClicked.compareAndSet(false, true)) return;
 
             // HIGH-RES crop so the card doesn't look pixelated
             Bitmap cropped = cropImageView.getCroppedImage(1600, 1600);
-            if (cropped == null) return;
+            if (cropped == null) {
+                identifyClicked.set(false);
+                return;
+            }
 
             // Save the cropped bitmap to a temporary file to pass its URI to the next activity.
             Uri croppedImageUri = saveBitmapToFile(cropped);
@@ -70,8 +78,17 @@ public class CropActivity extends AppCompatActivity {
                 intent.putExtra("imageUri", croppedImageUri.toString());
                 startActivity(intent);
                 finish();
+            } else {
+                identifyClicked.set(false);
             }
         });
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        // Reset guard if the user navigates back to this activity
+        identifyClicked.set(false);
     }
 
     /**

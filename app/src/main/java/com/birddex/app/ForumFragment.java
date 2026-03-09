@@ -35,19 +35,17 @@ import com.google.firebase.storage.FirebaseStorage;
 import com.google.firebase.storage.StorageReference;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
-/**
- * ForumFragment serves as the community hub for users to interact,
- * share sightings, and discuss birds.
- */
 public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostClickListener {
 
     private static final String TAG = "ForumFragment";
     private static final int PAGE_SIZE = 20;
-
     private static final String PREFS_NAME = "BirdDexPrefs";
     private static final String KEY_FILTER = "current_filter";
     private static final String KEY_GRAPHIC_CONTENT = "show_graphic_content";
@@ -64,74 +62,70 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
     private boolean isLastPage = false;
     private String currentFilter = "Recent";
     private List<String> followedIds = new ArrayList<>();
-    // Holds the pending onResume refresh so it can be cancelled in onDestroyView
     private Runnable pendingRefreshRunnable = null;
+    private int fetchGeneration = 0;
+
+    private final Set<String> postLikeInFlight = Collections.newSetFromMap(new ConcurrentHashMap<>());
+    
+    // FIX: Navigation guard
+    private boolean isNavigating = false;
 
     @Nullable
     @Override
-    public View onCreateView(@NonNull LayoutInflater inflater,
-                             @Nullable ViewGroup container,
-                             @Nullable Bundle savedInstanceState) {
+    public View onCreateView(@NonNull LayoutInflater inflater, @Nullable ViewGroup container, @Nullable Bundle savedInstanceState) {
         binding = FragmentForumBinding.inflate(inflater, container, false);
-        View view = binding.getRoot();
-
         mAuth = FirebaseAuth.getInstance();
         db = FirebaseFirestore.getInstance();
         firebaseManager = new FirebaseManager(requireContext());
-
-        // Load saved filter preference
         SharedPreferences prefs = requireContext().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
         currentFilter = prefs.getString(KEY_FILTER, "Recent");
-
         setupRecyclerView();
         setupClickListeners();
         loadUserProfilePicture();
         setupSwipeRefresh();
+        return binding.getRoot();
+    }
 
-        return view;
+    @Override
+    public void onResume() {
+        super.onResume();
+        isNavigating = false; // Reset on return
+        if (binding != null) {
+            pendingRefreshRunnable = () -> { if (binding != null && !isFetching) refreshPosts(); };
+            binding.getRoot().postDelayed(pendingRefreshRunnable, 1500);
+        }
     }
 
     private void setupRecyclerView() {
         adapter = new ForumPostAdapter(this);
-        LinearLayoutManager layoutManager = new LinearLayoutManager(getContext());
-        binding.rvForumPosts.setLayoutManager(layoutManager);
+        LinearLayoutManager lm = new LinearLayoutManager(getContext());
+        binding.rvForumPosts.setLayoutManager(lm);
         binding.rvForumPosts.setAdapter(adapter);
-
         binding.rvForumPosts.addOnScrollListener(new RecyclerView.OnScrollListener() {
             @Override
-            public void onScrolled(@NonNull RecyclerView recyclerView, int dx, int dy) {
-                super.onScrolled(recyclerView, dx, dy);
-                if (dy > 0) { // Scrolling down
-                    int visibleItemCount = layoutManager.getChildCount();
-                    int totalItemCount = layoutManager.getItemCount();
-                    int pastVisibleItems = layoutManager.findFirstVisibleItemPosition();
-
-                    if (!isFetching && !isLastPage) {
-                        if ((visibleItemCount + pastVisibleItems) >= totalItemCount) {
-                            fetchPosts();
-                        }
-                    }
+            public void onScrolled(@NonNull RecyclerView rv, int dx, int dy) {
+                if (dy > 0 && !isFetching && !isLastPage) {
+                    if ((lm.getChildCount() + lm.findFirstVisibleItemPosition()) >= lm.getItemCount()) fetchPosts();
                 }
             }
         });
     }
 
-    private void setupSwipeRefresh() {
-        binding.swipeRefreshLayout.setOnRefreshListener(() -> {
-            refreshPosts();
-        });
-    }
+    private void setupSwipeRefresh() { binding.swipeRefreshLayout.setOnRefreshListener(this::refreshPosts); }
 
     private void setupClickListeners() {
         binding.createPostCardView.setOnClickListener(v -> {
-            Intent intent = new Intent(getActivity(), CreatePostActivity.class);
-            startActivity(intent);
+            if (isNavigating) return;
+            isNavigating = true;
+            startActivity(new Intent(getActivity(), CreatePostActivity.class));
         });
-
+        
         binding.btnSocial.setOnClickListener(v -> {
+            if (isNavigating) return;
+            isNavigating = true;
             startActivity(new Intent(getActivity(), SocialActivity.class));
         });
-
+        
         binding.btnFilter.setOnClickListener(this::showFilterMenu);
     }
 
@@ -139,16 +133,11 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
         PopupMenu popup = new PopupMenu(getContext(), v);
         popup.getMenu().add("Recent");
         popup.getMenu().add("Following");
-
         popup.setOnMenuItemClickListener(item -> {
-            String selectedFilter = item.getTitle().toString();
-            if (!selectedFilter.equals(currentFilter)) {
-                currentFilter = selectedFilter;
-
-                // Save filter preference
-                SharedPreferences prefs = requireContext().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
-                prefs.edit().putString(KEY_FILTER, currentFilter).apply();
-
+            String selected = item.getTitle().toString();
+            if (!selected.equals(currentFilter)) {
+                currentFilter = selected;
+                requireContext().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit().putString(KEY_FILTER, currentFilter).apply();
                 refreshPosts();
             }
             return true;
@@ -157,468 +146,223 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
     }
 
     private void loadUserProfilePicture() {
-        FirebaseUser currentUser = mAuth.getCurrentUser();
-        if (currentUser == null) return;
-
-        db.collection("users").document(currentUser.getUid()).get()
-                .addOnSuccessListener(documentSnapshot -> {
-                    if (!isAdded() || binding == null) return;
-                    if (documentSnapshot.exists()) {
-                        String profilePictureUrl = documentSnapshot.getString("profilePictureUrl");
-                        if (getContext() != null) {
-                            Glide.with(this)
-                                    .load(profilePictureUrl)
-                                    .placeholder(R.drawable.ic_profile)
-                                    .into(binding.ivUserProfilePicture);
-                        }
-                    }
-                });
+        FirebaseUser user = mAuth.getCurrentUser();
+        if (user != null) db.collection("users").document(user.getUid()).get().addOnSuccessListener(doc -> {
+            if (!isAdded() || binding == null) return;
+            String url = doc.getString("profilePictureUrl");
+            if (getContext() != null) Glide.with(this).load(url).placeholder(R.drawable.ic_profile).into(binding.ivUserProfilePicture);
+        });
     }
 
+    /**
+     * FIX: Resetting fetch state with generation increment to handle overlapping requests.
+     */
     private void refreshPosts() {
+        fetchGeneration++;
         isFetching = false;
         lastVisible = null;
         isLastPage = false;
-        postList.clear();
-        adapter.setPosts(new ArrayList<>());
-
-        if ("Following".equals(currentFilter)) {
-            fetchFollowedIdsAndLoad();
-        } else {
-            fetchPosts();
-        }
+        // Don't clear postList here to avoid flickering if a new fetch is already starting.
+        // It will be cleared inside fetchPosts when the SUCCESSFUL generation returns.
+        if ("Following".equals(currentFilter)) fetchFollowedIdsAndLoad(fetchGeneration);
+        else fetchPosts();
     }
 
-    private void fetchFollowedIdsAndLoad() {
+    private void fetchFollowedIdsAndLoad(int generation) {
         FirebaseUser user = mAuth.getCurrentUser();
         if (user == null) return;
-
         isFetching = true;
-        db.collection("users").document(user.getUid()).collection("following")
-                .get()
-                .addOnSuccessListener(querySnapshot -> {
-                    if (!isAdded()) return;
-                    followedIds.clear();
-                    for (DocumentSnapshot doc : querySnapshot.getDocuments()) {
-                        followedIds.add(doc.getId());
-                    }
-                    isFetching = false;
-                    fetchPosts();
-                })
-                .addOnFailureListener(e -> {
-                    isFetching = false;
-                    if (binding != null) binding.swipeRefreshLayout.setRefreshing(false);
-                });
+        db.collection("users").document(user.getUid()).collection("following").get().addOnSuccessListener(snap -> {
+            if (!isAdded() || fetchGeneration != generation) return;
+            followedIds.clear();
+            for (DocumentSnapshot doc : snap.getDocuments()) followedIds.add(doc.getId());
+            isFetching = false;
+            fetchPosts();
+        }).addOnFailureListener(e -> {
+            if (fetchGeneration == generation) { isFetching = false; if (binding != null) binding.swipeRefreshLayout.setRefreshing(false); }
+        });
     }
 
     private void fetchPosts() {
-        if (!isAdded() || getContext() == null) {
-            return;
-        }
-
-        if (isFetching || isLastPage) {
+        if (!isAdded() || getContext() == null || isFetching || isLastPage) {
             if (binding != null) binding.swipeRefreshLayout.setRefreshing(false);
             return;
         }
-
         if ("Following".equals(currentFilter) && followedIds.isEmpty()) {
             if (binding != null) binding.swipeRefreshLayout.setRefreshing(false);
-            Toast.makeText(getContext(), "You aren't following anyone yet.", Toast.LENGTH_SHORT).show();
             return;
         }
 
         isFetching = true;
+        final int myGen = fetchGeneration;
+        Query q = db.collection("forumThreads").orderBy("timestamp", Query.Direction.DESCENDING);
+        if ("Following".equals(currentFilter)) q = q.whereIn("userId", followedIds.size() > 30 ? followedIds.subList(0, 30) : followedIds);
+        q = q.limit(PAGE_SIZE);
+        if (lastVisible != null) q = q.startAfter(lastVisible);
 
-        Query query = db.collection("forumThreads")
-                .orderBy("timestamp", Query.Direction.DESCENDING);
+        SharedPreferences prefs = getContext().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+        boolean showGraphic = prefs.getBoolean(KEY_GRAPHIC_CONTENT, false);
 
-        if ("Following".equals(currentFilter)) {
-            // Firestore whereIn limit is 30.
-            List<String> limitedIds = followedIds.size() > 30 ? followedIds.subList(0, 30) : followedIds;
-            query = query.whereIn("userId", limitedIds);
-        }
-
-        query = query.limit(PAGE_SIZE);
-
-        if (lastVisible != null) {
-            query = query.startAfter(lastVisible);
-        }
-
-        SharedPreferences sharedPreferences = getContext().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
-        boolean showGraphicContent = sharedPreferences.getBoolean(KEY_GRAPHIC_CONTENT, false);
-
-        query.get().addOnSuccessListener(value -> {
-            if (!isAdded() || binding == null) return;
-            binding.swipeRefreshLayout.setRefreshing(false);
-
-            if (value != null && !value.isEmpty()) {
-                lastVisible = value.getDocuments().get(value.size() - 1);
-
-                for (DocumentSnapshot doc : value.getDocuments()) {
-                    ForumPost post = doc.toObject(ForumPost.class);
-                    if (post != null) {
-                        post.setId(doc.getId());
-                        if (showGraphicContent || !post.isHunted()) {
-                            postList.add(post);
-                        }
-                    }
-                }
-
-                adapter.setPosts(new ArrayList<>(postList));
-
-                if (value.size() < PAGE_SIZE) {
-                    isLastPage = true;
-                }
-            } else {
-                isLastPage = true;
+        q.get().addOnSuccessListener(val -> {
+            if (!isAdded() || binding == null || fetchGeneration != myGen) return;
+            
+            // If this is the start of a new generation, clear the list now.
+            if (lastVisible == null) {
+                postList.clear();
             }
+            
+            binding.swipeRefreshLayout.setRefreshing(false);
+            if (val != null && !val.isEmpty()) {
+                lastVisible = val.getDocuments().get(val.size() - 1);
+                for (DocumentSnapshot doc : val.getDocuments()) {
+                    ForumPost p = doc.toObject(ForumPost.class);
+                    if (p != null) { p.setId(doc.getId()); if (showGraphic || !p.isHunted()) postList.add(p); }
+                }
+                adapter.setPosts(new ArrayList<>(postList));
+                if (val.size() < PAGE_SIZE) isLastPage = true;
+            } else isLastPage = true;
             isFetching = false;
         }).addOnFailureListener(e -> {
-            isFetching = false;
-            if (binding != null) binding.swipeRefreshLayout.setRefreshing(false);
-            Log.e(TAG, "Error fetching posts", e);
+            if (fetchGeneration == myGen) { isFetching = false; if (binding != null) binding.swipeRefreshLayout.setRefreshing(false); }
         });
     }
 
     @Override
-    public void onLikeClick(ForumPost post) {
-        FirebaseUser user = mAuth.getCurrentUser();
-        if (user == null || post.getId() == null) return;
+    public void onLikeClick(ForumPost p) {
+        FirebaseUser u = mAuth.getCurrentUser();
+        if (u == null || p.getId() == null || postLikeInFlight.contains(p.getId())) return;
+        postLikeInFlight.add(p.getId());
 
-        String userId = user.getUid();
-        boolean currentlyLiked = post.getLikedBy() != null && post.getLikedBy().containsKey(userId);
-
-        // Optimistic UI Update: change the count locally before Firestore finishes
-        int currentCount = post.getLikeCount();
-        if (currentlyLiked) {
-            post.setLikeCount(Math.max(0, currentCount - 1));
-            post.getLikedBy().remove(userId);
-        } else {
-            post.setLikeCount(currentCount + 1);
-            post.getLikedBy().put(userId, true);
-        }
+        String uid = u.getUid(); boolean liked = p.getLikedBy() != null && p.getLikedBy().containsKey(uid);
+        int count = p.getLikeCount();
+        
+        // Optimistic UI update
+        if (liked) { p.setLikeCount(Math.max(0, count - 1)); p.getLikedBy().remove(uid); }
+        else { p.setLikeCount(count + 1); if (p.getLikedBy() == null) p.setLikedBy(new HashMap<>()); p.getLikedBy().put(uid, true); }
         adapter.notifyDataSetChanged();
 
-        // Perform actual Firestore update: Source of truth only (maps)
-        // Count increment/decrement is now handled by server-side recalculation trigger
-        if (currentlyLiked) {
-            db.collection("forumThreads").document(post.getId())
-                    .update("likedBy." + userId, FieldValue.delete())
-                    .addOnFailureListener(e -> {
-                        // Revert local state on failure
-                        post.setLikeCount(currentCount);
-                        post.getLikedBy().put(userId, true);
+        db.collection("forumThreads").document(p.getId()).update("likedBy." + uid, liked ? FieldValue.delete() : true)
+                .addOnCompleteListener(t -> {
+                    // FIX: Ensure interaction is re-enabled only after UI is definitely back in sync.
+                    postLikeInFlight.remove(p.getId());
+                    if (!t.isSuccessful()) {
+                        // Revert on failure
+                        p.setLikeCount(count); if (liked) p.getLikedBy().put(uid, true); else p.getLikedBy().remove(uid);
                         adapter.notifyDataSetChanged();
-                        Toast.makeText(getContext(), "Failed to update like", Toast.LENGTH_SHORT).show();
-                    });
-        } else {
-            db.collection("forumThreads").document(post.getId())
-                    .update("likedBy." + userId, true)
-                    .addOnFailureListener(e -> {
-                        // Revert local state on failure
-                        post.setLikeCount(currentCount);
-                        post.getLikedBy().remove(userId);
-                        adapter.notifyDataSetChanged();
-                        Toast.makeText(getContext(), "Failed to update like", Toast.LENGTH_SHORT).show();
-                    });
-        }
+                        if (isAdded()) Toast.makeText(getContext(), "Failed to update like status.", Toast.LENGTH_SHORT).show();
+                    }
+                });
     }
 
-    @Override
-    public void onCommentClick(ForumPost post) {
-        onPostClick(post);
+    @Override public void onCommentClick(ForumPost p) { onPostClick(p); }
+    @Override public void onPostClick(ForumPost p) {
+        if (isNavigating) return;
+        isNavigating = true;
+        startActivity(new Intent(getActivity(), PostDetailActivity.class).putExtra(PostDetailActivity.EXTRA_POST_ID, p.getId()));
     }
 
-    @Override
-    public void onPostClick(ForumPost post) {
-        FirebaseUser user = mAuth.getCurrentUser();
-        if (user != null) {
-            String userId = user.getUid();
-            if (post.getViewedBy() == null || !post.getViewedBy().containsKey(userId)) {
-                // Update only the source of truth (viewedBy map)
-                db.collection("forumThreads").document(post.getId())
-                        .update("viewedBy." + userId, true);
-            }
-        }
-        openPostDetail(post);
-    }
-
-    @Override
-    public void onOptionsClick(ForumPost post, View view) {
-        PopupMenu popup = new PopupMenu(getContext(), view);
-        FirebaseUser user = mAuth.getCurrentUser();
-
-        if (user != null && post.getUserId().equals(user.getUid())) {
-            popup.getMenu().add("Delete");
-        }
+    @Override public void onOptionsClick(ForumPost p, View v) {
+        PopupMenu popup = new PopupMenu(getContext(), v); FirebaseUser u = mAuth.getCurrentUser();
+        if (u != null && p.getUserId().equals(u.getUid())) popup.getMenu().add("Delete");
         popup.getMenu().add("Report");
-
         popup.setOnMenuItemClickListener(item -> {
-            if (item.getTitle().equals("Delete")) {
-                showDeleteConfirmation(post);
-            } else if (item.getTitle().equals("Report")) {
-                showReportDialog(post);
-            }
+            if (item.getTitle().equals("Delete")) showDeleteConfirmation(p);
+            else if (item.getTitle().equals("Report")) showReportDialog(p);
             return true;
         });
         popup.show();
     }
 
-    @Override
-    public void onUserClick(String userId) {
-        openUserProfile(userId);
+    @Override public void onUserClick(String uid) {
+        if (isNavigating) return;
+        isNavigating = true;
+        startActivity(new Intent(getActivity(), UserSocialProfileActivity.class).putExtra(UserSocialProfileActivity.EXTRA_USER_ID, uid));
     }
-
-    @Override
-    public void onMapClick(ForumPost post) {
-        if (post.getLatitude() != null && post.getLongitude() != null) {
-            Intent intent = new Intent(getActivity(), NearbyHeatmapActivity.class);
-            intent.putExtra(NearbyHeatmapActivity.EXTRA_CENTER_LAT, post.getLatitude());
-            intent.putExtra(NearbyHeatmapActivity.EXTRA_CENTER_LNG, post.getLongitude());
-            intent.putExtra("extra_post_id", post.getId()); // Passing ID to focus on it
-            startActivity(intent);
+    
+    @Override public void onMapClick(ForumPost p) {
+        if (isNavigating) return;
+        if (p.getLatitude() != null && p.getLongitude() != null) {
+            isNavigating = true;
+            Intent i = new Intent(getActivity(), NearbyHeatmapActivity.class);
+            i.putExtra(NearbyHeatmapActivity.EXTRA_CENTER_LAT, p.getLatitude());
+            i.putExtra(NearbyHeatmapActivity.EXTRA_CENTER_LNG, p.getLongitude());
+            i.putExtra("extra_post_id", p.getId());
+            startActivity(i);
         }
     }
 
-    private void showDeleteConfirmation(ForumPost post) {
-        new AlertDialog.Builder(requireContext())
-                .setTitle("Delete Post")
-                .setMessage("Are you sure you want to delete this post? All comments and images will be archived.")
-                .setPositiveButton("Delete", (dialog, which) -> {
-                    archiveAndDeletePost(post);
-                })
-                .setNegativeButton("Cancel", null)
-                .show();
+    private void showDeleteConfirmation(ForumPost p) {
+        new AlertDialog.Builder(requireContext()).setTitle("Delete Post").setMessage("Are you sure?").setPositiveButton("Delete", (d, w) -> archiveAndDeletePost(p)).setNegativeButton("Cancel", null).show();
     }
 
-    private void archiveAndDeletePost(ForumPost post) {
-        FirebaseUser user = mAuth.getCurrentUser();
-        if (user == null) return;
-
-        String imageUrl = post.getBirdImageUrl();
-        if (imageUrl != null && !imageUrl.isEmpty()) {
-            moveImageToArchive(user.getUid(), post.getId(), imageUrl, new OnImageArchivedListener() {
-                @Override
-                public void onSuccess(String archivedUrl) {
-                    post.setBirdImageUrl(archivedUrl);
-                    handleCommentsArchiveAndDeletion(user.getUid(), post);
-                }
-
-                @Override
-                public void onFailure(Exception e) {
-                    Log.e(TAG, "Failed to archive image, proceeding with original URL", e);
-                    handleCommentsArchiveAndDeletion(user.getUid(), post);
-                }
+    private void archiveAndDeletePost(ForumPost p) {
+        FirebaseUser u = mAuth.getCurrentUser(); if (u == null) return;
+        if (p.getBirdImageUrl() != null && !p.getBirdImageUrl().isEmpty()) {
+            moveImageToArchive(u.getUid(), p.getId(), p.getBirdImageUrl(), new OnImageArchivedListener() {
+                @Override public void onSuccess(String url) { p.setBirdImageUrl(url); handleCommentsArchiveAndDeletion(u.getUid(), p); }
+                @Override public void onFailure(Exception e) { handleCommentsArchiveAndDeletion(u.getUid(), p); }
             });
-        } else {
-            handleCommentsArchiveAndDeletion(user.getUid(), post);
-        }
+        } else handleCommentsArchiveAndDeletion(u.getUid(), p);
     }
 
-    private void handleCommentsArchiveAndDeletion(String userId, ForumPost post) {
-        // Fetch all comments to archive them before deleting the post
-        db.collection("forumThreads").document(post.getId()).collection("comments")
-                .get()
-                .addOnSuccessListener(queryDocumentSnapshots -> {
-                    WriteBatch batch = db.batch();
-
-                    // Archive and delete each comment
-                    for (DocumentSnapshot doc : queryDocumentSnapshots) {
-                        Map<String, Object> commentBacklog = new HashMap<>();
-                        commentBacklog.put("type", "comment_archived_with_post");
-                        commentBacklog.put("originalId", doc.getId());
-                        commentBacklog.put("postId", post.getId());
-                        commentBacklog.put("data", doc.getData());
-                        commentBacklog.put("deletedBy", userId);
-                        commentBacklog.put("deletedAt", FieldValue.serverTimestamp());
-
-                        batch.set(db.collection("deletedforum_backlog").document(), commentBacklog);
-                        batch.delete(doc.getReference());
-                    }
-
-                    // Final post archive
-                    Map<String, Object> postBacklog = new HashMap<>();
-                    postBacklog.put("type", "post");
-                    postBacklog.put("originalId", post.getId());
-                    postBacklog.put("data", post);
-                    postBacklog.put("deletedBy", userId);
-                    postBacklog.put("deletedAt", FieldValue.serverTimestamp());
-
-                    batch.set(db.collection("deletedforum_backlog").document(), postBacklog);
-
-                    // Delete the post document itself
-                    batch.delete(db.collection("forumThreads").document(post.getId()));
-
-                    batch.commit().addOnSuccessListener(aVoid -> {
-                        if (!isAdded()) return;
-                        Toast.makeText(getContext(), "Post and comments deleted", Toast.LENGTH_SHORT).show();
-                        refreshPosts();
-                    }).addOnFailureListener(e -> {
-                        Log.e(TAG, "Failed to execute deletion batch", e);
-                        Toast.makeText(getContext(), "Error deleting post content", Toast.LENGTH_SHORT).show();
-                    });
-                })
-                .addOnFailureListener(e -> {
-                    Log.e(TAG, "Failed to fetch comments for deletion", e);
-                    // Fallback: just delete the post
-                    savePostToBacklogAndFirestore(userId, post);
-                });
+    private void handleCommentsArchiveAndDeletion(String uid, ForumPost p) {
+        db.collection("forumThreads").document(p.getId()).collection("comments").get().addOnSuccessListener(snap -> {
+            WriteBatch b = db.batch();
+            for (DocumentSnapshot doc : snap) {
+                Map<String, Object> m = new HashMap<>(); m.put("type", "comment_archived_with_post"); m.put("originalId", doc.getId()); m.put("postId", p.getId()); m.put("data", doc.getData()); m.put("deletedBy", uid); m.put("deletedAt", FieldValue.serverTimestamp());
+                b.set(db.collection("deletedforum_backlog").document(), m); b.delete(doc.getReference());
+            }
+            Map<String, Object> pb = new HashMap<>(); pb.put("type", "post"); pb.put("originalId", p.getId()); pb.put("data", p); pb.put("deletedBy", uid); pb.put("deletedAt", FieldValue.serverTimestamp());
+            b.set(db.collection("deletedforum_backlog").document(), pb); b.delete(db.collection("forumThreads").document(p.getId()));
+            b.commit().addOnSuccessListener(v -> { if (isAdded()) refreshPosts(); });
+        }).addOnFailureListener(e -> savePostToBacklogAndFirestore(uid, p));
     }
 
-    private interface OnImageArchivedListener {
-        void onSuccess(String archivedUrl);
-        void onFailure(Exception e);
-    }
+    private interface OnImageArchivedListener { void onSuccess(String url); void onFailure(Exception e); }
 
-    private void moveImageToArchive(String userId, String postId, String originalUrl, OnImageArchivedListener listener) {
-        FirebaseStorage storage = FirebaseStorage.getInstance();
+    private void moveImageToArchive(String uid, String pid, String url, OnImageArchivedListener l) {
+        FirebaseStorage s = FirebaseStorage.getInstance();
         try {
-            StorageReference oldRef = storage.getReferenceFromUrl(originalUrl);
-            String fileName = oldRef.getName();
-            StorageReference newRef = storage.getReference().child("archive/forum_post_images/" + userId + "/" + postId + "_" + fileName);
-
-            oldRef.getBytes(10 * 1024 * 1024).addOnSuccessListener(bytes -> {
-                newRef.putBytes(bytes).addOnSuccessListener(taskSnapshot -> {
-                    newRef.getDownloadUrl().addOnSuccessListener(uri -> {
-                        oldRef.delete().addOnCompleteListener(task -> {
-                            listener.onSuccess(uri.toString());
-                        });
-                    }).addOnFailureListener(listener::onFailure);
-                }).addOnFailureListener(listener::onFailure);
-            }).addOnFailureListener(listener::onFailure);
-        } catch (Exception e) {
-            listener.onFailure(e);
-        }
+            StorageReference old = s.getReferenceFromUrl(url);
+            StorageReference next = s.getReference().child("archive/forum_post_images/" + uid + "/" + pid + "_" + old.getName());
+            old.getBytes(10 * 1024 * 1024).addOnSuccessListener(bytes -> next.putBytes(bytes).addOnSuccessListener(ts -> next.getDownloadUrl().addOnSuccessListener(uri -> old.delete().addOnCompleteListener(t -> l.onSuccess(uri.toString()))).addOnFailureListener(l::onFailure)).addOnFailureListener(l::onFailure)).addOnFailureListener(l::onFailure);
+        } catch (Exception e) { l.onFailure(e); }
     }
 
-    private void savePostToBacklogAndFirestore(String userId, ForumPost post) {
-        Map<String, Object> backlogData = new HashMap<>();
-        backlogData.put("type", "post");
-        backlogData.put("originalId", post.getId());
-        backlogData.put("data", post);
-        backlogData.put("deletedBy", userId);
-        backlogData.put("deletedAt", FieldValue.serverTimestamp());
-
-        db.collection("deletedforum_backlog").add(backlogData)
-                .addOnSuccessListener(docRef -> {
-                    firebaseManager.deleteForumPost(post.getId(), task -> {
-                        if (!isAdded()) return;
-                        if (task.isSuccessful()) {
-                            Toast.makeText(getContext(), "Post deleted", Toast.LENGTH_SHORT).show();
-                            refreshPosts();
-                        }
-                    });
-                })
-                .addOnFailureListener(e -> {
-                    if (!isAdded()) return;
-                    Log.e(TAG, "Failed to backlog post", e);
-                    Toast.makeText(getContext(), "Failed to delete post. Try again.", Toast.LENGTH_SHORT).show();
-                });
+    private void savePostToBacklogAndFirestore(String uid, ForumPost p) {
+        WriteBatch b = db.batch(); Map<String, Object> m = new HashMap<>();
+        m.put("type", "post"); m.put("originalId", p.getId()); m.put("data", p); m.put("deletedBy", uid); m.put("deletedAt", FieldValue.serverTimestamp());
+        b.set(db.collection("deletedforum_backlog").document(), m); b.delete(db.collection("forumThreads").document(p.getId()));
+        b.commit().addOnSuccessListener(v -> { if (isAdded()) refreshPosts(); });
     }
 
-    private void showReportDialog(ForumPost post) {
-        String[] reasons = {"Inappropriate Language", "Inappropriate Image", "Spam", "Harassment", "Other"};
-        new AlertDialog.Builder(requireContext())
-                .setTitle("Report Post")
-                .setItems(reasons, (dialog, which) -> {
-                    String selectedReason = reasons[which];
-                    if (selectedReason.equals("Other")) {
-                        showOtherReportDialog(reason -> submitReport(post, reason));
-                    } else {
-                        submitReport(post, selectedReason);
-                    }
-                })
-                .show();
+    private void showReportDialog(ForumPost p) {
+        String[] rs = {"Inappropriate Language", "Inappropriate Image", "Spam", "Harassment", "Other"};
+        new AlertDialog.Builder(requireContext()).setTitle("Report Post").setItems(rs, (d, w) -> {
+            if (rs[w].equals("Other")) showOtherReportDialog(reason -> submitReport(p, reason));
+            else submitReport(p, rs[w]);
+        }).show();
     }
 
-    private void showOtherReportDialog(OnReasonEnteredListener listener) {
-        AlertDialog.Builder builder = new AlertDialog.Builder(requireContext());
-        builder.setTitle("Report Reason");
-
-        final EditText input = new EditText(requireContext());
-        input.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE);
-        input.setHint("Please specify the reason (max 200 chars)...");
-        input.setFilters(new InputFilter[]{new InputFilter.LengthFilter(200)});
-        input.setLines(5);
-
-        FrameLayout container = new FrameLayout(requireContext());
-        FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        params.leftMargin = params.rightMargin = 40;
-        input.setLayoutParams(params);
-        container.addView(input);
-        builder.setView(container);
-
-        builder.setPositiveButton("Submit", (dialog, which) -> {
-            String reason = input.getText().toString().trim();
-            if (reason.isEmpty()) {
-                Toast.makeText(getContext(), "Please enter a reason", Toast.LENGTH_SHORT).show();
-                return;
-            }
-            if (ContentFilter.containsInappropriateContent(reason)) {
-                Toast.makeText(getContext(), "Inappropriate language detected in your report.", Toast.LENGTH_SHORT).show();
-                return;
-            }
-            listener.onReasonEntered(reason);
-        });
-        builder.setNegativeButton("Cancel", (dialog, which) -> dialog.cancel());
-
-        builder.show();
+    private void showOtherReportDialog(OnReasonEnteredListener l) {
+        AlertDialog.Builder b = new AlertDialog.Builder(requireContext()); b.setTitle("Report Reason");
+        final EditText i = new EditText(requireContext()); i.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE); i.setHint("Reason..."); i.setFilters(new InputFilter[]{new InputFilter.LengthFilter(200)});
+        FrameLayout c = new FrameLayout(requireContext()); FrameLayout.LayoutParams p = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT); p.leftMargin = p.rightMargin = 40; i.setLayoutParams(p); c.addView(i); b.setView(c);
+        b.setPositiveButton("Submit", (d, w) -> { String r = i.getText().toString().trim(); if (!r.isEmpty()) l.onReasonEntered(r); });
+        b.setNegativeButton("Cancel", (d, w) -> d.cancel()); b.show();
     }
 
-    private interface OnReasonEnteredListener {
-        void onReasonEntered(String reason);
-    }
+    private interface OnReasonEnteredListener { void onReasonEntered(String r); }
 
-    private void submitReport(ForumPost post, String reason) {
-        FirebaseUser user = mAuth.getCurrentUser();
-        if (user == null) return;
-
-        Report report = new Report("post", post.getId(), user.getUid(), reason);
-        firebaseManager.addReport(report, task -> {
-            if (!isAdded()) return;
-            if (task.isSuccessful()) {
-                Toast.makeText(getContext(), "Thank you for reporting. We will review this post.", Toast.LENGTH_LONG).show();
-            } else {
-                String error = "Failed to submit report.";
-                if (task.getException() != null && task.getException().getMessage() != null) {
-                    error = task.getException().getMessage();
-                }
-                Toast.makeText(getContext(), error, Toast.LENGTH_SHORT).show();
-            }
-        });
-    }
-
-    private void openPostDetail(ForumPost post) {
-        Intent intent = new Intent(getActivity(), PostDetailActivity.class);
-        intent.putExtra(PostDetailActivity.EXTRA_POST_ID, post.getId());
-        startActivity(intent);
-    }
-
-    private void openUserProfile(String userId) {
-        Intent intent = new Intent(getActivity(), UserSocialProfileActivity.class);
-        intent.putExtra(UserSocialProfileActivity.EXTRA_USER_ID, userId);
-        startActivity(intent);
-    }
-
-    @Override
-    public void onResume() {
-        super.onResume();
-        if (binding != null) {
-            // Save the runnable reference so onDestroyView can cancel it.
-            // Without this, if the fragment is destroyed during the 1.5s window,
-            // refreshPosts() runs against a null binding and crashes.
-            pendingRefreshRunnable = this::refreshPosts;
-            binding.getRoot().postDelayed(pendingRefreshRunnable, 1500);
-        }
+    private void submitReport(ForumPost p, String r) {
+        FirebaseUser u = mAuth.getCurrentUser(); if (u == null) return;
+        firebaseManager.addReport(new Report("post", p.getId(), u.getUid(), r), t -> { if (isAdded() && t.isSuccessful()) Toast.makeText(getContext(), "Reported", Toast.LENGTH_SHORT).show(); });
     }
 
     @Override
     public void onDestroyView() {
         super.onDestroyView();
-        // Cancel pending refresh to avoid running against a null binding
-        if (binding != null && pendingRefreshRunnable != null) {
-            binding.getRoot().removeCallbacks(pendingRefreshRunnable);
-        }
+        if (binding != null && pendingRefreshRunnable != null) binding.getRoot().removeCallbacks(pendingRefreshRunnable);
         pendingRefreshRunnable = null;
         binding = null;
     }

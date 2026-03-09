@@ -22,6 +22,7 @@ import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 
 import com.google.firebase.auth.FirebaseAuth;
@@ -102,6 +103,8 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
         locationPermissionLauncher = registerForActivityResult(
                 new ActivityResultContracts.RequestMultiplePermissions(),
                 result -> {
+                    if (isFinishing() || isDestroyed()) return;
+
                     boolean fineLocationGranted = Boolean.TRUE.equals(result.get(Manifest.permission.ACCESS_FINE_LOCATION));
                     boolean coarseLocationGranted = Boolean.TRUE.equals(result.get(Manifest.permission.ACCESS_COARSE_LOCATION));
 
@@ -145,6 +148,8 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
 
     @Override
     public void onLocationReceived(Location location, @Nullable String localityName, @Nullable String state, @Nullable String country) {
+        if (isFinishing() || isDestroyed()) return;
+
         Log.d(TAG, "onLocationReceived: Lat=" + location.getLatitude() + ", Lng=" + location.getLongitude() + ", Locality=" + localityName);
         this.currentLocation = location;
         this.currentLocalityName = localityName;
@@ -160,6 +165,8 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
 
     @Override
     public void onLocationError(String errorMessage) {
+        if (isFinishing() || isDestroyed()) return;
+
         Log.e(TAG, "onLocationError: " + errorMessage);
         Toast.makeText(this, "Location error: " + errorMessage + ". Proceeding without location.", Toast.LENGTH_LONG).show();
         startIdentificationFlow(localImageUri, null, null, null, null, null);
@@ -199,7 +206,7 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
         firebaseManager.getOpenAiRequestsRemaining(new FirebaseManager.OpenAiRequestLimitListener() {
             @Override
             public void onCheckComplete(boolean hasRequestsRemaining, int remaining, Date expirationDate) {
-                if (identificationCompleted.get()) return;
+                if (identificationCompleted.get() || isFinishing() || isDestroyed()) return;
 
                 if (hasRequestsRemaining) {
                     Log.d(TAG, "onCheckComplete: " + remaining + " requests remaining. Uploading image to identificationImages first...");
@@ -213,7 +220,7 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
 
             @Override
             public void onFailure(String errorMessage) {
-                if (identificationCompleted.get()) return;
+                if (identificationCompleted.get() || isFinishing() || isDestroyed()) return;
                 Log.e(TAG, "Failed to check OpenAI request limits: " + errorMessage);
                 finishActivityWithToast("Failed to check AI limits.");
             }
@@ -234,9 +241,9 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
         Log.d(TAG, "uploadImageToIdentificationStorage: Uploading to " + fileName);
         storageRef.putFile(imageUri)
                 .addOnSuccessListener(taskSnapshot -> {
-                    if (identificationCompleted.get()) return;
+                    if (identificationCompleted.get() || isFinishing() || isDestroyed()) return;
                     storageRef.getDownloadUrl().addOnSuccessListener(downloadUri -> {
-                        if (identificationCompleted.get()) return;
+                        if (identificationCompleted.get() || isFinishing() || isDestroyed()) return;
                         Log.d(TAG, "Image uploaded. Download URL: " + downloadUri);
                         identifyBirdWithUrl(downloadUri.toString(), latitude, longitude, localityName, state, country);
                     }).addOnFailureListener(e -> {
@@ -262,7 +269,7 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
         openAiApi.identifyBirdFromImage(base64Image, downloadUrl, latitude, longitude, localityName, requestId, new OpenAiApi.OpenAiCallback() {
             @Override
             public void onSuccess(String response, boolean isVerified, boolean isGore) {
-                if (identificationCompleted.get()) return;
+                if (identificationCompleted.get() || isFinishing() || isDestroyed()) return;
                 Log.d(TAG, "OpenAI onSuccess: isVerified=" + isVerified + ", isGore=" + isGore);
 
                 if (isGore) {
@@ -279,7 +286,7 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
 
             @Override
             public void onFailure(Exception e, String message) {
-                if (identificationCompleted.get()) return;
+                if (identificationCompleted.get() || isFinishing() || isDestroyed()) return;
                 Log.e(TAG, "OpenAI onFailure: " + message, e);
                 finishActivityWithToast("Identification failed: " + message);
             }

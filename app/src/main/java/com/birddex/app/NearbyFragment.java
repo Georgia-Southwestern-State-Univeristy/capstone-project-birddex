@@ -57,7 +57,6 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * NearbyFragment displays bird sightings based on the user's current location.
- * It filters sightings by radius (50km) and recency (72 hours).
  */
 public class NearbyFragment extends Fragment {
 
@@ -66,9 +65,7 @@ public class NearbyFragment extends Fragment {
     private TextView txtLocation;
     private RecyclerView rvNearby;
     private NearbyAdapter adapter;
-    private ImageButton btnRefresh;
-    private ImageButton btnSearch;
-    private ImageButton btnMap;
+    private ImageButton btnRefresh, btnSearch, btnMap;
     private ProgressBar pbLoading;
     private TextView tvNoBirds;
 
@@ -77,10 +74,7 @@ public class NearbyFragment extends Fragment {
 
     private LocationRequest locationRequest;
     private LocationCallback locationCallback;
-    private Location currentLocation;
-    private Location lastFetchLocation;
-    private String lastPlaceShown = null;
-
+    private Location currentLocation, lastFetchLocation;
     private FirebaseManager firebaseManager;
     private FirebaseFirestore db;
     private EbirdApi ebirdApi;
@@ -90,16 +84,13 @@ public class NearbyFragment extends Fragment {
     private boolean isSearchDataLoading = false;
     private ExecutorService geoExecutor;
 
-    // Race condition fixes: fetchCount uses AtomicInteger so increment+check is atomic
-    // across the two concurrent callbacks (Firestore + eBird).
+    private int fetchGeneration = 0;
     private final AtomicInteger fetchCount = new AtomicInteger(0);
     private final List<Bird> latestFirestoreResults = Collections.synchronizedList(new ArrayList<>());
     private final List<Bird> latestEbirdResults = Collections.synchronizedList(new ArrayList<>());
-
-    // searchableBirds is populated from a Firestore callback (background thread) and read on
-    // the main thread inside openBirdSearchDialog. Using CopyOnWriteArrayList prevents
-    // ConcurrentModificationException during iteration without explicit locking.
     private final List<Bird> searchableBirds = new CopyOnWriteArrayList<>();
+
+    private boolean isNavigating = false;
 
     private static final long LOCATION_UPDATE_INTERVAL_MS = 3 * 60 * 1000;
     private static final double SEARCH_RADIUS_METERS = 50000;
@@ -109,12 +100,8 @@ public class NearbyFragment extends Fragment {
 
     @Nullable
     @Override
-    public View onCreateView(@NonNull LayoutInflater inflater,
-                             @Nullable ViewGroup container,
-                             @Nullable Bundle savedInstanceState) {
-
+    public View onCreateView(@NonNull LayoutInflater inflater, @Nullable ViewGroup container, @Nullable Bundle savedInstanceState) {
         View v = inflater.inflate(R.layout.fragment_nearby, container, false);
-
         txtLocation = v.findViewById(R.id.txtLocation);
         rvNearby = v.findViewById(R.id.rvNearby);
         btnRefresh = v.findViewById(R.id.btnRefresh);
@@ -131,166 +118,69 @@ public class NearbyFragment extends Fragment {
         db = FirebaseFirestore.getInstance();
         ebirdApi = new EbirdApi();
         cacheManager = new BirdCacheManager(requireContext());
-
         fusedLocationClient = LocationServices.getFusedLocationProviderClient(requireActivity());
 
-        locationRequest = new LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, LOCATION_UPDATE_INTERVAL_MS)
-                .setMinUpdateIntervalMillis(LOCATION_UPDATE_INTERVAL_MS / 2)
-                .build();
-
+        locationRequest = new LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, LOCATION_UPDATE_INTERVAL_MS).setMinUpdateIntervalMillis(LOCATION_UPDATE_INTERVAL_MS / 2).build();
         locationCallback = new LocationCallback() {
-            @Override
-            public void onLocationResult(@NonNull LocationResult locationResult) {
-                if (locationResult.getLocations().isEmpty()) return;
-
-                Location location = locationResult.getLastLocation();
-                if (location == null) return;
-
-                Log.d(TAG, "Location update received: " + location.getLatitude() + ", " + location.getLongitude());
-                handleNewLocation(location, false);
+            @Override public void onLocationResult(@NonNull LocationResult lr) {
+                Location l = lr.getLastLocation(); if (l != null) handleNewLocation(l, false);
             }
         };
 
-        locationPermissionLauncher = registerForActivityResult(
-                new ActivityResultContracts.RequestMultiplePermissions(), result -> {
-                    if (Boolean.TRUE.equals(result.get(Manifest.permission.ACCESS_FINE_LOCATION)) ||
-                            Boolean.TRUE.equals(result.get(Manifest.permission.ACCESS_COARSE_LOCATION))) {
-                        startLocationUpdates();
-                    } else {
-                        txtLocation.setText("Location: Permission denied");
-                        pbLoading.setVisibility(View.GONE);
-                    }
-                });
-
-        btnRefresh.setOnClickListener(view -> {
-            Log.d(TAG, "Manual refresh clicked");
-            if (ContextCompat.checkSelfPermission(requireContext(), Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
-                fusedLocationClient.getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, null)
-                        .addOnSuccessListener(location -> {
-                            if (location != null) {
-                                handleNewLocation(location, true);
-                            } else {
-                                fetchAllNearbyData();
-                            }
-                        });
-            } else {
-                requestLocationOrLoad();
-            }
+        locationPermissionLauncher = registerForActivityResult(new ActivityResultContracts.RequestMultiplePermissions(), res -> {
+            if (Boolean.TRUE.equals(res.get(Manifest.permission.ACCESS_FINE_LOCATION)) || Boolean.TRUE.equals(res.get(Manifest.permission.ACCESS_COARSE_LOCATION))) startLocationUpdates();
         });
 
+        btnRefresh.setOnClickListener(view -> requestLocationOrLoad(true));
         btnSearch.setOnClickListener(view -> openBirdSearchDialog());
         btnMap.setOnClickListener(view -> openHeatmapScreen());
 
         loadCachedData();
-        primeSearchableBirds();
-
         return v;
-    }
-
-    private void loadCachedData() {
-        List<Bird> cached = cacheManager.getCachedNearbyBirds();
-        if (!cached.isEmpty()) {
-            adapter.updateList(cached);
-            rvNearby.setVisibility(View.VISIBLE);
-            pbLoading.setVisibility(View.GONE);
-            tvNoBirds.setVisibility(View.GONE);
-        }
     }
 
     @Override
     public void onResume() {
         super.onResume();
-
-        if (geoExecutor == null || geoExecutor.isShutdown()) {
-            geoExecutor = Executors.newSingleThreadExecutor();
-        }
-
-        requestLocationOrLoad();
+        isNavigating = false;
+        if (adapter != null) adapter.setNavigating(false);
+        if (geoExecutor == null || geoExecutor.isShutdown()) geoExecutor = Executors.newSingleThreadExecutor();
+        requestLocationOrLoad(false);
         primeSearchableBirds();
     }
 
-    @Override
-    public void onPause() {
-        super.onPause();
-        stopLocationUpdates();
+    @Override public void onPause() { super.onPause(); stopLocationUpdates(); }
+    @Override public void onDestroyView() { super.onDestroyView(); if (geoExecutor != null) geoExecutor.shutdownNow(); }
+
+    private void loadCachedData() {
+        List<Bird> c = cacheManager.getCachedNearbyBirds();
+        if (!c.isEmpty()) { adapter.updateList(c); rvNearby.setVisibility(View.VISIBLE); pbLoading.setVisibility(View.GONE); }
     }
 
-    @Override
-    public void onDestroyView() {
-        super.onDestroyView();
-        if (geoExecutor != null) geoExecutor.shutdownNow();
-    }
-
-    private void handleNewLocation(Location location, boolean forceDataFetch) {
-        currentLocation = location;
-
-        boolean shouldFetch = forceDataFetch || lastFetchLocation == null;
-        if (!shouldFetch && lastFetchLocation != null) {
-            float distance = location.distanceTo(lastFetchLocation);
-            if (distance > MIN_DISTANCE_FOR_FETCH) {
-                Log.d(TAG, "Significant movement detected (" + distance + "m).");
-                shouldFetch = true;
-            }
-        }
-
-        if (shouldFetch) {
-            lastFetchLocation = location;
+    private void handleNewLocation(Location l, boolean force) {
+        currentLocation = l;
+        if (force || lastFetchLocation == null || l.distanceTo(lastFetchLocation) > MIN_DISTANCE_FOR_FETCH) {
+            Log.d(TAG, "Fetching new data for location: " + l.getLatitude() + ", " + l.getLongitude());
+            lastFetchLocation = l;
             fetchAllNearbyData();
         }
-
         if (geoExecutor != null && !geoExecutor.isShutdown()) {
             geoExecutor.execute(() -> {
-                String place = getCityStateFromLocation(location);
-                if (isAdded() && getActivity() != null) {
-                    getActivity().runOnUiThread(() -> {
-                        if (isAdded()) {
-                            txtLocation.setText("Location: " + place);
-                            lastPlaceShown = place;
-                        }
-                    });
-                }
+                String p = getCityStateFromLocation(l);
+                if (isAdded()) getActivity().runOnUiThread(() -> { if (isAdded()) txtLocation.setText("Location: " + p); });
             });
         }
     }
 
-    private void requestLocationOrLoad() {
+    private void requestLocationOrLoad(boolean force) {
         if (ContextCompat.checkSelfPermission(requireContext(), Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
-            fusedLocationClient.getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, null)
-                    .addOnSuccessListener(location -> {
-                        if (location != null) {
-                            handleNewLocation(location, false);
-                        } else {
-                            fusedLocationClient.getLastLocation().addOnSuccessListener(lastLoc -> {
-                                if (lastLoc != null) handleNewLocation(lastLoc, false);
-                            });
-                        }
-                    });
-
+            fusedLocationClient.getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, null).addOnSuccessListener(l -> { if (l != null) handleNewLocation(l, force); });
             startLocationUpdates();
-        } else {
-            locationPermissionLauncher.launch(new String[]{
-                    Manifest.permission.ACCESS_FINE_LOCATION,
-                    Manifest.permission.ACCESS_COARSE_LOCATION
-            });
-        }
+        } else locationPermissionLauncher.launch(new String[]{Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION});
     }
 
-    private void startLocationUpdates() {
-        if (isUpdating) return;
-
-        try {
-            fusedLocationClient.requestLocationUpdates(locationRequest, locationCallback, Looper.getMainLooper());
-            isUpdating = true;
-        } catch (SecurityException se) {
-            Log.e(TAG, "SecurityException: ", se);
-        }
-    }
-
-    private void stopLocationUpdates() {
-        if (!isUpdating) return;
-        fusedLocationClient.removeLocationUpdates(locationCallback);
-        isUpdating = false;
-    }
+    private void startLocationUpdates() { if (!isUpdating) { try { fusedLocationClient.requestLocationUpdates(locationRequest, locationCallback, Looper.getMainLooper()); isUpdating = true; } catch (SecurityException ignored) {} } }
+    private void stopLocationUpdates() { if (isUpdating) { fusedLocationClient.removeLocationUpdates(locationCallback); isUpdating = false; } }
 
     private String getCityStateFromLocation(Location location) {
         Geocoder geocoder = new Geocoder(requireContext(), Locale.getDefault());
@@ -311,473 +201,153 @@ public class NearbyFragment extends Fragment {
 
     private synchronized void fetchAllNearbyData() {
         if (currentLocation == null) return;
-
-        fetchCount.set(0);
-        Log.d(TAG, "Starting dual-fetch from userBirdSightings and eBird...");
-
-        if (isAdded() && getActivity() != null) {
-            getActivity().runOnUiThread(() -> {
-                if (isAdded()) {
-                    pbLoading.setVisibility(View.VISIBLE);
-                    rvNearby.setVisibility(View.GONE);
-                    tvNoBirds.setVisibility(View.GONE);
-                    adapter.updateList(new ArrayList<>());
-                }
-            });
-        }
-
-        latestFirestoreResults.clear();
-        latestEbirdResults.clear();
-
-        loadUserSightingsNearby();
-        loadEbirdNearby();
+        final int myGen = ++fetchGeneration;
+        fetchCount.set(0); latestFirestoreResults.clear(); latestEbirdResults.clear();
+        Log.d(TAG, "Starting dual-fetch (gen=" + myGen + ")");
+        if (isAdded()) getActivity().runOnUiThread(() -> { if (isAdded()) { pbLoading.setVisibility(View.VISIBLE); rvNearby.setVisibility(View.GONE); tvNoBirds.setVisibility(View.GONE); } });
+        loadUserSightingsNearby(myGen); loadEbirdNearby(myGen);
     }
 
-    private void loadUserSightingsNearby() {
-        db.collection("userBirdSightings")
-                .limit(MAX_USER_SIGHTINGS)
-                .get()
-                .addOnSuccessListener(querySnapshot -> {
-                    List<Bird> localFirestore = new ArrayList<>();
-                    for (DocumentSnapshot doc : querySnapshot.getDocuments()) {
-                        Bird bird = mapUserSightingToBird(doc);
-                        if (isValidSighting(bird)) {
-                            localFirestore.add(bird);
-                            cacheSearchBird(bird);
-                        }
-                    }
-                    latestFirestoreResults.addAll(localFirestore);
-                    checkIfAllFetched();
-                })
-                .addOnFailureListener(e -> {
-                    Log.e(TAG, "Failed loading userBirdSightings", e);
-                    checkIfAllFetched();
-                });
+    private void loadUserSightingsNearby(final int gen) {
+        db.collection("userBirdSightings").limit(MAX_USER_SIGHTINGS).get().addOnSuccessListener(querySnapshot -> {
+            if (gen != fetchGeneration) return;
+            for (DocumentSnapshot d : querySnapshot.getDocuments()) { Bird b = mapUserSightingToBird(d); if (isValidSighting(b)) { latestFirestoreResults.add(b); cacheSearchBird(b); } }
+            checkIfAllFetched(gen);
+        }).addOnFailureListener(e -> { if (gen == fetchGeneration) checkIfAllFetched(gen); });
     }
 
-    private void loadEbirdNearby() {
+    private void loadEbirdNearby(final int gen) {
         ebirdApi.fetchCoreGeorgiaBirdList(new EbirdApi.EbirdCoreBirdListCallback() {
-            @Override
-            public void onSuccess(List<JSONObject> birdsJson) {
-                List<Bird> localEbird = new ArrayList<>();
-                for (JSONObject json : birdsJson) {
-                    Bird bird = parseBirdJson(json);
-                    if (isValidSighting(bird)) {
-                        localEbird.add(bird);
-                    }
-                }
-                latestEbirdResults.addAll(localEbird);
-                checkIfAllFetched();
+            @Override public void onSuccess(List<JSONObject> birdsJson) {
+                if (gen != fetchGeneration) return;
+                for (JSONObject j : birdsJson) { Bird b = parseBirdJson(j); if (isValidSighting(b)) latestEbirdResults.add(b); }
+                checkIfAllFetched(gen);
             }
-
-            @Override
-            public void onFailure(Exception e) {
-                Log.e(TAG, "Failed loading eBird nearby birds", e);
-                checkIfAllFetched();
-            }
+            @Override public void onFailure(Exception e) { if (gen == fetchGeneration) checkIfAllFetched(gen); }
         });
     }
 
-    private void checkIfAllFetched() {
-        if (fetchCount.incrementAndGet() >= 2) {
-            processFinalList();
-        }
+    private void checkIfAllFetched(int gen) { if (gen == fetchGeneration && fetchCount.incrementAndGet() >= 2) processFinalList(); }
+
+    private void processFinalList() {
+        List<Bird> combined = new ArrayList<>(latestFirestoreResults); combined.addAll(latestEbirdResults);
+        combined.sort((b1, b2) -> {
+            Long t1 = b1.getLastSeenTimestampGeorgia(), t2 = b2.getLastSeenTimestampGeorgia();
+            if (t1 == null && t2 == null) return 0; if (t1 == null) return 1; if (t2 == null) return -1;
+            return t2.compareTo(t1);
+        });
+        cacheManager.saveNearbyBirds(combined);
+        if (isAdded()) getActivity().runOnUiThread(() -> { if (isAdded()) { pbLoading.setVisibility(View.GONE); if (combined.isEmpty()) { rvNearby.setVisibility(View.GONE); tvNoBirds.setVisibility(View.VISIBLE); } else { adapter.updateList(combined); tvNoBirds.setVisibility(View.GONE); rvNearby.setVisibility(View.VISIBLE); } } });
     }
 
-    private Bird mapUserSightingToBird(DocumentSnapshot doc) {
-        Bird bird = new Bird();
-
-        String baseBirdId = getStringValue(doc, "birdId");
-        String commonName = getStringValue(doc, "commonName");
-        String scientificName = getStringValue(doc, "scientificName");
-        String species = getStringValue(doc, "species");
-        String family = getStringValue(doc, "family");
-
-        bird.setId(!isBlank(baseBirdId) ? baseBirdId : doc.getId());
-        bird.setCommonName(!isBlank(commonName) ? commonName : "Unknown bird");
-        bird.setScientificName(!isBlank(scientificName) ? scientificName : "");
-        bird.setSpecies(!isBlank(species) ? species : "");
-        bird.setFamily(!isBlank(family) ? family : "");
-
-        Double lat = getDoubleValue(doc, "location.latitude", "latitude", "lat", "lastSeenLatitudeGeorgia");
-        Double lng = getDoubleValue(doc, "location.longitude", "longitude", "lng", "lastSeenLongitudeGeorgia");
-        Long timeMillis = getTimeMillisValue(doc, "timestamp", "observationDate", "lastSeenTimestampGeorgia");
-
-        bird.setLastSeenLatitudeGeorgia(lat);
-        bird.setLastSeenLongitudeGeorgia(lng);
-        bird.setLastSeenTimestampGeorgia(timeMillis);
-
-        return bird;
-    }
-
-    private boolean isValidSighting(Bird bird) {
-        if (bird == null ||
-                bird.getLastSeenLatitudeGeorgia() == null ||
-                bird.getLastSeenLongitudeGeorgia() == null ||
-                bird.getLastSeenTimestampGeorgia() == null ||
-                currentLocation == null) {
-            return false;
-        }
-
-        long cutoff = System.currentTimeMillis() - SIGHTING_RECENCY_MS;
-        if (bird.getLastSeenTimestampGeorgia() < cutoff) return false;
-
-        float[] results = new float[1];
-        Location.distanceBetween(
-                currentLocation.getLatitude(),
-                currentLocation.getLongitude(),
-                bird.getLastSeenLatitudeGeorgia(),
-                bird.getLastSeenLongitudeGeorgia(),
-                results
-        );
-
-        return results[0] <= SEARCH_RADIUS_METERS;
-    }
-
-    private Bird parseBirdJson(JSONObject json) {
-        Bird b = new Bird();
-        b.setId(json.optString("id"));
-        b.setCommonName(json.optString("commonName"));
-        b.setScientificName(json.optString("scientificName"));
-
-        if (json.has("lastSeenLatitudeGeorgia") && !json.isNull("lastSeenLatitudeGeorgia")) {
-            b.setLastSeenLatitudeGeorgia(json.optDouble("lastSeenLatitudeGeorgia"));
-        }
-
-        if (json.has("lastSeenLongitudeGeorgia") && !json.isNull("lastSeenLongitudeGeorgia")) {
-            b.setLastSeenLongitudeGeorgia(json.optDouble("lastSeenLongitudeGeorgia"));
-        }
-
-        if (json.has("lastSeenTimestampGeorgia") && !json.isNull("lastSeenTimestampGeorgia")) {
-            b.setLastSeenTimestampGeorgia(json.optLong("lastSeenTimestampGeorgia"));
-        }
-
+    private Bird mapUserSightingToBird(DocumentSnapshot d) {
+        Bird b = new Bird(); String bid = getStringValue(d, "birdId"); b.setId(bid != null ? bid : d.getId());
+        b.setCommonName(getStringValue(d, "commonName")); b.setScientificName(getStringValue(d, "scientificName"));
+        b.setLastSeenLatitudeGeorgia(getDoubleValue(d, "location.latitude", "latitude", "lat", "lastSeenLatitudeGeorgia"));
+        b.setLastSeenLongitudeGeorgia(getDoubleValue(d, "location.longitude", "longitude", "lng", "lastSeenLongitudeGeorgia"));
+        b.setLastSeenTimestampGeorgia(getTimeMillisValue(d, "timestamp", "observationDate", "lastSeenTimestampGeorgia"));
         return b;
     }
 
-    private void processFinalList() {
-        List<Bird> combined = new ArrayList<>();
-        combined.addAll(latestFirestoreResults);
-        combined.addAll(latestEbirdResults);
+    private boolean isValidSighting(Bird b) {
+        if (b == null || b.getLastSeenLatitudeGeorgia() == null || b.getLastSeenTimestampGeorgia() == null || currentLocation == null) return false;
+        if (b.getLastSeenTimestampGeorgia() < System.currentTimeMillis() - SIGHTING_RECENCY_MS) return false;
+        float[] res = new float[1]; Location.distanceBetween(currentLocation.getLatitude(), currentLocation.getLongitude(), b.getLastSeenLatitudeGeorgia(), b.getLastSeenLongitudeGeorgia(), res);
+        return res[0] <= SEARCH_RADIUS_METERS;
+    }
 
-        Collections.sort(combined, (b1, b2) -> {
-            Long t1 = b1.getLastSeenTimestampGeorgia();
-            Long t2 = b2.getLastSeenTimestampGeorgia();
-
-            if (t1 == null && t2 == null) return 0;
-            if (t1 == null) return 1;
-            if (t2 == null) return -1;
-
-            return t2.compareTo(t1);
-        });
-
-        cacheManager.saveNearbyBirds(combined);
-
-        if (isAdded() && getActivity() != null) {
-            getActivity().runOnUiThread(() -> {
-                if (isAdded()) {
-                    pbLoading.setVisibility(View.GONE);
-                    if (combined.isEmpty()) {
-                        rvNearby.setVisibility(View.GONE);
-                        tvNoBirds.setVisibility(View.VISIBLE);
-                    } else {
-                        adapter.updateList(combined);
-                        tvNoBirds.setVisibility(View.GONE);
-                        rvNearby.setVisibility(View.VISIBLE);
-                    }
-                }
-            });
-        }
+    private Bird parseBirdJson(JSONObject json) {
+        Bird b = new Bird(); b.setId(json.optString("id")); b.setCommonName(json.optString("commonName")); b.setScientificName(json.optString("scientificName"));
+        if (!json.isNull("lastSeenLatitudeGeorgia")) b.setLastSeenLatitudeGeorgia(json.optDouble("lastSeenLatitudeGeorgia"));
+        if (!json.isNull("lastSeenLongitudeGeorgia")) b.setLastSeenLongitudeGeorgia(json.optDouble("lastSeenLongitudeGeorgia"));
+        if (!json.isNull("lastSeenTimestampGeorgia")) b.setLastSeenTimestampGeorgia(json.optLong("lastSeenTimestampGeorgia"));
+        return b;
     }
 
     private void primeSearchableBirds() {
         if (isSearchDataLoading || !searchableBirds.isEmpty()) return;
-
         isSearchDataLoading = true;
-
         firebaseManager.getAllBirds(task -> {
-            isSearchDataLoading = false;
-
-            if (!task.isSuccessful() || task.getResult() == null) {
-                return;
-            }
-
-            List<Bird> loadedBirds = new ArrayList<>();
-
-            for (DocumentSnapshot doc : task.getResult().getDocuments()) {
-                Bird bird = doc.toObject(Bird.class);
-                if (bird == null) continue;
-
-                if (isBlank(bird.getId())) {
-                    bird.setId(doc.getId());
+            try {
+                if (task.isSuccessful() && task.getResult() != null) {
+                    List<Bird> loaded = new ArrayList<>();
+                    for (DocumentSnapshot d : task.getResult().getDocuments()) { Bird b = d.toObject(Bird.class); if (b != null) { if (isBlank(b.getId())) b.setId(d.getId()); loaded.add(b); } }
+                    loaded.sort((b1, b2) -> b1.getCommonName().compareToIgnoreCase(b2.getCommonName()));
+                    searchableBirds.clear(); searchableBirds.addAll(loaded);
                 }
-
-                loadedBirds.add(bird);
-            }
-
-            Collections.sort(loadedBirds, (b1, b2) ->
-                    safeName(b1.getCommonName()).compareToIgnoreCase(safeName(b2.getCommonName())));
-
-            searchableBirds.clear();
-            searchableBirds.addAll(loadedBirds);
+            } finally { isSearchDataLoading = false; }
         });
     }
 
     private void cacheSearchBird(Bird bird) {
         if (bird == null || isBlank(bird.getId())) return;
-        synchronized (searchableBirds) {
-            for (Bird existing : searchableBirds) {
-                if (bird.getId().equals(existing.getId())) return;
-            }
-            searchableBirds.add(bird);
-        }
+        synchronized (searchableBirds) { for (Bird b : searchableBirds) if (bird.getId().equals(b.getId())) return; searchableBirds.add(bird); }
     }
 
     private void openBirdSearchDialog() {
         if (!isAdded()) return;
-
-        if (searchableBirds.isEmpty()) {
-            primeSearchableBirds();
-            Toast.makeText(requireContext(), "Bird search is still loading. Tap search again.", Toast.LENGTH_SHORT).show();
-            return;
-        }
-
+        if (searchableBirds.isEmpty()) { primeSearchableBirds(); Toast.makeText(requireContext(), "Loading search data...", Toast.LENGTH_SHORT).show(); return; }
         List<SearchBirdItem> items = new ArrayList<>();
-        for (Bird bird : searchableBirds) {
-            if (isBlank(bird.getId())) continue;
-
-            items.add(new SearchBirdItem(
-                    bird.getId(),
-                    buildBirdSearchLabel(bird),
-                    safeName(bird.getCommonName()),
-                    safeName(bird.getScientificName())
-            ));
-        }
-
-        if (items.isEmpty()) {
-            Toast.makeText(requireContext(), "No searchable birds found.", Toast.LENGTH_SHORT).show();
-            return;
-        }
-
+        for (Bird b : searchableBirds) if (!isBlank(b.getId())) items.add(new SearchBirdItem(b.getId(), b.getCommonName() + " (" + b.getScientificName() + ")", b.getCommonName(), b.getScientificName()));
+        if (items.isEmpty()) return;
         Collections.sort(items, (a, b) -> a.label.compareToIgnoreCase(b.label));
 
         AutoCompleteTextView input = new AutoCompleteTextView(requireContext());
-        input.setHint("Search birds");
-        input.setThreshold(1);
-        input.setSingleLine(true);
-        input.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
-        input.setTextColor(ContextCompat.getColor(requireContext(), R.color.on_page));
-        input.setHintTextColor(ContextCompat.getColor(requireContext(), R.color.on_page_variant));
-        input.setBackground(ContextCompat.getDrawable(requireContext(), R.drawable.bg_input));
-        input.setDropDownBackgroundDrawable(ContextCompat.getDrawable(requireContext(), R.drawable.bg_white_button));
+        input.setHint("Search birds"); input.setThreshold(1); input.setSingleLine(true); input.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
+        input.setTextColor(ContextCompat.getColor(requireContext(), R.color.on_page)); input.setHintTextColor(ContextCompat.getColor(requireContext(), R.color.on_page_variant));
+        input.setBackground(ContextCompat.getDrawable(requireContext(), R.drawable.bg_input)); input.setDropDownBackgroundDrawable(ContextCompat.getDrawable(requireContext(), R.drawable.bg_white_button));
         input.setPadding(36, 28, 36, 28);
+        input.setAdapter(new ArrayAdapter<>(requireContext(), R.layout.item_bird_search_suggestion, R.id.tvSuggestionText, items));
 
-        ArrayAdapter<SearchBirdItem> searchAdapter = new ArrayAdapter<>(
-                requireContext(),
-                R.layout.item_bird_search_suggestion,
-                R.id.tvSuggestionText,
-                items
-        );
-        input.setAdapter(searchAdapter);
+        int p = (int) (16 * requireContext().getResources().getDisplayMetrics().density);
+        LinearLayout container = new LinearLayout(requireContext()); container.setOrientation(LinearLayout.VERTICAL); container.setPadding(p, p / 2, p, 0);
+        container.addView(input, new LinearLayout.LayoutParams(-1, -2));
 
-        int padding = (int) (16 * requireContext().getResources().getDisplayMetrics().density);
-
-        LinearLayout container = new LinearLayout(requireContext());
-        container.setOrientation(LinearLayout.VERTICAL);
-        container.setPadding(padding, padding / 2, padding, 0);
-        container.addView(
-                input,
-                new LinearLayout.LayoutParams(
-                        ViewGroup.LayoutParams.MATCH_PARENT,
-                        ViewGroup.LayoutParams.WRAP_CONTENT
-                )
-        );
-
-        final AlertDialog dialog = new AlertDialog.Builder(requireContext())
-                .setTitle("Search Birds")
-                .setMessage("Type a common name or scientific name.")
-                .setView(container)
-                .setPositiveButton("Open", null)
-                .setNegativeButton("Cancel", null)
-                .create();
-
-        input.setOnItemClickListener((parent, view, position, id) -> {
-            SearchBirdItem selected = (SearchBirdItem) parent.getItemAtPosition(position);
-            dialog.dismiss();
-            openBirdWikiPage(selected.birdId);
-        });
-
+        final AlertDialog dialog = new AlertDialog.Builder(requireContext()).setTitle("Search Birds").setMessage("Type a common name or scientific name.").setView(container).setPositiveButton("Open", null).setNegativeButton("Cancel", null).create();
+        input.setOnItemClickListener((parent, view, position, id) -> { dialog.dismiss(); openBirdWikiPage(((SearchBirdItem) parent.getItemAtPosition(position)).birdId); });
         dialog.setOnShowListener(d -> {
-            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setTextColor(
-                    ContextCompat.getColor(requireContext(), R.color.on_page)
-            );
-            dialog.getButton(AlertDialog.BUTTON_NEGATIVE).setTextColor(
-                    ContextCompat.getColor(requireContext(), R.color.on_page_variant)
-            );
-
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setTextColor(ContextCompat.getColor(requireContext(), R.color.on_page));
+            dialog.getButton(AlertDialog.BUTTON_NEGATIVE).setTextColor(ContextCompat.getColor(requireContext(), R.color.on_page_variant));
             dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
-                String query = input.getText() != null ? input.getText().toString() : "";
-                SearchBirdItem match = findBirdMatch(query, items);
-
-                if (match == null) {
-                    input.setError("Bird not found");
-                    return;
-                }
-
-                dialog.dismiss();
-                openBirdWikiPage(match.birdId);
+                String q = input.getText() != null ? input.getText().toString() : "";
+                SearchBirdItem match = findBirdMatch(q, items);
+                if (match == null) input.setError("Bird not found"); else { dialog.dismiss(); openBirdWikiPage(match.birdId); }
             });
         });
-
-        dialog.show();
-        input.requestFocus();
+        dialog.show(); input.requestFocus();
     }
 
     private SearchBirdItem findBirdMatch(String query, List<SearchBirdItem> items) {
         String normalized = query == null ? "" : query.trim().toLowerCase(Locale.getDefault());
         if (normalized.isEmpty()) return null;
-
-        for (SearchBirdItem item : items) {
-            if (item.commonName.equals(normalized)
-                    || item.scientificName.equals(normalized)
-                    || item.label.equalsIgnoreCase(query.trim())) {
-                return item;
-            }
-        }
-
-        for (SearchBirdItem item : items) {
-            if (item.commonName.contains(normalized) || item.scientificName.contains(normalized)) {
-                return item;
-            }
-        }
-
+        for (SearchBirdItem item : items) if (item.commonName.equals(normalized) || item.scientificName.equals(normalized) || item.label.equalsIgnoreCase(query.trim())) return item;
+        for (SearchBirdItem item : items) if (item.commonName.contains(normalized) || item.scientificName.contains(normalized)) return item;
         return null;
     }
 
-    private void openBirdWikiPage(String birdId) {
-        if (!isAdded() || isBlank(birdId)) {
-            Toast.makeText(requireContext(), "No bird info available.", Toast.LENGTH_SHORT).show();
-            return;
-        }
-
-        Intent intent = new Intent(requireContext(), BirdWikiActivity.class);
-        intent.putExtra(BirdWikiActivity.EXTRA_BIRD_ID, birdId);
-        startActivity(intent);
+    private void openBirdWikiPage(String id) {
+        if (!isAdded() || isBlank(id) || isNavigating) return;
+        isNavigating = true;
+        startActivity(new Intent(requireContext(), BirdWikiActivity.class).putExtra(BirdWikiActivity.EXTRA_BIRD_ID, id));
     }
 
     private void openHeatmapScreen() {
-        if (!isAdded()) return;
-
-        Intent intent = new Intent(requireContext(), NearbyHeatmapActivity.class);
-
-        if (currentLocation != null) {
-            intent.putExtra(NearbyHeatmapActivity.EXTRA_CENTER_LAT, currentLocation.getLatitude());
-            intent.putExtra(NearbyHeatmapActivity.EXTRA_CENTER_LNG, currentLocation.getLongitude());
-        }
-
-        startActivity(intent);
+        if (!isAdded() || isNavigating) return;
+        isNavigating = true;
+        Intent i = new Intent(requireContext(), NearbyHeatmapActivity.class);
+        if (currentLocation != null) { i.putExtra(NearbyHeatmapActivity.EXTRA_CENTER_LAT, currentLocation.getLatitude()); i.putExtra(NearbyHeatmapActivity.EXTRA_CENTER_LNG, currentLocation.getLongitude()); }
+        startActivity(i);
     }
 
-    private String buildBirdSearchLabel(Bird bird) {
-        String commonName = safeName(bird.getCommonName());
-        String scientificName = safeName(bird.getScientificName());
-
-        if (!scientificName.isEmpty()) {
-            return commonName + " (" + scientificName + ")";
-        }
-
-        return commonName;
-    }
-
-    private String safeName(String value) {
-        return value == null ? "" : value.trim();
-    }
-
-    private boolean isBlank(String value) {
-        return value == null || value.trim().isEmpty();
-    }
-
-    private String getStringValue(DocumentSnapshot doc, String... fieldPaths) {
-        for (String fieldPath : fieldPaths) {
-            Object value = getNestedValue(doc, fieldPath);
-            if (value != null) {
-                String text = String.valueOf(value).trim();
-                if (!text.isEmpty()) {
-                    return text;
-                }
-            }
-        }
-        return null;
-    }
-
-    private Double getDoubleValue(DocumentSnapshot doc, String... fieldPaths) {
-        for (String fieldPath : fieldPaths) {
-            Object value = getNestedValue(doc, fieldPath);
-            if (value instanceof Number) {
-                return ((Number) value).doubleValue();
-            }
-        }
-        return null;
-    }
-
-    private Long getTimeMillisValue(DocumentSnapshot doc, String... fieldPaths) {
-        for (String fieldPath : fieldPaths) {
-            Object value = getNestedValue(doc, fieldPath);
-
-            if (value instanceof Timestamp) {
-                return ((Timestamp) value).toDate().getTime();
-            }
-
-            if (value instanceof Date) {
-                return ((Date) value).getTime();
-            }
-
-            if (value instanceof Number) {
-                return ((Number) value).longValue();
-            }
-        }
-        return null;
-    }
-
-    private Object getNestedValue(DocumentSnapshot doc, String path) {
-        if (path == null || path.trim().isEmpty()) {
-            return null;
-        }
-
-        if (!path.contains(".")) {
-            return doc.get(path);
-        }
-
-        String[] parts = path.split("\\.");
-        Object current = doc.get(parts[0]);
-
-        for (int i = 1; i < parts.length; i++) {
-            if (!(current instanceof Map)) {
-                return null;
-            }
-            current = ((Map<?, ?>) current).get(parts[i]);
-        }
-
-        return current;
-    }
+    private boolean isBlank(String v) { return v == null || v.trim().isEmpty(); }
+    private String getStringValue(DocumentSnapshot d, String... paths) { for (String p : paths) { Object v = getNestedValue(d, p); if (v != null && !String.valueOf(v).trim().isEmpty()) return String.valueOf(v).trim(); } return null; }
+    private Double getDoubleValue(DocumentSnapshot d, String... paths) { for (String p : paths) { Object v = getNestedValue(d, p); if (v instanceof Number) return ((Number) v).doubleValue(); } return null; }
+    private Long getTimeMillisValue(DocumentSnapshot d, String... paths) { for (String p : paths) { Object v = getNestedValue(d, p); if (v instanceof Timestamp) return ((Timestamp) v).toDate().getTime(); if (v instanceof Date) return ((Date) v).getTime(); if (v instanceof Number) return ((Number) v).longValue(); } return null; }
+    private Object getNestedValue(DocumentSnapshot d, String p) { if (p == null || p.isEmpty()) return null; if (!p.contains(".")) return d.get(p); String[] pts = p.split("\\."); Object cur = d.get(pts[0]); for (int i = 1; i < pts.length; i++) { if (!(cur instanceof Map)) return null; cur = ((Map<?, ?>) cur).get(pts[i]); } return cur; }
 
     private static class SearchBirdItem {
-        final String birdId;
-        final String label;
-        final String commonName;
-        final String scientificName;
-
-        SearchBirdItem(String birdId, String label, String commonName, String scientificName) {
-            this.birdId = birdId;
-            this.label = label;
-            this.commonName = commonName == null ? "" : commonName.trim().toLowerCase(Locale.getDefault());
-            this.scientificName = scientificName == null ? "" : scientificName.trim().toLowerCase(Locale.getDefault());
-        }
-
-        @NonNull
-        @Override
-        public String toString() {
-            return label;
-        }
+        final String birdId, label, commonName, scientificName;
+        SearchBirdItem(String id, String l, String c, String s) { this.birdId = id; this.label = l; this.commonName = c != null ? c.toLowerCase() : ""; this.scientificName = s != null ? s.toLowerCase() : ""; }
+        @NonNull @Override public String toString() { return label; }
     }
 }

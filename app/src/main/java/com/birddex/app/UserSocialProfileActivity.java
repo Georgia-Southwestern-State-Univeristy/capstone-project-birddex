@@ -2,14 +2,22 @@ package com.birddex.app;
 
 import android.content.Intent;
 import android.os.Bundle;
+import android.text.InputFilter;
+import android.text.InputType;
 import android.util.Log;
+import android.view.LayoutInflater;
 import android.view.View;
+import android.view.ViewGroup;
+import android.widget.EditText;
+import android.widget.FrameLayout;
 import android.widget.LinearLayout;
+import android.widget.PopupMenu;
 import android.widget.TextView;
 import android.widget.Toast;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
+import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.appcompat.widget.Toolbar;
 import androidx.recyclerview.widget.GridLayoutManager;
@@ -33,7 +41,18 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
+/**
+ * UserSocialProfileActivity displays another user's profile.
+ * Fixes included:
+ * - isNavigating guard for navigation stack flooding.
+ * - favoriteFetchGeneration for asynchronous favorites loading overlap.
+ * - isFollowActionInProgress guard for toggleFollow button.
+ * - postLikeInFlight set for rapid liking.
+ */
 public class UserSocialProfileActivity extends AppCompatActivity implements
         ForumPostAdapter.OnPostClickListener,
         FavoritesAdapter.OnFavoriteInteractionListener {
@@ -72,6 +91,12 @@ public class UserSocialProfileActivity extends AppCompatActivity implements
 
     private ListenerRegistration userDetailsListener;
 
+    // --- CONCURRENCY FIXES ---
+    private final Set<String> postLikeInFlight = Collections.newSetFromMap(new ConcurrentHashMap<>());
+    private boolean isNavigating = false;
+    private int favoriteFetchGeneration = 0;
+    private boolean isFollowActionInProgress = false;
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -95,6 +120,12 @@ public class UserSocialProfileActivity extends AppCompatActivity implements
         setupRecyclerViews();
 
         fetchUserPosts();
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        isNavigating = false;
     }
 
     private void initUI() {
@@ -130,6 +161,8 @@ public class UserSocialProfileActivity extends AppCompatActivity implements
         btnFollow.setOnClickListener(v -> toggleFollow());
 
         btnUserFollowers.setOnClickListener(v -> {
+            if (isNavigating) return;
+            isNavigating = true;
             Log.d(TAG, "Followers count clicked.");
             Intent intent = new Intent(this, SocialActivity.class);
             intent.putExtra(SocialActivity.EXTRA_USER_ID, targetUserId);
@@ -138,6 +171,8 @@ public class UserSocialProfileActivity extends AppCompatActivity implements
         });
 
         btnUserFollowing.setOnClickListener(v -> {
+            if (isNavigating) return;
+            isNavigating = true;
             Log.d(TAG, "Following count clicked.");
             Intent intent = new Intent(this, SocialActivity.class);
             intent.putExtra(SocialActivity.EXTRA_USER_ID, targetUserId);
@@ -230,9 +265,14 @@ public class UserSocialProfileActivity extends AppCompatActivity implements
     }
 
     private void loadFavoriteCards() {
-        Log.d(TAG, "loadFavoriteCards: Fetching collectionSlot subcollection.");
+        final int myGen = ++favoriteFetchGeneration;
+        Log.d(TAG, "loadFavoriteCards: Fetching collectionSlot subcollection. Gen: " + myGen);
         db.collection("users").document(targetUserId).collection("collectionSlot").get()
                 .addOnSuccessListener(querySnapshot -> {
+                    if (myGen != favoriteFetchGeneration) {
+                        Log.d(TAG, "loadFavoriteCards: Discarding stale generation " + myGen);
+                        return;
+                    }
                     allCollectionSlots.clear();
                     for (DocumentSnapshot doc : querySnapshot.getDocuments()) {
                         CollectionSlot slot = doc.toObject(CollectionSlot.class);
@@ -282,10 +322,13 @@ public class UserSocialProfileActivity extends AppCompatActivity implements
     }
 
     private void toggleFollow() {
+        if (isFollowActionInProgress) return;
+        isFollowActionInProgress = true;
         btnFollow.setEnabled(false);
         Log.d(TAG, "toggleFollow: Current state: " + isFollowing);
         if (isFollowing) {
             firebaseManager.unfollowUser(targetUserId, task -> {
+                isFollowActionInProgress = false;
                 btnFollow.setEnabled(true);
                 if (task.isSuccessful()) {
                     Log.d(TAG, "unfollowUser success via CF.");
@@ -298,6 +341,7 @@ public class UserSocialProfileActivity extends AppCompatActivity implements
             });
         } else {
             firebaseManager.followUser(targetUserId, task -> {
+                isFollowActionInProgress = false;
                 btnFollow.setEnabled(true);
                 if (task.isSuccessful()) {
                     Log.d(TAG, "followUser success via CF.");
@@ -377,7 +421,8 @@ public class UserSocialProfileActivity extends AppCompatActivity implements
     @Override public void onLikeClick(ForumPost post) {
         Log.d(TAG, "Post Liked: " + post.getId());
         FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
-        if (user == null || post.getId() == null) return;
+        if (user == null || post.getId() == null || postLikeInFlight.contains(post.getId())) return;
+        postLikeInFlight.add(post.getId());
         
         String userId = user.getUid();
         if (post.getLikedBy() == null) post.setLikedBy(new HashMap<>());
@@ -399,20 +444,26 @@ public class UserSocialProfileActivity extends AppCompatActivity implements
         if (currentlyLiked) {
             db.collection("forumThreads").document(post.getId())
                     .update("likedBy." + userId, FieldValue.delete())
-                    .addOnFailureListener(e -> {
-                        // Revert
-                        post.setLikeCount(currentCount);
-                        post.getLikedBy().put(userId, true);
-                        adapter.notifyDataSetChanged();
+                    .addOnCompleteListener(t -> {
+                        postLikeInFlight.remove(post.getId());
+                        if (!t.isSuccessful()) {
+                            // Revert
+                            post.setLikeCount(currentCount);
+                            post.getLikedBy().put(userId, true);
+                            adapter.notifyDataSetChanged();
+                        }
                     });
         } else {
             db.collection("forumThreads").document(post.getId())
                     .update("likedBy." + userId, true)
-                    .addOnFailureListener(e -> {
-                        // Revert
-                        post.setLikeCount(currentCount);
-                        post.getLikedBy().remove(userId);
-                        adapter.notifyDataSetChanged();
+                    .addOnCompleteListener(t -> {
+                        postLikeInFlight.remove(post.getId());
+                        if (!t.isSuccessful()) {
+                            // Revert
+                            post.setLikeCount(currentCount);
+                            post.getLikedBy().remove(userId);
+                            adapter.notifyDataSetChanged();
+                        }
                     });
         }
     }
@@ -421,17 +472,74 @@ public class UserSocialProfileActivity extends AppCompatActivity implements
 
     @Override
     public void onPostClick(ForumPost post) {
+        if (isNavigating) return;
+        isNavigating = true;
         Log.d(TAG, "Post clicked: " + post.getId());
         Intent intent = new Intent(this, PostDetailActivity.class);
         intent.putExtra(PostDetailActivity.EXTRA_POST_ID, post.getId());
         startActivity(intent);
     }
 
-    @Override public void onOptionsClick(ForumPost post, View view) { Log.d(TAG, "Post options clicked."); }
+    @Override public void onOptionsClick(ForumPost post, View view) {
+        PopupMenu popup = new PopupMenu(this, view);
+        FirebaseUser currentUser = FirebaseAuth.getInstance().getCurrentUser();
+        if (currentUser != null && post.getUserId().equals(currentUser.getUid())) {
+            popup.getMenu().add("Delete");
+        }
+        popup.getMenu().add("Report");
+        popup.setOnMenuItemClickListener(item -> {
+            if (item.getTitle().equals("Delete")) {
+                new AlertDialog.Builder(this)
+                        .setTitle("Delete Post")
+                        .setMessage("Are you sure you want to delete this post?")
+                        .setPositiveButton("Delete", (d, w) -> {
+                            firebaseManager.deleteForumPost(post.getId(), task -> {
+                                if (task.isSuccessful()) {
+                                    postList.remove(post);
+                                    adapter.setPosts(new ArrayList<>(postList));
+                                    tvPostCount.setText(String.valueOf(postList.size()));
+                                    Toast.makeText(this, "Post deleted", Toast.LENGTH_SHORT).show();
+                                }
+                            });
+                        })
+                        .setNegativeButton("Cancel", null)
+                        .show();
+            } else if (item.getTitle().equals("Report")) {
+                showReportDialog(post);
+            }
+            return true;
+        });
+        popup.show();
+    }
+
+    private void showReportDialog(ForumPost post) {
+        String[] rs = {"Inappropriate Language", "Inappropriate Image", "Spam", "Harassment", "Other"};
+        new AlertDialog.Builder(this).setTitle("Report Post").setItems(rs, (d, w) -> {
+            if (rs[w].equals("Other")) showOtherReportDialog(reason -> submitReport(post, reason));
+            else submitReport(post, rs[w]);
+        }).show();
+    }
+
+    private void showOtherReportDialog(OnReasonEnteredListener l) {
+        AlertDialog.Builder b = new AlertDialog.Builder(this); b.setTitle("Report Reason");
+        final EditText i = new EditText(this); i.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE); i.setHint("Reason..."); i.setFilters(new InputFilter[]{new InputFilter.LengthFilter(200)});
+        FrameLayout c = new FrameLayout(this); FrameLayout.LayoutParams p = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT); p.leftMargin = p.rightMargin = 40; i.setLayoutParams(p); c.addView(i); b.setView(c);
+        b.setPositiveButton("Submit", (d, w) -> { String r = i.getText().toString().trim(); if (!r.isEmpty()) l.onReasonEntered(r); });
+        b.setNegativeButton("Cancel", (d, w) -> d.cancel()); b.show();
+    }
+
+    private interface OnReasonEnteredListener { void onReasonEntered(String r); }
+
+    private void submitReport(ForumPost post, String r) {
+        FirebaseUser u = FirebaseAuth.getInstance().getCurrentUser(); if (u == null) return;
+        firebaseManager.addReport(new Report("post", post.getId(), u.getUid(), r), t -> { if (t.isSuccessful()) Toast.makeText(this, "Reported", Toast.LENGTH_SHORT).show(); });
+    }
 
     @Override
     public void onUserClick(String userId) {
         if (!userId.equals(targetUserId)) {
+            if (isNavigating) return;
+            isNavigating = true;
             Log.d(TAG, "User in list clicked: " + userId);
             Intent intent = new Intent(this, UserSocialProfileActivity.class);
             intent.putExtra(UserSocialProfileActivity.EXTRA_USER_ID, userId);
@@ -442,6 +550,8 @@ public class UserSocialProfileActivity extends AppCompatActivity implements
     @Override
     public void onMapClick(ForumPost post) {
         if (post.getLatitude() != null && post.getLongitude() != null) {
+            if (isNavigating) return;
+            isNavigating = true;
             Log.d(TAG, "Map clicked for post: " + post.getId());
             Intent intent = new Intent(this, NearbyHeatmapActivity.class);
             intent.putExtra(NearbyHeatmapActivity.EXTRA_CENTER_LAT, post.getLatitude());
@@ -454,6 +564,8 @@ public class UserSocialProfileActivity extends AppCompatActivity implements
     @Override
     public void onFavoriteClicked(int position, @Nullable CollectionSlot slot) {
         if (slot != null) {
+            if (isNavigating) return;
+            isNavigating = true;
             Log.d(TAG, "Favorite card clicked: " + slot.getCommonName());
             Intent intent = new Intent(this, ViewBirdCardActivity.class);
             intent.putExtra(CollectionCardAdapter.EXTRA_IMAGE_URL, slot.getImageUrl());

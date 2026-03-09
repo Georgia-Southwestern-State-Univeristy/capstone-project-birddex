@@ -618,7 +618,13 @@ exports.identifyBird = onCall({ secrets: [OPENAI_API_KEY], timeoutSeconds: 30 },
                     role: "user",
                     content: [
                         { type: "text", text: "Identify the bird in this image. If the image contains a dead bird, gore, or graphic violence, respond ONLY with 'GORE'. Otherwise, respond exactly as:\nID: [ebird_species_code]\nCommon Name: [name]\nScientific Name: [name]\nSpecies: [name]\nFamily: [name]" },
-                        { type: "image_url", image_url: { url: `data:image/jpeg;base64,${image}` } }
+                        {
+                          type: "image_url",
+                          image_url: {
+                            url: `data:image/jpeg;base64,${image}`,
+                            detail: "high"
+                          }
+                        }
                     ]
                 }],
                 max_tokens: 300
@@ -1653,7 +1659,13 @@ Respond STRICTLY in JSON format with two keys:
                     role: "user",
                     content: [
                         { type: "text", text: moderationPrompt },
-                        { type: "image_url", image_url: { url: `data:image/jpeg;base64,${imageBase64}` } }
+                        {
+                          type: "image_url",
+                          image_url: {
+                            url: `data:image/jpeg;base64,${imageBase64}`,
+                            detail: "high"
+                          }
+                        }
                     ]
                 }],
                 response_format: { type: "json_object" },

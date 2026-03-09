@@ -424,11 +424,11 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
     private String encodeImage(Uri imageUri) {
         try {
             Bitmap bitmap = (Build.VERSION.SDK_INT >= 28) ? ImageDecoder.decodeBitmap(ImageDecoder.createSource(this.getContentResolver(), imageUri)) : MediaStore.Images.Media.getBitmap(this.getContentResolver(), imageUri);
-            int maxWidth = 512, maxHeight = 512;
+            int maxWidth = 1024, maxHeight = 1024;
             float ratio = Math.min((float) maxWidth / bitmap.getWidth(), (float) maxHeight / bitmap.getHeight());
             if (ratio < 1.0f) bitmap = Bitmap.createScaledBitmap(bitmap, Math.round(ratio * bitmap.getWidth()), Math.round(ratio * bitmap.getHeight()), true);
             ByteArrayOutputStream baos = new ByteArrayOutputStream();
-            bitmap.compress(Bitmap.CompressFormat.JPEG, 75, baos);
+            bitmap.compress(Bitmap.CompressFormat.JPEG, 90, baos);
             return Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP);
         } catch (IOException e) {
             Log.e(TAG, "encodeImage: Error", e);

@@ -355,13 +355,15 @@ public class EditProfileActivity extends AppCompatActivity implements NetworkMon
                     ? ImageDecoder.decodeBitmap(ImageDecoder.createSource(getContentResolver(), uri))
                     : MediaStore.Images.Media.getBitmap(getContentResolver(), uri);
 
-            // Resize to max 512x512 before encoding — prevents OpenAI 500 errors from oversized payloads
-            bm = scaleBitmap(bm, 512);
+            // Keep more detail for moderation while still limiting payload size
+            bm = scaleBitmap(bm, 768);
 
             ByteArrayOutputStream baos = new ByteArrayOutputStream();
-            bm.compress(Bitmap.CompressFormat.JPEG, 60, baos);
+            bm.compress(Bitmap.CompressFormat.JPEG, 80, baos);
             return Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP);
-        } catch (IOException e) { return null; }
+        } catch (IOException e) {
+            return null;
+        }
     }
 
     /**

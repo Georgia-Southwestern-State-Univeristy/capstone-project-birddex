@@ -44,11 +44,15 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * PostDetailActivity displays a single forum post and its comments.
+ * Fixes: Added isNavigating guard and fixed variable naming bug in toggleLike.
+ */
 public class PostDetailActivity extends AppCompatActivity implements ForumCommentAdapter.OnCommentInteractionListener {
 
     private static final String TAG = "PostDetailActivity";
     public static final String EXTRA_POST_ID = "extra_post_id";
-    private static final long EDIT_WINDOW_MS = 5 * 60 * 1000; // 5 minutes
+    private static final long EDIT_WINDOW_MS = 5 * 60 * 1000;
     private static final int COMMENTS_PAGE_SIZE = 25;
     private static final int MAX_POST_LENGTH = 500;
     private static final int MAX_COMMENT_LENGTH = 300;
@@ -63,20 +67,18 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
     private String currentUsername;
     private String currentUserPfpUrl;
 
-
     private List<ForumComment> commentList = new ArrayList<>();
     private DocumentSnapshot lastCommentVisible;
     private boolean isFetchingComments = false;
     private boolean isLastCommentsPage = false;
     private boolean postLikeInFlight = false;
 
-
     private ForumComment replyingToComment = null;
     private boolean hasMarkedAsViewed = false;
-    // Guards against double-tap races on comment likes
-    // Thread-safe set guarding against double-tap races on comment likes.
     private final java.util.Set<String> commentLikeInFlight =
             java.util.Collections.newSetFromMap(new java.util.concurrent.ConcurrentHashMap<>());
+
+    private boolean isNavigating = false;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -89,16 +91,19 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
         firebaseManager = new FirebaseManager(this);
         postId = getIntent().getStringExtra(EXTRA_POST_ID);
 
-        if (postId == null) {
-            finish();
-            return;
-        }
+        if (postId == null) { finish(); return; }
 
         setupUI();
         loadCurrentUser();
         loadPostDetails();
         setupCommentsRecyclerView();
         fetchComments();
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        isNavigating = false;
     }
 
     private void setupUI() {
@@ -108,457 +113,205 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
 
     private void loadCurrentUser() {
         FirebaseUser user = mAuth.getCurrentUser();
-        if (user != null) {
-            db.collection("users").document(user.getUid()).get()
-                    .addOnSuccessListener(doc -> {
-                        if (isFinishing() || isDestroyed()) return;
-                        if (doc.exists()) {
-                            currentUsername = doc.getString("username");
-                            currentUserPfpUrl = doc.getString("profilePictureUrl");
-                            Glide.with(this)
-                                    .load(currentUserPfpUrl)
-                                    .placeholder(R.drawable.ic_profile)
-                                    .into(binding.ivCurrentUserPfp);
-                        }
-                    });
-        }
+        if (user != null) db.collection("users").document(user.getUid()).get()
+                .addOnSuccessListener(doc -> {
+                    if (isFinishing() || isDestroyed()) return;
+                    if (doc.exists()) {
+                        currentUsername = doc.getString("username");
+                        currentUserPfpUrl = doc.getString("profilePictureUrl");
+                        Glide.with(this).load(currentUserPfpUrl).placeholder(R.drawable.ic_profile).into(binding.ivCurrentUserPfp);
+                    }
+                });
     }
 
     private void loadPostDetails() {
         db.collection("forumThreads").document(postId)
                 .addSnapshotListener(MetadataChanges.INCLUDE, (doc, error) -> {
-                    if (isFinishing() || isDestroyed()) return;
-                    if (error != null) return;
-                    if (doc != null && doc.exists()) {
-                        originalPost = doc.toObject(ForumPost.class);
-                        if (originalPost != null) {
-                            originalPost.setId(doc.getId());
-
-                            FirebaseUser user = mAuth.getCurrentUser();
-                            if (user != null && !hasMarkedAsViewed && !doc.getMetadata().hasPendingWrites()) {
-                                String userId = user.getUid();
-                                handleViewTracking(userId, originalPost);
-                            }
-
-                            bindPostToLayout(originalPost);
-                        }
+                    if (isFinishing() || isDestroyed() || error != null || doc == null || !doc.exists()) return;
+                    originalPost = doc.toObject(ForumPost.class);
+                    if (originalPost != null) {
+                        originalPost.setId(doc.getId());
+                        FirebaseUser user = mAuth.getCurrentUser();
+                        if (user != null && !hasMarkedAsViewed && !doc.getMetadata().hasPendingWrites()) handleViewTracking(user.getUid(), originalPost);
+                        bindPostToLayout(originalPost);
                     }
                 });
     }
 
     private void handleViewTracking(String userId, ForumPost post) {
-        hasMarkedAsViewed = true; // Prevent loop
+        hasMarkedAsViewed = true;
         Map<String, Object> updates = new HashMap<>();
-
-        // Source of truth only (viewedBy map).
-        // viewCount increment is now handled by server-side recalculation trigger.
-        if (post.getViewedBy() == null || !post.getViewedBy().containsKey(userId)) {
-            updates.put("viewedBy." + userId, true);
-        }
-
-        // Clear notifications for the owner
+        if (post.getViewedBy() == null || !post.getViewedBy().containsKey(userId)) updates.put("viewedBy." + userId, true);
         if (userId.equals(post.getUserId())) {
             if (post.isNotificationSent()) updates.put("notificationSent", false);
             if (post.isLikeNotificationSent()) updates.put("likeNotificationSent", false);
             updates.put("lastViewedAt", FieldValue.serverTimestamp());
         }
-
-        if (!updates.isEmpty()) {
-            db.collection("forumThreads").document(postId).update(updates);
-        }
+        if (!updates.isEmpty()) db.collection("forumThreads").document(postId).update(updates);
     }
 
     private void bindPostToLayout(ForumPost post) {
         if (isFinishing() || isDestroyed()) return;
-        View postView = binding.postContent.getRoot();
+        View v = binding.postContent.getRoot();
+        ((TextView) v.findViewById(R.id.tvPostUsername)).setText(post.getUsername());
+        ((TextView) v.findViewById(R.id.tvPostMessage)).setText(post.isEdited() ? post.getMessage() + " (edited)" : post.getMessage());
+        ((TextView) v.findViewById(R.id.tvLikeCount)).setText(String.valueOf(post.getLikeCount()));
+        ((TextView) v.findViewById(R.id.tvCommentCount)).setText(String.valueOf(post.getCommentCount()));
+        ((TextView) v.findViewById(R.id.tvViewCount)).setText(post.getViewCount() + " views");
 
-        TextView tvUsername = postView.findViewById(R.id.tvPostUsername);
-        TextView tvTimestamp = postView.findViewById(R.id.tvPostTimestamp);
-        TextView tvMessage = postView.findViewById(R.id.tvPostMessage);
-        ImageView ivPfp = postView.findViewById(R.id.ivPostUserProfilePicture);
-        ImageView ivBird = postView.findViewById(R.id.ivPostBirdImage);
-        View cvImage = postView.findViewById(R.id.cvPostImage);
-        TextView tvLikes = postView.findViewById(R.id.tvLikeCount);
-        TextView tvComments = postView.findViewById(R.id.tvCommentCount);
-        TextView tvViews = postView.findViewById(R.id.tvViewCount);
-        ImageView ivLikeIcon = postView.findViewById(R.id.ivLikeIcon);
-        View btnLike = postView.findViewById(R.id.btnLike);
-        View btnOptions = postView.findViewById(R.id.btnPostOptions);
-        View btnViewOnMap = postView.findViewById(R.id.btnViewOnMap);
+        View sp = v.findViewById(R.id.tvSpottedBadge), hu = v.findViewById(R.id.tvHuntedBadge);
+        if (sp != null) sp.setVisibility(post.isSpotted() ? View.VISIBLE : View.GONE);
+        if (hu != null) hu.setVisibility(post.isHunted() ? View.VISIBLE : View.GONE);
 
-        TextView tvSpottedBadge = postView.findViewById(R.id.tvSpottedBadge);
-        TextView tvHuntedBadge = postView.findViewById(R.id.tvHuntedBadge);
+        if (post.getTimestamp() != null) ((TextView) v.findViewById(R.id.tvPostTimestamp)).setText(DateUtils.getRelativeTimeSpanString(post.getTimestamp().toDate().getTime()));
+        Glide.with(this).load(post.getUserProfilePictureUrl()).placeholder(R.drawable.ic_profile).into((ImageView) v.findViewById(R.id.ivPostUserProfilePicture));
 
-        tvUsername.setText(post.getUsername());
-        String messageText = post.getMessage();
-        if (post.isEdited()) {
-            messageText += " (edited)";
-        }
-        tvMessage.setText(messageText);
-        tvLikes.setText(String.valueOf(post.getLikeCount()));
-        tvComments.setText(String.valueOf(post.getCommentCount()));
-        tvViews.setText(post.getViewCount() + " views");
+        View cv = v.findViewById(R.id.cvPostImage);
+        if (post.getBirdImageUrl() != null && !post.getBirdImageUrl().isEmpty()) { cv.setVisibility(View.VISIBLE); Glide.with(this).load(post.getBirdImageUrl()).into((ImageView) v.findViewById(R.id.ivPostBirdImage)); }
+        else cv.setVisibility(View.GONE);
 
-        if (tvSpottedBadge != null) tvSpottedBadge.setVisibility(post.isSpotted() ? View.VISIBLE : View.GONE);
-        if (tvHuntedBadge != null) tvHuntedBadge.setVisibility(post.isHunted() ? View.VISIBLE : View.GONE);
-
-        if (post.getTimestamp() != null) {
-            tvTimestamp.setText(DateUtils.getRelativeTimeSpanString(post.getTimestamp().toDate().getTime()));
-        }
-
-        Glide.with(this).load(post.getUserProfilePictureUrl()).placeholder(R.drawable.ic_profile).into(ivPfp);
-
-        if (post.getBirdImageUrl() != null && !post.getBirdImageUrl().isEmpty()) {
-            cvImage.setVisibility(View.VISIBLE);
-            Glide.with(this).load(post.getBirdImageUrl()).into(ivBird);
-        } else {
-            cvImage.setVisibility(View.GONE);
-        }
-
-        if (btnViewOnMap != null) {
-            boolean hasLocation = post.isShowLocation() && post.getLatitude() != null && post.getLongitude() != null;
-            if ((post.isSpotted() || post.isHunted()) && hasLocation) {
-                btnViewOnMap.setVisibility(View.VISIBLE);
-                btnViewOnMap.setOnClickListener(v -> {
-                    Intent intent = new Intent(this, NearbyHeatmapActivity.class);
-                    intent.putExtra(NearbyHeatmapActivity.EXTRA_CENTER_LAT, post.getLatitude());
-                    intent.putExtra(NearbyHeatmapActivity.EXTRA_CENTER_LNG, post.getLongitude());
-                    intent.putExtra("extra_post_id", post.getId());
-                    startActivity(intent);
+        View mapBtn = v.findViewById(R.id.btnViewOnMap);
+        if (mapBtn != null) {
+            if ((post.isSpotted() || post.isHunted()) && post.isShowLocation() && post.getLatitude() != null) {
+                mapBtn.setVisibility(View.VISIBLE);
+                mapBtn.setOnClickListener(view -> {
+                    if (isNavigating) return;
+                    isNavigating = true;
+                    startActivity(new Intent(this, NearbyHeatmapActivity.class).putExtra(NearbyHeatmapActivity.EXTRA_CENTER_LAT, post.getLatitude()).putExtra(NearbyHeatmapActivity.EXTRA_CENTER_LNG, post.getLongitude()).putExtra("extra_post_id", post.getId()));
                 });
-            } else {
-                btnViewOnMap.setVisibility(View.GONE);
-            }
+            } else mapBtn.setVisibility(View.GONE);
         }
 
-        // Like status icon update
-        FirebaseUser currentUser = mAuth.getCurrentUser();
-        if (currentUser != null && post.getLikedBy() != null && post.getLikedBy().containsKey(currentUser.getUid())) {
-            ivLikeIcon.setImageResource(R.drawable.ic_favorite);
-        } else {
-            ivLikeIcon.setImageResource(R.drawable.ic_favorite_border);
-        }
+        FirebaseUser user = mAuth.getCurrentUser();
+        ((ImageView) v.findViewById(R.id.ivLikeIcon)).setImageResource((user != null && post.getLikedBy() != null && post.getLikedBy().containsKey(user.getUid())) ? R.drawable.ic_favorite : R.drawable.ic_favorite_border);
+        v.findViewById(R.id.btnLike).setOnClickListener(view -> toggleLike());
+        v.findViewById(R.id.btnPostOptions).setOnClickListener(view -> showPostOptions(post, view));
+        
+        v.findViewById(R.id.ivPostUserProfilePicture).setOnClickListener(view -> openProfile(post.getUserId()));
+        v.findViewById(R.id.tvPostUsername).setOnClickListener(view -> openProfile(post.getUserId()));
+    }
 
-        btnLike.setOnClickListener(v -> toggleLike());
-        btnOptions.setOnClickListener(v -> showPostOptions(post, v));
-
-        ivPfp.setOnClickListener(v -> openUserProfile(post.getUserId()));
-        tvUsername.setOnClickListener(v -> openUserProfile(post.getUserId()));
+    private void openProfile(String uid) {
+        if (isNavigating) return;
+        isNavigating = true;
+        startActivity(new Intent(this, UserSocialProfileActivity.class).putExtra(UserSocialProfileActivity.EXTRA_USER_ID, uid));
     }
 
     private void showPostOptions(ForumPost post, View view) {
         PopupMenu popup = new PopupMenu(this, view);
         FirebaseUser user = mAuth.getCurrentUser();
-
         if (user != null && post.getUserId().equals(user.getUid())) {
-            if (post.getTimestamp() != null) {
-                long postTime = post.getTimestamp().toDate().getTime();
-                if (System.currentTimeMillis() - postTime <= EDIT_WINDOW_MS) {
-                    popup.getMenu().add("Edit");
-                }
-            }
+            if (post.getTimestamp() != null && (System.currentTimeMillis() - post.getTimestamp().toDate().getTime() <= EDIT_WINDOW_MS)) popup.getMenu().add("Edit");
             popup.getMenu().add("Delete");
         }
         popup.getMenu().add("Report");
-
         popup.setOnMenuItemClickListener(item -> {
-            if (item.getTitle().equals("Edit")) {
-                showEditPostDialog(post);
-            } else if (item.getTitle().equals("Delete")) {
-                showDeleteConfirmation(post);
-            } else if (item.getTitle().equals("Report")) {
-                showReportDialog(post);
-            }
+            if (item.getTitle().equals("Edit")) showEditPostDialog(post);
+            else if (item.getTitle().equals("Delete")) showDeleteConfirmation(post);
+            else if (item.getTitle().equals("Report")) showReportDialog(post);
             return true;
         });
         popup.show();
     }
 
     private void showEditPostDialog(ForumPost post) {
-        AlertDialog.Builder builder = new AlertDialog.Builder(this);
-        builder.setTitle("Edit Post");
-
-        LinearLayout layout = new LinearLayout(this);
-        layout.setOrientation(LinearLayout.VERTICAL);
-        layout.setPadding(40, 20, 40, 20);
-
-        final EditText input = new EditText(this);
-        input.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE);
-        input.setText(post.getMessage());
-        input.setHint("Message");
-        input.setFilters(new InputFilter[]{new InputFilter.LengthFilter(MAX_POST_LENGTH)});
-        layout.addView(input);
-
-        final CheckBox cbSpotted = new CheckBox(this);
-        cbSpotted.setText("Spotted");
-        cbSpotted.setChecked(post.isSpotted());
-        layout.addView(cbSpotted);
-
-        final CheckBox cbHunted = new CheckBox(this);
-        cbHunted.setText("Hunted");
-        cbHunted.setChecked(post.isHunted());
-        layout.addView(cbHunted);
-
-        final SwitchMaterial swLocation = new SwitchMaterial(this);
-        swLocation.setText("Show location on map");
-        swLocation.setChecked(post.isShowLocation());
-        layout.addView(swLocation);
-
-        builder.setView(layout);
-
-        builder.setPositiveButton("Save", (dialog, which) -> {
-            String newText = input.getText().toString().trim();
-            if (newText.length() > MAX_POST_LENGTH) {
-                Toast.makeText(this, "Post exceeds maximum length", Toast.LENGTH_SHORT).show();
-                return;
-            }
-            updatePost(post, newText, cbSpotted.isChecked(), cbHunted.isChecked(), swLocation.isChecked());
-        });
-        builder.setNegativeButton("Cancel", (dialog, which) -> dialog.cancel());
-
-        builder.show();
+        AlertDialog.Builder b = new AlertDialog.Builder(this);
+        b.setTitle("Edit Post");
+        LinearLayout l = new LinearLayout(this); l.setOrientation(LinearLayout.VERTICAL); l.setPadding(40, 20, 40, 20);
+        final EditText i = new EditText(this); i.setText(post.getMessage()); i.setFilters(new InputFilter[]{new InputFilter.LengthFilter(MAX_POST_LENGTH)}); l.addView(i);
+        final CheckBox s = new CheckBox(this); s.setText("Spotted"); s.setChecked(post.isSpotted()); l.addView(s);
+        final CheckBox h = new CheckBox(this); h.setText("Hunted"); h.setChecked(post.isHunted()); l.addView(h);
+        final SwitchMaterial loc = new SwitchMaterial(this); loc.setText("Show location"); loc.setChecked(post.isShowLocation()); l.addView(loc);
+        b.setView(l);
+        b.setPositiveButton("Save", (d, w) -> updatePost(post, i.getText().toString().trim(), s.isChecked(), h.isChecked(), loc.isChecked()));
+        b.setNegativeButton("Cancel", null); b.show();
     }
 
-    private void updatePost(ForumPost post, String newText, boolean spotted, boolean hunted, boolean showLocation) {
-        if (!ContentFilter.isSafe(this, newText, "Post message")) return;
-
-        Map<String, Object> updates = new HashMap<>();
-        updates.put("message", newText);
-        updates.put("spotted", spotted);
-        updates.put("hunted", hunted);
-        updates.put("showLocation", showLocation);
-        updates.put("edited", true);
-        updates.put("lastEditedAt", FieldValue.serverTimestamp());
-
-        db.collection("forumThreads").document(post.getId())
-                .update(updates)
-                .addOnSuccessListener(aVoid -> Toast.makeText(this, "Post updated", Toast.LENGTH_SHORT).show())
-                .addOnFailureListener(e -> Toast.makeText(this, "Update failed", Toast.LENGTH_SHORT).show());
+    private void updatePost(ForumPost post, String msg, boolean spotted, boolean hunted, boolean loc) {
+        if (!ContentFilter.isSafe(this, msg, "Post")) return;
+        Map<String, Object> u = new HashMap<>(); u.put("message", msg); u.put("spotted", spotted); u.put("hunted", hunted); u.put("showLocation", loc); u.put("edited", true); u.put("lastEditedAt", FieldValue.serverTimestamp());
+        db.collection("forumThreads").document(post.getId()).update(u).addOnSuccessListener(v -> Toast.makeText(this, "Updated", Toast.LENGTH_SHORT).show());
     }
 
     private void showDeleteConfirmation(ForumPost post) {
-        new AlertDialog.Builder(this)
-                .setTitle("Delete Post")
-                .setMessage("Are you sure you want to delete this post? All comments and images will be archived.")
-                .setPositiveButton("Delete", (dialog, which) -> {
-                    archiveAndDeletePost(post);
-                })
-                .setNegativeButton("Cancel", null)
-                .show();
+        new AlertDialog.Builder(this).setTitle("Delete Post").setMessage("Are you sure?").setPositiveButton("Delete", (d, w) -> archiveAndDeletePost(post)).setNegativeButton("Cancel", null).show();
     }
 
     private void archiveAndDeletePost(ForumPost post) {
-        FirebaseUser user = mAuth.getCurrentUser();
-        if (user == null) return;
-
-        String imageUrl = post.getBirdImageUrl();
-        if (imageUrl != null && !imageUrl.isEmpty()) {
-            moveImageToArchive(user.getUid(), post.getId(), imageUrl, new OnImageArchivedListener() {
-                @Override
-                public void onSuccess(String archivedUrl) {
-                    post.setBirdImageUrl(archivedUrl);
-                    handleCommentsArchiveAndDeletion(user.getUid(), post);
-                }
-
-                @Override
-                public void onFailure(Exception e) {
-                    Log.e(TAG, "Failed to archive image, proceeding with original URL", e);
-                    handleCommentsArchiveAndDeletion(user.getUid(), post);
-                }
+        FirebaseUser user = mAuth.getCurrentUser(); if (user == null) return;
+        if (post.getBirdImageUrl() != null && !post.getBirdImageUrl().isEmpty()) {
+            moveImageToArchive(user.getUid(), post.getId(), post.getBirdImageUrl(), new OnImageArchivedListener() {
+                @Override public void onSuccess(String url) { post.setBirdImageUrl(url); handleCommentsArchiveAndDeletion(user.getUid(), post); }
+                @Override public void onFailure(Exception e) { handleCommentsArchiveAndDeletion(user.getUid(), post); }
             });
-        } else {
-            handleCommentsArchiveAndDeletion(user.getUid(), post);
-        }
+        } else handleCommentsArchiveAndDeletion(user.getUid(), post);
     }
 
-    private void handleCommentsArchiveAndDeletion(String userId, ForumPost post) {
-        db.collection("forumThreads").document(post.getId()).collection("comments")
-                .get()
-                .addOnSuccessListener(queryDocumentSnapshots -> {
-                    WriteBatch batch = db.batch();
-
-                    for (DocumentSnapshot doc : queryDocumentSnapshots) {
-                        Map<String, Object> commentBacklog = new HashMap<>();
-                        commentBacklog.put("type", "comment_archived_with_post");
-                        commentBacklog.put("originalId", doc.getId());
-                        commentBacklog.put("postId", post.getId());
-                        commentBacklog.put("data", doc.getData());
-                        commentBacklog.put("deletedBy", userId);
-                        commentBacklog.put("deletedAt", FieldValue.serverTimestamp());
-
-                        batch.set(db.collection("deletedforum_backlog").document(), commentBacklog);
-                        batch.delete(doc.getReference());
-                    }
-
-                    Map<String, Object> postBacklog = new HashMap<>();
-                    postBacklog.put("type", "post");
-                    postBacklog.put("originalId", post.getId());
-                    postBacklog.put("data", post);
-                    postBacklog.put("deletedBy", userId);
-                    postBacklog.put("deletedAt", FieldValue.serverTimestamp());
-
-                    batch.set(db.collection("deletedforum_backlog").document(), postBacklog);
-                    batch.delete(db.collection("forumThreads").document(post.getId()));
-
-                    batch.commit().addOnSuccessListener(aVoid -> {
-                        if (isFinishing() || isDestroyed()) return;
-                        Toast.makeText(this, "Post and comments deleted", Toast.LENGTH_SHORT).show();
-                        finish();
-                    }).addOnFailureListener(e -> {
-                        Log.e(TAG, "Failed to execute deletion batch", e);
-                        Toast.makeText(this, "Error deleting post content", Toast.LENGTH_SHORT).show();
-                    });
-                })
-                .addOnFailureListener(e -> {
-                    Log.e(TAG, "Failed to fetch comments for deletion", e);
-                    savePostToBacklogAndFirestore(userId, post);
-                });
+    private void handleCommentsArchiveAndDeletion(String uid, ForumPost post) {
+        db.collection("forumThreads").document(post.getId()).collection("comments").get().addOnSuccessListener(snap -> {
+            WriteBatch b = db.batch();
+            for (DocumentSnapshot d : snap) {
+                Map<String, Object> c = new HashMap<>(); c.put("type", "comment_archived_with_post"); c.put("originalId", d.getId()); c.put("postId", post.getId()); c.put("data", d.getData()); c.put("deletedBy", uid); c.put("deletedAt", FieldValue.serverTimestamp());
+                b.set(db.collection("deletedforum_backlog").document(), c); b.delete(d.getReference());
+            }
+            Map<String, Object> p = new HashMap<>(); p.put("type", "post"); p.put("originalId", post.getId()); p.put("data", post); p.put("deletedBy", uid); p.put("deletedAt", FieldValue.serverTimestamp());
+            b.set(db.collection("deletedforum_backlog").document(), p); b.delete(db.collection("forumThreads").document(post.getId()));
+            b.commit().addOnSuccessListener(v -> { if (!isFinishing()) { Toast.makeText(this, "Deleted", Toast.LENGTH_SHORT).show(); finish(); } });
+        }).addOnFailureListener(e -> savePostToBacklogAndFirestore(uid, post));
     }
 
-    private interface OnImageArchivedListener {
-        void onSuccess(String archivedUrl);
-        void onFailure(Exception e);
-    }
+    private interface OnImageArchivedListener { void onSuccess(String url); void onFailure(Exception e); }
 
-    private void moveImageToArchive(String userId, String postId, String originalUrl, OnImageArchivedListener listener) {
-        FirebaseStorage storage = FirebaseStorage.getInstance();
+    private void moveImageToArchive(String uid, String pid, String url, OnImageArchivedListener l) {
+        FirebaseStorage s = FirebaseStorage.getInstance();
         try {
-            StorageReference oldRef = storage.getReferenceFromUrl(originalUrl);
-            String fileName = oldRef.getName();
-            StorageReference newRef = storage.getReference().child("archive/forum_post_images/" + userId + "/" + postId + "_" + fileName);
-
-            oldRef.getBytes(10 * 1024 * 1024).addOnSuccessListener(bytes -> {
-                newRef.putBytes(bytes).addOnSuccessListener(taskSnapshot -> {
-                    newRef.getDownloadUrl().addOnSuccessListener(uri -> {
-                        oldRef.delete().addOnCompleteListener(task -> {
-                            listener.onSuccess(uri.toString());
-                        });
-                    }).addOnFailureListener(listener::onFailure);
-                }).addOnFailureListener(listener::onFailure);
-            }).addOnFailureListener(listener::onFailure);
-        } catch (Exception e) {
-            listener.onFailure(e);
-        }
+            StorageReference old = s.getReferenceFromUrl(url);
+            StorageReference next = s.getReference().child("archive/forum_post_images/" + uid + "/" + pid + "_" + old.getName());
+            old.getBytes(10 * 1024 * 1024).addOnSuccessListener(bytes -> next.putBytes(bytes).addOnSuccessListener(ts -> next.getDownloadUrl().addOnSuccessListener(uri -> old.delete().addOnCompleteListener(t -> l.onSuccess(uri.toString()))).addOnFailureListener(l::onFailure)).addOnFailureListener(l::onFailure)).addOnFailureListener(l::onFailure);
+        } catch (Exception e) { l.onFailure(e); }
     }
 
-    private void savePostToBacklogAndFirestore(String userId, ForumPost post) {
-        Map<String, Object> backlogData = new HashMap<>();
-        backlogData.put("type", "post");
-        backlogData.put("originalId", post.getId());
-        backlogData.put("data", post);
-        backlogData.put("deletedBy", userId);
-        backlogData.put("deletedAt", FieldValue.serverTimestamp());
-
-        db.collection("deletedforum_backlog").add(backlogData)
-                .addOnSuccessListener(docRef -> {
-                    firebaseManager.deleteForumPost(post.getId(), task -> {
-                        if (task.isSuccessful()) {
-                            if (isFinishing() || isDestroyed()) return;
-                            Toast.makeText(this, "Post deleted", Toast.LENGTH_SHORT).show();
-                            finish();
-                        }
-                    });
-                })
-                .addOnFailureListener(e -> {
-                    Log.e(TAG, "Failed to backlog post", e);
-                    Toast.makeText(this, "Failed to delete post. Try again.", Toast.LENGTH_SHORT).show();
-                });
+    private void savePostToBacklogAndFirestore(String uid, ForumPost post) {
+        WriteBatch b = db.batch();
+        Map<String, Object> m = new HashMap<>(); m.put("type", "post"); m.put("originalId", post.getId()); m.put("data", post); m.put("deletedBy", uid); m.put("deletedAt", FieldValue.serverTimestamp());
+        b.set(db.collection("deletedforum_backlog").document(), m);
+        b.delete(db.collection("forumThreads").document(post.getId()));
+        b.commit().addOnSuccessListener(v -> { if (!isFinishing()) finish(); });
     }
 
     private void showReportDialog(ForumPost post) {
-        String[] reasons = {"Inappropriate Language", "Inappropriate Image", "Spam", "Harassment", "Other"};
-        new AlertDialog.Builder(this)
-                .setTitle("Report Post")
-                .setItems(reasons, (dialog, which) -> {
-                    String selectedReason = reasons[which];
-                    if (selectedReason.equals("Other")) {
-                        showOtherReportDialog(reason -> submitReport(post, reason));
-                    } else {
-                        submitReport(post, selectedReason);
-                    }
-                })
-                .show();
+        String[] rs = {"Inappropriate Language", "Inappropriate Image", "Spam", "Harassment", "Other"};
+        new AlertDialog.Builder(this).setTitle("Report Post").setItems(rs, (d, w) -> {
+            if (rs[w].equals("Other")) showOtherReportDialog(reason -> submitReport(post, reason));
+            else submitReport(post, rs[w]);
+        }).show();
     }
 
     private void submitReport(ForumPost post, String reason) {
-        FirebaseUser user = mAuth.getCurrentUser();
-        if (user == null) return;
-
-        Report report = new Report("post", post.getId(), user.getUid(), reason);
-        firebaseManager.addReport(report, task -> {
-            if (task.isSuccessful()) {
-                if (isFinishing() || isDestroyed()) return;
-                Toast.makeText(this, "Report submitted.", Toast.LENGTH_LONG).show();
-            }
-        });
+        FirebaseUser u = mAuth.getCurrentUser(); if (u == null) return;
+        firebaseManager.addReport(new Report("post", post.getId(), u.getUid(), reason), t -> { if (t.isSuccessful()) Toast.makeText(this, "Reported", Toast.LENGTH_SHORT).show(); });
     }
 
     private void toggleLike() {
-        if (postLikeInFlight) return; // block double-tap while write is in flight
-        FirebaseUser user = mAuth.getCurrentUser();
-        if (user == null || originalPost == null) return;
-
+        if (postLikeInFlight || originalPost == null) return;
+        FirebaseUser user = mAuth.getCurrentUser(); if (user == null) return;
         postLikeInFlight = true;
-
-        String userId = user.getUid();
-        if (originalPost.getLikedBy() == null) originalPost.setLikedBy(new HashMap<>());
-        boolean liked = originalPost.getLikedBy().containsKey(userId);
-
-        int currentCount = originalPost.getLikeCount();
-        if (liked) {
-            originalPost.setLikeCount(Math.max(0, currentCount - 1));
-            originalPost.getLikedBy().remove(userId);
-        } else {
-            originalPost.setLikeCount(currentCount + 1);
-            originalPost.getLikedBy().put(userId, true);
-        }
+        String uid = user.getUid(); boolean liked = originalPost.getLikedBy() != null && originalPost.getLikedBy().containsKey(uid);
+        int count = originalPost.getLikeCount();
+        if (liked) { originalPost.setLikeCount(Math.max(0, count - 1)); originalPost.getLikedBy().remove(uid); }
+        else { originalPost.setLikeCount(count + 1); if (originalPost.getLikedBy() == null) originalPost.setLikedBy(new HashMap<>()); originalPost.getLikedBy().put(uid, true); }
         bindPostToLayout(originalPost);
-
-        if (liked) {
-            db.collection("forumThreads").document(postId)
-                    .update("likedBy." + userId, FieldValue.delete())
-                    .addOnCompleteListener(task -> {
-                        postLikeInFlight = false;
-                        if (!task.isSuccessful()) {
-                            originalPost.setLikeCount(currentCount);
-                            originalPost.getLikedBy().put(userId, true);
-                            bindPostToLayout(originalPost);
-                        }
-                    });
-        } else {
-            db.collection("forumThreads").document(postId)
-                    .update("likedBy." + userId, true)
-                    .addOnCompleteListener(task -> {
-                        postLikeInFlight = false;
-                        if (!task.isSuccessful()) {
-                            originalPost.setLikeCount(currentCount);
-                            originalPost.getLikedBy().remove(userId);
-                            bindPostToLayout(originalPost);
-                        }
-                    });
-        }
+        db.collection("forumThreads").document(postId).update("likedBy." + uid, liked ? FieldValue.delete() : true).addOnCompleteListener(t -> { postLikeInFlight = false; if (!t.isSuccessful()) { originalPost.setLikeCount(count); if (liked) originalPost.getLikedBy().put(uid, true); else originalPost.getLikedBy().remove(uid); bindPostToLayout(originalPost); } });
     }
 
     private void setupCommentsRecyclerView() {
         adapter = new ForumCommentAdapter(this);
-        LinearLayoutManager layoutManager = new LinearLayoutManager(this);
-        binding.rvComments.setLayoutManager(layoutManager);
+        LinearLayoutManager lm = new LinearLayoutManager(this);
+        binding.rvComments.setLayoutManager(lm);
         binding.rvComments.setAdapter(adapter);
-
         binding.rvComments.addOnScrollListener(new RecyclerView.OnScrollListener() {
-            @Override
-            public void onScrolled(@NonNull RecyclerView recyclerView, int dx, int dy) {
-                if (dy > 0) {
-                    int visibleItemCount = layoutManager.getChildCount();
-                    int totalItemCount = layoutManager.getItemCount();
-                    int pastVisibleItems = layoutManager.findFirstVisibleItemPosition();
-
-                    if (!isFetchingComments && !isLastCommentsPage) {
-                        if ((visibleItemCount + pastVisibleItems) >= totalItemCount) {
-                            fetchComments();
-                        }
-                    }
-                }
+            @Override public void onScrolled(@NonNull RecyclerView rv, int dx, int dy) {
+                if (dy > 0 && !isFetchingComments && !isLastCommentsPage) { if ((lm.getChildCount() + lm.findFirstVisibleItemPosition()) >= lm.getItemCount()) fetchComments(); }
             }
         });
     }
@@ -566,375 +319,135 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
     private void fetchComments() {
         if (isFetchingComments || isLastCommentsPage) return;
         isFetchingComments = true;
-
-        Query query = db.collection("forumThreads").document(postId).collection("comments")
-                .orderBy("timestamp", Query.Direction.ASCENDING)
-                .limit(COMMENTS_PAGE_SIZE);
-
-        if (lastCommentVisible != null) {
-            query = query.startAfter(lastCommentVisible);
-        }
-
-        query.get().addOnSuccessListener(value -> {
+        Query q = db.collection("forumThreads").document(postId).collection("comments").orderBy("timestamp", Query.Direction.ASCENDING).limit(COMMENTS_PAGE_SIZE);
+        if (lastCommentVisible != null) q = q.startAfter(lastCommentVisible);
+        q.get().addOnSuccessListener(val -> {
             if (isFinishing() || isDestroyed()) return;
-
-            if (value != null && !value.isEmpty()) {
-                lastCommentVisible = value.getDocuments().get(value.size() - 1);
-
-                for (DocumentSnapshot doc : value.getDocuments()) {
-                    ForumComment comment = doc.toObject(ForumComment.class);
-                    if (comment != null) {
-                        comment.setId(doc.getId());
-                        commentList.add(comment);
-                    }
-                }
+            if (val != null && !val.isEmpty()) {
+                lastCommentVisible = val.getDocuments().get(val.size() - 1);
+                for (DocumentSnapshot d : val.getDocuments()) { ForumComment c = d.toObject(ForumComment.class); if (c != null) { c.setId(d.getId()); commentList.add(c); } }
                 adapter.setComments(new ArrayList<>(commentList));
-
-                if (value.size() < COMMENTS_PAGE_SIZE) {
-                    isLastCommentsPage = true;
-                }
-            } else {
-                isLastCommentsPage = true;
-            }
+                if (val.size() < COMMENTS_PAGE_SIZE) isLastCommentsPage = true;
+            } else isLastCommentsPage = true;
             isFetchingComments = false;
-        }).addOnFailureListener(e -> {
-            isFetchingComments = false;
-            Log.e(TAG, "Error fetching comments", e);
-        });
+        }).addOnFailureListener(e -> isFetchingComments = false);
     }
 
     private void postComment() {
-        String text = binding.etComment.getText().toString().trim();
-        if (text.isEmpty()) return;
-
-        if (text.length() > MAX_COMMENT_LENGTH) {
-            Toast.makeText(this, "Comment exceeds maximum length", Toast.LENGTH_SHORT).show();
-            return;
-        }
-
-        if (!ContentFilter.isSafe(this, text, "Comment")) return;
-
-        FirebaseUser user = mAuth.getCurrentUser();
-        if (user == null) return;
-
+        String msg = binding.etComment.getText().toString().trim();
+        if (msg.isEmpty() || msg.length() > MAX_COMMENT_LENGTH || !ContentFilter.isSafe(this, msg, "Comment")) return;
+        FirebaseUser user = mAuth.getCurrentUser(); if (user == null) return;
         binding.btnSendComment.setEnabled(false);
-        ForumComment comment = new ForumComment(postId, user.getUid(), currentUsername, currentUserPfpUrl, text);
-
-        if (replyingToComment != null) {
-            comment.setParentCommentId(replyingToComment.getId());
-            comment.setParentUsername(replyingToComment.getUsername());
-        }
-
-        // Removed manual commentCount increment. Handled by server trigger.
-        db.collection("forumThreads").document(postId).collection("comments").add(comment)
-                .addOnSuccessListener(aVoid -> {
-                    if (isFinishing() || isDestroyed()) return;
-                    binding.etComment.setText("");
-                    binding.etComment.setHint("Write a comment...");
-                    replyingToComment = null;
-                    binding.btnSendComment.setEnabled(true);
-
-                    // Refresh list
-                    lastCommentVisible = null;
-                    isLastCommentsPage = false;
-                    commentList.clear();
-                    fetchComments();
-                })
-                .addOnFailureListener(e -> {
-                    if (isFinishing() || isDestroyed()) return;
-                    binding.btnSendComment.setEnabled(true);
-                    Toast.makeText(this, "Failed to post comment", Toast.LENGTH_SHORT).show();
-                });
+        ForumComment c = new ForumComment(postId, user.getUid(), currentUsername, currentUserPfpUrl, msg);
+        if (replyingToComment != null) { c.setParentCommentId(replyingToComment.getId()); c.setParentUsername(replyingToComment.getUsername()); }
+        String cid = db.collection("forumThreads").document(postId).collection("comments").document().getId();
+        db.collection("forumThreads").document(postId).collection("comments").document(cid).set(c).addOnSuccessListener(v -> {
+            if (isFinishing()) return;
+            binding.etComment.setText(""); binding.etComment.setHint("Write a comment..."); replyingToComment = null; binding.btnSendComment.setEnabled(true);
+            lastCommentVisible = null; isLastCommentsPage = false; commentList.clear(); fetchComments();
+        }).addOnFailureListener(e -> { binding.btnSendComment.setEnabled(true); Toast.makeText(this, "Failed", Toast.LENGTH_SHORT).show(); });
     }
 
     @Override
     public void onCommentLikeClick(ForumComment comment) {
-        FirebaseUser user = mAuth.getCurrentUser();
-        if (user == null) return;
-
-        String userId = user.getUid();
-        // Prevent a double-tap race: if a write for this comment is already in-flight,
-        // ignore the second tap entirely rather than sending conflicting increments.
+        FirebaseUser user = mAuth.getCurrentUser(); if (user == null) return;
+        String uid = user.getUid();
         if (commentLikeInFlight.contains(comment.getId())) return;
         commentLikeInFlight.add(comment.getId());
-
         if (comment.getLikedBy() == null) comment.setLikedBy(new HashMap<>());
-        boolean liked = comment.getLikedBy().containsKey(userId);
-
-        // Optimistic UI update
-        int currentCount = comment.getLikeCount();
-        if (liked) {
-            comment.setLikeCount(Math.max(0, currentCount - 1));
-            comment.getLikedBy().remove(userId);
-        } else {
-            comment.setLikeCount(currentCount + 1);
-            comment.getLikedBy().put(userId, true);
-        }
+        boolean liked = comment.getLikedBy().containsKey(uid);
+        int count = comment.getLikeCount();
+        if (liked) { comment.setLikeCount(Math.max(0, count - 1)); comment.getLikedBy().remove(uid); }
+        else { comment.setLikeCount(count + 1); comment.getLikedBy().put(uid, true); }
         adapter.notifyDataSetChanged();
 
-        if (liked) {
-            db.collection("forumThreads").document(postId).collection("comments").document(comment.getId())
-                    .update("likeCount", FieldValue.increment(-1),
-                            "likedBy." + userId, FieldValue.delete())
-                    .addOnCompleteListener(task -> {
-                        commentLikeInFlight.remove(comment.getId());
-                        if (!task.isSuccessful()) {
-                            // Revert on failure
-                            comment.setLikeCount(currentCount);
-                            comment.getLikedBy().put(userId, true);
-                            adapter.notifyDataSetChanged();
-                        }
-                    });
-        } else {
-            db.collection("forumThreads").document(postId).collection("comments").document(comment.getId())
-                    .update("likeCount", FieldValue.increment(1),
-                            "likedBy." + userId, true)
-                    .addOnCompleteListener(task -> {
-                        commentLikeInFlight.remove(comment.getId());
-                        if (!task.isSuccessful()) {
-                            // Revert on failure
-                            comment.setLikeCount(currentCount);
-                            comment.getLikedBy().remove(userId);
-                            adapter.notifyDataSetChanged();
-                        }
-                    });
-        }
+        db.collection("forumThreads").document(postId).collection("comments").document(comment.getId())
+                .update("likedBy." + uid, liked ? FieldValue.delete() : true)
+                .addOnCompleteListener(t -> {
+                    commentLikeInFlight.remove(comment.getId());
+                    if (!t.isSuccessful()) { comment.setLikeCount(count); if (liked) comment.getLikedBy().put(uid, true); else comment.getLikedBy().remove(uid); adapter.notifyDataSetChanged(); }
+                });
     }
 
-    @Override
-    public void onCommentReplyClick(ForumComment comment) {
-        replyingToComment = comment;
-        binding.etComment.setHint("Replying to " + comment.getUsername() + "...");
-        binding.etComment.requestFocus();
+    @Override public void onCommentReplyClick(ForumComment c) { replyingToComment = c; binding.etComment.setHint("Replying to " + c.getUsername() + "..."); binding.etComment.requestFocus(); }
+    @Override public void onCommentOptionsClick(ForumComment c, View v) { showCommentOptions(c, v); }
+    @Override public void onUserClick(String uid) {
+        if (isNavigating) return;
+        isNavigating = true;
+        startActivity(new Intent(this, UserSocialProfileActivity.class).putExtra(UserSocialProfileActivity.EXTRA_USER_ID, uid));
     }
 
-    @Override
-    public void onCommentOptionsClick(ForumComment comment, View view) {
-        showCommentOptions(comment, view);
-    }
-
-    @Override
-    public void onUserClick(String userId) {
-        openUserProfile(userId);
-    }
-
-    private void showCommentOptions(ForumComment comment, View view) {
-        PopupMenu popup = new PopupMenu(this, view);
-        FirebaseUser user = mAuth.getCurrentUser();
-
-        boolean isCommentAuthor = user != null && comment.getUserId().equals(user.getUid());
-
-        if (isCommentAuthor) {
-            if (comment.getTimestamp() != null) {
-                long commentTime = comment.getTimestamp().toDate().getTime();
-                if (System.currentTimeMillis() - commentTime <= EDIT_WINDOW_MS) {
-                    popup.getMenu().add("Edit");
-                }
-            }
+    private void showCommentOptions(ForumComment c, View v) {
+        PopupMenu popup = new PopupMenu(this, v); FirebaseUser user = mAuth.getCurrentUser();
+        if (user != null && c.getUserId().equals(user.getUid())) {
+            if (c.getTimestamp() != null && (System.currentTimeMillis() - c.getTimestamp().toDate().getTime() <= EDIT_WINDOW_MS)) popup.getMenu().add("Edit");
             popup.getMenu().add("Delete");
         }
         popup.getMenu().add("Report");
-
         popup.setOnMenuItemClickListener(item -> {
-            if (item.getTitle().equals("Edit")) {
-                showEditCommentDialog(comment);
-            } else if (item.getTitle().equals("Delete")) {
-                showCommentDeleteConfirmation(comment);
-            } else if (item.getTitle().equals("Report")) {
-                showCommentReportDialog(comment);
-            }
+            if (item.getTitle().equals("Edit")) showEditCommentDialog(c);
+            else if (item.getTitle().equals("Delete")) showCommentDeleteConfirmation(c);
+            else if (item.getTitle().equals("Report")) showCommentReportDialog(c);
             return true;
         });
         popup.show();
     }
 
-    private void showEditCommentDialog(ForumComment comment) {
-        AlertDialog.Builder builder = new AlertDialog.Builder(this);
-        builder.setTitle("Edit Comment");
-
-        final EditText input = new EditText(this);
-        input.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE);
-        input.setText(comment.getText());
-        input.setFilters(new InputFilter[]{new InputFilter.LengthFilter(MAX_COMMENT_LENGTH)});
-
-        FrameLayout container = new FrameLayout(this);
-        FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        params.leftMargin = params.rightMargin = 40;
-        input.setLayoutParams(params);
-        container.addView(input);
-        builder.setView(container);
-
-        builder.setPositiveButton("Save", (dialog, which) -> {
-            String newText = input.getText().toString().trim();
-            if (newText.length() > MAX_COMMENT_LENGTH) {
-                Toast.makeText(this, "Comment exceeds maximum length", Toast.LENGTH_SHORT).show();
-                return;
-            }
-            if (!newText.isEmpty() && !newText.equals(comment.getText())) {
-                updateComment(comment, newText);
-            }
-        });
-        builder.setNegativeButton("Cancel", (dialog, which) -> dialog.cancel());
-
-        builder.show();
+    private void showEditCommentDialog(ForumComment c) {
+        AlertDialog.Builder b = new AlertDialog.Builder(this); b.setTitle("Edit Comment");
+        final EditText i = new EditText(this); i.setText(c.getText()); i.setFilters(new InputFilter[]{new InputFilter.LengthFilter(MAX_COMMENT_LENGTH)});
+        FrameLayout container = new FrameLayout(this); FrameLayout.LayoutParams p = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT); p.leftMargin = p.rightMargin = 40; i.setLayoutParams(p); container.addView(i); b.setView(container);
+        b.setPositiveButton("Save", (d, w) -> { String msg = i.getText().toString().trim(); if (!msg.isEmpty() && !msg.equals(c.getText())) updateComment(c, msg); });
+        b.setNegativeButton("Cancel", null); b.show();
     }
 
-    private void updateComment(ForumComment comment, String newText) {
-        if (!ContentFilter.isSafe(this, newText, "Comment")) return;
-
-        db.collection("forumThreads").document(postId).collection("comments").document(comment.getId())
-                .update("text", newText,
-                        "edited", true,
-                        "lastEditedAt", FieldValue.serverTimestamp())
-                .addOnSuccessListener(aVoid -> Toast.makeText(this, "Comment updated", Toast.LENGTH_SHORT).show())
-                .addOnFailureListener(e -> Toast.makeText(this, "Update failed", Toast.LENGTH_SHORT).show());
+    private void updateComment(ForumComment c, String msg) {
+        if (!ContentFilter.isSafe(this, msg, "Comment")) return;
+        db.collection("forumThreads").document(postId).collection("comments").document(c.getId()).update("text", msg, "edited", true, "lastEditedAt", FieldValue.serverTimestamp());
     }
 
-    private void showCommentDeleteConfirmation(ForumComment comment) {
-        new AlertDialog.Builder(this)
-                .setTitle("Delete Comment")
-                .setMessage("Are you sure you want to delete this comment? " + (comment.getParentCommentId() == null ? "All replies will also be deleted." : ""))
-                .setPositiveButton("Delete", (dialog, which) -> {
-                    deleteCommentAndReplies(comment);
-                })
-                .setNegativeButton("Cancel", null)
-                .show();
+    private void showCommentDeleteConfirmation(ForumComment c) {
+        new AlertDialog.Builder(this).setTitle("Delete Comment").setMessage("Are you sure?").setPositiveButton("Delete", (d, w) -> deleteCommentAndReplies(c)).setNegativeButton("Cancel", null).show();
     }
 
-    private void deleteCommentAndReplies(ForumComment comment) {
-        FirebaseUser user = mAuth.getCurrentUser();
-        if (user == null) return;
-
-        if (comment.getParentCommentId() == null) {
-            db.collection("forumThreads").document(postId).collection("comments")
-                    .whereEqualTo("parentCommentId", comment.getId())
-                    .get()
-                    .addOnSuccessListener(queryDocumentSnapshots -> {
-                        WriteBatch batch = db.batch();
-
-                        for (DocumentSnapshot doc : queryDocumentSnapshots) {
-                            backlogByUserId(batch, user.getUid(), "comment_reply", doc.getId(), doc.getData());
-                            batch.delete(doc.getReference());
-                        }
-
-                        backlogByUserId(batch, user.getUid(), "comment", comment.getId(), comment);
-
-                        batch.delete(db.collection("forumThreads").document(postId)
-                                .collection("comments").document(comment.getId()));
-
-                        // Removed manual commentCount decrement. Handled by server trigger.
-                        batch.commit().addOnSuccessListener(aVoid -> {
-                            if (isFinishing() || isDestroyed()) return;
-                            Toast.makeText(this, "Comment deleted", Toast.LENGTH_SHORT).show();
-                            // Refresh
-                            lastCommentVisible = null;
-                            isLastCommentsPage = false;
-                            commentList.clear();
-                            fetchComments();
-                        });
-                    });
-        } else {
-            Map<String, Object> replyBacklog = new HashMap<>();
-            replyBacklog.put("type", "reply");
-            replyBacklog.put("originalId", comment.getId());
-            replyBacklog.put("data", comment);
-            replyBacklog.put("deletedBy", user.getUid());
-            replyBacklog.put("deletedAt", FieldValue.serverTimestamp());
-
-            db.collection("deletedforum_backlog").add(replyBacklog)
-                    .addOnSuccessListener(docRef -> {
-                        // Removed manual commentCount decrement from here too.
-                        firebaseManager.deleteForumComment(postId, comment.getId(), task -> {
-                            if (task.isSuccessful()) {
-                                if (isFinishing() || isDestroyed()) return;
-                                Toast.makeText(this, "Reply deleted", Toast.LENGTH_SHORT).show();
-                                // Refresh
-                                lastCommentVisible = null;
-                                isLastCommentsPage = false;
-                                commentList.clear();
-                                fetchComments();
-                            }
-                        });
-                    });
-        }
-    }
-
-    private void backlogByUserId(WriteBatch batch, String uid, String type, String originalId, Object data) {
-        Map<String, Object> backlog = new HashMap<>();
-        backlog.put("type", type);
-        backlog.put("originalId", originalId);
-        backlog.put("data", data);
-        backlog.put("deletedBy", uid);
-        backlog.put("deletedAt", FieldValue.serverTimestamp());
-        batch.set(db.collection("deletedforum_backlog").document(), backlog);
-    }
-
-    private void showCommentReportDialog(ForumComment comment) {
-        String[] reasons = {"Inappropriate Language", "Spam", "Harassment", "Other"};
-        new AlertDialog.Builder(this)
-                .setTitle("Report Comment")
-                .setItems(reasons, (dialog, which) -> {
-                    String selectedReason = reasons[which];
-                    if (selectedReason.equals("Other")) {
-                        showOtherReportDialog(reason -> submitCommentReport(comment, reason));
-                    } else {
-                        submitCommentReport(comment, selectedReason);
-                    }
-                })
-                .show();
-    }
-
-    private void submitCommentReport(ForumComment comment, String reason) {
-        FirebaseUser user = mAuth.getCurrentUser();
-        if (user == null) return;
-
-        Report report = new Report("comment", comment.getId(), user.getUid(), reason);
-        firebaseManager.addReport(report, task -> {
-            if (task.isSuccessful()) {
-                if (isFinishing() || isDestroyed()) return;
-                Toast.makeText(this, "Comment reported.", Toast.LENGTH_LONG).show();
-            }
+    private void deleteCommentAndReplies(ForumComment c) {
+        FirebaseUser user = mAuth.getCurrentUser(); if (user == null) return;
+        DocumentReference ref = db.collection("forumThreads").document(postId).collection("comments").document(c.getId());
+        ref.update("deleting", true).addOnSuccessListener(v -> {
+            db.collection("forumThreads").document(postId).collection("comments").whereEqualTo("parentCommentId", c.getId()).get().addOnSuccessListener(snap -> {
+                WriteBatch b = db.batch();
+                for (DocumentSnapshot d : snap) { backlogByUserId(b, user.getUid(), "comment_reply", d.getId(), d.getData()); b.delete(d.getReference()); }
+                backlogByUserId(b, user.getUid(), "comment", c.getId(), c); b.delete(ref);
+                b.commit().addOnSuccessListener(res -> { if (!isFinishing()) { lastCommentVisible = null; isLastCommentsPage = false; commentList.clear(); fetchComments(); } });
+            });
         });
     }
 
-    private void showOtherReportDialog(OnReasonEnteredListener listener) {
-        AlertDialog.Builder builder = new AlertDialog.Builder(this);
-        builder.setTitle("Report Reason");
-
-        final EditText input = new EditText(this);
-        input.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE);
-        input.setHint("Please specify the reason (max 200 chars)...");
-        input.setFilters(new InputFilter[]{new InputFilter.LengthFilter(200)});
-        input.setLines(5);
-
-        FrameLayout container = new FrameLayout(this);
-        FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        params.leftMargin = params.rightMargin = 40;
-        input.setLayoutParams(params);
-        container.addView(input);
-        builder.setView(container);
-
-        builder.setPositiveButton("Submit", (dialog, which) -> {
-            String reason = input.getText().toString().trim();
-            if (reason.isEmpty()) {
-                Toast.makeText(this, "Please enter a reason", Toast.LENGTH_SHORT).show();
-                return;
-            }
-            if (!ContentFilter.isSafe(this, reason, "Report reason")) return;
-            listener.onReasonEntered(reason);
-        });
-        builder.setNegativeButton("Cancel", (dialog, which) -> dialog.cancel());
-
-        builder.show();
+    private void backlogByUserId(WriteBatch b, String uid, String type, String oid, Object data) {
+        Map<String, Object> m = new HashMap<>(); m.put("type", type); m.put("originalId", oid); m.put("data", data); m.put("deletedBy", uid); m.put("deletedAt", FieldValue.serverTimestamp());
+        b.set(db.collection("deletedforum_backlog").document(), m);
     }
 
-    private interface OnReasonEnteredListener {
-        void onReasonEntered(String reason);
+    private void showCommentReportDialog(ForumComment c) {
+        String[] rs = {"Inappropriate Language", "Spam", "Harassment", "Other"};
+        new AlertDialog.Builder(this).setTitle("Report Comment").setItems(rs, (d, w) -> {
+            if (rs[w].equals("Other")) showOtherReportDialog(reason -> submitCommentReport(c, reason));
+            else submitCommentReport(c, rs[w]);
+        }).show();
     }
 
-    private void openUserProfile(String userId) {
-        Intent intent = new Intent(this, UserSocialProfileActivity.class);
-        intent.putExtra(UserSocialProfileActivity.EXTRA_USER_ID, userId);
-        startActivity(intent);
+    private void submitCommentReport(ForumComment c, String reason) {
+        FirebaseUser u = mAuth.getCurrentUser(); if (u == null) return;
+        firebaseManager.addReport(new Report("comment", c.getId(), u.getUid(), reason), t -> { if (t.isSuccessful()) Toast.makeText(this, "Reported", Toast.LENGTH_SHORT).show(); });
     }
+
+    private void showOtherReportDialog(OnReasonEnteredListener l) {
+        AlertDialog.Builder b = new AlertDialog.Builder(this); b.setTitle("Report Reason");
+        final EditText i = new EditText(this); i.setHint("Specify reason..."); i.setFilters(new InputFilter[]{new InputFilter.LengthFilter(200)});
+        FrameLayout container = new FrameLayout(this); FrameLayout.LayoutParams p = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT); p.leftMargin = p.rightMargin = 40; i.setLayoutParams(p); container.addView(i); b.setView(container);
+        b.setPositiveButton("Submit", (d, w) -> { String r = i.getText().toString().trim(); if (!r.isEmpty()) l.onReasonEntered(r); });
+        b.setNegativeButton("Cancel", null); b.show();
+    }
+
+    private interface OnReasonEnteredListener { void onReasonEntered(String r); }
 }

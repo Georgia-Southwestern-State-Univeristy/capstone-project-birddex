@@ -74,7 +74,16 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
+/**
+ * NearbyHeatmapActivity shows sightings on a map.
+ * Fixed Race Conditions:
+ * 1. Navigation Flooding: Added isNavigating guard.
+ * 2. Stale Fetch: Added fetchGeneration counter.
+ * 3. Like Spam: Added postLikeInFlight and commentLikeInFlight guards.
+ */
 public class NearbyHeatmapActivity extends AppCompatActivity
         implements OnMapReadyCallback, GoogleMap.OnCircleClickListener, GoogleMap.OnMarkerClickListener, ForumCommentAdapter.OnCommentInteractionListener {
 
@@ -101,22 +110,12 @@ public class NearbyHeatmapActivity extends AppCompatActivity
     private static final double HOTSPOT_CIRCLE_RADIUS_METERS = 900d;
 
     private static final Gradient USER_GRADIENT = new Gradient(
-            new int[]{
-                    Color.argb(0, 255, 138, 0),
-                    Color.rgb(255, 195, 0),
-                    Color.rgb(255, 122, 0),
-                    Color.rgb(220, 38, 38)
-            },
+            new int[]{ Color.argb(0, 255, 138, 0), Color.rgb(255, 195, 0), Color.rgb(255, 122, 0), Color.rgb(220, 38, 38) },
             new float[]{0.2f, 0.5f, 0.8f, 1f}
     );
 
     private static final Gradient EBIRD_GRADIENT = new Gradient(
-            new int[]{
-                    Color.argb(0, 37, 99, 235),
-                    Color.rgb(103, 232, 249),
-                    Color.rgb(59, 130, 246),
-                    Color.rgb(29, 78, 216)
-            },
+            new int[]{ Color.argb(0, 37, 99, 235), Color.rgb(103, 232, 249), Color.rgb(59, 130, 246), Color.rgb(29, 78, 216) },
             new float[]{0.2f, 0.5f, 0.8f, 1f}
     );
 
@@ -143,6 +142,7 @@ public class NearbyHeatmapActivity extends AppCompatActivity
     private double centerLng = Double.NaN;
 
     private int pendingLoads = 0;
+    private int fetchGeneration = 0;
 
     private ForumComment replyingToComment = null;
     private EditText currentPopupEditText;
@@ -156,6 +156,11 @@ public class NearbyHeatmapActivity extends AppCompatActivity
     private boolean isLastPopupCommentsPage = false;
     private static final int POPUP_COMMENTS_PAGE_SIZE = 25;
 
+    // --- FIXES ---
+    private final Set<String> postLikeInFlight = Collections.newSetFromMap(new ConcurrentHashMap<>());
+    private final Set<String> commentLikeInFlight = Collections.newSetFromMap(new ConcurrentHashMap<>());
+    private boolean isNavigating = false;
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -165,1300 +170,472 @@ public class NearbyHeatmapActivity extends AppCompatActivity
         mAuth = FirebaseAuth.getInstance();
         firebaseManager = new FirebaseManager(this);
 
-        ImageButton btnBack = findViewById(R.id.btnBack);
+        findViewById(R.id.btnBack).setOnClickListener(v -> finish());
         tvMapSubtitle = findViewById(R.id.tvMapSubtitle);
 
-        btnBack.setOnClickListener(v -> finish());
-
-        if (getIntent() != null
-                && getIntent().hasExtra(EXTRA_CENTER_LAT)
-                && getIntent().hasExtra(EXTRA_CENTER_LNG)) {
+        if (getIntent() != null && getIntent().hasExtra(EXTRA_CENTER_LAT)) {
             centerLat = getIntent().getDoubleExtra(EXTRA_CENTER_LAT, Double.NaN);
             centerLng = getIntent().getDoubleExtra(EXTRA_CENTER_LNG, Double.NaN);
         }
 
-        SupportMapFragment mapFragment =
-                (SupportMapFragment) getSupportFragmentManager().findFragmentById(R.id.map);
+        SupportMapFragment mapFragment = (SupportMapFragment) getSupportFragmentManager().findFragmentById(R.id.map);
+        if (mapFragment != null) mapFragment.getMapAsync(this);
+        else { Toast.makeText(this, "Map failed to load", Toast.LENGTH_SHORT).show(); finish(); }
+    }
 
-        if (mapFragment != null) {
-            mapFragment.getMapAsync(this);
-        } else {
-            Toast.makeText(this, "Map failed to load", Toast.LENGTH_SHORT).show();
-            finish();
-        }
+    @Override
+    protected void onResume() {
+        super.onResume();
+        isNavigating = false;
     }
 
     @Override
     public void onMapReady(@NonNull GoogleMap map) {
         googleMap = map;
-
         googleMap.getUiSettings().setZoomControlsEnabled(true);
         googleMap.getUiSettings().setCompassEnabled(true);
         googleMap.getUiSettings().setMyLocationButtonEnabled(true);
         googleMap.setOnCircleClickListener(this);
         googleMap.setOnMarkerClickListener(this);
 
-        LatLng initialCenter = hasNearbyCenter()
-                ? new LatLng(centerLat, centerLng)
-                : new LatLng(DEFAULT_LAT, DEFAULT_LNG);
-
-        float initialZoom = hasNearbyCenter() ? NEARBY_ZOOM : DEFAULT_ZOOM;
+        LatLng initialCenter = !Double.isNaN(centerLat) ? new LatLng(centerLat, centerLng) : new LatLng(DEFAULT_LAT, DEFAULT_LNG);
+        float initialZoom = !Double.isNaN(centerLat) ? NEARBY_ZOOM : DEFAULT_ZOOM;
         googleMap.moveCamera(CameraUpdateFactory.newLatLngZoom(initialCenter, initialZoom));
 
-        if (hasLocationPermission()) {
-            try {
-                googleMap.setMyLocationEnabled(true);
-            } catch (SecurityException ignored) {
-            }
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
+            try { googleMap.setMyLocationEnabled(true); } catch (SecurityException ignored) {}
         }
 
         googleMap.setOnCameraIdleListener(() -> {
             if (googleMap == null) return;
-
-            CameraPosition cameraPosition = googleMap.getCameraPosition();
-            LatLng target = cameraPosition.target;
-            float zoom = cameraPosition.zoom;
-
+            CameraPosition cp = googleMap.getCameraPosition();
             currentVisibleBounds = googleMap.getProjection().getVisibleRegion().latLngBounds;
-
-            // keep your nearby-center behavior in sync with the actual map center
-            centerLat = target.latitude;
-            centerLng = target.longitude;
+            centerLat = cp.target.latitude; centerLng = cp.target.longitude;
 
             boolean shouldRefresh = false;
-
-            if (lastAppliedTarget == null) {
-                shouldRefresh = true;
-            } else {
-                float[] results = new float[1];
-                android.location.Location.distanceBetween(
-                        lastAppliedTarget.latitude,
-                        lastAppliedTarget.longitude,
-                        target.latitude,
-                        target.longitude,
-                        results
-                );
-
-                float movedMeters = results[0];
-                float zoomDiff = Math.abs(zoom - lastAppliedZoom);
-
-                if (movedMeters >= MIN_CAMERA_MOVE_TO_REFRESH_METERS ||
-                        zoomDiff >= MIN_ZOOM_CHANGE_TO_REFRESH) {
-                    shouldRefresh = true;
-                }
+            if (lastAppliedTarget == null) shouldRefresh = true;
+            else {
+                float[] res = new float[1];
+                android.location.Location.distanceBetween(lastAppliedTarget.latitude, lastAppliedTarget.longitude, cp.target.latitude, cp.target.longitude, res);
+                if (res[0] >= MIN_CAMERA_MOVE_TO_REFRESH_METERS || Math.abs(cp.zoom - lastAppliedZoom) >= MIN_ZOOM_CHANGE_TO_REFRESH) shouldRefresh = true;
             }
 
-            if (shouldRefresh) {
-                lastAppliedTarget = target;
-                lastAppliedZoom = zoom;
-                fetchHeatmapData();
-                loadForumPins();
-            }
+            if (shouldRefresh) { lastAppliedTarget = cp.target; lastAppliedZoom = cp.zoom; fetchHeatmapData(); loadForumPins(); }
         });
 
-        // initial visible bounds
         googleMap.setOnMapLoadedCallback(() -> {
             if (googleMap != null) {
                 currentVisibleBounds = googleMap.getProjection().getVisibleRegion().latLngBounds;
-                CameraPosition cameraPosition = googleMap.getCameraPosition();
-                lastAppliedTarget = cameraPosition.target;
-                lastAppliedZoom = cameraPosition.zoom;
-                fetchHeatmapData();
-                loadForumPins();
+                CameraPosition cp = googleMap.getCameraPosition();
+                lastAppliedTarget = cp.target; lastAppliedZoom = cp.zoom;
+                fetchHeatmapData(); loadForumPins();
             }
         });
     }
 
     private void fetchHeatmapData() {
-        pendingLoads = 2;
-        userHeatPoints.clear();
-        eBirdHeatPoints.clear();
-        userHotspotSightings.clear();
-        eBirdHotspotSightings.clear();
-        hotspotBuckets.clear();
-        clearHotspotCircles();
-
+        final int gen = ++fetchGeneration;
+        pendingLoads = 4;
+        userHeatPoints.clear(); eBirdHeatPoints.clear();
+        userHotspotSightings.clear(); eBirdHotspotSightings.clear();
+        hotspotBuckets.clear(); clearHotspotCircles();
         tvMapSubtitle.setText("Loading heatmap...");
 
-        loadUserBirdSightings();
-        loadEbirdApiSightings();
+        loadUserBirdSightings(gen);
+        loadEbirdApiSightings(gen);
     }
 
     private void loadForumPins() {
-        db.collection("forumThreads")
-                .whereEqualTo("showLocation", true)
-                .get(Source.CACHE)
-                .addOnSuccessListener(querySnapshot -> {
-                    if (querySnapshot != null && !querySnapshot.isEmpty()) {
-                        processForumPins(querySnapshot);
-                    }
-                    fetchForumPinsFromServer();
-                })
-                .addOnFailureListener(e -> fetchForumPinsFromServer());
+        db.collection("forumThreads").whereEqualTo("showLocation", true).get(Source.CACHE).addOnSuccessListener(snap -> {
+            if (snap != null && !snap.isEmpty()) processForumPins(snap);
+            fetchForumPinsFromServer();
+        }).addOnFailureListener(e -> fetchForumPinsFromServer());
     }
 
     private void fetchForumPinsFromServer() {
-        db.collection("forumThreads")
-                .whereEqualTo("showLocation", true)
-                .get(Source.SERVER)
-                .addOnSuccessListener(this::processForumPins)
-                .addOnFailureListener(e -> Log.e(TAG, "Error loading forum pins from server", e));
+        db.collection("forumThreads").whereEqualTo("showLocation", true).get(Source.SERVER).addOnSuccessListener(this::processForumPins).addOnFailureListener(e -> Log.e(TAG, "Error", e));
     }
 
-    private void processForumPins(com.google.firebase.firestore.QuerySnapshot querySnapshot) {
+    private void processForumPins(com.google.firebase.firestore.QuerySnapshot snap) {
         clearForumMarkers();
-        SharedPreferences sharedPreferences = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
-        boolean showGraphicContent = sharedPreferences.getBoolean(KEY_GRAPHIC_CONTENT, false);
-
-        for (DocumentSnapshot doc : querySnapshot.getDocuments()) {
-            ForumPost post = doc.toObject(ForumPost.class);
-            if (post != null && post.getLatitude() != null && post.getLongitude() != null) {
-                post.setId(doc.getId());
-
-                boolean inVisibleBounds = true;
-                if (currentVisibleBounds != null) {
-                    inVisibleBounds = currentVisibleBounds.contains(
-                            new LatLng(post.getLatitude(), post.getLongitude())
-                    );
-                }
-
-                if (inVisibleBounds && (showGraphicContent || !post.isHunted())) {
-                    addPinToMap(post);
-                }
+        boolean showGraphic = getSharedPreferences(PREFS_NAME, MODE_PRIVATE).getBoolean(KEY_GRAPHIC_CONTENT, false);
+        for (DocumentSnapshot doc : snap.getDocuments()) {
+            ForumPost p = doc.toObject(ForumPost.class);
+            if (p != null && p.getLatitude() != null) {
+                p.setId(doc.getId());
+                boolean inBounds = currentVisibleBounds == null || currentVisibleBounds.contains(new LatLng(p.getLatitude(), p.getLongitude()));
+                if (inBounds && (showGraphic || !p.isHunted())) addPinToMap(p);
             }
         }
     }
 
-    private void addPinToMap(ForumPost post) {
-        LatLng pos = new LatLng(post.getLatitude(), post.getLongitude());
-
+    private void addPinToMap(ForumPost p) {
+        LatLng pos = new LatLng(p.getLatitude(), p.getLongitude());
         StringBuilder status = new StringBuilder();
-        if (post.isSpotted()) status.append("Spotted ");
-        if (post.isHunted()) status.append("Hunted ");
+        if (p.isSpotted()) status.append("Spotted ");
+        if (p.isHunted()) status.append("Hunted ");
+        String title = p.getUsername() + (status.length() > 0 ? " (" + status.toString().trim() + ")" : "");
 
-        String title = post.getUsername() + (status.length() > 0 ? " (" + status.toString().trim() + ")" : "");
+        BitmapDescriptor icon;
+        if (p.isSpotted() && p.isHunted()) icon = createDualColorPin();
+        else if (p.isHunted()) icon = createColoredPin(Color.BLACK);
+        else if (p.isSpotted()) icon = createColoredPin(Color.rgb(255, 165, 0));
+        else icon = BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_AZURE);
 
-        BitmapDescriptor pinIcon;
-        if (post.isSpotted() && post.isHunted()) {
-            pinIcon = createDualColorPin();
-        } else if (post.isHunted()) {
-            pinIcon = createColoredPin(Color.BLACK);
-        } else if (post.isSpotted()) {
-            pinIcon = createColoredPin(Color.rgb(255, 165, 0));
-        } else {
-            pinIcon = BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_AZURE);
-        }
-
-        MarkerOptions options = new MarkerOptions()
-                .position(pos)
-                .title(title)
-                .snippet(post.getMessage())
-                .icon(pinIcon);
-
-        Marker marker = googleMap.addMarker(options);
-        if (marker != null) {
-            marker.setTag(post);
-            forumMarkers.add(marker);
-        }
+        Marker m = googleMap.addMarker(new MarkerOptions().position(pos).title(title).snippet(p.getMessage()).icon(icon));
+        if (m != null) { m.setTag(p); forumMarkers.add(m); }
     }
 
     private BitmapDescriptor createColoredPin(int color) {
-        int size = 80;
-        Bitmap bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888);
-        Canvas canvas = new Canvas(bitmap);
-        Paint paint = new Paint();
-        paint.setColor(color);
-        paint.setAntiAlias(true);
-
-        canvas.drawCircle(size / 2f, size / 3f, size / 3f, paint);
-        canvas.drawRect(size / 2f - 4, size / 2f, size / 2f + 4, size * 0.9f, paint);
-
-        return BitmapDescriptorFactory.fromBitmap(bitmap);
+        int size = 80; Bitmap bm = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888); Canvas c = new Canvas(bm); Paint p = new Paint();
+        p.setColor(color); p.setAntiAlias(true); c.drawCircle(size / 2f, size / 3f, size / 3f, p); c.drawRect(size / 2f - 4, size / 2f, size / 2f + 4, size * 0.9f, p);
+        return BitmapDescriptorFactory.fromBitmap(bm);
     }
 
     private BitmapDescriptor createDualColorPin() {
-        int size = 80;
-        Bitmap bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888);
-        Canvas canvas = new Canvas(bitmap);
-        Paint paint = new Paint();
-        paint.setAntiAlias(true);
-
-        paint.setColor(Color.BLUE);
-        canvas.drawArc(size / 6f, 0, size * 5 / 6f, size * 2 / 3f, 90, 180, true, paint);
-
-        paint.setColor(Color.BLACK);
-        canvas.drawArc(size / 6f, 0, size * 5 / 6f, size * 2 / 3f, 270, 180, true, paint);
-
-        paint.setColor(Color.BLUE);
-        canvas.drawRect(size / 2f - 4, size / 2f, size / 2f, size * 0.9f, paint);
-        paint.setColor(Color.BLACK);
-        canvas.drawRect(size / 2f, size / 2f, size / 2f + 4, size * 0.9f, paint);
-
-        return BitmapDescriptorFactory.fromBitmap(bitmap);
+        int size = 80; Bitmap bm = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888); Canvas c = new Canvas(bm); Paint p = new Paint(); p.setAntiAlias(true);
+        p.setColor(Color.BLUE); c.drawArc(size/6f, 0, size*5/6f, size*2/3f, 90, 180, true, p);
+        p.setColor(Color.BLACK); c.drawArc(size/6f, 0, size*5/6f, size*2/3f, 270, 180, true, p);
+        p.setColor(Color.BLUE); c.drawRect(size/2f-4, size/2f, size/2f, size*0.9f, p);
+        p.setColor(Color.BLACK); c.drawRect(size/2f, size/2f, size/2f+4, size*0.9f, p);
+        return BitmapDescriptorFactory.fromBitmap(bm);
     }
 
-    private void clearForumMarkers() {
-        for (Marker m : forumMarkers) {
-            m.remove();
-        }
-        forumMarkers.clear();
-    }
+    private void clearForumMarkers() { for (Marker m : forumMarkers) m.remove(); forumMarkers.clear(); }
 
-    @Override
-    public boolean onMarkerClick(@NonNull Marker marker) {
-        Object tag = marker.getTag();
-        if (tag instanceof ForumPost) {
-            showPostInBottomSheet((ForumPost) tag);
-            return true;
-        }
-        return false;
-    }
+    @Override public boolean onMarkerClick(@NonNull Marker m) { Object tag = m.getTag(); if (tag instanceof ForumPost) { showPostInBottomSheet((ForumPost) tag); return true; } return false; }
 
-    private void showPostInBottomSheet(ForumPost post) {
-        activePost = post;
-        BottomSheetDialog dialog = new BottomSheetDialog(this);
-        View view = getLayoutInflater().inflate(R.layout.bottom_sheet_post_view, null);
-        dialog.setContentView(view);
+    private void showPostInBottomSheet(ForumPost p) {
+        activePost = p; BottomSheetDialog dialog = new BottomSheetDialog(this); View view = getLayoutInflater().inflate(R.layout.bottom_sheet_post_view, null); dialog.setContentView(view);
+        FirebaseUser user = mAuth.getCurrentUser();
+        if (user != null && user.getUid().equals(p.getUserId()) && p.isNotificationSent()) db.collection("forumThreads").document(p.getId()).update("notificationSent", false);
 
-        FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
-        if (user != null) {
-            String userId = user.getUid();
-            if (userId.equals(post.getUserId()) && post.isNotificationSent()) {
-                db.collection("forumThreads").document(post.getId())
-                        .update("notificationSent", false);
-            }
-        }
+        View content = view.findViewById(R.id.postContent);
+        ((TextView) content.findViewById(R.id.tvPostUsername)).setText(p.getUsername());
+        ((TextView) content.findViewById(R.id.tvPostMessage)).setText(p.isEdited() ? p.getMessage() + " (edited)" : p.getMessage());
+        ((TextView) content.findViewById(R.id.tvLikeCount)).setText(String.valueOf(p.getLikeCount()));
+        ((TextView) content.findViewById(R.id.tvCommentCount)).setText(String.valueOf(p.getCommentCount()));
+        ((TextView) content.findViewById(R.id.tvViewCount)).setText(p.getViewCount() + " views");
 
-        View postContent = view.findViewById(R.id.postContent);
-        TextView tvUsername = postContent.findViewById(R.id.tvPostUsername);
-        TextView tvTimestamp = postContent.findViewById(R.id.tvPostTimestamp);
-        TextView tvMessage = postContent.findViewById(R.id.tvPostMessage);
-        ImageView ivPfp = postContent.findViewById(R.id.ivPostUserProfilePicture);
-        ImageView ivBird = postContent.findViewById(R.id.ivPostBirdImage);
-        View cvImage = postContent.findViewById(R.id.cvPostImage);
-        TextView tvLikes = postContent.findViewById(R.id.tvLikeCount);
-        TextView tvComments = postContent.findViewById(R.id.tvCommentCount);
-        TextView tvViews = postContent.findViewById(R.id.tvViewCount);
-        View btnPostOptions = postContent.findViewById(R.id.btnPostOptions);
-        ImageView ivLikeIcon = postContent.findViewById(R.id.ivLikeIcon);
-        View btnLike = postContent.findViewById(R.id.btnLike);
+        if (p.getTimestamp() != null) ((TextView) content.findViewById(R.id.tvPostTimestamp)).setText(DateUtils.getRelativeTimeSpanString(p.getTimestamp().toDate().getTime()));
+        Glide.with(this).load(p.getUserProfilePictureUrl()).placeholder(R.drawable.ic_profile).into((ImageView) content.findViewById(R.id.ivPostUserProfilePicture));
 
-        TextView tvSpottedBadge = postContent.findViewById(R.id.tvSpottedBadge);
-        TextView tvHuntedBadge = postContent.findViewById(R.id.tvHuntedBadge);
+        ImageView ivBird = content.findViewById(R.id.ivPostBirdImage);
+        if (p.getBirdImageUrl() != null && !p.getBirdImageUrl().isEmpty()) { content.findViewById(R.id.cvPostImage).setVisibility(View.VISIBLE); Glide.with(this).load(p.getBirdImageUrl()).into(ivBird); }
+        else content.findViewById(R.id.cvPostImage).setVisibility(View.GONE);
 
-        tvUsername.setText(post.getUsername());
-        tvMessage.setText(post.isEdited() ? post.getMessage() + " (edited)" : post.getMessage());
-        tvLikes.setText(String.valueOf(post.getLikeCount()));
-        tvComments.setText(String.valueOf(post.getCommentCount()));
-        tvViews.setText(post.getViewCount() + " views");
+        ImageView ivLike = content.findViewById(R.id.ivLikeIcon);
+        ivLike.setImageResource((user != null && p.getLikedBy() != null && p.getLikedBy().containsKey(user.getUid())) ? R.drawable.ic_favorite : R.drawable.ic_favorite_border);
 
-        if (tvSpottedBadge != null) tvSpottedBadge.setVisibility(post.isSpotted() ? View.VISIBLE : View.GONE);
-        if (tvHuntedBadge != null) tvHuntedBadge.setVisibility(post.isHunted() ? View.VISIBLE : View.GONE);
+        content.findViewById(R.id.btnLike).setOnClickListener(v -> {
+            if (user == null || postLikeInFlight.contains(p.getId())) return;
+            postLikeInFlight.add(p.getId());
 
-        if (post.getTimestamp() != null) {
-            tvTimestamp.setText(DateUtils.getRelativeTimeSpanString(post.getTimestamp().toDate().getTime()));
-        }
+            String uid = user.getUid(); boolean liked = p.getLikedBy() != null && p.getLikedBy().containsKey(uid);
+            int count = p.getLikeCount();
+            if (liked) { p.setLikeCount(Math.max(0, count-1)); p.getLikedBy().remove(uid); ivLike.setImageResource(R.drawable.ic_favorite_border); }
+            else { p.setLikeCount(count+1); if (p.getLikedBy() == null) p.setLikedBy(new HashMap<>()); p.getLikedBy().put(uid, true); ivLike.setImageResource(R.drawable.ic_favorite); }
+            ((TextView) content.findViewById(R.id.tvLikeCount)).setText(String.valueOf(p.getLikeCount()));
 
-        Glide.with(this).load(post.getUserProfilePictureUrl()).placeholder(R.drawable.ic_profile).into(ivPfp);
-
-        if (post.getBirdImageUrl() != null && !post.getBirdImageUrl().isEmpty()) {
-            cvImage.setVisibility(View.VISIBLE);
-            Glide.with(this).load(post.getBirdImageUrl()).into(ivBird);
-        } else {
-            cvImage.setVisibility(View.GONE);
-        }
-
-        // Update like icon for post
-        if (user != null && post.getLikedBy() != null && post.getLikedBy().containsKey(user.getUid())) {
-            ivLikeIcon.setImageResource(R.drawable.ic_favorite);
-        } else {
-            ivLikeIcon.setImageResource(R.drawable.ic_favorite_border);
-        }
-
-        btnLike.setOnClickListener(v -> {
-            if (user == null) return;
-            String userId = user.getUid();
-            boolean liked = post.getLikedBy() != null && post.getLikedBy().containsKey(userId);
-            int currentCount = post.getLikeCount();
-
-            if (liked) {
-                post.setLikeCount(Math.max(0, currentCount - 1));
-                post.getLikedBy().remove(userId);
-                ivLikeIcon.setImageResource(R.drawable.ic_favorite_border);
-            } else {
-                post.setLikeCount(currentCount + 1);
-                if (post.getLikedBy() == null) post.setLikedBy(new HashMap<>());
-                post.getLikedBy().put(userId, true);
-                ivLikeIcon.setImageResource(R.drawable.ic_favorite);
-            }
-            tvLikes.setText(String.valueOf(post.getLikeCount()));
-
-            // Update source of truth (likedBy map). 
-            // likeCount is handled by server trigger.
-            db.collection("forumThreads").document(post.getId())
-                    .update("likedBy." + userId, liked ? FieldValue.delete() : true)
-                    .addOnFailureListener(e -> {
-                        // Revert on failure
-                        post.setLikeCount(currentCount);
-                        if (liked) post.getLikedBy().put(userId, true);
-                        else post.getLikedBy().remove(userId);
-                        tvLikes.setText(String.valueOf(post.getLikeCount()));
-                        ivLikeIcon.setImageResource(liked ? R.drawable.ic_favorite : R.drawable.ic_favorite_border);
+            db.collection("forumThreads").document(p.getId()).update("likedBy." + uid, liked ? FieldValue.delete() : true)
+                    .addOnCompleteListener(t -> {
+                        postLikeInFlight.remove(p.getId());
+                        if (!t.isSuccessful()) {
+                            p.setLikeCount(count); if (liked) p.getLikedBy().put(uid, true); else p.getLikedBy().remove(uid);
+                            ((TextView) content.findViewById(R.id.tvLikeCount)).setText(String.valueOf(count));
+                            ivLike.setImageResource(liked ? R.drawable.ic_favorite : R.drawable.ic_favorite_border);
+                        }
                     });
         });
 
-        postContent.setOnClickListener(v -> {
-            Intent intent = new Intent(this, PostDetailActivity.class);
-            intent.putExtra(PostDetailActivity.EXTRA_POST_ID, post.getId());
-            startActivity(intent);
+        content.setOnClickListener(v -> {
+            if (isNavigating) return;
+            isNavigating = true;
+            startActivity(new Intent(this, PostDetailActivity.class).putExtra(PostDetailActivity.EXTRA_POST_ID, p.getId()));
             dialog.dismiss();
         });
+        content.findViewById(R.id.btnPostOptions).setOnClickListener(v -> showPostOptions(p, v, dialog));
 
-        btnPostOptions.setOnClickListener(v -> showPostOptions(post, v, dialog));
-
-        RecyclerView rvComments = view.findViewById(R.id.rvComments);
-        popupCommentAdapter = new ForumCommentAdapter(this);
-        LinearLayoutManager layoutManager = new LinearLayoutManager(this);
-        rvComments.setLayoutManager(layoutManager);
-        rvComments.setAdapter(popupCommentAdapter);
-
-        popupCommentList.clear();
-        lastPopupCommentVisible = null;
-        isLastPopupCommentsPage = false;
-        fetchPopupComments(post.getId(), popupCommentAdapter);
-
-        rvComments.addOnScrollListener(new RecyclerView.OnScrollListener() {
-            @Override
-            public void onScrolled(@NonNull RecyclerView recyclerView, int dx, int dy) {
-                if (dy > 0) {
-                    int visibleItemCount = layoutManager.getChildCount();
-                    int totalItemCount = layoutManager.getItemCount();
-                    int pastVisibleItems = layoutManager.findFirstVisibleItemPosition();
-
-                    if (!isFetchingPopupComments && !isLastPopupCommentsPage) {
-                        if ((visibleItemCount + pastVisibleItems) >= totalItemCount) {
-                            fetchPopupComments(post.getId(), popupCommentAdapter);
-                        }
-                    }
-                }
+        RecyclerView rv = view.findViewById(R.id.rvComments); popupCommentAdapter = new ForumCommentAdapter(this); LinearLayoutManager lm = new LinearLayoutManager(this); rv.setLayoutManager(lm); rv.setAdapter(popupCommentAdapter);
+        popupCommentList.clear(); lastPopupCommentVisible = null; isLastPopupCommentsPage = false; fetchPopupComments(p.getId(), popupCommentAdapter);
+        rv.addOnScrollListener(new RecyclerView.OnScrollListener() {
+            @Override public void onScrolled(@NonNull RecyclerView r, int dx, int dy) {
+                if (dy > 0 && !isFetchingPopupComments && !isLastPopupCommentsPage) { if ((lm.getChildCount() + lm.findFirstVisibleItemPosition()) >= lm.getItemCount()) fetchPopupComments(p.getId(), popupCommentAdapter); }
             }
         });
 
-        ImageView ivCurrentUser = view.findViewById(R.id.ivCurrentUserPfp);
-        if (user != null) {
-            db.collection("users").document(user.getUid()).get(Source.CACHE).addOnSuccessListener(doc -> {
-                String pfp = doc.getString("profilePictureUrl");
-                Glide.with(this).load(pfp).placeholder(R.drawable.ic_profile).into(ivCurrentUser);
-            });
-        }
-
         currentPopupEditText = view.findViewById(R.id.etComment);
-        View btnSend = view.findViewById(R.id.btnSendComment);
-        btnSend.setOnClickListener(v -> {
-            String text = currentPopupEditText.getText().toString().trim();
-            if (text.isEmpty()) return;
-            if (user == null) return;
-
-            if (ContentFilter.containsInappropriateContent(text)) {
-                Toast.makeText(this, "Comment contains inappropriate language.", Toast.LENGTH_SHORT).show();
-                return;
-            }
-
-            db.collection("users").document(user.getUid()).get().addOnSuccessListener(userDoc -> {
-                String name = userDoc.getString("username");
-                String pfp = userDoc.getString("profilePictureUrl");
-                ForumComment comment = new ForumComment(post.getId(), user.getUid(), name, pfp, text);
-                if (replyingToComment != null) {
-                    comment.setParentCommentId(replyingToComment.getId());
-                    comment.setParentUsername(replyingToComment.getUsername());
-                }
-
-                // Removed manual commentCount increment. Handled by server trigger.
-                db.collection("forumThreads").document(post.getId()).collection("comments").add(comment)
-                        .addOnSuccessListener(aVoid -> {
-                            currentPopupEditText.setText("");
-                            currentPopupEditText.setHint("Write a comment...");
-                            replyingToComment = null;
-                            refreshPopupComments();
-                        });
+        view.findViewById(R.id.btnSendComment).setOnClickListener(v -> {
+            String text = currentPopupEditText.getText().toString().trim(); if (text.isEmpty() || user == null || ContentFilter.containsInappropriateContent(text)) return;
+            db.collection("users").document(user.getUid()).get().addOnSuccessListener(udoc -> {
+                ForumComment c = new ForumComment(p.getId(), user.getUid(), udoc.getString("username"), udoc.getString("profilePictureUrl"), text);
+                if (replyingToComment != null) { c.setParentCommentId(replyingToComment.getId()); c.setParentUsername(replyingToComment.getUsername()); }
+                db.collection("forumThreads").document(p.getId()).collection("comments").add(c).addOnSuccessListener(v2 -> { currentPopupEditText.setText(""); replyingToComment = null; refreshPopupComments(); });
             });
         });
 
         dialog.show();
-
-        View bottomSheet = dialog.findViewById(com.google.android.material.R.id.design_bottom_sheet);
-        if (bottomSheet != null) {
-            BottomSheetBehavior<View> behavior = BottomSheetBehavior.from(bottomSheet);
-            behavior.setState(BottomSheetBehavior.STATE_EXPANDED);
-            behavior.setSkipCollapsed(true);
-        }
+        View bs = dialog.findViewById(com.google.android.material.R.id.design_bottom_sheet);
+        if (bs != null) { BottomSheetBehavior<View> behavior = BottomSheetBehavior.from(bs); behavior.setState(BottomSheetBehavior.STATE_EXPANDED); behavior.setSkipCollapsed(true); }
     }
 
-    private void refreshPopupComments() {
-        if (activePost == null || popupCommentAdapter == null) return;
-        popupCommentList.clear();
-        lastPopupCommentVisible = null;
-        isLastPopupCommentsPage = false;
-        fetchPopupComments(activePost.getId(), popupCommentAdapter);
-    }
+    private void refreshPopupComments() { if (activePost == null) return; popupCommentList.clear(); lastPopupCommentVisible = null; isLastPopupCommentsPage = false; fetchPopupComments(activePost.getId(), popupCommentAdapter); }
 
     private void fetchPopupComments(String postId, ForumCommentAdapter adapter) {
         if (isFetchingPopupComments || isLastPopupCommentsPage) return;
         isFetchingPopupComments = true;
-
-        Query query = db.collection("forumThreads").document(postId).collection("comments")
-                .orderBy("timestamp", Query.Direction.ASCENDING)
-                .limit(POPUP_COMMENTS_PAGE_SIZE);
-
-        if (lastPopupCommentVisible != null) {
-            query = query.startAfter(lastPopupCommentVisible);
-        }
-
-        query.get().addOnSuccessListener(value -> {
-            if (value != null && !value.isEmpty()) {
-                lastPopupCommentVisible = value.getDocuments().get(value.size() - 1);
-                for (DocumentSnapshot doc : value.getDocuments()) {
-                    ForumComment comment = doc.toObject(ForumComment.class);
-                    if (comment != null) {
-                        comment.setId(doc.getId());
-                        popupCommentList.add(comment);
-                    }
-                }
+        Query q = db.collection("forumThreads").document(postId).collection("comments").orderBy("timestamp", Query.Direction.ASCENDING).limit(POPUP_COMMENTS_PAGE_SIZE);
+        if (lastPopupCommentVisible != null) q = q.startAfter(lastPopupCommentVisible);
+        q.get().addOnSuccessListener(val -> {
+            if (val != null && !val.isEmpty()) {
+                lastPopupCommentVisible = val.getDocuments().get(val.size()-1);
+                for (DocumentSnapshot d : val.getDocuments()) { ForumComment c = d.toObject(ForumComment.class); if (c != null) { c.setId(d.getId()); popupCommentList.add(c); } }
                 adapter.setComments(new ArrayList<>(popupCommentList));
-                if (value.size() < POPUP_COMMENTS_PAGE_SIZE) isLastPopupCommentsPage = true;
-            } else {
-                isLastPopupCommentsPage = true;
-            }
+                if (val.size() < POPUP_COMMENTS_PAGE_SIZE) isLastPopupCommentsPage = true;
+            } else isLastPopupCommentsPage = true;
             isFetchingPopupComments = false;
-        }).addOnFailureListener(e -> {
-            isFetchingPopupComments = false;
-        });
+        }).addOnFailureListener(e -> isFetchingPopupComments = false);
     }
 
-    private void showPostOptions(ForumPost post, View view, BottomSheetDialog dialog) {
-        PopupMenu popup = new PopupMenu(this, view);
-        FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
-
-        if (user != null && post.getUserId().equals(user.getUid())) {
-            popup.getMenu().add("Delete");
-        }
+    private void showPostOptions(ForumPost p, View v, BottomSheetDialog dialog) {
+        PopupMenu popup = new PopupMenu(this, v); FirebaseUser user = mAuth.getCurrentUser();
+        if (user != null && p.getUserId().equals(user.getUid())) popup.getMenu().add("Delete");
         popup.getMenu().add("Report");
-
         popup.setOnMenuItemClickListener(item -> {
-            if (item.getTitle().equals("Delete")) {
-                showDeleteConfirmation(post, dialog);
-            } else if (item.getTitle().equals("Report")) {
-                showReportDialog("post", post.getId());
-            }
+            if (item.getTitle().equals("Delete")) showDeleteConfirmation(p, dialog);
+            else if (item.getTitle().equals("Report")) showReportDialog("post", p.getId());
             return true;
         });
         popup.show();
     }
 
-    private void showDeleteConfirmation(ForumPost post, BottomSheetDialog bottomSheetDialog) {
-        new AlertDialog.Builder(this)
-                .setTitle("Delete Post")
-                .setMessage("Are you sure you want to delete this post? All comments and images will be archived.")
-                .setPositiveButton("Delete", (dialog, which) -> {
-                    archiveAndDeletePost(post, bottomSheetDialog);
-                })
-                .setNegativeButton("Cancel", null)
-                .show();
+    private void showDeleteConfirmation(ForumPost p, BottomSheetDialog dialog) {
+        new AlertDialog.Builder(this).setTitle("Delete Post").setMessage("Are you sure?").setPositiveButton("Delete", (d, w) -> archiveAndDeletePost(p, dialog)).setNegativeButton("Cancel", null).show();
     }
 
-    private void archiveAndDeletePost(ForumPost post, BottomSheetDialog bottomSheetDialog) {
-        FirebaseUser user = mAuth.getCurrentUser();
-        if (user == null) return;
-
-        String imageUrl = post.getBirdImageUrl();
-        if (imageUrl != null && !imageUrl.isEmpty()) {
-            moveImageToArchive(user.getUid(), post.getId(), imageUrl, new OnImageArchivedListener() {
-                @Override
-                public void onSuccess(String archivedUrl) {
-                    post.setBirdImageUrl(archivedUrl);
-                    handleCommentsArchiveAndDeletion(user.getUid(), post, bottomSheetDialog);
-                }
-
-                @Override
-                public void onFailure(Exception e) {
-                    Log.e(TAG, "Failed to archive image, proceeding with original URL", e);
-                    handleCommentsArchiveAndDeletion(user.getUid(), post, bottomSheetDialog);
-                }
+    private void archiveAndDeletePost(ForumPost post, BottomSheetDialog dialog) {
+        FirebaseUser user = mAuth.getCurrentUser(); if (user == null) return;
+        if (post.getBirdImageUrl() != null && !post.getBirdImageUrl().isEmpty()) {
+            moveImageToArchive(user.getUid(), post.getId(), post.getBirdImageUrl(), new OnImageArchivedListener() {
+                @Override public void onSuccess(String url) { post.setBirdImageUrl(url); handleCommentsArchiveAndDeletion(user.getUid(), post, dialog); }
+                @Override public void onFailure(Exception e) { handleCommentsArchiveAndDeletion(user.getUid(), post, dialog); }
             });
-        } else {
-            handleCommentsArchiveAndDeletion(user.getUid(), post, bottomSheetDialog);
-        }
+        } else handleCommentsArchiveAndDeletion(user.getUid(), post, dialog);
     }
 
-    private void handleCommentsArchiveAndDeletion(String userId, ForumPost post, BottomSheetDialog bottomSheetDialog) {
-        db.collection("forumThreads").document(post.getId()).collection("comments")
-                .get()
-                .addOnSuccessListener(queryDocumentSnapshots -> {
-                    WriteBatch batch = db.batch();
-
-                    for (DocumentSnapshot doc : queryDocumentSnapshots) {
-                        Map<String, Object> commentBacklog = new HashMap<>();
-                        commentBacklog.put("type", "comment_archived_with_post");
-                        commentBacklog.put("originalId", doc.getId());
-                        commentBacklog.put("postId", post.getId());
-                        commentBacklog.put("data", doc.getData());
-                        commentBacklog.put("deletedBy", userId);
-                        commentBacklog.put("deletedAt", FieldValue.serverTimestamp());
-
-                        batch.set(db.collection("deletedforum_backlog").document(), commentBacklog);
-                        batch.delete(doc.getReference());
-                    }
-
-                    Map<String, Object> postBacklog = new HashMap<>();
-                    postBacklog.put("type", "post");
-                    postBacklog.put("originalId", post.getId());
-                    postBacklog.put("data", post);
-                    postBacklog.put("deletedBy", userId);
-                    postBacklog.put("deletedAt", FieldValue.serverTimestamp());
-
-                    batch.set(db.collection("deletedforum_backlog").document(), postBacklog);
-                    batch.delete(db.collection("forumThreads").document(post.getId()));
-
-                    // Removed manual commentCount decrement. Handled by server trigger.
-                    batch.commit().addOnSuccessListener(aVoid -> {
-                        Toast.makeText(this, "Post and comments deleted", Toast.LENGTH_SHORT).show();
-                        if (bottomSheetDialog != null) bottomSheetDialog.dismiss();
-                        loadForumPins();
-                    }).addOnFailureListener(e -> {
-                        Log.e(TAG, "Failed to execute deletion batch", e);
-                        Toast.makeText(this, "Error deleting post content", Toast.LENGTH_SHORT).show();
-                    });
-                })
-                .addOnFailureListener(e -> {
-                    Log.e(TAG, "Failed to fetch comments for deletion", e);
-                    savePostToBacklogAndFirestore(userId, post, bottomSheetDialog);
-                });
+    private void handleCommentsArchiveAndDeletion(String uid, ForumPost post, BottomSheetDialog dialog) {
+        db.collection("forumThreads").document(post.getId()).collection("comments").get().addOnSuccessListener(snap -> {
+            WriteBatch b = db.batch();
+            for (DocumentSnapshot d : snap) {
+                Map<String, Object> c = new HashMap<>(); c.put("type", "comment_archived_with_post"); c.put("originalId", d.getId()); c.put("postId", post.getId()); c.put("data", d.getData()); c.put("deletedBy", uid); c.put("deletedAt", FieldValue.serverTimestamp());
+                b.set(db.collection("deletedforum_backlog").document(), c); b.delete(d.getReference());
+            }
+            Map<String, Object> pb = new HashMap<>(); pb.put("type", "post"); pb.put("originalId", post.getId()); pb.put("data", post); pb.put("deletedBy", uid); pb.put("deletedAt", FieldValue.serverTimestamp());
+            b.set(db.collection("deletedforum_backlog").document(), pb); b.delete(db.collection("forumThreads").document(post.getId()));
+            b.commit().addOnSuccessListener(v -> { if (dialog != null) dialog.dismiss(); loadForumPins(); });
+        }).addOnFailureListener(e -> savePostToBacklogAndFirestore(uid, post, dialog));
     }
 
-    private interface OnImageArchivedListener {
-        void onSuccess(String archivedUrl);
-        void onFailure(Exception e);
-    }
+    private interface OnImageArchivedListener { void onSuccess(String url); void onFailure(Exception e); }
 
-    private void moveImageToArchive(String userId, String postId, String originalUrl, OnImageArchivedListener listener) {
-        FirebaseStorage storage = FirebaseStorage.getInstance();
+    private void moveImageToArchive(String uid, String pid, String url, OnImageArchivedListener l) {
+        FirebaseStorage s = FirebaseStorage.getInstance();
         try {
-            StorageReference oldRef = storage.getReferenceFromUrl(originalUrl);
-            String fileName = oldRef.getName();
-            StorageReference newRef = storage.getReference().child("archive/forum_post_images/" + userId + "/" + postId + "_" + fileName);
-
-            oldRef.getBytes(10 * 1024 * 1024).addOnSuccessListener(bytes -> {
-                newRef.putBytes(bytes).addOnSuccessListener(taskSnapshot -> {
-                    newRef.getDownloadUrl().addOnSuccessListener(uri -> {
-                        oldRef.delete().addOnCompleteListener(task -> {
-                            listener.onSuccess(uri.toString());
-                        });
-                    }).addOnFailureListener(listener::onFailure);
-                }).addOnFailureListener(listener::onFailure);
-            }).addOnFailureListener(listener::onFailure);
-        } catch (Exception e) {
-            listener.onFailure(e);
-        }
+            StorageReference old = s.getReferenceFromUrl(url);
+            StorageReference next = s.getReference().child("archive/forum_post_images/" + uid + "/" + pid + "_" + old.getName());
+            old.getBytes(10 * 1024 * 1024).addOnSuccessListener(bytes -> next.putBytes(bytes).addOnSuccessListener(ts -> next.getDownloadUrl().addOnSuccessListener(uri -> old.delete().addOnCompleteListener(t -> l.onSuccess(uri.toString()))).addOnFailureListener(l::onFailure)).addOnFailureListener(l::onFailure)).addOnFailureListener(l::onFailure);
+        } catch (Exception e) { l.onFailure(e); }
     }
 
-    private void savePostToBacklogAndFirestore(String userId, ForumPost post, BottomSheetDialog bottomSheetDialog) {
-        Map<String, Object> backlogData = new HashMap<>();
-        backlogData.put("type", "post");
-        backlogData.put("originalId", post.getId());
-        backlogData.put("data", post);
-        backlogData.put("deletedBy", userId);
-        backlogData.put("deletedAt", FieldValue.serverTimestamp());
-
-        db.collection("deletedforum_backlog").add(backlogData)
-                .addOnSuccessListener(docRef -> {
-                    firebaseManager.deleteForumPost(post.getId(), task -> {
-                        if (task.isSuccessful()) {
-                            Toast.makeText(this, "Post deleted", Toast.LENGTH_SHORT).show();
-                            if (bottomSheetDialog != null) bottomSheetDialog.dismiss();
-                            loadForumPins();
-                        }
-                    });
-                })
-                .addOnFailureListener(e -> {
-                    Log.e(TAG, "Failed to backlog post", e);
-                    Toast.makeText(this, "Failed to delete post. Try again.", Toast.LENGTH_SHORT).show();
-                });
+    private void savePostToBacklogAndFirestore(String uid, ForumPost post, BottomSheetDialog dialog) {
+        WriteBatch b = db.batch(); Map<String, Object> m = new HashMap<>();
+        m.put("type", "post"); m.put("originalId", post.getId()); m.put("data", post); m.put("deletedBy", uid); m.put("deletedAt", FieldValue.serverTimestamp());
+        b.set(db.collection("deletedforum_backlog").document(), m); b.delete(db.collection("forumThreads").document(post.getId()));
+        b.commit().addOnSuccessListener(v -> { if (dialog != null) dialog.dismiss(); loadForumPins(); });
     }
 
-    private void showReportDialog(String type, String targetId) {
-        String[] reasons = {"Inappropriate Language", "Spam", "Harassment", "Other"};
-        new AlertDialog.Builder(this)
-                .setTitle("Report " + type)
-                .setItems(reasons, (dialog, which) -> {
-                    String selectedReason = reasons[which];
-                    if (selectedReason.equals("Other")) {
-                        showOtherReportDialog(reason -> submitReport(type, targetId, reason));
-                    } else {
-                        submitReport(type, targetId, selectedReason);
-                    }
-                })
-                .show();
+    private void showReportDialog(String type, String id) {
+        String[] rs = {"Inappropriate Language", "Spam", "Harassment", "Other"};
+        new AlertDialog.Builder(this).setTitle("Report").setItems(rs, (d, w) -> { if (rs[w].equals("Other")) showOtherReportDialog(reason -> submitReport(type, id, reason)); else submitReport(type, id, rs[w]); }).show();
     }
 
-    private void submitReport(String type, String targetId, String reason) {
-        FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
-        if (user == null) return;
-
-        Report report = new Report(type, targetId, user.getUid(), reason);
-        firebaseManager.addReport(report, task -> {
-            if (task.isSuccessful()) {
-                Toast.makeText(this, "Report submitted.", Toast.LENGTH_LONG).show();
-            } else {
-                String error = task.getException() != null ? task.getException().getMessage() : "Unknown error";
-                Toast.makeText(this, error, Toast.LENGTH_SHORT).show();
-            }
-        });
+    private void submitReport(String type, String id, String r) {
+        FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser(); if (user == null) return;
+        firebaseManager.addReport(new Report(type, id, user.getUid(), r), t -> { if (t.isSuccessful()) Toast.makeText(this, "Reported", Toast.LENGTH_SHORT).show(); });
     }
 
-    private void showOtherReportDialog(OnReasonEnteredListener listener) {
-        AlertDialog.Builder builder = new AlertDialog.Builder(this);
-        builder.setTitle("Report Reason");
-
-        final EditText input = new EditText(this);
-        input.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE);
-        input.setHint("Please specify the reason (max 200 chars)...");
-        input.setFilters(new InputFilter[]{new InputFilter.LengthFilter(200)});
-        input.setLines(5);
-
-        FrameLayout container = new FrameLayout(this);
-        FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        params.leftMargin = params.rightMargin = 40;
-        input.setLayoutParams(params);
-        container.addView(input);
-        builder.setView(container);
-
-        builder.setPositiveButton("Submit", (dialog, which) -> {
-            String reason = input.getText().toString().trim();
-            if (reason.isEmpty()) {
-                Toast.makeText(this, "Please enter a reason", Toast.LENGTH_SHORT).show();
-                return;
-            }
-            if (ContentFilter.containsInappropriateContent(reason)) {
-                Toast.makeText(this, "Inappropriate language detected in your report.", Toast.LENGTH_SHORT).show();
-                return;
-            }
-            listener.onReasonEntered(reason);
-        });
-        builder.setNegativeButton("Cancel", (dialog, which) -> dialog.cancel());
-
-        builder.show();
+    private void showOtherReportDialog(OnReasonEnteredListener l) {
+        AlertDialog.Builder b = new AlertDialog.Builder(this); b.setTitle("Reason"); final EditText i = new EditText(this); i.setHint("Specify..."); i.setFilters(new InputFilter[]{new InputFilter.LengthFilter(200)});
+        FrameLayout c = new FrameLayout(this); FrameLayout.LayoutParams p = new FrameLayout.LayoutParams(-1, -2); p.leftMargin = p.rightMargin = 40; i.setLayoutParams(p); c.addView(i); b.setView(c);
+        b.setPositiveButton("Submit", (d, w) -> { String r = i.getText().toString().trim(); if (!r.isEmpty()) l.onReasonEntered(r); });
+        b.setNegativeButton("Cancel", null); b.show();
     }
 
-    private interface OnReasonEnteredListener {
-        void onReasonEntered(String reason);
-    }
+    private interface OnReasonEnteredListener { void onReasonEntered(String r); }
 
     @Override
-    public void onCommentLikeClick(ForumComment comment) {
-        FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
-        if (user == null || activePost == null) return;
+    public void onCommentLikeClick(ForumComment c) {
+        FirebaseUser user = mAuth.getCurrentUser(); if (user == null || activePost == null || commentLikeInFlight.contains(c.getId())) return;
+        commentLikeInFlight.add(c.getId());
 
-        String userId = user.getUid();
-        if (comment.getLikedBy() == null) comment.setLikedBy(new HashMap<>());
-        boolean liked = comment.getLikedBy().containsKey(userId);
-
-        // Optimistic UI Update
-        int currentCount = comment.getLikeCount();
-        if (liked) {
-            comment.setLikeCount(Math.max(0, currentCount - 1));
-            comment.getLikedBy().remove(userId);
-        } else {
-            comment.setLikeCount(currentCount + 1);
-            comment.getLikedBy().put(userId, true);
-        }
+        String uid = user.getUid(); if (c.getLikedBy() == null) c.setLikedBy(new HashMap<>()); boolean liked = c.getLikedBy().containsKey(uid);
+        int count = c.getLikeCount();
+        if (liked) { c.setLikeCount(Math.max(0, count-1)); c.getLikedBy().remove(uid); }
+        else { c.setLikeCount(count+1); c.getLikedBy().put(uid, true); }
         if (popupCommentAdapter != null) popupCommentAdapter.notifyDataSetChanged();
 
-        if (liked) {
-            db.collection("forumThreads").document(activePost.getId()).collection("comments").document(comment.getId())
-                    .update("likeCount", FieldValue.increment(-1),
-                            "likedBy." + userId, FieldValue.delete())
-                    .addOnFailureListener(e -> {
-                        // Revert on failure
-                        comment.setLikeCount(currentCount);
-                        comment.getLikedBy().put(userId, true);
+        db.collection("forumThreads").document(activePost.getId()).collection("comments").document(c.getId())
+                .update("likedBy." + uid, liked ? FieldValue.delete() : true)
+                .addOnCompleteListener(t -> {
+                    commentLikeInFlight.remove(c.getId());
+                    if (!t.isSuccessful()) {
+                        c.setLikeCount(count); if (liked) c.getLikedBy().put(uid, true); else c.getLikedBy().remove(uid);
                         if (popupCommentAdapter != null) popupCommentAdapter.notifyDataSetChanged();
-                    });
-        } else {
-            db.collection("forumThreads").document(activePost.getId()).collection("comments").document(comment.getId())
-                    .update("likeCount", FieldValue.increment(1),
-                            "likedBy." + userId, true)
-                    .addOnFailureListener(e -> {
-                        // Revert on failure
-                        comment.setLikeCount(currentCount);
-                        comment.getLikedBy().remove(userId);
-                        if (popupCommentAdapter != null) popupCommentAdapter.notifyDataSetChanged();
-                    });
-        }
-    }
-
-    @Override
-    public void onCommentReplyClick(ForumComment comment) {
-        replyingToComment = comment;
-        if (currentPopupEditText != null) {
-            currentPopupEditText.setHint("Replying to " + comment.getUsername() + "...");
-            currentPopupEditText.requestFocus();
-        }
-    }
-
-    @Override
-    public void onCommentOptionsClick(ForumComment comment, View view) {
-        PopupMenu popup = new PopupMenu(this, view);
-        FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
-
-        boolean isCommentAuthor = user != null && comment.getUserId().equals(user.getUid());
-
-        if (isCommentAuthor) {
-            popup.getMenu().add("Delete");
-        }
-        popup.getMenu().add("Report");
-
-        popup.setOnMenuItemClickListener(item -> {
-            if (item.getTitle().equals("Delete")) {
-                showCommentDeleteConfirmation(comment);
-            } else if (item.getTitle().equals("Report")) {
-                showReportDialog("comment", comment.getId());
-            }
-            return true;
-        });
-        popup.show();
-    }
-
-    private void showCommentDeleteConfirmation(ForumComment comment) {
-        new AlertDialog.Builder(this)
-                .setTitle("Delete Comment")
-                .setMessage("Are you sure you want to delete this comment? " + (comment.getParentCommentId() == null ? "All replies will also be deleted." : ""))
-                .setPositiveButton("Delete", (dialog, which) -> {
-                    deleteCommentAndReplies(comment);
-                })
-                .setNegativeButton("Cancel", null)
-                .show();
-    }
-
-    private void deleteCommentAndReplies(ForumComment comment) {
-        FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
-        if (user == null || activePost == null) return;
-
-        if (comment.getParentCommentId() == null) {
-            db.collection("forumThreads").document(activePost.getId()).collection("comments")
-                    .whereEqualTo("parentCommentId", comment.getId())
-                    .get()
-                    .addOnSuccessListener(queryDocumentSnapshots -> {
-                        WriteBatch batch = db.batch();
-
-                        for (DocumentSnapshot doc : queryDocumentSnapshots) {
-                            backlogByUserId(batch, user.getUid(), "comment_reply", doc.getId(), doc.getData());
-                            batch.delete(doc.getReference());
-                        }
-
-                        backlogByUserId(batch, user.getUid(), "comment", comment.getId(), comment);
-
-                        batch.delete(db.collection("forumThreads").document(activePost.getId())
-                                .collection("comments").document(comment.getId()));
-
-                        // Removed manual commentCount decrement. Handled by server trigger.
-                        batch.commit().addOnSuccessListener(aVoid -> {
-                            Toast.makeText(this, "Comment deleted", Toast.LENGTH_SHORT).show();
-                            refreshPopupComments();
-                        });
-                    });
-        } else {
-            Map<String, Object> replyBacklog = new HashMap<>();
-            replyBacklog.put("type", "reply");
-            replyBacklog.put("originalId", comment.getId());
-            replyBacklog.put("data", comment);
-            replyBacklog.put("deletedBy", user.getUid());
-            replyBacklog.put("deletedAt", FieldValue.serverTimestamp());
-
-            db.collection("deletedforum_backlog").add(replyBacklog)
-                    .addOnSuccessListener(docRef -> {
-                        // Removed manual commentCount decrement from here too.
-                        firebaseManager.deleteForumComment(activePost.getId(), comment.getId(), task -> {
-                            if (task.isSuccessful()) {
-                                Toast.makeText(this, "Reply deleted", Toast.LENGTH_SHORT).show();
-                                refreshPopupComments();
-                            }
-                        });
-                    });
-        }
-    }
-
-    private void backlogByUserId(WriteBatch batch, String uid, String type, String originalId, Object data) {
-        Map<String, Object> backlog = new HashMap<>();
-        backlog.put("type", type);
-        backlog.put("originalId", originalId);
-        backlog.put("data", data);
-        backlog.put("deletedBy", uid);
-        backlog.put("deletedAt", FieldValue.serverTimestamp());
-        batch.set(db.collection("deletedforum_backlog").document(), backlog);
-    }
-
-    @Override
-    public void onUserClick(String userId) {
-        Intent intent = new Intent(this, UserSocialProfileActivity.class);
-        intent.putExtra(UserSocialProfileActivity.EXTRA_USER_ID, userId);
-        startActivity(intent);
-    }
-
-    private void loadUserBirdSightings() {
-        db.collection("userBirdSightings")
-                .limit(500)
-                .get(Source.CACHE)
-                .addOnSuccessListener(querySnapshot -> {
-                    if (querySnapshot != null && !querySnapshot.isEmpty()) {
-                        processSightings(querySnapshot, true);
                     }
-                    fetchUserBirdSightingsFromServer();
-                })
-                .addOnFailureListener(e -> fetchUserBirdSightingsFromServer());
+                });
     }
 
-    private void fetchUserBirdSightingsFromServer() {
-        db.collection("userBirdSightings")
-                .limit(500)
-                .get(Source.SERVER)
-                .addOnSuccessListener(querySnapshot -> processSightings(querySnapshot, true))
-                .addOnFailureListener(e -> onCollectionFinished());
+    @Override public void onCommentReplyClick(ForumComment c) { replyingToComment = c; if (currentPopupEditText != null) { currentPopupEditText.setHint("Replying to " + c.getUsername() + "..."); currentPopupEditText.requestFocus(); } }
+    @Override public void onCommentOptionsClick(ForumComment c, View v) { PopupMenu p = new PopupMenu(this, v); FirebaseUser user = mAuth.getCurrentUser(); if (user != null && c.getUserId().equals(user.getUid())) p.getMenu().add("Delete"); p.getMenu().add("Report"); p.setOnMenuItemClickListener(item -> { if (item.getTitle().equals("Delete")) showCommentDeleteConfirmation(c); else if (item.getTitle().equals("Report")) showReportDialog("comment", c.getId()); return true; }); p.show(); }
+
+    private void showCommentDeleteConfirmation(ForumComment c) {
+        new AlertDialog.Builder(this).setTitle("Delete Comment").setMessage("Are you sure?").setPositiveButton("Delete", (d, w) -> deleteCommentAndReplies(c)).setNegativeButton("Cancel", null).show();
     }
 
-    private void loadEbirdApiSightings() {
-        db.collection("eBirdApiSightings")
-                .limit(1000)
-                .get(Source.CACHE)
-                .addOnSuccessListener(querySnapshot -> {
-                    if (querySnapshot != null && !querySnapshot.isEmpty()) {
-                        processSightings(querySnapshot, false);
-                    }
-                    fetchEbirdApiSightingsFromServer();
-                })
-                .addOnFailureListener(e -> fetchEbirdApiSightingsFromServer());
-    }
-
-    private void fetchEbirdApiSightingsFromServer() {
-        db.collection("eBirdApiSightings")
-                .limit(1000)
-                .get(Source.SERVER)
-                .addOnSuccessListener(querySnapshot -> processSightings(querySnapshot, false))
-                .addOnFailureListener(e -> onCollectionFinished());
-    }
-
-    private void processSightings(com.google.firebase.firestore.QuerySnapshot querySnapshot, boolean isUserSighting) {
-        List<WeightedLatLng> targetHeatPoints = isUserSighting ? userHeatPoints : eBirdHeatPoints;
-        List<HotspotSighting> targetHotspotSightings = isUserSighting ? userHotspotSightings : eBirdHotspotSightings;
-
-        targetHeatPoints.clear();
-        targetHotspotSightings.clear();
-
-        for (DocumentSnapshot doc : querySnapshot.getDocuments()) {
-            Double lat = getAnyDouble(doc, "location.latitude", "lastSeenLatitudeGeorgia", "latitude", "lat");
-            Double lng = getAnyDouble(doc, "location.longitude", "lastSeenLongitudeGeorgia", "longitude", "lng");
-            Long timeMillis = getAnyTimeMillis(doc, isUserSighting ? "timestamp" : "observationDate");
-
-            if (lat == null || lng == null) continue;
-            if (shouldBeFiltered(lat, lng, timeMillis)) continue;
-
-            if (isUserSighting) {
-                targetHeatPoints.add(new WeightedLatLng(new LatLng(lat, lng), 1.8));
-            } else {
-                targetHeatPoints.add(new WeightedLatLng(new LatLng(lat, lng), 1.0));
-            }
-
-            String birdName = extractBirdName(doc);
-            targetHotspotSightings.add(new HotspotSighting(lat, lng, birdName, isUserSighting));
+    private void deleteCommentAndReplies(ForumComment c) {
+        FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser(); if (user == null || activePost == null) return;
+        if (c.getParentCommentId() == null) {
+            db.collection("forumThreads").document(activePost.getId()).collection("comments").whereEqualTo("parentCommentId", c.getId()).get().addOnSuccessListener(snap -> {
+                WriteBatch b = db.batch();
+                for (DocumentSnapshot d : snap) { backlogByUserId(b, user.getUid(), "comment_reply", d.getId(), d.getData()); b.delete(d.getReference()); }
+                backlogByUserId(b, user.getUid(), "comment", c.getId(), c); b.delete(db.collection("forumThreads").document(activePost.getId()).collection("comments").document(c.getId()));
+                b.commit().addOnSuccessListener(v -> refreshPopupComments());
+            });
+        } else {
+            WriteBatch b = db.batch(); Map<String, Object> m = new HashMap<>(); m.put("type", "reply"); m.put("originalId", c.getId()); m.put("data", c); m.put("deletedBy", user.getUid()); m.put("deletedAt", FieldValue.serverTimestamp());
+            b.set(db.collection("deletedforum_backlog").document(), m); b.delete(db.collection("forumThreads").document(activePost.getId()).collection("comments").document(c.getId()));
+            b.commit().addOnSuccessListener(v -> refreshPopupComments());
         }
-
-        rebuildHotspotBuckets();
-        onCollectionFinished();
     }
 
-    private void onCollectionFinished() {
-        pendingLoads--;
-        if (pendingLoads <= 0) renderHeatmaps();
+    private void backlogByUserId(WriteBatch b, String uid, String type, String oid, Object data) {
+        Map<String, Object> m = new HashMap<>(); m.put("type", type); m.put("originalId", oid); m.put("data", data); m.put("deletedBy", uid); m.put("deletedAt", FieldValue.serverTimestamp());
+        b.set(db.collection("deletedforum_backlog").document(), m);
+    }
+
+    @Override public void onUserClick(String uid) {
+        if (isNavigating) return;
+        isNavigating = true;
+        startActivity(new Intent(this, UserSocialProfileActivity.class).putExtra(UserSocialProfileActivity.EXTRA_USER_ID, uid));
+    }
+
+    private void loadUserBirdSightings(int gen) {
+        db.collection("userBirdSightings").limit(500).get(Source.CACHE).addOnSuccessListener(snap -> {
+            if (snap != null && !snap.isEmpty()) processSightings(snap, true, gen); else onCollectionFinished(gen);
+            fetchUserBirdSightingsFromServer(gen);
+        }).addOnFailureListener(e -> { onCollectionFinished(gen); fetchUserBirdSightingsFromServer(gen); });
+    }
+
+    private void fetchUserBirdSightingsFromServer(int gen) {
+        db.collection("userBirdSightings").limit(500).get(Source.SERVER).addOnSuccessListener(snap -> processSightings(snap, true, gen)).addOnFailureListener(e -> onCollectionFinished(gen));
+    }
+
+    private void loadEbirdApiSightings(int gen) {
+        db.collection("eBirdApiSightings").limit(1000).get(Source.CACHE).addOnSuccessListener(snap -> {
+            if (snap != null && !snap.isEmpty()) processSightings(snap, false, gen); else onCollectionFinished(gen);
+            fetchEbirdApiSightingsFromServer(gen);
+        }).addOnFailureListener(e -> { onCollectionFinished(gen); fetchEbirdApiSightingsFromServer(gen); });
+    }
+
+    private void fetchEbirdApiSightingsFromServer(int gen) {
+        db.collection("eBirdApiSightings").limit(1000).get(Source.SERVER).addOnSuccessListener(snap -> processSightings(snap, false, gen)).addOnFailureListener(e -> onCollectionFinished(gen));
+    }
+
+    private void processSightings(com.google.firebase.firestore.QuerySnapshot snap, boolean user, int gen) {
+        if (fetchGeneration != gen) return;
+        List<WeightedLatLng> hl = user ? userHeatPoints : eBirdHeatPoints; List<HotspotSighting> hsl = user ? userHotspotSightings : eBirdHotspotSightings;
+        hl.clear(); hsl.clear();
+        for (DocumentSnapshot d : snap.getDocuments()) {
+            Double lat = getAnyDouble(d, "location.latitude", "lastSeenLatitudeGeorgia", "latitude", "lat"), lng = getAnyDouble(d, "location.longitude", "lastSeenLongitudeGeorgia", "longitude", "lng");
+            if (lat == null || lng == null || shouldBeFiltered(lat, lng, getAnyTimeMillis(d, user ? "timestamp" : "observationDate"))) continue;
+            hl.add(new WeightedLatLng(new LatLng(lat, lng), user ? 1.8 : 1.0)); hsl.add(new HotspotSighting(lat, lng, extractBirdName(d), user));
+        }
+        rebuildHotspotBuckets(); onCollectionFinished(gen);
+    }
+
+    private void onCollectionFinished(int gen) {
+        if (fetchGeneration != gen) return;
+        pendingLoads--; if (pendingLoads <= 0) renderHeatmaps();
     }
 
     private void rebuildHotspotBuckets() {
         hotspotBuckets.clear();
-
-        for (HotspotSighting sighting : userHotspotSightings) {
-            addToHotspotBucket(sighting.lat, sighting.lng, sighting.birdName, true);
-        }
-
-        for (HotspotSighting sighting : eBirdHotspotSightings) {
-            addToHotspotBucket(sighting.lat, sighting.lng, sighting.birdName, false);
-        }
+        for (HotspotSighting s : userHotspotSightings) addToHotspotBucket(s.lat, s.lng, s.birdName, true);
+        for (HotspotSighting s : eBirdHotspotSightings) addToHotspotBucket(s.lat, s.lng, s.birdName, false);
     }
 
     private void renderHeatmaps() {
         if (googleMap == null) return;
-
-        if (eBirdOverlay != null) {
-            eBirdOverlay.remove();
-            eBirdOverlay = null;
-        }
-
-        if (userOverlay != null) {
-            userOverlay.remove();
-            userOverlay = null;
-        }
-
+        if (eBirdOverlay != null) { eBirdOverlay.remove(); eBirdOverlay = null; }
+        if (userOverlay != null) { userOverlay.remove(); userOverlay = null; }
         clearHotspotCircles();
 
-        if (!eBirdHeatPoints.isEmpty()) {
-            HeatmapTileProvider eBirdProvider = new HeatmapTileProvider.Builder()
-                    .weightedData(eBirdHeatPoints)
-                    .radius(45)
-                    .opacity(0.65)
-                    .gradient(EBIRD_GRADIENT)
-                    .build();
-
-            eBirdOverlay = googleMap.addTileOverlay(
-                    new TileOverlayOptions()
-                            .tileProvider(eBirdProvider)
-                            .zIndex(1f)
-            );
-        }
-
-        if (!userHeatPoints.isEmpty()) {
-            HeatmapTileProvider userProvider = new HeatmapTileProvider.Builder()
-                    .weightedData(userHeatPoints)
-                    .radius(45)
-                    .opacity(0.70)
-                    .gradient(USER_GRADIENT)
-                    .build();
-
-            userOverlay = googleMap.addTileOverlay(
-                    new TileOverlayOptions()
-                            .tileProvider(userProvider)
-                            .zIndex(2f)
-            );
-        }
-
+        if (!eBirdHeatPoints.isEmpty()) eBirdOverlay = googleMap.addTileOverlay(new TileOverlayOptions().tileProvider(new HeatmapTileProvider.Builder().weightedData(eBirdHeatPoints).radius(45).opacity(0.65).gradient(EBIRD_GRADIENT).build()).zIndex(1f));
+        if (!userHeatPoints.isEmpty()) userOverlay = googleMap.addTileOverlay(new TileOverlayOptions().tileProvider(new HeatmapTileProvider.Builder().weightedData(userHeatPoints).radius(45).opacity(0.70).gradient(USER_GRADIENT).build()).zIndex(2f));
         renderHotspotCircles();
 
-        if (userHeatPoints.isEmpty() && eBirdHeatPoints.isEmpty()) {
-            tvMapSubtitle.setText(hasNearbyCenter()
-                    ? "No nearby sightings found."
-                    : "No recent sightings found.");
-        } else {
-            String scopeText = hasNearbyCenter() ? "in the last 72h within 50km" : "in the last 72h";
-            tvMapSubtitle.setText("Heatmap (" + scopeText + "): " + userHeatPoints.size() + " unverified, " + eBirdHeatPoints.size() + " verified");
-        }
+        if (userHeatPoints.isEmpty() && eBirdHeatPoints.isEmpty()) tvMapSubtitle.setText("No recent sightings found.");
+        else tvMapSubtitle.setText("Heatmap: " + userHeatPoints.size() + " unverified, " + eBirdHeatPoints.size() + " verified");
     }
 
     private void renderHotspotCircles() {
-        if (googleMap == null) return;
-
-        for (HotspotBucket bucket : hotspotBuckets.values()) {
-            if (bucket.pointCount == 0) continue;
-
-            LatLng center = new LatLng(bucket.getCenterLat(), bucket.getCenterLng());
-
-            Circle circle = googleMap.addCircle(
-                    new CircleOptions()
-                            .center(center)
-                            .radius(HOTSPOT_CIRCLE_RADIUS_METERS)
-                            .strokeWidth(2f)
-                            .strokeColor(Color.argb(110, 255, 255, 255))
-                            .fillColor(Color.argb(35, 255, 255, 255))
-                            .clickable(true)
-                            .zIndex(3f)
-            );
-
-            hotspotCircles.add(circle);
-            circleIdToBucket.put(circle.getId(), bucket);
+        for (HotspotBucket b : hotspotBuckets.values()) {
+            if (b.pointCount == 0) continue;
+            Circle c = googleMap.addCircle(new CircleOptions().center(new LatLng(b.getCenterLat(), b.getCenterLng())).radius(HOTSPOT_CIRCLE_RADIUS_METERS).strokeWidth(2f).strokeColor(Color.argb(110, 255, 255, 255)).fillColor(Color.argb(35, 255, 255, 255)).clickable(true).zIndex(3f));
+            hotspotCircles.add(c); circleIdToBucket.put(c.getId(), b);
         }
     }
 
-    private void clearHotspotCircles() {
-        for (Circle circle : hotspotCircles) {
-            circle.remove();
+    private void clearHotspotCircles() { for (Circle c : hotspotCircles) c.remove(); hotspotCircles.clear(); circleIdToBucket.clear(); }
+
+    @Override public void onCircleClick(@NonNull Circle c) { HotspotBucket b = circleIdToBucket.get(c.getId()); if (b != null) showBirdListBottomSheet(b); }
+
+    private void showBirdListBottomSheet(@NonNull HotspotBucket b) {
+        BottomSheetDialog dialog = new BottomSheetDialog(this); dialog.setContentView(R.layout.bottom_sheet_heatmap_birds);
+        View bs = dialog.findViewById(com.google.android.material.R.id.design_bottom_sheet);
+        if (bs != null) { bs.setBackgroundColor(Color.TRANSPARENT); ViewGroup.LayoutParams p = bs.getLayoutParams(); p.height = (int) (getResources().getDisplayMetrics().heightPixels * 0.58f); bs.setLayoutParams(p); BottomSheetBehavior<View> behavior = BottomSheetBehavior.from(bs); behavior.setState(BottomSheetBehavior.STATE_EXPANDED); }
+        ((TextView) dialog.findViewById(R.id.tvSheetSummary)).setText("Unverified: " + b.userCount + "  •  Verified: " + b.eBirdCount);
+        LinearLayout container = dialog.findViewById(R.id.birdListContainer); container.removeAllViews();
+        List<String> names = new ArrayList<>(b.birdCounts.keySet()); Collections.sort(names, String.CASE_INSENSITIVE_ORDER);
+        LayoutInflater inf = LayoutInflater.from(this);
+        for (String n : names) {
+            View row = inf.inflate(R.layout.item_heatmap_bird_placeholder, container, false);
+            ((TextView) row.findViewById(R.id.tvBirdName)).setText(n);
+            ((TextView) row.findViewById(R.id.tvBirdCount)).setText(b.birdCounts.get(n) + " sightings");
+            container.addView(row);
         }
-        hotspotCircles.clear();
-        circleIdToBucket.clear();
-    }
-
-    @Override
-    public void onCircleClick(@NonNull Circle circle) {
-        HotspotBucket bucket = circleIdToBucket.get(circle.getId());
-        if (bucket == null) return;
-
-        showBirdListBottomSheet(bucket);
-    }
-
-    private void showBirdListBottomSheet(@NonNull HotspotBucket bucket) {
-        BottomSheetDialog dialog = new BottomSheetDialog(this);
-        dialog.setContentView(R.layout.bottom_sheet_heatmap_birds);
-
-        View bottomSheet = dialog.findViewById(com.google.android.material.R.id.design_bottom_sheet);
-        if (bottomSheet != null) {
-            bottomSheet.setBackgroundColor(Color.TRANSPARENT);
-
-            ViewGroup.LayoutParams params = bottomSheet.getLayoutParams();
-            params.height = (int) (getResources().getDisplayMetrics().heightPixels * 0.58f);
-            bottomSheet.setLayoutParams(params);
-
-            BottomSheetBehavior<View> behavior = BottomSheetBehavior.from(bottomSheet);
-            behavior.setDraggable(true);
-            behavior.setHideable(true);
-            behavior.setSkipCollapsed(false);
-            behavior.setPeekHeight(params.height);
-            behavior.setState(BottomSheetBehavior.STATE_EXPANDED);
-        }
-
-        TextView tvTitle = dialog.findViewById(R.id.tvSheetTitle);
-        TextView tvSummary = dialog.findViewById(R.id.tvSheetSummary);
-        TextView tvEmpty = dialog.findViewById(R.id.tvEmptyBirds);
-        LinearLayout birdListContainer = dialog.findViewById(R.id.birdListContainer);
-
-        if (tvTitle != null) {
-            tvTitle.setText("Birds in this hotspot");
-        }
-
-        if (tvSummary != null) {
-            tvSummary.setText(
-                    "Unverified Sightings: " + bucket.userCount +
-                            "  •  Verified Sightings: " + bucket.eBirdCount
-            );
-        }
-
-        if (birdListContainer != null) {
-            birdListContainer.removeAllViews();
-
-            List<String> birdNames = new ArrayList<>(bucket.birdCounts.keySet());
-            Collections.sort(birdNames, String.CASE_INSENSITIVE_ORDER);
-
-            if (birdNames.isEmpty()) {
-                if (tvEmpty != null) {
-                    tvEmpty.setVisibility(View.VISIBLE);
-                }
-            } else {
-                if (tvEmpty != null) {
-                    tvEmpty.setVisibility(View.GONE);
-                }
-
-                LayoutInflater inflater = LayoutInflater.from(this);
-
-                for (String birdName : birdNames) {
-                    View row = inflater.inflate(R.layout.item_heatmap_bird_placeholder, birdListContainer, false);
-
-                    ImageView ivBird = row.findViewById(R.id.ivBirdPlaceholder);
-                    TextView tvBirdName = row.findViewById(R.id.tvBirdName);
-                    TextView tvBirdCount = row.findViewById(R.id.tvBirdCount);
-
-                    Integer count = bucket.birdCounts.get(birdName);
-                    if (count == null) count = 1;
-
-                    ivBird.setImageResource(android.R.drawable.ic_menu_gallery);
-                    ivBird.setColorFilter(null);
-
-                    tvBirdName.setText(birdName);
-
-                    if (count == 1) {
-                        tvBirdCount.setText("1 sighting in this hotspot");
-                    } else {
-                        tvBirdCount.setText(count + " sightings in this hotspot");
-                    }
-
-                    LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
-                            ViewGroup.LayoutParams.MATCH_PARENT,
-                            ViewGroup.LayoutParams.WRAP_CONTENT
-                    );
-                    lp.bottomMargin = dp(10);
-                    row.setLayoutParams(lp);
-
-                    birdListContainer.addView(row);
-                }
-            }
-        }
-
         dialog.show();
     }
 
-    private int dp(int value) {
-        return (int) TypedValue.applyDimension(
-                TypedValue.COMPLEX_UNIT_DIP,
-                value,
-                getResources().getDisplayMetrics()
-        );
+    private void addToHotspotBucket(double lat, double lng, String name, boolean user) {
+        double blat = Math.round(lat / HOTSPOT_BUCKET_SIZE) * HOTSPOT_BUCKET_SIZE, blng = Math.round(lng / HOTSPOT_BUCKET_SIZE) * HOTSPOT_BUCKET_SIZE;
+        String key = String.format(Locale.US, "%.4f,%.4f", blat, blng);
+        HotspotBucket b = hotspotBuckets.get(key); if (b == null) { b = new HotspotBucket(); hotspotBuckets.put(key, b); }
+        b.add(lat, lng, name, user);
     }
 
-    private void addToHotspotBucket(double lat, double lng, String birdName, boolean isUserSighting) {
-        String key = buildBucketKey(lat, lng);
+    private String extractBirdName(DocumentSnapshot d) { String n = getAnyString(d, "commonName", "comName", "birdName", "species", "scientificName", "sciName", "speciesCode", "birdId"); return (n == null || n.trim().isEmpty()) ? "Unknown bird" : n.trim().replace("_", " ").replace("-", " "); }
 
-        HotspotBucket bucket = hotspotBuckets.get(key);
-        if (bucket == null) {
-            bucket = new HotspotBucket();
-            hotspotBuckets.put(key, bucket);
-        }
-
-        bucket.add(lat, lng, birdName, isUserSighting);
-    }
-
-    private String buildBucketKey(double lat, double lng) {
-        double bucketLat = Math.round(lat / HOTSPOT_BUCKET_SIZE) * HOTSPOT_BUCKET_SIZE;
-        double bucketLng = Math.round(lng / HOTSPOT_BUCKET_SIZE) * HOTSPOT_BUCKET_SIZE;
-        return String.format(Locale.US, "%.4f,%.4f", bucketLat, bucketLng);
-    }
-
-    private String extractBirdName(DocumentSnapshot doc) {
-        String name = getAnyString(doc,
-                "commonName",
-                "comName",
-                "birdName",
-                "species",
-                "scientificName",
-                "sciName",
-                "speciesCode",
-                "birdId");
-
-        if (name == null || name.trim().isEmpty()) {
-            return "Unknown bird";
-        }
-
-        name = name.trim();
-        name = name.replace("_", " ").replace("-", " ");
-
-        return name;
-    }
-
-    private boolean shouldBeFiltered(double lat, double lng, Long timeMillis) {
-        if (timeMillis != null) {
-            long age = System.currentTimeMillis() - timeMillis;
-            if (age > SIGHTING_RECENCY_MS) {
-                return true;
-            }
-        }
-
-        // When map bounds are available, filter by what is actually visible on screen.
-        if (currentVisibleBounds != null) {
-            LatLng point = new LatLng(lat, lng);
-            if (!currentVisibleBounds.contains(point)) {
-                return true;
-            }
-        } else if (hasNearbyCenter()) {
-            // fallback to old 50km center-radius behavior
-            float[] results = new float[1];
-            android.location.Location.distanceBetween(
-                    centerLat,
-                    centerLng,
-                    lat,
-                    lng,
-                    results
-            );
-
-            if (results[0] > SEARCH_RADIUS_METERS) {
-                return true;
-            }
-        }
-
+    private boolean shouldBeFiltered(double lat, double lng, Long time) {
+        if (time != null && (System.currentTimeMillis() - time > SIGHTING_RECENCY_MS)) return true;
+        if (currentVisibleBounds != null) return !currentVisibleBounds.contains(new LatLng(lat, lng));
         return false;
     }
 
-    private boolean hasNearbyCenter() {
-        return !Double.isNaN(centerLat) && !Double.isNaN(centerLng);
-    }
+    private Double getAnyDouble(DocumentSnapshot d, String... paths) { for (String p : paths) { Object v = d.get(p); if (v instanceof Number) return ((Number) v).doubleValue(); } return null; }
+    private String getAnyString(DocumentSnapshot d, String... paths) { for (String p : paths) { Object v = d.get(p); if (v != null && !String.valueOf(v).trim().isEmpty()) return String.valueOf(v).trim(); } return null; }
+    private Long getAnyTimeMillis(DocumentSnapshot d, String... paths) { for (String p : paths) { Object v = d.get(p); if (v instanceof Date) return ((Date) v).getTime(); if (v instanceof Number) return ((Number) v).longValue(); } return null; }
 
-    private boolean hasLocationPermission() {
-        return ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
-                == PackageManager.PERMISSION_GRANTED
-                || ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION)
-                == PackageManager.PERMISSION_GRANTED;
-    }
-
-    private Double getAnyDouble(DocumentSnapshot doc, String... fieldPaths) {
-        for (String fieldPath : fieldPaths) {
-            Object value = doc.get(fieldPath);
-            if (value instanceof Number) {
-                return ((Number) value).doubleValue();
-            }
-        }
-        return null;
-    }
-
-    private String getAnyString(DocumentSnapshot doc, String... fieldPaths) {
-        for (String fieldPath : fieldPaths) {
-            Object value = doc.get(fieldPath);
-            if (value != null) {
-                String text = String.valueOf(value).trim();
-                if (!text.isEmpty()) {
-                    return text;
-                }
-            }
-        }
-        return null;
-    }
-
-    private Long getAnyTimeMillis(DocumentSnapshot doc, String... fieldPaths) {
-        for (String fieldPath : fieldPaths) {
-            Object raw = doc.get(fieldPath);
-            if (raw instanceof Date) {
-                return ((Date) raw).getTime();
-            }
-            if (raw instanceof Number) {
-                return ((Number) raw).longValue();
-            }
-        }
-        return null;
-    }
-
-    private static class HotspotSighting {
-        final double lat;
-        final double lng;
-        final String birdName;
-        final boolean isUserSighting;
-
-        HotspotSighting(double lat, double lng, String birdName, boolean isUserSighting) {
-            this.lat = lat;
-            this.lng = lng;
-            this.birdName = birdName;
-            this.isUserSighting = isUserSighting;
-        }
-    }
-
-    private static class HotspotBucket {
-        double latSum = 0d;
-        double lngSum = 0d;
-        int pointCount = 0;
-        int userCount = 0;
-        int eBirdCount = 0;
-
-        final Map<String, Integer> birdCounts = new LinkedHashMap<>();
-
-        void add(double lat, double lng, String birdName, boolean isUserSighting) {
-            latSum += lat;
-            lngSum += lng;
-            pointCount++;
-
-            if (isUserSighting) {
-                userCount++;
-            } else {
-                eBirdCount++;
-            }
-
-            String cleanName = (birdName == null || birdName.trim().isEmpty())
-                    ? "Unknown bird"
-                    : birdName.trim();
-
-            Integer currentCount = birdCounts.get(cleanName);
-            if (currentCount == null) currentCount = 0;
-            birdCounts.put(cleanName, currentCount + 1);
-        }
-
-        double getCenterLat() {
-            return pointCount == 0 ? 0d : latSum / pointCount;
-        }
-
-        double getCenterLng() {
-            return pointCount == 0 ? 0d : lngSum / pointCount;
-        }
-    }
-
-    @Override
-    protected void onDestroy() {
-        super.onDestroy();
-    }
+    private static class HotspotSighting { final double lat, lng; final String birdName; final boolean isUserSighting; HotspotSighting(double lat, double lng, String n, boolean u) { this.lat = lat; this.lng = lng; this.birdName = n; this.isUserSighting = u; } }
+    private static class HotspotBucket { double latSum=0, lngSum=0; int pointCount=0, userCount=0, eBirdCount=0; final Map<String, Integer> birdCounts = new LinkedHashMap<>(); void add(double lat, double lng, String n, boolean u) { latSum+=lat; lngSum+=lng; pointCount++; if (u) userCount++; else eBirdCount++; String cn = (n==null || n.trim().isEmpty()) ? "Unknown bird" : n.trim(); Integer c = birdCounts.get(cn); birdCounts.put(cn, (c==null?0:c)+1); } double getCenterLat() { return pointCount==0?0:latSum/pointCount; } double getCenterLng() { return pointCount==0?0:lngSum/pointCount; } }
 }

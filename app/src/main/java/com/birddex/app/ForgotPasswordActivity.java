@@ -15,7 +15,7 @@ import com.google.android.gms.tasks.Task;
 
 /**
  * ForgotPasswordActivity allows users to request a password reset email.
- * It uses Firebase Authentication to handle the reset process.
+ * Fixes: Added isSending guard to prevent email spamming.
  */
 public class ForgotPasswordActivity extends AppCompatActivity {
 
@@ -24,54 +24,44 @@ public class ForgotPasswordActivity extends AppCompatActivity {
     private sign_IN_upValidator signINupValidator;
 
     private EditText forgotPasswordEmailEditText;
+    private Button btnSendReset;
+    private boolean isSending = false;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_forgot_password);
 
-        // Initialize helpers for Firebase operations and input validation.
         firebaseManager = new FirebaseManager(this);
         signINupValidator = new sign_IN_upValidator();
 
-        // Bind UI components.
         forgotPasswordEmailEditText = findViewById(R.id.etForgotEmail);
-        Button btnSendReset = findViewById(R.id.btnSendReset);
+        btnSendReset = findViewById(R.id.btnSendReset);
         TextView tvBackToLogin = findViewById(R.id.tvBackToLogin);
 
-        // Handle the 'Send Reset' button click.
         btnSendReset.setOnClickListener(v -> {
-            Log.d(TAG, "Send Reset button clicked.");
-            // Validate that the email field is not empty and is in the correct format.
+            if (isSending) return;
+            
             if (signINupValidator.validateForgotPasswordForm(forgotPasswordEmailEditText)) {
-                String email = forgotPasswordEmailEditText.getText().toString();
-                Log.d(TAG, "Validation successful. Sending reset email to: " + email);
+                String email = forgotPasswordEmailEditText.getText().toString().trim();
+                isSending = true;
+                btnSendReset.setEnabled(false);
 
-                // Trigger the Firebase password reset email.
-                firebaseManager.sendPasswordResetEmail(email, new OnCompleteListener<Void>() {
-                    @Override
-                    public void onComplete(@androidx.annotation.NonNull Task<Void> task) {
-                        if (task.isSuccessful()) {
-                            Log.d(TAG, "onSuccess: Password reset email sent successfully.");
-                            // Notify the user that the email was sent successfully.
-                            Toast.makeText(ForgotPasswordActivity.this, "Password reset email sent. Please check your inbox (and spam folder).", Toast.LENGTH_LONG).show();
-                        } else {
-                            String errorMessage = task.getException() != null ? task.getException().getMessage() : "Unknown error";
-                            Log.e(TAG, "onFailure: " + errorMessage);
-                            // Display error message if the operation fails.
-                            Toast.makeText(ForgotPasswordActivity.this, errorMessage, Toast.LENGTH_LONG).show();
-                        }
+                firebaseManager.sendPasswordResetEmail(email, task -> {
+                    isSending = false;
+                    btnSendReset.setEnabled(true);
+                    if (task.isSuccessful()) {
+                        Toast.makeText(ForgotPasswordActivity.this, "Password reset email sent.", Toast.LENGTH_LONG).show();
+                    } else {
+                        Toast.makeText(ForgotPasswordActivity.this, task.getException() != null ? task.getException().getMessage() : "Error", Toast.LENGTH_LONG).show();
                     }
                 });
-            } else {
-                Log.w(TAG, "Validation failed. Email field likely empty or invalid.");
             }
         });
 
-        // Navigate back to the LoginActivity.
         tvBackToLogin.setOnClickListener(v -> {
             startActivity(new Intent(ForgotPasswordActivity.this, LoginActivity.class));
-            finish(); // Finish current activity.
+            finish();
         });
     }
 }

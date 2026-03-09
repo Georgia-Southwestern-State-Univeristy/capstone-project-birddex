@@ -12,6 +12,8 @@ import android.widget.TextView;
 import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatActivity;
 
+import java.util.concurrent.atomic.AtomicBoolean;
+
 public class BirdInfoActivity extends AppCompatActivity {
 
     private String currentImageUriStr;
@@ -29,6 +31,9 @@ public class BirdInfoActivity extends AppCompatActivity {
 
     private RadioGroup rgQuantity;
     private Button btnStore;
+    
+    // FIX: Guard against double-tap launching multiple activities
+    private final AtomicBoolean storeClicked = new AtomicBoolean(false);
 
     @Override
     protected void onCreate(@Nullable Bundle savedInstanceState) {
@@ -71,9 +76,11 @@ public class BirdInfoActivity extends AppCompatActivity {
         );
 
         btnStore.setOnClickListener(v -> {
+            if (!storeClicked.compareAndSet(false, true)) return;
+            
             String quantity = getSelectedQuantity();
-
             long caughtTime = System.currentTimeMillis();
+            
             Intent i = new Intent(BirdInfoActivity.this, CardMakerActivity.class);
             i.putExtra(CardMakerActivity.EXTRA_IMAGE_URI, currentImageUriStr);
             i.putExtra(CardMakerActivity.EXTRA_LOCALITY, currentLocalityName);
@@ -101,6 +108,13 @@ public class BirdInfoActivity extends AppCompatActivity {
             startActivity(home);
             finish();
         });
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        // Reset guard if returning to this activity
+        storeClicked.set(false);
     }
 
     private String getSelectedQuantity() {

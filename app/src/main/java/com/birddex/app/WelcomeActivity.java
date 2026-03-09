@@ -24,24 +24,18 @@ import java.util.concurrent.TimeUnit;
 
 /**
  * WelcomeActivity serves as the entry point of the app.
- * It handles automatic login redirection and transitions quickly to the next activity.
- * Data loading is now decoupled from this initial screen for better performance.
+ * Fixes: Added isNavigating guard to prevent redundant activity launches.
  */
 public class WelcomeActivity extends AppCompatActivity implements NetworkMonitor.NetworkStatusListener {
 
     private static final String TAG = "WelcomeActivity";
     private FirebaseAuth mAuth;
-    private FirebaseManager firebaseManager;
     private NetworkMonitor networkMonitor;
     private boolean isTransitioned = false;
+    private boolean isNavigating = false;
 
     private final ActivityResultLauncher<String> requestPermissionLauncher =
             registerForActivityResult(new ActivityResultContracts.RequestPermission(), isGranted -> {
-                if (isGranted) {
-                    Log.d(TAG, "Notification permission granted");
-                } else {
-                    Log.d(TAG, "Notification permission denied");
-                }
                 proceedToNextActivity();
             });
 
@@ -51,10 +45,8 @@ public class WelcomeActivity extends AppCompatActivity implements NetworkMonitor
         setContentView(R.layout.activity_main);
 
         mAuth = FirebaseAuth.getInstance();
-        firebaseManager = new FirebaseManager(this);
         networkMonitor = new NetworkMonitor(this, this);
 
-        // Immediately handle notifications and proceed to authentication
         askNotificationPermission();
         setupFCM();
     }
@@ -75,14 +67,9 @@ public class WelcomeActivity extends AppCompatActivity implements NetworkMonitor
     private void setupFCM() {
         FirebaseMessaging.getInstance().getToken()
                 .addOnCompleteListener(task -> {
-                    if (!task.isSuccessful()) {
-                        Log.w(TAG, "Fetching FCM registration token failed", task.getException());
-                        return;
+                    if (task.isSuccessful() && task.getResult() != null) {
+                        updateUserToken(task.getResult());
                     }
-
-                    String token = task.getResult();
-                    Log.d(TAG, "FCM Token: " + token);
-                    updateUserToken(token);
                 });
     }
 
@@ -97,29 +84,24 @@ public class WelcomeActivity extends AppCompatActivity implements NetworkMonitor
     @Override
     protected void onResume() {
         super.onResume();
-        networkMonitor.register(); // Register network monitor
+        networkMonitor.register();
+        isNavigating = false;
     }
 
     @Override
     protected void onPause() {
         super.onPause();
-        networkMonitor.unregister(); // Unregister network monitor
+        networkMonitor.unregister();
     }
 
     private synchronized void proceedToNextActivity() {
-        if (isTransitioned) {
-            return;
-        }
+        if (isTransitioned) return;
         isTransitioned = true;
 
         FirebaseUser currentUser = mAuth.getCurrentUser();
-
         if (currentUser != null) {
-            long lastSignInTimestamp = currentUser.getMetadata().getLastSignInTimestamp();
-            long thirtyDaysInMillis = TimeUnit.DAYS.toMillis(30);
-            long currentTime = System.currentTimeMillis();
-
-            if ((currentTime - lastSignInTimestamp) > thirtyDaysInMillis) {
+            long lastSignIn = currentUser.getMetadata().getLastSignInTimestamp();
+            if ((System.currentTimeMillis() - lastSignIn) > TimeUnit.DAYS.toMillis(30)) {
                 mAuth.signOut();
                 showWelcomeScreenLayout();
             } else {
@@ -137,38 +119,26 @@ public class WelcomeActivity extends AppCompatActivity implements NetworkMonitor
 
         if (btnSignup != null) {
             btnSignup.setOnClickListener(v -> {
+                if (isNavigating) return;
+                isNavigating = true;
                 startActivity(new Intent(WelcomeActivity.this, SignUpActivity.class));
             });
         }
 
         if (tvAlready != null) {
             tvAlready.setOnClickListener(v -> {
+                if (isNavigating) return;
+                isNavigating = true;
                 startActivity(new Intent(WelcomeActivity.this, LoginActivity.class));
             });
         }
     }
 
-    // --- NetworkMonitor Callbacks ---
-    @Override
-    public void onNetworkAvailable() {
-        Log.d(TAG, "Network became available in WelcomeActivity.");
-        // No immediate action needed here, subsequent activities will handle data loading.
-    }
-
-    @Override
-    public void onNetworkLost() {
-        Log.e(TAG, "Network lost during WelcomeActivity startup.");
-        synchronized (this) {
-            if (!isTransitioned) {
-                Toast.makeText(this, "Internet connection lost. Please reconnect and restart the app.", Toast.LENGTH_LONG).show();
-                finish(); // Exit the app as core data might not load
-            }
+    @Override public void onNetworkAvailable() {}
+    @Override public void onNetworkLost() {
+        if (!isTransitioned) {
+            Toast.makeText(this, "Connection lost.", Toast.LENGTH_LONG).show();
+            finish();
         }
-    }
-
-    @Override
-    protected void onDestroy() {
-        super.onDestroy();
-        // No handlers/runnables to remove here anymore.
     }
 }

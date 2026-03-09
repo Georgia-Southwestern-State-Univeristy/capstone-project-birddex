@@ -23,7 +23,7 @@ public class BirdCacheManager {
         this.prefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE);
     }
 
-    public void saveNearbyBirds(List<Bird> birds) {
+    public synchronized void saveNearbyBirds(List<Bird> birds) {
         JSONArray array = new JSONArray();
         for (Bird bird : birds) {
             try {
@@ -45,7 +45,7 @@ public class BirdCacheManager {
                 .apply();
     }
 
-    public List<Bird> getCachedNearbyBirds() {
+    public synchronized List<Bird> getCachedNearbyBirds() {
         String json = prefs.getString(KEY_NEARBY_BIRDS, null);
         if (json == null) return new ArrayList<>();
 
@@ -69,7 +69,11 @@ public class BirdCacheManager {
         return birds;
     }
 
-    public long getCacheAge() {
+    /**
+     * FIX: synchronized so a concurrent saveNearbyBirds() cannot cause a falsely
+     * large stale-age value being read while the timestamp is mid-write.
+     */
+    public synchronized long getCacheAge() {
         return System.currentTimeMillis() - prefs.getLong(KEY_NEARBY_TIMESTAMP, 0);
     }
 }

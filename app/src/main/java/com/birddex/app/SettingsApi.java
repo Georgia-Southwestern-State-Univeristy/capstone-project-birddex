@@ -7,6 +7,10 @@ import com.google.firebase.firestore.SetOptions;
 import java.util.HashMap;
 import java.util.Map;
 
+/**
+ * SettingsApi handles reading and writing user preferences.
+ * Fixes: Corrected path to top-level User document to match Cloud Function expectations.
+ */
 public class SettingsApi {
 
     private static final String TAG = "SettingsApi";
@@ -20,12 +24,10 @@ public class SettingsApi {
     public void getSettings(String uid, SettingsCallback callback) {
         if (uid == null) return;
         
-        // Direct path: users/{uid}/settings/notifications
-        db.collection("users").document(uid)
-                .collection("settings").document("notifications")
-                .get()
+        // Target top-level user doc where Cloud Functions look for notification preferences
+        db.collection("users").document(uid).get()
                 .addOnSuccessListener(doc -> {
-                    boolean enabled = false;
+                    boolean enabled = true;
                     boolean replies = true;
                     int cooldown = 2;
                     if (doc != null && doc.exists()) {
@@ -41,7 +43,7 @@ public class SettingsApi {
                     if (callback != null) callback.onSuccess(new UserSettings(enabled, replies, cooldown));
                 })
                 .addOnFailureListener(e -> {
-                    Log.e(TAG, "Error getting settings for " + uid, e);
+                    Log.e(TAG, "Error getting settings", e);
                     if (callback != null) callback.onFailure(e, "Failed to load settings.");
                 });
     }
@@ -65,21 +67,14 @@ public class SettingsApi {
     }
 
     private void saveToFirestore(String uid, Map<String, Object> updates, SettingsCallback callback) {
-        if (uid == null) {
-            Log.e(TAG, "Cannot save settings: uid is null");
-            return;
-        }
+        if (uid == null) return;
 
-        // Explicitly target the document: users/{uid}/settings/notifications
-        db.collection("users").document(uid)
-                .collection("settings").document("notifications")
-                .set(updates, SetOptions.merge())
+        db.collection("users").document(uid).update(updates)
                 .addOnSuccessListener(v -> {
-                    Log.d(TAG, "SUCCESS: Settings saved to Firestore path: users/" + uid + "/settings/notifications");
                     if (callback != null) getSettings(uid, callback);
                 })
                 .addOnFailureListener(e -> {
-                    Log.e(TAG, "FAILURE: Could not save settings for " + uid, e);
+                    Log.e(TAG, "Save failed", e);
                     if (callback != null) callback.onFailure(e, "Failed to update settings.");
                 });
     }

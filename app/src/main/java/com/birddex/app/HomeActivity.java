@@ -19,6 +19,9 @@ import java.util.List;
  * HomeActivity serves as the main navigation hub of the application.
  * It uses a BottomNavigationView to switch between different fragments
  * and pre-loads the core Georgia bird list in the background.
+ * 
+ * Race Condition fixes:
+ *  - Added isNavigating guard for camera launch.
  */
 public class HomeActivity extends AppCompatActivity implements NetworkMonitor.NetworkStatusListener {
 
@@ -33,6 +36,7 @@ public class HomeActivity extends AppCompatActivity implements NetworkMonitor.Ne
     private List<JSONObject> allGeorgiaBirds; // New: To hold the core bird list
     private NetworkMonitor networkMonitor; // New: NetworkMonitor instance
     private boolean isFetchingBirds = false; // Flag to prevent redundant fetches
+    private boolean isNavigating = false;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -70,6 +74,9 @@ public class HomeActivity extends AppCompatActivity implements NetworkMonitor.Ne
 
             // Check which item was selected and switch to the corresponding fragment.
             if (id == R.id.nav_camera) {
+                if (isNavigating) return false;
+                isNavigating = true;
+                
                 startActivity(new Intent(HomeActivity.this, ImageUploadActivity.class));
 
                 // Restore highlight to the last non-camera tab (so camera doesn't stay selected)
@@ -119,6 +126,7 @@ public class HomeActivity extends AppCompatActivity implements NetworkMonitor.Ne
         super.onResume();
         // Register NetworkMonitor
         networkMonitor.register();
+        isNavigating = false;
 
         // Ensure the selected tab matches the fragment the user was last actually on
         if (bottomNav != null && bottomNav.getSelectedItemId() != lastNonCameraTabId) {
@@ -167,13 +175,17 @@ public class HomeActivity extends AppCompatActivity implements NetworkMonitor.Ne
 
     /**
      * Replaces the current fragment in the container with the specified fragment.
+     * FIX: Uses commitAllowingStateLoss() to prevent IllegalStateException if 
+     * the fragment is replaced while the activity is in the background (e.g. via network callback).
      * @param fragment The new fragment to display.
      */
     private void switchFragment(Fragment fragment) {
+        if (isFinishing() || isDestroyed()) return;
+
         getSupportFragmentManager()
                 .beginTransaction()
                 .replace(R.id.fragmentContainer, fragment)
-                .commit();
+                .commitAllowingStateLoss();
     }
 
     // You can add a method here to provide the allGeorgiaBirds list to fragments if they need it

@@ -48,12 +48,13 @@ function sanitizeUsername(username) {
     if (!username || typeof username !== "string") {
         throw new HttpsError("invalid-argument", "Username must be a non-empty string.");
     }
-    const trimmed = username.trim();
+    // Trim edges and collapse multiple internal spaces into one
+    const trimmed = username.trim().replace(/ {2,}/g, " ");
     if (trimmed.length < 3 || trimmed.length > 30) {
         throw new HttpsError("invalid-argument", "Username must be between 3 and 30 characters.");
     }
-    if (!/^[a-zA-Z0-9_]+$/.test(trimmed)) {
-        throw new HttpsError("invalid-argument", "Username can only contain letters, numbers, and underscores.");
+    if (!/^[a-zA-Z0-9_ ]+$/.test(trimmed)) {
+        throw new HttpsError("invalid-argument", "Username can only contain letters, numbers, underscores, and spaces.");
     }
     return trimmed;
 }
@@ -376,24 +377,48 @@ exports.checkUsernameAndEmailAvailability = onCall(async (request) => {
 exports.initializeUser = onCall(async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Authentication required.");
 
-    const { username, email } = request.data;
+    const { username, email, bio, profilePictureUrl } = request.data;
     const uid = request.auth.uid;
     const sanitizedUsername = sanitizeUsername(username);
 
+    const userRef = db.collection("users").doc(uid);
+    // Dedicated username registry: doc ID = username, guaranteed unique by Firestore
+    const usernameRef = db.collection("usernames").doc(sanitizedUsername);
+
     try {
-        const userRef = db.collection("users").doc(uid);
-        const usernameSnapshot = await db.collection("users").where("username", "==", sanitizedUsername).limit(1).get();
+        await db.runTransaction(async (t) => {
+            const [usernameDoc, userDoc] = await Promise.all([
+                t.get(usernameRef),
+                t.get(userRef)
+            ]);
 
-        if (!usernameSnapshot.empty && usernameSnapshot.docs[0].id !== uid) {
-            throw new HttpsError("already-exists", "Username is already taken.");
-        }
+            // Allow re-claim if this user already owns it
+            if (usernameDoc.exists && usernameDoc.data().uid !== uid) {
+                throw new HttpsError("already-exists", "Username is already taken.");
+            }
 
-        await userRef.set({
-            username: sanitizedUsername,
-            email: email || request.auth.token.email,
-            id: uid,
-            updatedAt: admin.firestore.FieldValue.serverTimestamp()
-        }, { merge: true });
+            // If user previously had a different username, release the old claim
+            if (userDoc.exists && userDoc.data().username &&
+                userDoc.data().username !== sanitizedUsername) {
+                const oldUsernameRef = db.collection("usernames").doc(userDoc.data().username);
+                t.delete(oldUsernameRef);
+            }
+
+            // Claim the new username atomically
+            t.set(usernameRef, { uid, claimedAt: admin.firestore.FieldValue.serverTimestamp() });
+
+            const profileUpdate = {
+                username: sanitizedUsername,
+                email: email || request.auth.token.email,
+                id: uid,
+                updatedAt: admin.firestore.FieldValue.serverTimestamp()
+            };
+            if (bio !== undefined && bio !== null) profileUpdate.bio = bio;
+            if (profilePictureUrl !== undefined && profilePictureUrl !== null) {
+                profileUpdate.profilePictureUrl = profilePictureUrl;
+            }
+            t.set(userRef, profileUpdate, { merge: true });
+        });
 
         logger.info(`Successfully initialized user ${uid} with username ${sanitizedUsername}`);
         return { success: true };
@@ -417,6 +442,8 @@ exports.createUserDocument = auth.user().onCreate(async (user) => {
     try {
         await db.collection("users").doc(uid).set({
             email,
+            bio: "",
+            profilePictureUrl: "",
             createdAt: admin.firestore.FieldValue.serverTimestamp(),
             openAiRequestsRemaining: CONFIG.MAX_OPENAI_REQUESTS,
             pfpChangesToday: CONFIG.MAX_PFP_CHANGES,
@@ -436,22 +463,51 @@ exports.createUserDocument = auth.user().onCreate(async (user) => {
 
 // ======================================================
 // archiveAndDeleteUser
+// FIX #19: Sequential get → set → delete had no idempotency guard.
+// A crash between set and delete left the user doc live with an archive copy already written.
+// Concurrent double-calls both archived (second overwrote first) and both deleted.
+// Fix: (a) Check if archive doc already exists — if so, skip the write and go straight to
+//          deleting the source doc (handles crash-between-write-and-delete).
+//      (b) Use a WriteBatch to make the archive-set and user-delete atomic.
 // ======================================================
 exports.archiveAndDeleteUser = onCall(async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "The function must be called while authenticated.");
 
     const uid = request.auth.uid;
+    const userRef = db.collection("users").doc(uid);
+    const archiveRef = db.collection("usersdeletedAccounts").doc(uid);
     try {
-        const userDoc = await db.collection("users").doc(uid).get();
-        if (userDoc.exists) {
-            await db.collection("usersdeletedAccounts").doc(uid).set({
+        const [userDoc, archiveDoc] = await Promise.all([userRef.get(), archiveRef.get()]);
+
+        if (!archiveDoc.exists) {
+            if (!userDoc.exists) {
+                // Nothing to archive and nothing to delete — already fully cleaned up.
+                return { success: true };
+            }
+            // Atomic: write archive record AND delete source doc together.
+            const batch = db.batch();
+            batch.set(archiveRef, {
                 ...userDoc.data(),
                 archivedAt: admin.firestore.FieldValue.serverTimestamp(),
                 originalUid: uid,
                 deletionReason: "User requested account deletion"
             });
-            await db.collection("users").doc(uid).delete();
+            batch.delete(userRef);
+            const deletedUsername = userDoc.data().username;
+                if (deletedUsername) {
+                batch.delete(db.collection("usernames").doc(deletedUsername));
+                    }
+                    await batch.commit();
             logger.info(`Archived and deleted user doc for UID: ${uid}`);
+        } else {
+            // Archive already written (crash after set, before delete — or duplicate call).
+            // Just ensure the source doc is gone.
+            if (userDoc.exists) {
+                await userRef.delete();
+                logger.info(`archiveAndDeleteUser: Archive existed; deleted stale source doc for UID: ${uid}`);
+            } else {
+                logger.info(`archiveAndDeleteUser: Already fully processed for UID: ${uid}`);
+            }
         }
         return { success: true };
     } catch (error) {
@@ -699,10 +755,35 @@ exports.recordPfpChange = onCall({ timeoutSeconds: 15 }, async (request) => {
 
 // ======================================================
 // HELPER: Core Georgia Birds Sync (shared logic)
+// FIX #18: _syncGeorgiaBirdsCore had no concurrency lock.  It could be invoked
+// simultaneously from scheduledGetGeorgiaBirds (every 72h) and the getGeorgiaBirds
+// callable (triggered by any authenticated user), causing duplicate batch deletes
+// and conflicting ebirdCacheDocRef writes.
+// Fix: Acquire the same schedulerLock pattern used by archiveOldForumPosts.
 // ======================================================
 async function _syncGeorgiaBirdsCore() {
     logger.info("Executing _syncGeorgiaBirdsCore...");
     const ebirdCacheDocRef = db.collection("ebird_ga_cache").doc("data");
+
+    // FIX #18: Acquire exclusive lock before any reads or writes.
+    const lockRef = db.collection("schedulerLocks").doc("syncGeorgiaBirds");
+    const STALE_LOCK_MS = 15 * 60 * 1000; // 15 minutes — release if previous run crashed
+    const lockAcquired = await db.runTransaction(async (t) => {
+        const lockDoc = await t.get(lockRef);
+        if (lockDoc.exists) {
+            const startedAt = lockDoc.data().startedAt?.toDate();
+            if (startedAt && (Date.now() - startedAt.getTime()) < STALE_LOCK_MS) {
+                return false; // another instance is running
+            }
+        }
+        t.set(lockRef, { startedAt: admin.firestore.FieldValue.serverTimestamp() });
+        return true;
+    });
+
+    if (!lockAcquired) {
+        logger.info("_syncGeorgiaBirdsCore: Another instance is already running. Skipping.");
+        return { status: "skipped", message: "Sync already in progress." };
+    }
 
     try {
         let cachedBirdIds = [];
@@ -819,6 +900,11 @@ async function _syncGeorgiaBirdsCore() {
     } catch (error) {
         logger.error("Error in _syncGeorgiaBirdsCore:", error);
         throw error;
+    } finally {
+        // FIX #18: Always release the lock, even on failure.
+        await lockRef.delete().catch(e =>
+            logger.warn("Failed to release syncGeorgiaBirds lock:", e)
+        );
     }
 }
 
@@ -1040,6 +1126,10 @@ exports.cleanupUserData = functions.runWith({
 
 // ======================================================
 // onCollectionSlotUpdatedForImageDeletion
+// FIX #24: Under at-least-once delivery a double-invocation could propagate duplicate
+// delete events for the same slotId, causing the userBirds delete to fire twice.
+// The second delete is a no-op in Firestore but the surrounding logic (and any future
+// code here) could produce side effects.  Add a processedEvents idempotency guard.
 // ======================================================
 exports.onCollectionSlotUpdatedForImageDeletion = onDocumentUpdated("users/{userId}/collectionSlot/{slotId}", async (event) => {
     const beforeData = event.data.before.data();
@@ -1049,8 +1139,27 @@ exports.onCollectionSlotUpdatedForImageDeletion = onDocumentUpdated("users/{user
     const imageUrlAfter = afterData.imageUrl;
 
     if (userBirdId && imageUrlBefore && !imageUrlAfter) {
+        const slotId = event.params.slotId;
+        const eventLogRef = db.collection("processedEvents").doc(`SLOT_DEL_${slotId}`);
+
         logger.info(`Starting cleanup for userBirdId: ${userBirdId}`);
         try {
+            // FIX #24: Idempotency guard — skip if this slot deletion was already processed.
+            let alreadyProcessed = false;
+            await db.runTransaction(async (t) => {
+                const eventDoc = await t.get(eventLogRef);
+                if (eventDoc.exists) {
+                    alreadyProcessed = true;
+                    return;
+                }
+                t.set(eventLogRef, { userBirdId, processedAt: admin.firestore.FieldValue.serverTimestamp() });
+            });
+
+            if (alreadyProcessed) {
+                logger.info(`onCollectionSlotUpdatedForImageDeletion: slot ${slotId} already processed. Skipping.`);
+                return null;
+            }
+
             await db.collection("userBirds").doc(userBirdId).delete();
             logger.info(`Cleaned up userBirdId: ${userBirdId}`);
         } catch (err) {
@@ -1099,14 +1208,53 @@ async function _updateUserTotals(userId, eventId, totalBirdsChange, duplicateBir
 
 // ======================================================
 // onUserBirdCreated
+// FIX #21: isDuplicate and pointsEarned were client-supplied and blindly trusted.
+// A malicious client could send isDuplicate=false and a large pointsEarned to inflate scores,
+// or set isDuplicate=true to suppress legitimate duplicate detection.
+// Fix: determine isDuplicate server-side by checking whether another userBird doc already
+// exists for this (userId, birdSpeciesId) pair (excluding this new document).
+// Compute pointsEarned server-side from the bird's rarity field in the birds collection,
+// ignoring the client-provided value entirely.
 // ======================================================
 exports.onUserBirdCreated = onDocumentCreated("userBirds/{uploadId}", async (event) => {
     const userBirdData = event.data.data();
-    const { userId, pointsEarned = 0, isDuplicate = false } = userBirdData;
+    const { userId, birdSpeciesId } = userBirdData;
     if (!userId) {
         logger.error("onUserBirdCreated: No userId in document.");
         return null;
     }
+
+    // FIX #21a: Determine isDuplicate server-side.
+    let isDuplicate = false;
+    if (birdSpeciesId) {
+        const existingSnap = await db.collection("userBirds")
+            .where("userId", "==", userId)
+            .where("birdSpeciesId", "==", birdSpeciesId)
+            .limit(2)  // limit 2: one is the doc just created; a second means duplicate
+            .get();
+        isDuplicate = existingSnap.size >= 2;
+    }
+
+    // FIX #21b: Compute pointsEarned server-side from the bird's rarity field.
+    // Fallback to 0 if the bird doc doesn't exist or has no rarity.
+    let pointsEarned = 0;
+    if (birdSpeciesId && !isDuplicate) {
+        const birdDoc = await db.collection("birds").doc(birdSpeciesId).get();
+        if (birdDoc.exists) {
+            const rarity = (birdDoc.data().rarity || "").toLowerCase();
+            if (rarity === "common") pointsEarned = 1;
+            else if (rarity === "uncommon") pointsEarned = 3;
+            else if (rarity === "rare") pointsEarned = 5;
+            else if (rarity === "very rare") pointsEarned = 10;
+            else pointsEarned = 1; // default for unknown rarity
+        }
+    }
+
+    // Patch the server-computed values back onto the document so downstream reads are correct.
+    await event.data.ref.update({ isDuplicate, pointsEarned }).catch(e =>
+        logger.warn(`onUserBirdCreated: Failed to patch isDuplicate/pointsEarned on ${event.params.uploadId}:`, e)
+    );
+
     // Use the document ID (uploadId) as the unique event key for idempotency
     await _updateUserTotals(userId, `CREATED_${event.params.uploadId}`, 1, isDuplicate ? 1 : 0, pointsEarned);
     return null;
@@ -1320,16 +1468,23 @@ exports.onDeleteUserBirdImage = onDocumentDeleted("users/{userId}/userBirdImage/
             }
         });
 
-        // Now safe to open a second transaction — outer one has already committed
+        // FIX #4: Use the same eventId format as onUserBirdDeleted (`DELETED_${id}`).
+        // Both triggers write to processedEvents with this key.  Whichever fires second
+        // finds the key already present and exits — preventing the double-decrement.
         if (shouldDeleteAndDecrement) {
             await _updateUserTotals(
                 userId,
-                `DELETED_USERBIRD_${userBirdRefId}`,
+                `DELETED_${userBirdRefId}`,
                 -1,
                 capturedIsDuplicate ? -1 : 0,
                 -capturedPointsEarned
             );
         }
+    } catch (error) {
+        logger.error(`Failed to cleanup for deleted image ${userBirdRefId}:`, error);
+    }
+    return null;
+});
 
 // ======================================================
 // moderatePfpImage (OpenAI Vision)
@@ -1401,6 +1556,27 @@ exports.archiveOldForumPosts = onSchedule({
     timeZone: "America/New_York",
     timeoutSeconds: 540
 }, async (event) => {
+    const lockRef = db.collection("schedulerLocks").doc("archiveOldForumPosts");
+    const STALE_LOCK_MS = 10 * 60 * 1000; // 10 minutes — release if previous run crashed
+
+    // Acquire lock
+    const lockAcquired = await db.runTransaction(async (t) => {
+        const lockDoc = await t.get(lockRef);
+        if (lockDoc.exists) {
+            const startedAt = lockDoc.data().startedAt?.toDate();
+            if (startedAt && (Date.now() - startedAt.getTime()) < STALE_LOCK_MS) {
+                return false; // another instance is running
+            }
+        }
+        t.set(lockRef, { startedAt: admin.firestore.FieldValue.serverTimestamp() });
+        return true;
+    });
+
+    if (!lockAcquired) {
+        logger.info("archiveOldForumPosts: Another instance is already running. Skipping.");
+        return null;
+    }
+
     logger.info("Starting scheduled forum post archiving...");
     const archiveThreshold = new Date(Date.now() - CONFIG.FORUM_ARCHIVE_DAYS_MS);
     const storageBucket = admin.storage().bucket();
@@ -1424,10 +1600,18 @@ exports.archiveOldForumPosts = onSchedule({
             const commentsSnap = await postDoc.ref.collection("comments").get();
             const comments = commentsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
 
-            await storageBucket.file(`archived_posts/${postId}.json`).save(
-                JSON.stringify({ ...postData, id: postId, archivedAt: new Date().toISOString(), comments }),
-                { contentType: "application/json" }
-            );
+            // FIX #20: Storage write and batch.commit() are non-atomic — a crash between
+            // them causes the next retry to re-archive (overwriting the Storage file) before
+            // deleting.  Guard: skip the Storage write if the file already exists so retries
+            // are safe (the archive was already written; just proceed to delete Firestore docs).
+            const archiveFile = storageBucket.file(`archived_posts/${postId}.json`);
+            const [archiveExists] = await archiveFile.exists();
+            if (!archiveExists) {
+                await archiveFile.save(
+                    JSON.stringify({ ...postData, id: postId, archivedAt: new Date().toISOString(), comments }),
+                    { contentType: "application/json" }
+                );
+            }
 
             const batch = db.batch();
             commentsSnap.forEach(doc => batch.delete(doc.ref));
@@ -1438,6 +1622,10 @@ exports.archiveOldForumPosts = onSchedule({
         logger.info("Forum post archiving cycle complete.");
     } catch (error) {
         logger.error("Error during forum post archiving:", error);
+    } finally {
+        await lockRef.delete().catch(e =>
+            logger.warn("Failed to release archive lock:", e)
+        );
     }
     return null;
 });
@@ -1597,9 +1785,20 @@ exports.onPostLiked = onDocumentUpdated("forumThreads/{threadId}", async (event)
     const beforeData = event.data.before.data();
     const afterData = event.data.after.data();
 
-    if ((afterData.likeCount || 0) <= (beforeData.likeCount || 0) || afterData.likeNotificationSent === true) return null;
+    if ((afterData.likeCount || 0) <= (beforeData.likeCount || 0)) return null;
 
     try {
+        // Atomically claim the right to send this notification
+        let shouldSend = false;
+        await db.runTransaction(async (t) => {
+            const postDoc = await t.get(event.data.after.ref);
+            if (!postDoc.exists || postDoc.data().likeNotificationSent === true) return;
+            t.update(event.data.after.ref, { likeNotificationSent: true });
+            shouldSend = true;
+        });
+
+        if (!shouldSend) return null;
+
         const recipientDoc = await db.collection("users").doc(afterData.userId).get();
         if (!recipientDoc.exists) return null;
 
@@ -1607,7 +1806,8 @@ exports.onPostLiked = onDocumentUpdated("forumThreads/{threadId}", async (event)
         if (!fcmToken || !notificationsEnabled) return null;
 
         if (notificationCooldownHours > 0 && afterData.lastViewedAt &&
-            (Date.now() - afterData.lastViewedAt.toDate().getTime()) < notificationCooldownHours * 60 * 60 * 1000) return null;
+            (Date.now() - afterData.lastViewedAt.toDate().getTime()) <
+            notificationCooldownHours * 60 * 60 * 1000) return null;
 
         try {
             await messaging.send({
@@ -1615,26 +1815,46 @@ exports.onPostLiked = onDocumentUpdated("forumThreads/{threadId}", async (event)
                 notification: { title: "Post Liked!", body: "Someone liked your post." },
                 data: { postId: event.params.threadId, type: "like" }
             });
-            await event.data.after.ref.update({ likeNotificationSent: true });
         } catch (error) {
             if (error.code === "messaging/registration-token-not-registered") {
-                await db.collection("users").doc(afterData.userId).update({ fcmToken: admin.firestore.FieldValue.delete() });
+                await db.collection("users").doc(afterData.userId)
+                    .update({ fcmToken: admin.firestore.FieldValue.delete() });
+            } else {
+                logger.error("Error sending post like notification:", error);
             }
         }
-    } catch (error) { logger.error("Error in onPostLiked:", error); }
+    } catch (error) {
+        logger.error("Error in onPostLiked:", error);
+    }
     return null;
 });
 
 // ======================================================
 // onCommentLiked
+// FIX #14: likeNotificationSent was read from the stale event snapshot, not from a
+// transaction.  Under at-least-once delivery two concurrent invocations both saw false,
+// both sent the notification, and both wrote true — resulting in duplicate pushes.
+// Fix: mirror the transaction pattern already used in onPostLiked.
 // ======================================================
 exports.onCommentLiked = onDocumentUpdated("forumThreads/{threadId}/comments/{commentId}", async (event) => {
     const beforeData = event.data.before.data();
     const afterData = event.data.after.data();
 
-    if ((afterData.likeCount || 0) <= (beforeData.likeCount || 0) || afterData.likeNotificationSent === true) return null;
+    // Quick pre-check on the snapshot to avoid unnecessary Firestore reads on non-like updates.
+    if ((afterData.likeCount || 0) <= (beforeData.likeCount || 0)) return null;
 
     try {
+        // FIX #14: Atomically claim the right to send this notification via transaction.
+        let shouldSend = false;
+        await db.runTransaction(async (t) => {
+            const commentDoc = await t.get(event.data.after.ref);
+            if (!commentDoc.exists || commentDoc.data().likeNotificationSent === true) return;
+            t.update(event.data.after.ref, { likeNotificationSent: true });
+            shouldSend = true;
+        });
+
+        if (!shouldSend) return null;
+
         const recipientDoc = await db.collection("users").doc(afterData.userId).get();
         if (!recipientDoc.exists) return null;
 
@@ -1653,7 +1873,6 @@ exports.onCommentLiked = onDocumentUpdated("forumThreads/{threadId}/comments/{co
                 notification: { title: "Comment Liked!", body: "Someone liked your comment." },
                 data: { postId: event.params.threadId, type: "comment_like" }
             });
-            await event.data.after.ref.update({ likeNotificationSent: true });
         } catch (error) {
             if (error.code === "messaging/registration-token-not-registered") {
                 await db.collection("users").doc(afterData.userId).update({ fcmToken: admin.firestore.FieldValue.delete() });
@@ -1677,12 +1896,32 @@ exports.onUserProfileUpdated = onDocumentUpdated({
     const oldData = event.data.before.data();
     const userId = event.params.userId;
 
+    // FIX #12 + #7: Guard against self-triggering infinite loop.
+    // This function writes profileSyncStatus / profileSyncStartedAt / profileSyncCompletedAt
+    // back to the same users/{userId} doc it listens on.  When those fields change the trigger
+    // fires again.  Detect that case early and exit before doing any real work.
+    const SYNC_FIELDS = new Set(["profileSyncStatus", "profileSyncStartedAt", "profileSyncCompletedAt"]);
+    const changedKeys = Object.keys(newData).filter(k => {
+        const nv = newData[k];
+        const ov = oldData[k];
+        // Firestore Timestamps: compare via toMillis() to avoid reference inequality
+        if (nv && typeof nv.toMillis === "function" && ov && typeof ov.toMillis === "function") {
+            return nv.toMillis() !== ov.toMillis();
+        }
+        return JSON.stringify(nv) !== JSON.stringify(ov);
+    });
+    const onlySyncFieldsChanged = changedKeys.length > 0 && changedKeys.every(k => SYNC_FIELDS.has(k));
+    if (onlySyncFieldsChanged) {
+        logger.info(`onUserProfileUpdated: Only profileSync* fields changed for ${userId}. Skipping to prevent loop.`);
+        return null;
+    }
+
     const newPfp = newData.profilePictureUrl || "";
     const oldPfp = oldData.profilePictureUrl || "";
     const newUsername = newData.username || "";
     const oldUsername = oldData.username || "";
 
-    // Delete old PFP from storage if changed
+    // Delete old PFP from storage if changed (unchanged)
     if (oldPfp && oldPfp !== newPfp && oldPfp.includes("firebasestorage.googleapis.com")) {
         try {
             const decodedUrl = decodeURIComponent(oldPfp);
@@ -1691,7 +1930,6 @@ exports.onUserProfileUpdated = onDocumentUpdated({
             const file = bucket.file(filePath);
             const [exists] = await file.exists();
             if (exists) await file.delete();
-            logger.info(`Deleted old storage PFP for user ${userId}`);
         } catch (error) {
             logger.error(`Error deleting old PFP for user ${userId}:`, error);
         }
@@ -1701,10 +1939,13 @@ exports.onUserProfileUpdated = onDocumentUpdated({
     if (newPfp !== oldPfp) updates.userProfilePictureUrl = newPfp;
     if (newUsername !== oldUsername) updates.username = newUsername;
 
-    if (Object.keys(updates).length === 0) {
-        logger.info(`No visual profile changes detected for user ${userId}.`);
-        return null;
-    }
+    if (Object.keys(updates).length === 0) return null;
+
+    // Mark propagation as in-progress
+    await event.data.after.ref.update({
+        profileSyncStatus: "in_progress",
+        profileSyncStartedAt: admin.firestore.FieldValue.serverTimestamp()
+    });
 
     const BATCH_SIZE = 450;
     const processBatch = async (querySnapshot, batchUpdates) => {
@@ -1720,40 +1961,37 @@ exports.onUserProfileUpdated = onDocumentUpdated({
         return count;
     };
 
-    // 1. Update forumThreads (always works)
     try {
-        const postsSnap = await db.collection("forumThreads").where("userId", "==", userId).get();
-        const postsCount = await processBatch(postsSnap, updates);
-        logger.info(`Updated ${postsCount} forum posts for user ${userId}`);
-    } catch (e) { logger.error("Failed to update forum posts:", e); }
+        const [postsSnap, sightingsSnap, commentsSnap] = await Promise.all([
+            db.collection("forumThreads").where("userId", "==", userId).get(),
+            newUsername !== oldUsername
+                ? db.collection("userBirdSightings").where("userId", "==", userId).get()
+                : Promise.resolve({ empty: true, docs: [] }),
+            db.collectionGroup("comments").where("userId", "==", userId).get()
+        ]);
 
-    // 2. Update userBirdSightings (always works)
-    if (newUsername !== oldUsername) {
-        try {
-            const sightingsSnap = await db.collection("userBirdSightings").where("userId", "==", userId).get();
-            const sightingsCount = await processBatch(sightingsSnap, { username: newUsername });
-            logger.info(`Updated ${sightingsCount} sightings for user ${userId}`);
-        } catch (e) { logger.error("Failed to update sightings:", e); }
-    }
+        await Promise.all([
+            processBatch(postsSnap, updates),
+            newUsername !== oldUsername ? processBatch(sightingsSnap, { username: newUsername }) : Promise.resolve(),
+            processBatch(commentsSnap, updates)
+        ]);
 
-    // 3. Update comments (requires collectionGroup index)
-    try {
-        const commentsSnap = await db.collectionGroup("comments").where("userId", "==", userId).get();
-        const commentsCount = await processBatch(commentsSnap, updates);
-        logger.info(`Updated ${commentsCount} comments for user ${userId}`);
-    } catch (e) {
-        logger.warn("Could not update comments - likely missing collectionGroup index:", e.message);
-    }
-
-    // 4. Update parentUsername (requires collectionGroup index)
-    if (newUsername !== oldUsername) {
-        try {
-            const repliesSnap = await db.collectionGroup("comments").where("parentUsername", "==", oldUsername).get();
-            const repliesCount = await processBatch(repliesSnap, { parentUsername: newUsername });
-            logger.info(`Updated ${repliesCount} reply references for user ${userId}`);
-        } catch (e) {
-            logger.warn("Could not update reply references - likely missing collectionGroup index:", e.message);
+        if (newUsername !== oldUsername) {
+            const repliesSnap = await db.collectionGroup("comments")
+                .where("parentUsername", "==", oldUsername).get();
+            await processBatch(repliesSnap, { parentUsername: newUsername });
         }
+
+        // Mark propagation complete
+        await event.data.after.ref.update({
+            profileSyncStatus: "complete",
+            profileSyncCompletedAt: admin.firestore.FieldValue.serverTimestamp()
+        });
+
+        logger.info(`Profile propagation complete for user ${userId}`);
+    } catch (error) {
+        // Leave syncStatus as "in_progress" so it can be detected and retried
+        logger.error(`Profile propagation failed for user ${userId}:`, error);
     }
 
     return null;
@@ -1761,19 +1999,36 @@ exports.onUserProfileUpdated = onDocumentUpdated({
 
 // ======================================================
 // onUserAuthDeleted — automatic auth trigger
+// FIX #8: Both cleanupUserData (v1) and onUserAuthDeleted (v2) fire on auth.user().onDelete
+// concurrently.  They both race to archive + delete the same users/{uid} doc.
+// Fix: (a) Use a WriteBatch so archive-set and user-delete are atomic.
+//      (b) Check usersdeletedAccounts first — if already archived, skip silently.
 // ======================================================
 exports.onUserAuthDeleted = auth.user().onDelete(async (user) => {
     const uid = user.uid;
     const userRef = db.collection("users").doc(uid);
+    const archiveRef = db.collection("usersdeletedAccounts").doc(uid);
     try {
-        const userDoc = await userRef.get();
+        // Idempotency: if already archived (by cleanupUserData or a prior retry), skip.
+        const [userDoc, archiveDoc] = await Promise.all([userRef.get(), archiveRef.get()]);
+        if (archiveDoc.exists) {
+            logger.info(`onUserAuthDeleted: UID ${uid} already archived. Skipping.`);
+            return;
+        }
         if (userDoc.exists) {
-            await db.collection("usersdeletedAccounts").doc(uid).set({
+            // Atomic: write archive record AND delete source doc in one batch.
+            const batch = db.batch();
+            batch.set(archiveRef, {
                 ...userDoc.data(),
                 archivedAt: admin.firestore.FieldValue.serverTimestamp(),
                 deletionType: "Automatic Auth Trigger (Manual or App Deletion)"
             });
-            await userRef.delete();
+            batch.delete(userRef);
+            const deletedUsername = userDoc.data().username;
+                if (deletedUsername) {
+                batch.delete(db.collection("usernames").doc(deletedUsername));
+                }
+            await batch.commit();
             logger.info(`Automatically archived and cleaned up Firestore for UID: ${uid}`);
         }
     } catch (error) {
@@ -1884,5 +2139,374 @@ exports.getLeaderboard = onCall(async (request) => {
     } catch (error) {
         logger.error("Error fetching leaderboard:", error);
         throw new HttpsError("internal", "Failed to fetch leaderboard.");
+    }
+});
+
+// ======================================================
+// archiveStaleEBirdSightings (scheduled, every 6 hours)
+// ======================================================
+async function _archiveStaleEBirdSightingsCore() {
+    logger.info("_archiveStaleEBirdSightingsCore: starting.");
+
+    const lockRef = db.collection("schedulerLocks").doc("archiveStaleEBirdSightings");
+    const STALE_LOCK_MS = 10 * 60 * 1000;
+    const lockAcquired = await db.runTransaction(async (t) => {
+        const lockDoc = await t.get(lockRef);
+        if (lockDoc.exists) {
+            const startedAt = lockDoc.data().startedAt?.toDate();
+            if (startedAt && (Date.now() - startedAt.getTime()) < STALE_LOCK_MS) return false;
+        }
+        t.set(lockRef, { startedAt: admin.firestore.FieldValue.serverTimestamp() });
+        return true;
+    });
+
+    if (!lockAcquired) {
+        logger.info("_archiveStaleEBirdSightingsCore: another instance is running. Skipping.");
+        return { status: "skipped", message: "Archive already in progress." };
+    }
+
+    try {
+        const THREE_DAYS_MS = 3 * 24 * 60 * 60 * 1000;
+        const cutoffDate = new Date(Date.now() - THREE_DAYS_MS);
+
+        const allSnap = await db.collection("eBirdApiSightings").get();
+        if (allSnap.empty) {
+            logger.info("_archiveStaleEBirdSightingsCore: no sightings found.");
+            return { status: "success", message: "No sightings to process." };
+        }
+
+        // Group by speciesCode, track newest observationDate per species
+        const speciesMap = new Map();
+        for (const doc of allSnap.docs) {
+            const data = doc.data();
+            const speciesCode = data.speciesCode;
+            if (!speciesCode) continue;
+
+            let obsDate = null;
+            if (data.observationDate) {
+                obsDate = data.observationDate.toDate
+                    ? data.observationDate.toDate()
+                    : new Date(data.observationDate);
+            }
+
+            if (!speciesMap.has(speciesCode)) {
+                speciesMap.set(speciesCode, { newestDate: null, docs: [] });
+            }
+            const entry = speciesMap.get(speciesCode);
+            entry.docs.push({ id: doc.id, ref: doc.ref, data });
+            if (obsDate && (!entry.newestDate || obsDate > entry.newestDate)) {
+                entry.newestDate = obsDate;
+            }
+        }
+
+        // Only archive species whose newest sighting is older than 3 days
+        const staleDocs = [];
+        for (const [code, entry] of speciesMap.entries()) {
+            if (!entry.newestDate || entry.newestDate < cutoffDate) {
+                staleDocs.push(...entry.docs);
+            }
+        }
+
+        if (staleDocs.length === 0) {
+            logger.info("_archiveStaleEBirdSightingsCore: all species are fresh.");
+            return { status: "success", message: "All sightings are fresh. Nothing archived." };
+        }
+
+        let archivedCount = 0;
+        for (let i = 0; i < staleDocs.length; i += CONFIG.FIRESTORE_BATCH_SIZE) {
+            const chunk = staleDocs.slice(i, i + CONFIG.FIRESTORE_BATCH_SIZE);
+            const batch = db.batch();
+            for (const { id, ref, data } of chunk) {
+                batch.set(db.collection("eBirdApiSightings_backlog").doc(id), {
+                    ...data,
+                    archivedAt: admin.firestore.FieldValue.serverTimestamp(),
+                });
+                batch.delete(ref);
+            }
+            await batch.commit();
+            archivedCount += chunk.length;
+            logger.info(`_archiveStaleEBirdSightingsCore: archived ${archivedCount}/${staleDocs.length}.`);
+        }
+
+        const summary = `Archived ${archivedCount} stale eBird sightings.`;
+        logger.info(`_archiveStaleEBirdSightingsCore: done. ${summary}`);
+        return { status: "success", message: summary };
+
+    } finally {
+        await lockRef.delete().catch(e =>
+            logger.error("_archiveStaleEBirdSightingsCore: failed to release lock.", e)
+        );
+    }
+}
+
+exports.archiveStaleEBirdSightings = onSchedule({
+    schedule: "every 6 hours",
+    timeZone: "America/New_York",
+    timeoutSeconds: 300,
+}, async (event) => {
+    logger.info("Scheduled archiveStaleEBirdSightings starting.");
+    try { await _archiveStaleEBirdSightingsCore(); }
+    catch (error) { logger.error("Scheduled archiveStaleEBirdSightings failed:", error); }
+    return null;
+});
+
+exports.triggerArchiveStaleEBirdSightings = onCall(async (request) => {
+    logger.info("Callable archiveStaleEBirdSightings triggered.");
+    try { return await _archiveStaleEBirdSightingsCore(); }
+    catch (error) {
+        logger.error("Callable archiveStaleEBirdSightings failed:", error);
+        throw new HttpsError("internal", `Archive failed: ${error.message}`);
+    }
+});
+
+// ======================================================
+// archiveStaleUserBirdSightings (scheduled, every 6 hours)
+// ======================================================
+async function _archiveStaleUserBirdSightingsCore() {
+    logger.info("_archiveStaleUserBirdSightingsCore: starting.");
+
+    const lockRef = db.collection("schedulerLocks").doc("archiveStaleUserBirdSightings");
+    const STALE_LOCK_MS = 10 * 60 * 1000;
+    const lockAcquired = await db.runTransaction(async (t) => {
+        const lockDoc = await t.get(lockRef);
+        if (lockDoc.exists) {
+            const startedAt = lockDoc.data().startedAt?.toDate();
+            if (startedAt && (Date.now() - startedAt.getTime()) < STALE_LOCK_MS) return false;
+        }
+        t.set(lockRef, { startedAt: admin.firestore.FieldValue.serverTimestamp() });
+        return true;
+    });
+
+    if (!lockAcquired) {
+        logger.info("_archiveStaleUserBirdSightingsCore: another instance is running. Skipping.");
+        return { status: "skipped", message: "Archive already in progress." };
+    }
+
+    try {
+        const THREE_DAYS_MS = 3 * 24 * 60 * 60 * 1000;
+        const cutoffDate = new Date(Date.now() - THREE_DAYS_MS);
+
+        const staleSnap = await db.collection("userBirdSightings")
+            .where("timestamp", "<", cutoffDate)
+            .get();
+
+        if (staleSnap.empty) {
+            logger.info("_archiveStaleUserBirdSightingsCore: no stale sightings found.");
+            return { status: "success", message: "No stale user sightings to archive." };
+        }
+
+        logger.info(`_archiveStaleUserBirdSightingsCore: found ${staleSnap.size} stale docs.`);
+
+        let archivedCount = 0;
+        const docs = staleSnap.docs;
+        for (let i = 0; i < docs.length; i += CONFIG.FIRESTORE_BATCH_SIZE) {
+            const chunk = docs.slice(i, i + CONFIG.FIRESTORE_BATCH_SIZE);
+            const batch = db.batch();
+            for (const doc of chunk) {
+                batch.set(db.collection("userBirdSightings_backlog").doc(doc.id), {
+                    ...doc.data(),
+                    archivedAt: admin.firestore.FieldValue.serverTimestamp(),
+                });
+                batch.delete(doc.ref);
+            }
+            await batch.commit();
+            archivedCount += chunk.length;
+            logger.info(`_archiveStaleUserBirdSightingsCore: archived ${archivedCount}/${docs.length}.`);
+        }
+
+        const summary = `Archived ${archivedCount} stale user sightings to userBirdSightings_backlog.`;
+        logger.info(`_archiveStaleUserBirdSightingsCore: done. ${summary}`);
+        return { status: "success", message: summary };
+
+    } finally {
+        await lockRef.delete().catch(e =>
+            logger.error("_archiveStaleUserBirdSightingsCore: failed to release lock.", e)
+        );
+    }
+}
+
+exports.archiveStaleUserBirdSightings = onSchedule({
+    schedule: "every 6 hours",
+    timeZone: "America/New_York",
+    timeoutSeconds: 300,
+}, async (event) => {
+    logger.info("Scheduled archiveStaleUserBirdSightings starting.");
+    try { await _archiveStaleUserBirdSightingsCore(); }
+    catch (error) { logger.error("Scheduled archiveStaleUserBirdSightings failed:", error); }
+    return null;
+});
+
+exports.triggerArchiveStaleUserBirdSightings = onCall(async (request) => {
+    logger.info("Callable archiveStaleUserBirdSightings triggered.");
+    try { return await _archiveStaleUserBirdSightingsCore(); }
+    catch (error) {
+        logger.error("Callable archiveStaleUserBirdSightings failed:", error);
+        throw new HttpsError("internal", `Archive failed: ${error.message}`);
+    }
+});
+// ======================================================
+// recordBirdSighting — server-side 1 sighting per user per species per 24h
+// ======================================================
+// Called from CardMakerActivity instead of the client-side cooldown check.
+// Uses a Firestore transaction to atomically:
+//   1. Check the cooldown (users/{uid}/settings/heatmapCooldowns)
+//   2. Write the sighting to userBirdSightings
+//   3. Update the cooldown timestamp
+//
+// Returns: { recorded: true }  — sighting written
+//          { recorded: false, reason: "cooldown" } — within 24h cooldown
+//
+// Race-condition safety: the cooldown check and sighting write happen
+// inside a single transaction so concurrent calls for the same
+// user+species cannot both slip through.
+// ======================================================
+exports.recordBirdSighting = onCall(async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
+
+    const userId = request.auth.uid;
+    const {
+        birdId,
+        commonName,
+        userBirdId,
+        latitude,
+        longitude,
+        state,
+        locality,
+        country,
+        quantity,
+        timestamp: clientTimestamp,
+    } = request.data;
+
+    if (!birdId || typeof birdId !== "string") {
+        throw new HttpsError("invalid-argument", "birdId is required.");
+    }
+
+    const COOLDOWN_MS = 24 * 60 * 60 * 1000; // 24 hours
+    const now = Date.now();
+    const sightingTimestamp = (typeof clientTimestamp === "number") ? clientTimestamp : now;
+
+    const cooldownRef = db
+        .collection("users").doc(userId)
+        .collection("settings").doc("heatmapCooldowns");
+
+    const sightingId = db.collection("userBirdSightings").doc().id;
+    const sightingRef = db.collection("userBirdSightings").doc(sightingId);
+
+    try {
+        const result = await db.runTransaction(async (t) => {
+            const cooldownSnap = await t.get(cooldownRef);
+
+            // Read existing cooldowns map
+            const speciesCooldowns = {};
+            if (cooldownSnap.exists) {
+                const raw = cooldownSnap.data().speciesCooldowns;
+                if (raw && typeof raw === "object") {
+                    Object.assign(speciesCooldowns, raw);
+                }
+            }
+
+            // Enforce 24-hour cooldown per species
+            const lastUploadMs = typeof speciesCooldowns[birdId] === "number"
+                ? speciesCooldowns[birdId]
+                : 0;
+
+            if ((now - lastUploadMs) < COOLDOWN_MS) {
+                // Still within cooldown window — reject
+                return { recorded: false, reason: "cooldown", nextAllowedMs: lastUploadMs + COOLDOWN_MS };
+            }
+
+            // Update cooldown INSIDE the transaction (prevents race)
+            speciesCooldowns[birdId] = now;
+            t.set(cooldownRef, {
+                speciesCooldowns,
+                updatedAt: now,
+            }, { merge: true });
+
+            // Write sighting INSIDE the transaction
+            t.set(sightingRef, {
+                id: sightingId,
+                userId,
+                birdId,
+                commonName: commonName || "",
+                userBirdId: userBirdId || "",
+                timestamp: new Date(sightingTimestamp),
+                latitude: typeof latitude === "number" ? latitude : 0.0,
+                longitude: typeof longitude === "number" ? longitude : 0.0,
+                state: state || "",
+                locality: locality || "",
+                country: country || "US",
+                quantity: quantity || "1",
+            });
+
+            return { recorded: true };
+        });
+
+        logger.info(`recordBirdSighting: userId=${userId} birdId=${birdId} recorded=${result.recorded}`);
+        return result;
+
+    } catch (error) {
+        logger.error("recordBirdSighting failed:", error);
+        if (error instanceof HttpsError) throw error;
+        throw new HttpsError("internal", `Failed to record sighting: ${error.message}`);
+    }
+});
+
+// ======================================================
+// recordForumPost — server-side 3 posts per user per calendar day
+// ======================================================
+// Called from CreatePostActivity before writing the Firestore post doc.
+// Uses a transaction to atomically check + increment the daily post count.
+// Resets automatically at midnight UTC.
+//
+// Returns: { allowed: true, remaining: N }  — post is permitted
+//          { allowed: false, remaining: 0 } — daily limit reached
+// ======================================================
+exports.recordForumPost = onCall(async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
+
+    const userId = request.auth.uid;
+    const MAX_DAILY_POSTS = 3;
+
+    // Use UTC date string as the key so it resets at midnight UTC
+    const today = new Date().toISOString().slice(0, 10); // e.g. "2026-03-08"
+
+    const postLimitRef = db
+        .collection("users").doc(userId)
+        .collection("settings").doc("forumPostLimits");
+
+    try {
+        const result = await db.runTransaction(async (t) => {
+            const snap = await t.get(postLimitRef);
+
+            let postsToday = 0;
+            if (snap.exists) {
+                const data = snap.data();
+                // Reset if the stored date is not today
+                if (data.date === today) {
+                    postsToday = typeof data.postsToday === "number" ? data.postsToday : 0;
+                }
+            }
+
+            if (postsToday >= MAX_DAILY_POSTS) {
+                return { allowed: false, remaining: 0 };
+            }
+
+            const newCount = postsToday + 1;
+            t.set(postLimitRef, {
+                date: today,
+                postsToday: newCount,
+                updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            });
+
+            return { allowed: true, remaining: MAX_DAILY_POSTS - newCount };
+        });
+
+        logger.info(`recordForumPost: userId=${userId} allowed=${result.allowed} remaining=${result.remaining}`);
+        return result;
+
+    } catch (error) {
+        logger.error("recordForumPost failed:", error);
+        if (error instanceof HttpsError) throw error;
+        throw new HttpsError("internal", `Failed to check post limit: ${error.message}`);
     }
 });

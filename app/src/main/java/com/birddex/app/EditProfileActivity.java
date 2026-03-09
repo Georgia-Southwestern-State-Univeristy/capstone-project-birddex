@@ -53,10 +53,10 @@ public class EditProfileActivity extends AppCompatActivity implements NetworkMon
 
     private TextInputEditText etUsername;
     private TextInputEditText etBio;
-    private TextView tvPfpChangesRemaining; // New TextView to display PFP changes remaining
+    private TextView tvPfpChangesRemaining;
     private String initialUsername;
     private String initialBio;
-    private String initialProfilePictureUrl; // This will hold the URL from the intent, and then the new uploaded one
+    private String initialProfilePictureUrl;
 
     // Firebase
     private FirebaseAuth mAuth;
@@ -72,11 +72,9 @@ public class EditProfileActivity extends AppCompatActivity implements NetworkMon
     private MaterialButton btnChangePhoto;
 
     private Uri imageUri;
-    // Prevents double-tapping Save from firing the async upload chain twice
     private boolean isSaveInProgress = false;
-    private String uploadedProfilePictureDownloadUrl = null; // To store the URL after successful upload
+    private String uploadedProfilePictureDownloadUrl = null;
 
-    // Activity Result Launchers
     private ActivityResultLauncher<Intent> pickImageLauncher;
     private ActivityResultLauncher<CropImageContractOptions> cropImageLauncher;
 
@@ -85,7 +83,6 @@ public class EditProfileActivity extends AppCompatActivity implements NetworkMon
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_edit_profile);
 
-        // Initialize Firebase
         mAuth = FirebaseAuth.getInstance();
         db = FirebaseFirestore.getInstance();
         storage = FirebaseStorage.getInstance();
@@ -94,24 +91,18 @@ public class EditProfileActivity extends AppCompatActivity implements NetworkMon
         loadingOverlay = findViewById(R.id.loadingOverlay);
         networkMonitor = new NetworkMonitor(this, this);
 
-        // Initialize UI
         ivPfpPreview = findViewById(R.id.ivPfpPreview);
         btnChangePhoto = findViewById(R.id.btnChangePhoto);
         etUsername = findViewById(R.id.etUsername);
         etBio = findViewById(R.id.etBio);
         tvPfpChangesRemaining = findViewById(R.id.tvPfpChangesRemaining);
 
-        // Get initial data from intent (only bio and profile picture URL are passed via intent now)
-        // Username will be fetched from Firebase
         initialBio = getIntent().getStringExtra("bio");
         initialProfilePictureUrl = getIntent().getStringExtra("profilePictureUrl");
 
         etBio.setText(initialBio);
-
-        // Fetch user profile data including username
         fetchUserProfileData();
 
-        // Load existing profile picture
         if (initialProfilePictureUrl != null && !initialProfilePictureUrl.isEmpty()) {
             Glide.with(this).load(initialProfilePictureUrl).into(ivPfpPreview);
         } else {
@@ -121,57 +112,38 @@ public class EditProfileActivity extends AppCompatActivity implements NetworkMon
         MaterialButton btnSave = findViewById(R.id.btnSave);
         TextView tvCancel = findViewById(R.id.tvCancel);
 
-        // Fetch and display PFP changes remaining
         fetchPfpChangesRemaining();
 
-        // Register for image picking result
         pickImageLauncher = registerForActivityResult(new ActivityResultContracts.StartActivityForResult(),
                 result -> {
                     if (result.getResultCode() == Activity.RESULT_OK && result.getData() != null) {
                         Uri selectedImageUri = result.getData().getData();
                         if (selectedImageUri != null) {
                             startImageCropper(selectedImageUri);
-                        } else {
-                            Toast.makeText(this, "Failed to get image URI", Toast.LENGTH_SHORT).show();
                         }
                     }
                 });
 
-        // Register for image cropping result
         cropImageLauncher = registerForActivityResult(new CropImageContract(), result -> {
             if (result.isSuccessful()) {
                 imageUri = result.getUriContent();
                 if (imageUri != null) {
-                    Log.d(TAG, "Cropped image URI: " + imageUri.toString());
-                    if (!isFinishing() && !isDestroyed()) {
-                        Glide.with(this).load(imageUri).into(ivPfpPreview);
-                    }
-                    uploadedProfilePictureDownloadUrl = null; // Reset to null until uploaded
-                } else {
-                    Log.e(TAG, "Cropped image URI is null");
-                    Toast.makeText(this, "Failed to crop image", Toast.LENGTH_SHORT).show();
+                    if (!isFinishing() && !isDestroyed()) Glide.with(this).load(imageUri).into(ivPfpPreview);
+                    uploadedProfilePictureDownloadUrl = null;
                 }
-            } else {
-                Exception error = result.getError();
-                Log.e(TAG, "Image cropping failed: " + (error != null ? error.getMessage() : "Unknown error"), error);
-                Toast.makeText(this, "Image cropping failed: " + (error != null ? error.getMessage() : "Unknown error"), Toast.LENGTH_LONG).show();
             }
         });
 
-
-        btnChangePhoto.setOnClickListener(v -> {
-            checkPermissionsAndPickImage();
-        });
+        btnChangePhoto.setOnClickListener(v -> checkPermissionsAndPickImage());
 
         btnSave.setOnClickListener(v -> {
-            if (isSaveInProgress) return; // Prevent double-tap race
+            if (isSaveInProgress) return;
             if (!networkMonitor.isConnected()) {
-                Toast.makeText(this, "No internet connection. Please check your network and try again.", Toast.LENGTH_LONG).show();
+                Toast.makeText(this, "No internet connection.", Toast.LENGTH_LONG).show();
                 return;
             }
 
             String newUsername = etUsername.getText().toString().trim();
-            // Aggressively trim and collapse newlines/spaces
             String rawBio = etBio.getText().toString().trim();
             String cleanedBio = rawBio.replaceAll("\n{2,}", "\n").replaceAll(" +", " ");
 
@@ -180,341 +152,192 @@ public class EditProfileActivity extends AppCompatActivity implements NetworkMon
                 return;
             }
 
-            // Check line count: max 3 lines (which means max 2 newline characters)
-            int newlineCount = 0;
-            for (int i = 0; i < cleanedBio.length(); i++) {
-                if (cleanedBio.charAt(i) == '\n') newlineCount++;
-            }
-
-            if (newlineCount >= 3) {
-                Toast.makeText(this, "Bio cannot be longer than 3 lines down.", Toast.LENGTH_SHORT).show();
-                return;
-            }
-
             if (cleanedBio.length() > MAX_BIO_LENGTH) {
-                Toast.makeText(this, "Bio exceeds maximum length of " + MAX_BIO_LENGTH + " characters.", Toast.LENGTH_SHORT).show();
+                Toast.makeText(this, "Bio too long.", Toast.LENGTH_SHORT).show();
                 return;
             }
 
             if (!ContentFilter.isSafe(this, newUsername, "Username")) return;
             if (!ContentFilter.isSafe(this, cleanedBio, "Bio")) return;
 
-            // Check if a new image was cropped OR if the old URL is different from current imageUri
-            boolean pfpChanged = (imageUri != null) || (uploadedProfilePictureDownloadUrl != null && !uploadedProfilePictureDownloadUrl.equals(initialProfilePictureUrl));
+            boolean pfpChanged = (imageUri != null);
+
+            isSaveInProgress = true;
+            loadingOverlay.setVisibility(View.VISIBLE);
 
             if (pfpChanged) {
-                Log.d(TAG, "PFP changed, showing loading overlay and calling recordPfpChange Cloud Function.");
-                isSaveInProgress = true;
-                loadingOverlay.setVisibility(View.VISIBLE);
-
-                // Idempotency: Generate a unique ID for this specific save attempt
                 String pfpChangeId = UUID.randomUUID().toString();
-
                 firebaseManager.recordPfpChange(pfpChangeId, new FirebaseManager.PfpChangeLimitListener() {
                     @Override
-                    public void onSuccess(int pfpChangesToday, Date pfpCooldownResetTimestamp) { // Updated signature
+                    public void onSuccess(int remaining, Date reset) {
                         if (isFinishing() || isDestroyed()) return;
-                        Log.d(TAG, "PFP change recorded. Remaining: " + pfpChangesToday);
-                        tvPfpChangesRemaining.setText("PFP changes remaining today: " + pfpChangesToday);
-                        // The pfpCooldownResetTimestamp can be used to display when the limit resets,
-                        // but for now, we'll just log it.
-                        Log.d(TAG, "PFP Cooldown Reset Timestamp: " + pfpCooldownResetTimestamp);
-
-                        // --- MODERATION INTEGRATION START ---
-                        // Before uploading, call the moderation function
-                        String base64Image = encodeImage(imageUri);
-                        if (base64Image == null) {
-                            loadingOverlay.setVisibility(View.GONE);
-                            Toast.makeText(EditProfileActivity.this, "Failed to encode image for moderation.", Toast.LENGTH_LONG).show();
+                        tvPfpChangesRemaining.setText("PFP changes remaining today: " + remaining);
+                        String base64 = encodeImage(imageUri);
+                        if (base64 == null) {
+                            resetSaveState();
                             return;
                         }
-
-                        Log.d(TAG, "Calling moderation CF...");
-                        firebaseManager.callOpenAiImageModeration(base64Image, new FirebaseManager.OpenAiModerationListener() {
+                        firebaseManager.callOpenAiImageModeration(base64, new FirebaseManager.OpenAiModerationListener() {
                             @Override
-                            public void onSuccess(boolean isAppropriate, String moderationReason) {
+                            public void onSuccess(boolean appropriate, String reason) {
                                 if (isFinishing() || isDestroyed()) return;
-                                if (isAppropriate) {
-                                    Log.d(TAG, "PFP appropriate, proceeding with uploadImageToFirebase.");
-                                    uploadImageToFirebase(imageUri, newUsername, cleanedBio); // Proceed with upload
-                                } else {
-                                    loadingOverlay.setVisibility(View.GONE);
-                                    Toast.makeText(EditProfileActivity.this, "PFP rejected: " + moderationReason, Toast.LENGTH_LONG).show();
-                                    if (initialProfilePictureUrl != null && !initialProfilePictureUrl.isEmpty()) {
-                                        Glide.with(EditProfileActivity.this).load(initialProfilePictureUrl).into(ivPfpPreview);
-                                    } else {
-                                        ivPfpPreview.setImageResource(R.drawable.ic_profile);
-                                    }
-                                    imageUri = null;
+                                if (appropriate) uploadImageToFirebase(imageUri, newUsername, cleanedBio);
+                                else {
+                                    resetSaveState();
+                                    Toast.makeText(EditProfileActivity.this, "PFP rejected: " + reason, Toast.LENGTH_LONG).show();
                                 }
                             }
-
-                            @Override
-                            public void onFailure(String errorMessage) {
-                                if (isFinishing() || isDestroyed()) return;
-                                loadingOverlay.setVisibility(View.GONE);
-                                Log.e(TAG, "Moderation failed: " + errorMessage);
-                                Toast.makeText(EditProfileActivity.this, "Moderation failed.", Toast.LENGTH_LONG).show();
-                            }
+                            @Override public void onFailure(String err) { resetSaveState(); }
                         });
-                        // --- MODERATION INTEGRATION END ---
                     }
-
-                    @Override
-                    public void onFailure(String errorMessage) {
-                        if (isFinishing() || isDestroyed()) return;
-                        isSaveInProgress = false;
-                        loadingOverlay.setVisibility(View.GONE);
-                        Log.e(TAG, "Failed to record PFP change: " + errorMessage);
-                        Toast.makeText(EditProfileActivity.this, "Error: " + errorMessage, Toast.LENGTH_LONG).show();
-                    }
-
-                    @Override
-                    public void onLimitExceeded() {
-                        if (isFinishing() || isDestroyed()) return;
-                        isSaveInProgress = false;
-                        loadingOverlay.setVisibility(View.GONE);
-                        Log.w(TAG, "PFP limit exceeded.");
-                        Toast.makeText(EditProfileActivity.this, "Daily limit reached.", Toast.LENGTH_LONG).show();
-                    }
+                    @Override public void onFailure(String err) { resetSaveState(); }
+                    @Override public void onLimitExceeded() { resetSaveState(); }
                 });
             } else {
-                isSaveInProgress = true;
-                Log.d(TAG, "PFP not changed. Showing loading overlay and saving profile text changes.");
-                loadingOverlay.setVisibility(View.VISIBLE);
-                // If no new image, and username/bio changed, save those
-                saveProfileChanges(newUsername, cleanedBio, initialProfilePictureUrl); // Pass current PFP URL
+                saveProfileChanges(newUsername, cleanedBio, initialProfilePictureUrl);
             }
         });
 
-        tvCancel.setOnClickListener(v -> {
-            Log.d(TAG, "Cancel button clicked.");
-            // Revert the preview to the initial profile picture if a new one was selected but not saved.
+        tvCancel.setOnClickListener(v -> finish());
+    }
 
-            if (initialProfilePictureUrl != null && !initialProfilePictureUrl.isEmpty()) {
-                Glide.with(this).load(initialProfilePictureUrl).into(ivPfpPreview);
-            } else {
-                ivPfpPreview.setImageResource(R.drawable.ic_profile);
-            }
-            imageUri = null;
-            setResult(RESULT_CANCELED);
-            finish();
-        });
+    private void resetSaveState() {
+        isSaveInProgress = false;
+        loadingOverlay.setVisibility(View.GONE);
     }
 
     private void fetchUserProfileData() {
         FirebaseUser currentUser = mAuth.getCurrentUser();
         if (currentUser == null) return;
-
         firebaseManager.getUserProfile(currentUser.getUid(), task -> {
             if (isFinishing() || isDestroyed()) return;
             if (task.isSuccessful() && task.getResult() != null) {
                 User user = task.getResult().toObject(User.class);
                 if (user != null) {
                     initialUsername = user.getUsername();
-                    etUsername.setText(initialUsername);
-                    // Also update initialBio and initialProfilePictureUrl if they are to be fetched from Firestore
-                    // For now, only username is changed as per the request.
-                    initialBio = user.getBio();
-                    etBio.setText(initialBio);
-                    if (user.getProfilePictureUrl() != null && !user.getProfilePictureUrl().isEmpty()) {
-                        initialProfilePictureUrl = user.getProfilePictureUrl();
-                        Glide.with(this).load(initialProfilePictureUrl).into(ivPfpPreview);
-                    } else {
-                        ivPfpPreview.setImageResource(R.drawable.ic_profile);
-                        initialProfilePictureUrl = null;
+                    initialProfilePictureUrl = user.getProfilePictureUrl();
+
+                    // Only pre-fill username if user hasn't started editing it yet
+                    if (etUsername.getText().toString().isEmpty()) {
+                        etUsername.setText(initialUsername);
                     }
-                } else {
-                    Log.e(TAG, "User document found but could not be parsed to User object.");
-                    Toast.makeText(this, "Error loading profile data.", Toast.LENGTH_SHORT).show();
+
+                    // CRITICAL: Only pre-fill bio from Firestore if the field is still
+                    // showing the value passed via Intent (i.e. user hasn't typed anything).
+                    // If we unconditionally call etBio.setText() here, we wipe whatever
+                    // the user typed in the window between onCreate and this async callback.
+                    String currentBioText = etBio.getText().toString();
+                    String intentBio = initialBio != null ? initialBio : "";
+                    if (currentBioText.equals(intentBio)) {
+                        initialBio = user.getBio() != null ? user.getBio() : "";
+                        etBio.setText(initialBio);
+                    }
+                    // Always update initialBio so save button uses the fresh value
+                    // even if we didn't overwrite the EditText
+                    if (!currentBioText.equals(intentBio)) {
+                        initialBio = user.getBio() != null ? user.getBio() : "";
+                    }
+
+                    if (initialProfilePictureUrl != null && !initialProfilePictureUrl.isEmpty()) {
+                        Glide.with(EditProfileActivity.this).load(initialProfilePictureUrl).into(ivPfpPreview);
+                    }
                 }
-            } else {
-                Log.e(TAG, "Failed to fetch user profile: " + (task.getException() != null ? task.getException().getMessage() : "Unknown error"));
-                Toast.makeText(this, "Failed to load profile data.", Toast.LENGTH_SHORT).show();
             }
         });
     }
 
     private void fetchPfpChangesRemaining() {
-        String userId = mAuth.getCurrentUser() != null ? mAuth.getCurrentUser().getUid() : null;
-        if (userId == null) return;
-
-        db.collection("users").document(userId).get().addOnSuccessListener(documentSnapshot -> {
+        String uid = mAuth.getUid();
+        if (uid == null) return;
+        db.collection("users").document(uid).get().addOnSuccessListener(doc -> {
             if (isFinishing() || isDestroyed()) return;
-            if (documentSnapshot.exists()) {
-                // The Cloud Function 'checkUsernameAndEmailAvailability' should ensure these fields exist and are up-to-date
-                Long pfpChangesTodayLong = documentSnapshot.getLong("pfpChangesToday");
-                int pfpChangesToday = pfpChangesTodayLong != null ? pfpChangesTodayLong.intValue() : 0;
-                tvPfpChangesRemaining.setText("PFP changes remaining today: " + pfpChangesToday);
-                if (pfpChangesToday <= 0) btnChangePhoto.setEnabled(false);
+            Long rem = doc.getLong("pfpChangesToday");
+            if (rem != null) {
+                tvPfpChangesRemaining.setText("PFP changes remaining today: " + rem);
+                if (rem <= 0) btnChangePhoto.setEnabled(false);
             }
         });
     }
 
     private void checkPermissionsAndPickImage() {
-        String userId = mAuth.getCurrentUser() != null ? mAuth.getCurrentUser().getUid() : null;
-        if (userId == null) return;
-        db.collection("users").document(userId).get().addOnSuccessListener(documentSnapshot -> {
-            if (isFinishing() || isDestroyed()) return;
-            if (documentSnapshot.exists()) {
-                Long pfpChangesTodayLong = documentSnapshot.getLong("pfpChangesToday");
-                if (pfpChangesTodayLong != null && pfpChangesTodayLong <= 0) {
-                    Toast.makeText(this, "Daily limit reached.", Toast.LENGTH_LONG).show();
-                    return;
-                }
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                    if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_MEDIA_IMAGES) != PackageManager.PERMISSION_GRANTED) {
-                        ActivityCompat.requestPermissions(this, new String[]{Manifest.permission.READ_MEDIA_IMAGES}, REQUEST_READ_EXTERNAL_STORAGE);
-                    } else pickImage();
-                } else if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
-                    ActivityCompat.requestPermissions(this, new String[]{Manifest.permission.READ_EXTERNAL_STORAGE}, REQUEST_READ_EXTERNAL_STORAGE);
-                } else pickImage();
-            }
-        });
-    }
-
-    @Override
-    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
-        if (requestCode == REQUEST_READ_EXTERNAL_STORAGE && grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) pickImage();
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_MEDIA_IMAGES) != PackageManager.PERMISSION_GRANTED) {
+                ActivityCompat.requestPermissions(this, new String[]{Manifest.permission.READ_MEDIA_IMAGES}, REQUEST_READ_EXTERNAL_STORAGE);
+            } else pickImage();
+        } else {
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
+                ActivityCompat.requestPermissions(this, new String[]{Manifest.permission.READ_EXTERNAL_STORAGE}, REQUEST_READ_EXTERNAL_STORAGE);
+            } else pickImage();
+        }
     }
 
     private void pickImage() {
-        Intent galleryIntent = new Intent(Intent.ACTION_GET_CONTENT);
-        galleryIntent.setType("image/*");
-        pickImageLauncher.launch(galleryIntent);
+        Intent intent = new Intent(Intent.ACTION_GET_CONTENT);
+        intent.setType("image/*");
+        pickImageLauncher.launch(intent);
     }
 
-    private void startImageCropper(Uri imageUriToCrop) {
-        CropImageOptions options = new CropImageOptions();
-        options.cropShape = CropImageView.CropShape.OVAL;
-        options.fixAspectRatio = true;
-        options.aspectRatioX = 1;
-        options.aspectRatioY = 1;
-        cropImageLauncher.launch(new CropImageContractOptions(imageUriToCrop, options));
+    private void startImageCropper(Uri uri) {
+        CropImageOptions opt = new CropImageOptions();
+        opt.cropShape = CropImageView.CropShape.OVAL;
+        opt.fixAspectRatio = true;
+        cropImageLauncher.launch(new CropImageContractOptions(uri, opt));
     }
 
-
-    private void uploadImageToFirebase(Uri newImageUri, String newUsername, String cleanedBio) {
-        FirebaseUser user = mAuth.getCurrentUser();
-        if (user == null || newImageUri == null) {
-            saveProfileChanges(newUsername, cleanedBio, initialProfilePictureUrl);
-            return;
-        }
-
-        String userId = user.getUid();
-
-        // Use a timestamp in the filename so the new file doesn't overwrite the old one immediately.
-        // This allows the Cloud Function to see the change and delete the 'unused' file.
-        String fileName = userId + "_" + System.currentTimeMillis() + ".jpg";
-        StorageReference newProfileImageRef = storageRef.child("profile_pictures/" + fileName);
-
-        newProfileImageRef.putFile(newImageUri)
-                .addOnSuccessListener(taskSnapshot -> {
-                    if (isFinishing() || isDestroyed()) return;
-
-                    // We no longer need to manually delete the old file here in the app!
-                    // The Cloud Function in index.js will handle it once saveProfileChanges updates Firestore.
-
-                    newProfileImageRef.getDownloadUrl().addOnSuccessListener(uri -> {
-                        if (isFinishing() || isDestroyed()) return;
-                        saveProfileChanges(newUsername, cleanedBio, uri.toString());
-                    }).addOnFailureListener(e -> {
-                        loadingOverlay.setVisibility(View.GONE);
-                        Toast.makeText(this, "Failed to get URL", Toast.LENGTH_SHORT).show();
-                    });
-                })
-                .addOnFailureListener(e -> {
-                    loadingOverlay.setVisibility(View.GONE);
-                    Toast.makeText(this, "Upload failed", Toast.LENGTH_SHORT).show();
-                });
+    private void uploadImageToFirebase(Uri uri, String user, String bio) {
+        String uid = mAuth.getUid();
+        StorageReference ref = storageRef.child("profile_pictures/" + uid + "_" + System.currentTimeMillis() + ".jpg");
+        ref.putFile(uri).addOnSuccessListener(ts -> ref.getDownloadUrl().addOnSuccessListener(dl -> saveProfileChanges(user, bio, dl.toString())))
+                .addOnFailureListener(e -> resetSaveState());
     }
 
-    private String encodeImage(Uri imageUri) {
+    private String encodeImage(Uri uri) {
         try {
-            Bitmap bitmap = (Build.VERSION.SDK_INT >= 28) ? ImageDecoder.decodeBitmap(ImageDecoder.createSource(this.getContentResolver(), imageUri)) : MediaStore.Images.Media.getBitmap(this.getContentResolver(), imageUri);
-            int maxWidth = 512, maxHeight = 512;
-            float ratio = Math.min((float) maxWidth / bitmap.getWidth(), (float) maxHeight / bitmap.getHeight());
-            if (ratio < 1.0f) bitmap = Bitmap.createScaledBitmap(bitmap, Math.round(ratio * bitmap.getWidth()), Math.round(ratio * bitmap.getHeight()), true);
+            Bitmap bm = (Build.VERSION.SDK_INT >= 28)
+                    ? ImageDecoder.decodeBitmap(ImageDecoder.createSource(getContentResolver(), uri))
+                    : MediaStore.Images.Media.getBitmap(getContentResolver(), uri);
+
+            // Resize to max 512x512 before encoding — prevents OpenAI 500 errors from oversized payloads
+            bm = scaleBitmap(bm, 512);
+
             ByteArrayOutputStream baos = new ByteArrayOutputStream();
-            bitmap.compress(Bitmap.CompressFormat.JPEG, 75, baos);
+            bm.compress(Bitmap.CompressFormat.JPEG, 60, baos);
             return Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP);
         } catch (IOException e) { return null; }
     }
 
-    private void saveProfileChanges(String newUsername, String cleanedBio, String finalProfilePictureUrl) {
-        boolean hasChanges = !newUsername.equals(initialUsername) || !cleanedBio.equals(initialBio) || (finalProfilePictureUrl != null && !finalProfilePictureUrl.equals(initialProfilePictureUrl));
-
-        if (hasChanges) {
-            User userToUpdate = new User(mAuth.getCurrentUser().getUid(), null, newUsername, null, null);
-            userToUpdate.setBio(cleanedBio);
-            userToUpdate.setProfilePictureUrl(finalProfilePictureUrl);
-
-            firebaseManager.updateUserProfile(userToUpdate, new FirebaseManager.AuthListener() {
-                @Override
-                public void onSuccess(com.google.firebase.auth.FirebaseUser user) {
-                    if (isFinishing() || isDestroyed()) return;
-                    loadingOverlay.setVisibility(View.GONE);
-                    setResult(RESULT_OK, new Intent().putExtra("newUsername", newUsername).putExtra("newBio", cleanedBio).putExtra("newProfilePictureUrl", finalProfilePictureUrl));
-                    finish();
-                }
-
-                @Override
-                public void onFailure(String errorMessage) {
-                    loadingOverlay.setVisibility(View.GONE);
-                    Toast.makeText(EditProfileActivity.this, "Update failed: " + errorMessage, Toast.LENGTH_LONG).show();
-                }
-
-                @Override
-                public void onUsernameTaken() {
-                    loadingOverlay.setVisibility(View.GONE);
-                    etUsername.setError("Username taken.");
-                }
-
-                @Override public void onEmailTaken() { loadingOverlay.setVisibility(View.GONE); }
-            });
-        } else {
-            loadingOverlay.setVisibility(View.GONE);
-            setResult(RESULT_OK, new Intent().putExtra("newUsername", initialUsername).putExtra("newBio", initialBio).putExtra("newProfilePictureUrl", initialProfilePictureUrl));
-            finish();
-        }
+    private Bitmap scaleBitmap(Bitmap original, int maxSize) {
+        int width = original.getWidth();
+        int height = original.getHeight();
+        float ratio = Math.min((float) maxSize / width, (float) maxSize / height);
+        if (ratio >= 1f) return original;
+        return Bitmap.createScaledBitmap(original, (int)(width * ratio), (int)(height * ratio), true);
     }
 
-    @Override
-    protected void onPause() {
-        super.onPause();
-        networkMonitor.unregister();
-        // Do NOT reset isSaveInProgress — the async chain may still be running.
-        // Hiding the overlay is fine (user left the screen), but the guard must
-        // stay true so a re-entry tap cannot start a second parallel chain.
-        if (loadingOverlay != null) {
-            loadingOverlay.setVisibility(View.GONE);
-        }
-    }
+    private void saveProfileChanges(String newUsername, String cleanedBio, String finalPfp) {
+        // FIX #13: use updateUserProfileAtomic to ensure username uniqueness via Cloud Function
+        User user = new User(mAuth.getUid(), null, newUsername, null, null);
+        user.setBio(cleanedBio);
+        user.setProfilePictureUrl(finalPfp);
 
-    @Override
-    protected void onResume() {
-        super.onResume();
-        networkMonitor.register();
-        // Re-show the overlay if a save was in progress when the user left.
-        if (isSaveInProgress && loadingOverlay != null) {
-            loadingOverlay.setVisibility(View.VISIBLE);
-        }
-    }
-
-    @Override
-    public void onNetworkAvailable() {
-        Log.d(TAG, "Network available.");
-    }
-
-    @Override
-    public void onNetworkLost() {
-        Log.w(TAG, "Network lost.");
-        runOnUiThread(() -> {
-            if (loadingOverlay != null && loadingOverlay.getVisibility() == View.VISIBLE) {
-                loadingOverlay.setVisibility(View.GONE);
-                Toast.makeText(this, "Network connection lost. Please try again.", Toast.LENGTH_LONG).show();
+        firebaseManager.updateUserProfileAtomic(user, new FirebaseManager.AuthListener() {
+            @Override
+            public void onSuccess(com.google.firebase.auth.FirebaseUser u) {
+                if (isFinishing() || isDestroyed()) return;
+                resetSaveState();
+                setResult(RESULT_OK, new Intent().putExtra("newUsername", newUsername).putExtra("newBio", cleanedBio).putExtra("newProfilePictureUrl", finalPfp));
+                finish();
             }
+            @Override
+            public void onFailure(String err) { resetSaveState(); Toast.makeText(EditProfileActivity.this, "Update failed.", Toast.LENGTH_SHORT).show(); }
+            @Override
+            public void onUsernameTaken() { resetSaveState(); etUsername.setError("Username taken."); }
+            @Override public void onEmailTaken() { resetSaveState(); }
         });
     }
+
+    @Override protected void onPause() { super.onPause(); networkMonitor.unregister(); if (loadingOverlay != null) loadingOverlay.setVisibility(View.GONE); }
+    @Override protected void onResume() { super.onResume(); networkMonitor.register(); if (isSaveInProgress && loadingOverlay != null) loadingOverlay.setVisibility(View.VISIBLE); }
+    @Override public void onNetworkAvailable() {}
+    @Override public void onNetworkLost() { runOnUiThread(() -> { if (loadingOverlay != null && loadingOverlay.getVisibility() == View.VISIBLE) resetSaveState(); }); }
 }

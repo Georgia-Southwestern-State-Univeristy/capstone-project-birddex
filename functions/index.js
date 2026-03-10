@@ -2814,17 +2814,37 @@ exports.recordBirdSighting = onCall(async (request) => {
  * Input/permission checks happen here first so invalid requests fail before any expensive
  * backend work starts.
  */
+// ======================================================
+// recordForumPost — only limit posts that SHOW LOCATION ON MAP
+// ======================================================
+// If showLocation == false:
+//   - allow the post immediately
+//   - do NOT consume one of the 3 daily map-location post slots
+//
+// If showLocation == true:
+//   - enforce the 3-per-day limit
+//   - atomically increment the user's daily map-location post count
+// ======================================================
 exports.recordForumPost = onCall(async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
 
     const userId = request.auth.uid;
-    const MAX_DAILY_POSTS = 3;
+    const { showLocation = false } = request.data || {};
+    const MAX_DAILY_LOCATION_POSTS = 3;
 
-    // Use UTC date string as the key so it resets at midnight UTC
-    const today = new Date().toISOString().slice(0, 10); // e.g. "2026-03-08"
+    // If the user is posting WITHOUT location, do not apply the daily limit at all.
+    if (!showLocation) {
+        return {
+            allowed: true,
+            remaining: MAX_DAILY_LOCATION_POSTS,
+            locationLimited: false
+        };
+    }
+
+    // Use UTC date key so the count resets each day.
+    const today = new Date().toISOString().slice(0, 10);
 
     const postLimitRef = db
-        // This is where the function touches Firestore documents/collections for the requested action.
         .collection("users").doc(userId)
         .collection("settings").doc("forumPostLimits");
 
@@ -2832,30 +2852,49 @@ exports.recordForumPost = onCall(async (request) => {
         const result = await db.runTransaction(async (t) => {
             const snap = await t.get(postLimitRef);
 
-            let postsToday = 0;
+            let locationPostsToday = 0;
+
             if (snap.exists) {
                 const data = snap.data();
-                // Reset if the stored date is not today
+
+                // Only reuse the stored count if it is from today.
                 if (data.date === today) {
-                    postsToday = typeof data.postsToday === "number" ? data.postsToday : 0;
+                    locationPostsToday =
+                        typeof data.locationPostsToday === "number"
+                            ? data.locationPostsToday
+                            : 0;
                 }
             }
 
-            if (postsToday >= MAX_DAILY_POSTS) {
-                return { allowed: false, remaining: 0 };
+            // If the user already used all 3 location-post slots today, reject.
+            if (locationPostsToday >= MAX_DAILY_LOCATION_POSTS) {
+                return {
+                    allowed: false,
+                    remaining: 0,
+                    locationLimited: true
+                };
             }
 
-            const newCount = postsToday + 1;
+            const newCount = locationPostsToday + 1;
+
+            // Save the updated daily count for location-sharing forum posts only.
             t.set(postLimitRef, {
                 date: today,
-                postsToday: newCount,
+                locationPostsToday: newCount,
                 updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-            });
+            }, { merge: true });
 
-            return { allowed: true, remaining: MAX_DAILY_POSTS - newCount };
+            return {
+                allowed: true,
+                remaining: MAX_DAILY_LOCATION_POSTS - newCount,
+                locationLimited: true
+            };
         });
 
-        logger.info(`recordForumPost: userId=${userId} allowed=${result.allowed} remaining=${result.remaining}`);
+        logger.info(
+            `recordForumPost: userId=${userId} showLocation=${showLocation} allowed=${result.allowed} remaining=${result.remaining}`
+        );
+
         return result;
 
     } catch (error) {

@@ -2,7 +2,6 @@ package com.birddex.app;
 
 import android.content.Context;
 import android.util.Log;
-import android.widget.Toast;
 
 import com.google.android.gms.tasks.OnCompleteListener;
 import com.google.android.gms.tasks.Task;
@@ -12,17 +11,14 @@ import com.google.firebase.auth.FirebaseUser;
 import com.google.firebase.firestore.DocumentReference;
 import com.google.firebase.firestore.DocumentSnapshot;
 import com.google.firebase.firestore.EventListener;
-import com.google.firebase.firestore.FieldValue;
 import com.google.firebase.firestore.FirebaseFirestore;
 import com.google.firebase.firestore.ListenerRegistration;
 import com.google.firebase.firestore.QuerySnapshot;
 import com.google.firebase.firestore.SetOptions;
-import com.google.firebase.firestore.WriteBatch;
 import com.google.firebase.functions.FirebaseFunctions;
 import com.google.firebase.functions.FirebaseFunctionsException;
 import com.google.firebase.functions.HttpsCallableResult;
 
-import java.util.ArrayList;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
@@ -585,27 +581,37 @@ public class FirebaseManager {
     /**
      * Main logic block for this part of the feature.
      */
-    public void recordForumPost(ForumPostLimitListener listener) {
-        Log.d(TAG, "Calling recordForumPost CF.");
-        mFunctions.getHttpsCallable("recordForumPost").call().addOnCompleteListener(task -> {
-            if (task.isSuccessful() && task.getResult() != null) {
-                Map<String, Object> res = (Map<String, Object>) task.getResult().getData();
-                boolean allowed = res != null && Boolean.TRUE.equals(res.get("allowed"));
-                if (allowed) {
-                    int remaining = res.get("remaining") != null
-                            ? ((Number) res.get("remaining")).intValue() : 0;
-                    Log.d(TAG, "recordForumPost: allowed, remaining=" + remaining);
-                    listener.onAllowed(remaining);
-                } else {
-                    Log.d(TAG, "recordForumPost: daily limit reached.");
-                    listener.onLimitReached();
-                }
-            } else {
-                String error = task.getException() != null ? task.getException().getMessage() : "recordForumPost failed.";
-                Log.e(TAG, "recordForumPost CF failed: " + error);
-                listener.onFailure(error);
-            }
-        });
+    public void recordForumPost(boolean showLocation, ForumPostLimitListener listener) {
+        Log.d(TAG, "Calling recordForumPost CF. showLocation=" + showLocation);
+
+        java.util.Map<String, Object> data = new java.util.HashMap<>();
+        data.put("showLocation", showLocation);
+
+        mFunctions.getHttpsCallable("recordForumPost")
+                .call(data)
+                .addOnCompleteListener(task -> {
+                    if (task.isSuccessful() && task.getResult() != null) {
+                        Map<String, Object> res = (Map<String, Object>) task.getResult().getData();
+                        boolean allowed = res != null && Boolean.TRUE.equals(res.get("allowed"));
+
+                        if (allowed) {
+                            int remaining = res.get("remaining") != null
+                                    ? ((Number) res.get("remaining")).intValue()
+                                    : 0;
+                            Log.d(TAG, "recordForumPost: allowed, remaining=" + remaining);
+                            listener.onAllowed(remaining);
+                        } else {
+                            Log.d(TAG, "recordForumPost: location-post daily limit reached.");
+                            listener.onLimitReached();
+                        }
+                    } else {
+                        String error = task.getException() != null
+                                ? task.getException().getMessage()
+                                : "recordForumPost failed.";
+                        Log.e(TAG, "recordForumPost CF failed: " + error);
+                        listener.onFailure(error);
+                    }
+                });
     }
 
     // -------------------------------------------------------------------------

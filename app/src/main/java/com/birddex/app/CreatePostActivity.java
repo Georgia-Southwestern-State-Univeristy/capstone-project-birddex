@@ -377,7 +377,8 @@ public class CreatePostActivity extends AppCompatActivity {
         //   (a) We don't waste Storage on a post that will be rejected.
         //   (b) The limit is enforced atomically — two rapid taps cannot both slip through
         //       because the CF uses a Firestore transaction to read+increment in one step.
-        checkServerPostLimit(msg);
+        boolean wantsToShowLocation = binding.swShowLocation.isChecked();
+        checkServerPostLimit(msg, wantsToShowLocation);
     }
 
     /**
@@ -393,12 +394,18 @@ public class CreatePostActivity extends AppCompatActivity {
      * User-facing feedback is shown here so the user knows whether the action succeeded, failed,
      * or needs attention.
      */
-    private void checkServerPostLimit(String msg) {
-        // Set up or query the Firebase layer that supplies/stores this feature's data.
-        firebaseManager.recordForumPost(new FirebaseManager.ForumPostLimitListener() {
-            @Override public void onAllowed(int remaining) {
+    /**
+     * Calls recordForumPost CF.
+     * The backend only applies the 3-per-day limit when showLocation == true.
+     * Normal posts without map location are always allowed through.
+     */
+    private void checkServerPostLimit(String msg, boolean wantsToShowLocation) {
+        firebaseManager.recordForumPost(wantsToShowLocation, new FirebaseManager.ForumPostLimitListener() {
+            @Override
+            public void onAllowed(int remaining) {
                 if (isFinishing() || isDestroyed()) return;
-                // Slot claimed — proceed with upload or direct Firestore write
+
+                // Proceed normally once the backend says this post is allowed.
                 if (viewModel.getUploadedImageUrl() != null) {
                     createFirestorePost(msg, viewModel.getUploadedImageUrl());
                 } else if (selectedImageUri != null) {
@@ -407,24 +414,34 @@ public class CreatePostActivity extends AppCompatActivity {
                     createFirestorePost(msg, null);
                 }
             }
-            @Override public void onLimitReached() {
+
+            @Override
+            public void onLimitReached() {
                 if (isFinishing() || isDestroyed()) return;
-                // Persist the new state so the action is saved outside the current screen.
+
                 viewModel.isPostInProgress.set(false);
                 setPostingUi(false);
-                // Give the user immediate feedback about the result of this action.
-                Toast.makeText(CreatePostActivity.this,
-                        "You've reached your 3 post limit for today. Try again tomorrow!",
-                        Toast.LENGTH_LONG).show();
+
+                Toast.makeText(
+                        CreatePostActivity.this,
+                        "You can only post with map location 3 times per day.",
+                        Toast.LENGTH_LONG
+                ).show();
             }
-            @Override public void onFailure(String errorMessage) {
+
+            @Override
+            public void onFailure(String errorMessage) {
                 if (isFinishing() || isDestroyed()) return;
+
                 Log.e(TAG, "recordForumPost failed: " + errorMessage);
                 viewModel.isPostInProgress.set(false);
                 setPostingUi(false);
-                Toast.makeText(CreatePostActivity.this,
-                        "Could not verify post limit. Please try again.",
-                        Toast.LENGTH_SHORT).show();
+
+                Toast.makeText(
+                        CreatePostActivity.this,
+                        "Could not verify posting limit. Please try again.",
+                        Toast.LENGTH_SHORT
+                ).show();
             }
         });
     }

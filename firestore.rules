@@ -19,6 +19,13 @@ service cloud.firestore {
       return request.auth != null && request.resource.data.userId == request.auth.uid;
     }
 
+    function onlySessionFieldUpdate() {
+  		return request.resource.data.diff(resource.data).affectedKeys()
+    	.hasOnly(['currentSessionId']) &&
+    	request.resource.data.currentSessionId is string &&
+    	request.resource.data.currentSessionId.size() > 0;
+		}
+
     // Fields that only Cloud Functions should ever write.
     // If any of these are in the incoming diff, block the client write.
     function onlyClientProfileFields() {
@@ -39,7 +46,10 @@ service cloud.firestore {
       allow read: if isSignedIn();
 
       // Owner can update their own profile, but cannot touch CF-managed fields
-      allow update: if isOwner(userId) && onlyClientProfileFields();
+      allow update: if isOwner(userId) && (
+  			onlyClientProfileFields() ||
+  			onlySessionFieldUpdate()
+				);
 
       // Creation/deletion handled by Cloud Functions only
       allow create, delete: if false;
@@ -88,41 +98,54 @@ service cloud.firestore {
       allow write: if false; // Cloud Functions (initializeUser) only
     }
 
-    // --- Forum Collection ---
-    match /forumThreads/{postId} {
-      allow read: if isSignedIn();
+  	match /forumThreads/{postId} {
+  		allow read: if isSignedIn();
 
-      // Only create if the userId field matches the requester
-      allow create: if isSignedIn() && incomingDataOwned();
+  	// Only create if the userId field matches the requester
+  		allow create: if isSignedIn() && incomingDataOwned();
 
-      // Owner can update/delete their thread.
-      // Any signed-in user can update ONLY the engagement stat fields.
-      allow update: if isSignedIn() && (
-        isOwnerOfResource() ||
-        request.resource.data.diff(resource.data).affectedKeys()
-          .hasOnly(['likeCount', 'likedBy', 'viewCount', 'viewedBy', 'commentCount'])
-      );
-      allow delete: if isSignedIn() && isOwnerOfResource();
+  		allow update: if isSignedIn() && (
+    // Owner can edit for 5 minutes, but NOT location/map fields
+    (
+      isOwnerOfResource() &&
+      resource.data.createdAt != null &&
+      request.time < resource.data.createdAt + duration.value(5, "m") &&
+      !request.resource.data.diff(resource.data).affectedKeys().hasAny([
+        'showLocation',
+        'latitude',
+        'longitude',
+        'locationId',
+        'localityName',
+        'state',
+        'country',
+        'userId',
+        'createdAt'
+      ])
+    ) ||
+    // Other signed-in users can only update engagement fields
+    request.resource.data.diff(resource.data).affectedKeys()
+      .hasOnly(['likeCount', 'likedBy', 'viewCount', 'viewedBy', 'commentCount'])
+  	);
 
-      match /comments/{commentId} {
-        allow read: if isSignedIn();
+  			allow delete: if isSignedIn() && isOwnerOfResource();
 
-        allow create: if isSignedIn() && incomingDataOwned();
+  		match /comments/{commentId} {
+    	allow read: if isSignedIn();
 
-        // Owner of comment or owner of parent thread can delete
-        allow delete: if isSignedIn() && (
-          isOwnerOfResource() ||
-          get(/databases/$(database)/documents/forumThreads/$(postId)).data.userId == request.auth.uid
-        );
+    		allow create: if isSignedIn() && incomingDataOwned();
 
-        // Comment owner can update freely; others can only update like fields
-        allow update: if isSignedIn() && (
-          isOwnerOfResource() ||
-          request.resource.data.diff(resource.data).affectedKeys()
-            .hasOnly(['likedBy'])
-        );
-      }
-    }
+    		allow delete: if isSignedIn() && (
+      	isOwnerOfResource() ||
+      	get(/databases/$(database)/documents/forumThreads/$(postId)).data.userId == request.auth.uid
+    		);
+
+    		allow update: if isSignedIn() && (
+      	isOwnerOfResource() ||
+      	request.resource.data.diff(resource.data).affectedKeys()
+        .hasOnly(['likedBy'])
+    		);
+  		}
+		}
 
     // --- Backlog Collection for Deletions ---
     match /deletedforum_backlog/{docId} {

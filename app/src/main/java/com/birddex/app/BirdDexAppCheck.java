@@ -116,7 +116,10 @@ public class BirdDexAppCheck extends Application {
                     String remoteSessionId = snapshot.getString("currentSessionId");
                     String localSessionId = sessionManager.getSessionId(user.getUid());
 
-                    if (remoteSessionId != null && localSessionId != null && !remoteSessionId.equals(localSessionId)) {
+                    if (remoteSessionId == null || remoteSessionId.trim().isEmpty()) return;
+                    if (localSessionId == null || localSessionId.trim().isEmpty()) return;
+
+                    if (!remoteSessionId.equals(localSessionId)) {
                         handleOtherDeviceLogin(user.getUid());
                     }
                 }

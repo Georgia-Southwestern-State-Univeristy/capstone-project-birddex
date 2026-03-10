@@ -1,6 +1,5 @@
 package com.birddex.app;
 
-import com.google.firebase.firestore.Exclude;
 import java.util.Date;
 
 /**
@@ -18,24 +17,29 @@ public class UserBird {
     private Date timeSpotted;
     private String birdFactsId; // Added for linking to bird facts
     private String hunterFactsId; // Added for linking to hunter facts
-    private boolean isDuplicate; // New field
-    private int pointsEarned; // New field
+    private boolean isDuplicate; // True if user already had this species before
+    private int pointsEarned; // How many points this identification earned
     private int imageCount; // Track number of associated images
+
+    // New cooldown-related fields written by Cloud Functions
+    private Date pointAwardedAt; // When this identification actually earned a point
+    private boolean pointCooldownBlocked; // True if 5-minute same-species cooldown blocked the point
 
     /**
      * Constructor that stores incoming dependencies/values so this object starts in a usable
      * state.
      */
     public UserBird() {
-        // Required for Firestore deserialization
+        // Default constructor required for calls to DataSnapshot.getValue(UserBird.class)
     }
 
-    // Existing constructor updated to initialize new fields
+
     /**
      * Constructor that stores incoming dependencies/values so this object starts in a usable
      * state.
      */
-    public UserBird(String id, String userId, String birdSpeciesId, String imageUrl, String locationId, Date timeSpotted, String birdFactsId, String hunterFactsId) {
+    public UserBird(String id, String userId, String birdSpeciesId, String imageUrl, String locationId,
+                    Date timeSpotted, String birdFactsId, String hunterFactsId) {
         this.id = id;
         this.userId = userId;
         this.birdSpeciesId = birdSpeciesId;
@@ -44,17 +48,20 @@ public class UserBird {
         this.timeSpotted = timeSpotted;
         this.birdFactsId = birdFactsId;
         this.hunterFactsId = hunterFactsId;
-        this.isDuplicate = false; 
-        this.pointsEarned = 0;    
-        this.imageCount = 1; // Default to 1
+        this.isDuplicate = false;
+        this.pointsEarned = 0;
+        this.imageCount = 1;
+        this.pointAwardedAt = null;
+        this.pointCooldownBlocked = false;
     }
 
-    // Full constructor including all fields
     /**
-     * Constructor that stores incoming dependencies/values so this object starts in a usable
-     * state.
+     * Full constructor including all fields.
      */
-    public UserBird(String id, String userId, String birdSpeciesId, String imageUrl, String locationId, Date timeSpotted, String birdFactsId, String hunterFactsId, boolean isDuplicate, int pointsEarned, int imageCount) {
+    public UserBird(String id, String userId, String birdSpeciesId, String imageUrl, String locationId,
+                    Date timeSpotted, String birdFactsId, String hunterFactsId,
+                    boolean isDuplicate, int pointsEarned, int imageCount,
+                    Date pointAwardedAt, boolean pointCooldownBlocked) {
         this.id = id;
         this.userId = userId;
         this.birdSpeciesId = birdSpeciesId;
@@ -66,9 +73,10 @@ public class UserBird {
         this.isDuplicate = isDuplicate;
         this.pointsEarned = pointsEarned;
         this.imageCount = imageCount;
+        this.pointAwardedAt = pointAwardedAt;
+        this.pointCooldownBlocked = pointCooldownBlocked;
     }
 
-    // Getters and setters (required for Firestore)
     public String getId() { return id; }
     public void setId(String id) { this.id = id; }
 
@@ -101,4 +109,10 @@ public class UserBird {
 
     public int getImageCount() { return imageCount; }
     public void setImageCount(int imageCount) { this.imageCount = imageCount; }
+
+    public Date getPointAwardedAt() { return pointAwardedAt; }
+    public void setPointAwardedAt(Date pointAwardedAt) { this.pointAwardedAt = pointAwardedAt; }
+
+    public boolean isPointCooldownBlocked() { return pointCooldownBlocked; }
+    public void setPointCooldownBlocked(boolean pointCooldownBlocked) { this.pointCooldownBlocked = pointCooldownBlocked; }
 }

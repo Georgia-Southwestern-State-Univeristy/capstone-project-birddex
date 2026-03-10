@@ -1332,47 +1332,129 @@ async function _updateUserTotals(userId, eventId, totalBirdsChange, duplicateBir
  * for the app.
  */
 exports.onUserBirdCreated = onDocumentCreated("userBirds/{uploadId}", async (event) => {
+    // Read the new userBird document that was just created.
     const userBirdData = event.data.data();
+
+    // userId = who saved/identified the bird
+    // birdSpeciesId = which species this bird is
+    // awardPoints = whether this save is even allowed to earn points
+    // (for example, your gallery-upload flow can set this to false)
     const { userId, birdSpeciesId, awardPoints = true } = userBirdData;
+
+    // Safety check: if there is no userId, we cannot update totals correctly.
     if (!userId) {
         logger.error("onUserBirdCreated: No userId in document.");
         return null;
     }
 
-    // FIX #21a: Determine isDuplicate server-side.
-    let isDuplicate = false;
+    // This is the cooldown length for earning points on the SAME species.
+    // 5 minutes = 5 * 60 * 1000 milliseconds.
+    const POINT_COOLDOWN_MS = 5 * 60 * 1000;
+
+    // Current server timestamp.
+    const nowTs = admin.firestore.Timestamp.now();
+
+    // Default values before we inspect this user's history for this species.
+    let isDuplicate = false;          // true if this user already had this species before
+    let pointsEarned = 0;             // how many points THIS identification gives
+    let pointAwardedAt = null;        // when this identification actually gave a point
+    let pointCooldownBlocked = false; // true if it was blocked by the 5-minute cooldown
+
+    // Only do species-based logic if the document has a birdSpeciesId.
     if (birdSpeciesId) {
-        // This is where the function touches Firestore documents/collections for the requested action.
-        const existingSnap = await db.collection("userBirds")
+        // Pull all userBird docs for this SAME user and SAME species.
+        // We use this for two things:
+        // 1) figure out whether this species is a duplicate for the user
+        // 2) find the most recent time this species actually gave a point
+        const sameSpeciesSnap = await db.collection("userBirds")
             .where("userId", "==", userId)
             .where("birdSpeciesId", "==", birdSpeciesId)
-            .limit(2)  // limit 2: one is the doc just created; a second means duplicate
             .get();
-        isDuplicate = existingSnap.size >= 2;
-    }
 
-    // FIX #21b: Compute pointsEarned server-side from the bird's rarity field.
-    // Fallback to 0 if the bird doc doesn't exist or has no rarity.
-    let pointsEarned = 0;
-    if (awardPoints && birdSpeciesId && !isDuplicate) {
-        const birdDoc = await db.collection("birds").doc(birdSpeciesId).get();
-        if (birdDoc.exists) {
-            const rarity = (birdDoc.data().rarity || "").toLowerCase();
-            if (rarity === "common") pointsEarned = 1;
-            else if (rarity === "uncommon") pointsEarned = 3;
-            else if (rarity === "rare") pointsEarned = 5;
-            else if (rarity === "very rare") pointsEarned = 10;
-            else pointsEarned = 1; // default for unknown rarity
+        // Remove the document that just triggered this function from the list,
+        // because we only want to compare against older entries.
+        const otherDocs = sameSpeciesSnap.docs.filter(doc => doc.id !== event.params.uploadId);
+
+        // If any older doc for this species exists, mark it as duplicate.
+        isDuplicate = otherDocs.length > 0;
+
+        // Track the most recent time this species earned points.
+        let latestPointAwardMs = null;
+
+        for (const doc of otherDocs) {
+            const data = doc.data();
+
+            // Read how many points that older identification earned.
+            // Only old entries with pointsEarned > 0 should start a cooldown.
+            const prevPointsEarned = Number(data.pointsEarned || 0);
+
+            // Read the timestamp of when that old identification earned its point.
+            const prevPointAwardedAt = data.pointAwardedAt;
+
+            // Only consider older entries that actually awarded points and have a valid timestamp.
+            if (prevPointsEarned > 0 && prevPointAwardedAt && typeof prevPointAwardedAt.toMillis === "function") {
+                const prevMs = prevPointAwardedAt.toMillis();
+
+                // Keep the newest point-award time we find.
+                if (latestPointAwardMs === null || prevMs > latestPointAwardMs) {
+                    latestPointAwardMs = prevMs;
+                }
+            }
+        }
+
+        // Only attempt to give points if this identification is allowed to award points.
+        if (awardPoints) {
+            // If the same species earned a point less than 5 minutes ago,
+            // block the new point.
+            const isWithinCooldown =
+                latestPointAwardMs !== null &&
+                (nowTs.toMillis() - latestPointAwardMs) < POINT_COOLDOWN_MS;
+
+            if (isWithinCooldown) {
+                // Same species was already rewarded too recently, so give 0 points.
+                pointsEarned = 0;
+                pointCooldownBlocked = true;
+                pointAwardedAt = null;
+            } else {
+                // Cooldown has passed (or no previous point-award exists),
+                // so give exactly 1 point for this identification.
+                pointsEarned = 1;
+                pointCooldownBlocked = false;
+                pointAwardedAt = nowTs;
+            }
         }
     }
 
-    // Patch the server-computed values back onto the document so downstream reads are correct.
-    await event.data.ref.update({ isDuplicate, pointsEarned }).catch(e =>
-        logger.warn(`onUserBirdCreated: Failed to patch isDuplicate/pointsEarned on ${event.params.uploadId}:`, e)
+    // Save the server-computed fields back onto the userBird document
+    // so the app can see:
+    // - whether it is a duplicate
+    // - whether it earned a point
+    // - whether the cooldown blocked it
+    // - when the point was awarded
+    await event.data.ref.update({
+        isDuplicate,
+        pointsEarned,
+        pointAwardedAt,
+        pointCooldownBlocked
+    }).catch(e =>
+        logger.warn(
+            `onUserBirdCreated: Failed to patch computed fields on ${event.params.uploadId}:`,
+            e
+        )
     );
 
-    // Use the document ID (uploadId) as the unique event key for idempotency
-    await _updateUserTotals(userId, `CREATED_${event.params.uploadId}`, 1, isDuplicate ? 1 : 0, pointsEarned);
+    // Update the user's totals in an idempotent way.
+    // +1 totalBirds because a new userBird was created
+    // +1 duplicateBirds only if this species already existed for the user
+    // +pointsEarned adds either 1 or 0 depending on the cooldown
+    await _updateUserTotals(
+        userId,
+        `CREATED_${event.params.uploadId}`,
+        1,
+        isDuplicate ? 1 : 0,
+        pointsEarned
+    );
+
     return null;
 });
 

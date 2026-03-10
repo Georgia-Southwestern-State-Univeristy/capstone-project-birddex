@@ -76,14 +76,29 @@ public class LoginActivity extends AppCompatActivity {
                         if (user != null && user.isEmailVerified()) {
                             if (isNavigating) return;
                             isNavigating = true;
-                            
+
                             SessionManager sessionManager = new SessionManager(LoginActivity.this);
                             String sessionId = sessionManager.createSession(user.getUid());
+
                             firebaseManager.updateSessionId(user.getUid(), sessionId, task -> {
                                 setLoadingState(false);
-                                // Move into the next screen and pass the identifiers/data that screen needs.
-                                startActivity(new Intent(LoginActivity.this, HomeActivity.class));
-                                finish();
+
+                                if (task.isSuccessful()) {
+                                    startActivity(new Intent(LoginActivity.this, HomeActivity.class));
+                                    finish();
+                                } else {
+                                    FirebaseAuth.getInstance().signOut();
+                                    sessionManager.clearSession(user.getUid());
+                                    isNavigating = false;
+
+                                    String msg = (task.getException() != null)
+                                            ? task.getException().getMessage()
+                                            : "Failed to start session.";
+
+                                    Toast.makeText(LoginActivity.this,
+                                            "Login failed: " + msg,
+                                            Toast.LENGTH_LONG).show();
+                                }
                             });
                         } else if (user != null) {
                             FirebaseAuth.getInstance().signOut();

@@ -16,6 +16,7 @@ import com.google.firebase.firestore.FieldValue;
 import com.google.firebase.firestore.FirebaseFirestore;
 import com.google.firebase.firestore.ListenerRegistration;
 import com.google.firebase.firestore.QuerySnapshot;
+import com.google.firebase.firestore.SetOptions;
 import com.google.firebase.firestore.WriteBatch;
 import com.google.firebase.functions.FirebaseFunctions;
 import com.google.firebase.functions.FirebaseFunctionsException;
@@ -329,8 +330,14 @@ public class FirebaseManager {
      */
     public void updateSessionId(String userId, String sessionId, OnCompleteListener<Void> listener) {
         Log.d(TAG, "Updating session ID for user: " + userId);
-        // Set up or query the Firebase layer that supplies/stores this feature's data.
-        db.collection("users").document(userId).update("currentSessionId", sessionId).addOnCompleteListener(listener);
+
+        Map<String, Object> updates = new HashMap<>();
+        updates.put("currentSessionId", sessionId);
+
+        db.collection("users")
+                .document(userId)
+                .set(updates, SetOptions.merge())
+                .addOnCompleteListener(listener);
     }
 
     /**

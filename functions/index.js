@@ -46,6 +46,7 @@ const CONFIG = {
     UNVERIFIED_USER_TTL_MS: 72 * 60 * 60 * 1000,      // 72 hours
     FIRESTORE_BATCH_SIZE: 400,  // Firestore max is 500; using 400 for safety
     LOCATION_PRECISION: 4,      // decimal places (~11 meters)
+    FORUM_EDIT_WINDOW_MS: 5 * 60 * 1000,
 };
 
 // ======================================================
@@ -79,6 +80,175 @@ function sanitizeText(text, maxLength = 5000) {
     const trimmed = text.trim();
     if (trimmed.length > maxLength) return trimmed.substring(0, maxLength);
     return trimmed.replace(/<[^>]*>/g, "");
+}
+
+// ======================================================
+// HELPER: Forum text moderation
+// ======================================================
+const FORUM_BLOCKED_WORDS = new Set([
+    "fuck", "shit", "asshole", "bitch", "cunt", "dick", "pussy", "bastard",
+    "slut", "whore", "sex", "porn", "pornography", "xxx", "nsfw", "erotic",
+    "hardcore", "softcore", "adult content", "motherfucker", "cocksucker",
+    "cockfucker", "jackass", "dipshit", "dumbass", "dumbshit", "goddamn", "piss",
+    "ahole", "biotch", "penis", "vagina", "clitoris", "testicles", "scrotum",
+    "boobs", "tits", "ass", "butt", "breasts", "genitals", "cock", "balls",
+    "clit", "labia", "erection", "masturbate", "masturbation", "orgasm", "cum",
+    "cumming", "ejaculate", "penetrate", "penetration", "intercourse", "coitus",
+    "blowjob", "handjob", "deepthroat", "rimjob", "rimming", "anal", "cummin",
+    "coom", "blowie", "his member", "wet cunt", "onlyfans", "camgirl", "camsite",
+    "stripper", "escort", "brothel", "fetish", "bdsm", "kink", "kinky",
+    "dominatrix", "submissive", "bondage", "dildo", "vibrator", "pegging",
+    "fingering", "scissoring", "grinding", "foot fetish", "roleplay sex", "nude",
+    "nudes", "naked", "topless", "lewd", "explicit", "send nudes", "milf",
+    "dilf", "sugar daddy", "sugar baby", "creampie", "facial", "spitroast",
+    "threesome", "foursome", "gangbang", "orgy", "hentai", "doujinshi",
+    "adult video", "sex tape", "gilf", "hookup", "one night stand", "booty call",
+    "smash", "get laid", "bang", "doggy style", "69", "quickie", "hooking up",
+    "sleep together", "nigger", "kike", "faggot", "dyke", "retard", "tranny",
+    "spic", "chink", "wetback", "coon", "nazi", "hitler", "negro", "beaner",
+    "gook", "gypo", "fag", "cracker", "zipperhead", "sand nigger", "turban head",
+    "darkie", "chud", "transvestite", "troon", "nigga", "dark skin", "cholo",
+    "gringo", "kill yourself", "suicide", "murder", "rape", "molest", "pedophile",
+    "underage", "terrorist", "massacre", "genocide", "kys", "rapist", "al qaeda",
+    "isis", "kkk", "klu klux klan", "kool kids klub", "cia", "fbi", "cocaine",
+    "heroin", "meth", "fentanyl", "oxycodone", "xanax", "percocet", "crack cocaine",
+    "mdma", "ecstasy", "9-11", "white power", "black lives matter", "magam", "maga",
+    "magat", "libtard", "glowie", "ice agent", "israel", "palestine",
+    "jet fuel can't melt steel beams", "jet fuel cant melt steel beams",
+    "black excellence", "white superiority", "idf", "ukraine", "from the river to the sea",
+    "from the river, to the sea", "russia", "free palestine", "trump", "biden",
+    "obama", "bill clinton", "hillary clinton", "nick fuentes", "osama", "bin laden",
+    "jd vance", "andrew tate", "tristan tate", "sneako", "epstein",
+    "ghislaine maxwell", "jeffery epstein", "benjamin netanyahu", "netanyahu",
+    "adolf hitler", "himmler", "g string", "lingerie", "thong"
+]);
+
+const FORUM_BIRD_WHITELIST = [
+    "tit", "tits", "booby", "boobies", "shag", "woodcock", "dickcissel",
+    "bushtit", "cock", "ass", "blue tit", "great tit", "tufted titmouse"
+];
+
+const FORUM_EMAIL_REGEX = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,6}/;
+const FORUM_PHONE_REGEX = /\b(\+?\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b/;
+const FORUM_URL_REGEX = /https?:\/\/\S+\s?/i;
+const FORUM_SPAM_REPETITION_REGEX = /(.)\1{4,}/;
+const FORUM_CREDIT_CARD_REGEX = /\b(?:\d[ -]*?){13,16}\b/;
+const FORUM_ZALGO_REGEX = /[\u0300-\u036F\u1DC0-\u1DFF\u20D0-\u20FF\uFE20-\uFE2F]{3,}/u;
+
+function escapeRegex(value) {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function normalizeForumText(text) {
+    if (!text || typeof text !== "string") return "";
+    return text.toLowerCase()
+        .replace(/0/g, "o")
+        .replace(/1/g, "i")
+        .replace(/3/g, "e")
+        .replace(/4/g, "a")
+        .replace(/5/g, "s")
+        .replace(/7/g, "t")
+        .replace(/8/g, "b")
+        .replace(/@/g, "a")
+        .replace(/\$/g, "s")
+        .replace(/!/g, "i")
+        .replace(/(.)\1+/g, "$1");
+}
+
+function isForumWordWhitelisted(input, blockedWord) {
+    return FORUM_BIRD_WHITELIST.some((allowed) =>
+        input.includes(allowed) && allowed.includes(blockedWord)
+    );
+}
+
+function forumWordMatches(input, target) {
+    if (!target || target.length < 3) return false;
+    const regex = new RegExp(`\\b${escapeRegex(target)}\\b`, "i");
+    return regex.test(input);
+}
+
+function forumWordMatchesBypass(input, target) {
+    const pattern = Array.from(target)
+        .map((char) => escapeRegex(char))
+        .join("[\\W_]*");
+    const regex = new RegExp(`\\b${pattern}\\b`, "i");
+    return regex.test(input);
+}
+
+function hasBlockedForumLanguage(input) {
+    const normalizedInput = normalizeForumText(input);
+
+    for (const word of FORUM_BLOCKED_WORDS) {
+        if (isForumWordWhitelisted(input, word)) continue;
+        if (forumWordMatches(normalizedInput, normalizeForumText(word))) return true;
+        if (forumWordMatchesBypass(input, word)) return true;
+    }
+
+    return false;
+}
+
+function getForumContentViolation(text) {
+    if (!text || typeof text !== "string" || !text.trim()) return null;
+
+    if (FORUM_ZALGO_REGEX.test(text)) return "glitch text";
+
+    const unicodeNormalized = text.normalize("NFD").replace(/[^\x00-\x7F]/g, "");
+    const lower = unicodeNormalized.toLowerCase();
+
+    if (FORUM_CREDIT_CARD_REGEX.test(text)) return "sensitive financial data";
+    if (FORUM_EMAIL_REGEX.test(text)) return "an email address";
+    if (FORUM_PHONE_REGEX.test(text)) return "a phone number";
+    if (FORUM_URL_REGEX.test(text)) return "external links";
+    if (FORUM_SPAM_REPETITION_REGEX.test(text)) return "excessive character repetition";
+    if (hasBlockedForumLanguage(lower)) return "inappropriate language";
+
+    return null;
+}
+
+function assertForumContentAllowed(text, fieldName, maxLength) {
+    const sanitized = sanitizeText(text, maxLength);
+    const violation = getForumContentViolation(sanitized);
+
+    if (violation) {
+        throw new HttpsError("failed-precondition", `${fieldName} contains ${violation}.`);
+    }
+
+    return sanitized;
+}
+
+function assertForumEditWindow(createdAt, entityName) {
+    if (!createdAt || typeof createdAt.toMillis !== "function") return;
+
+    const ageMs = Date.now() - createdAt.toMillis();
+    if (ageMs > CONFIG.FORUM_EDIT_WINDOW_MS) {
+        throw new HttpsError("failed-precondition", `${entityName} can no longer be edited.`);
+    }
+}
+
+function assertProfileUsernameAllowed(username) {
+    const sanitizedUsername = sanitizeUsername(username);
+    const violation = getForumContentViolation(sanitizedUsername);
+
+    if (violation) {
+        throw new HttpsError("failed-precondition", `Username contains ${violation}.`);
+    }
+
+    return sanitizedUsername;
+}
+
+function assertProfileBioAllowed(bio) {
+    if (bio === undefined || bio === null) return undefined;
+
+    const sanitizedBio = sanitizeText(bio, 90)
+        .replace(/\n{2,}/g, "\n")
+        .replace(/ +/g, " ");
+    const violation = getForumContentViolation(sanitizedBio);
+
+    if (violation) {
+        throw new HttpsError("failed-precondition", `Bio contains ${violation}.`);
+    }
+
+    return sanitizedBio;
 }
 
 // ======================================================
@@ -374,7 +544,7 @@ async function getOrCreateAndSaveBirdFacts(birdId, commonName) {
  */
 exports.checkUsernameAndEmailAvailability = onCall(async (request) => {
     const { username, email } = request.data;
-    const sanitizedUsername = sanitizeUsername(username);
+    const sanitizedUsername = assertProfileUsernameAllowed(username);
 
     if (!email || typeof email !== "string" || email.trim().length === 0) {
         throw new HttpsError("invalid-argument", "The email field is required and must be a non-empty string.");
@@ -412,7 +582,8 @@ exports.initializeUser = onCall(async (request) => {
 
     const { username, email, bio, profilePictureUrl } = request.data;
     const uid = request.auth.uid;
-    const sanitizedUsername = sanitizeUsername(username);
+    const sanitizedUsername = assertProfileUsernameAllowed(username);
+    const sanitizedBio = assertProfileBioAllowed(bio);
 
     // This is where the function touches Firestore documents/collections for the requested action.
     const userRef = db.collection("users").doc(uid);
@@ -447,7 +618,7 @@ exports.initializeUser = onCall(async (request) => {
                 id: uid,
                 updatedAt: admin.firestore.FieldValue.serverTimestamp()
             };
-            if (bio !== undefined && bio !== null) profileUpdate.bio = bio;
+            if (sanitizedBio !== undefined) profileUpdate.bio = sanitizedBio;
             if (profilePictureUrl !== undefined && profilePictureUrl !== null) {
                 profileUpdate.profilePictureUrl = profilePictureUrl;
             }

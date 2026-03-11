@@ -51,8 +51,10 @@ import java.util.Map;
 /**
  * PostDetailActivity: Detailed post view that loads one post plus its comments/replies and handles interactions.
  *
- * These comments focus on what the actual code blocks are doing so the file is easier to trace
- * when you are debugging or presenting the app. Only comments were added; runtime logic was not changed.
+ * Updated for the forum moderation hardening pass:
+ * - new comments and text edits now go through callable Cloud Functions
+ * - the frontend still validates immediately, but the backend now re-checks moderation and ownership
+ * - likes, loading, and delete/archive behavior were left on their existing paths
  */
 public class PostDetailActivity extends AppCompatActivity implements ForumCommentAdapter.OnCommentInteractionListener {
 
@@ -258,7 +260,7 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
         ((ImageView) v.findViewById(R.id.ivLikeIcon)).setImageResource((user != null && post.getLikedBy() != null && post.getLikedBy().containsKey(user.getUid())) ? R.drawable.ic_favorite : R.drawable.ic_favorite_border);
         v.findViewById(R.id.btnLike).setOnClickListener(view -> toggleLike());
         v.findViewById(R.id.btnPostOptions).setOnClickListener(view -> showPostOptions(post, view));
-        
+
         v.findViewById(R.id.ivPostUserProfilePicture).setOnClickListener(view -> openProfile(post.getUserId()));
         v.findViewById(R.id.tvPostUsername).setOnClickListener(view -> openProfile(post.getUserId()));
     }
@@ -323,9 +325,20 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
      */
     private void updatePost(ForumPost post, String msg, boolean spotted, boolean hunted, boolean loc) {
         if (!ContentFilter.isSafe(this, msg, "Post")) return;
-        Map<String, Object> u = new HashMap<>(); u.put("message", msg); u.put("spotted", spotted); u.put("hunted", hunted); u.put("showLocation", loc); u.put("edited", true); u.put("lastEditedAt", FieldValue.serverTimestamp());
-        // Set up or query the Firebase layer that supplies/stores this feature's data.
-        db.collection("forumThreads").document(post.getId()).update(u).addOnSuccessListener(v -> Toast.makeText(this, "Updated", Toast.LENGTH_SHORT).show());
+
+        firebaseManager.updateForumPostContent(post.getId(), msg, spotted, hunted, loc, new FirebaseManager.ForumWriteListener() {
+            @Override
+            public void onSuccess() {
+                if (isFinishing()) return;
+                Toast.makeText(PostDetailActivity.this, "Updated", Toast.LENGTH_SHORT).show();
+            }
+
+            @Override
+            public void onFailure(String errorMessage) {
+                if (isFinishing()) return;
+                Toast.makeText(PostDetailActivity.this, errorMessage != null ? errorMessage : "Failed to update post", Toast.LENGTH_SHORT).show();
+            }
+        });
     }
 
     /**
@@ -509,17 +522,31 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
         if (msg.isEmpty() || msg.length() > MAX_COMMENT_LENGTH || !ContentFilter.isSafe(this, msg, "Comment")) return;
         FirebaseUser user = mAuth.getCurrentUser(); if (user == null) return;
         binding.btnSendComment.setEnabled(false);
-        ForumComment c = new ForumComment(postId, user.getUid(), currentUsername, currentUserPfpUrl, msg);
-        if (replyingToComment != null) { c.setParentCommentId(replyingToComment.getId()); c.setParentUsername(replyingToComment.getUsername()); }
-        // Set up or query the Firebase layer that supplies/stores this feature's data.
+
         String cid = db.collection("forumThreads").document(postId).collection("comments").document().getId();
-        // Persist the new state so the action is saved outside the current screen.
-        db.collection("forumThreads").document(postId).collection("comments").document(cid).set(c).addOnSuccessListener(v -> {
-            if (isFinishing()) return;
-            binding.etComment.setText(""); binding.etComment.setHint("Write a comment..."); replyingToComment = null; binding.btnSendComment.setEnabled(true);
-            lastCommentVisible = null; isLastCommentsPage = false; commentList.clear(); fetchComments();
-        // Give the user immediate feedback about the result of this action.
-        }).addOnFailureListener(e -> { binding.btnSendComment.setEnabled(true); Toast.makeText(this, "Failed", Toast.LENGTH_SHORT).show(); });
+        String parentCommentId = replyingToComment != null ? replyingToComment.getId() : "";
+
+        firebaseManager.createForumComment(postId, cid, msg, parentCommentId, new FirebaseManager.ForumWriteListener() {
+            @Override
+            public void onSuccess() {
+                if (isFinishing()) return;
+                binding.etComment.setText("");
+                binding.etComment.setHint("Write a comment...");
+                replyingToComment = null;
+                binding.btnSendComment.setEnabled(true);
+                lastCommentVisible = null;
+                isLastCommentsPage = false;
+                commentList.clear();
+                fetchComments();
+            }
+
+            @Override
+            public void onFailure(String errorMessage) {
+                if (isFinishing()) return;
+                binding.btnSendComment.setEnabled(true);
+                Toast.makeText(PostDetailActivity.this, errorMessage != null ? errorMessage : "Failed", Toast.LENGTH_SHORT).show();
+            }
+        });
     }
 
     /**
@@ -601,8 +628,20 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
      */
     private void updateComment(ForumComment c, String msg) {
         if (!ContentFilter.isSafe(this, msg, "Comment")) return;
-        // Set up or query the Firebase layer that supplies/stores this feature's data.
-        db.collection("forumThreads").document(postId).collection("comments").document(c.getId()).update("text", msg, "edited", true, "lastEditedAt", FieldValue.serverTimestamp());
+
+        firebaseManager.updateForumCommentContent(postId, c.getId(), msg, new FirebaseManager.ForumWriteListener() {
+            @Override
+            public void onSuccess() {
+                if (isFinishing()) return;
+                Toast.makeText(PostDetailActivity.this, "Updated", Toast.LENGTH_SHORT).show();
+            }
+
+            @Override
+            public void onFailure(String errorMessage) {
+                if (isFinishing()) return;
+                Toast.makeText(PostDetailActivity.this, errorMessage != null ? errorMessage : "Failed to update comment", Toast.LENGTH_SHORT).show();
+            }
+        });
     }
 
     /**

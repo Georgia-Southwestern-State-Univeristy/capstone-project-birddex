@@ -47,6 +47,7 @@ import java.util.UUID;
 
 /**
  * EditProfileActivity: Screen that edits profile fields and writes the changes back to the user record.
+ * The screen still does instant frontend filtering, and backend profile filtering now backs it up on save.
  *
  * These comments focus on what the actual code blocks are doing so the file is easier to trace
  * when you are debugging or presenting the app. Only comments were added; runtime logic was not changed.
@@ -405,7 +406,11 @@ public class EditProfileActivity extends AppCompatActivity implements NetworkMon
             }
             @Override
             // Give the user immediate feedback about the result of this action.
-            public void onFailure(String err) { resetSaveState(); Toast.makeText(EditProfileActivity.this, "Update failed.", Toast.LENGTH_SHORT).show(); }
+            public void onFailure(String err) {
+                resetSaveState();
+                String message = (err != null && !err.trim().isEmpty()) ? err : "Update failed.";
+                Toast.makeText(EditProfileActivity.this, message, Toast.LENGTH_SHORT).show();
+            }
             @Override
             public void onUsernameTaken() { resetSaveState(); etUsername.setError("Username taken."); }
             @Override public void onEmailTaken() { resetSaveState(); }

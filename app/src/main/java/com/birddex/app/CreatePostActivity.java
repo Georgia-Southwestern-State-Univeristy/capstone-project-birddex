@@ -62,8 +62,10 @@ import java.util.UUID;
 /**
  * CreatePostActivity: Composer screen for creating a new forum post with text, media, and metadata.
  *
- * These comments focus on what the actual code blocks are doing so the file is easier to trace
- * when you are debugging or presenting the app. Only comments were added; runtime logic was not changed.
+ * Updated for the forum moderation hardening pass:
+ * - keeps the frontend content filter for instant feedback
+ * - sends the final post write through a callable Cloud Function so backend moderation cannot be bypassed
+ * - keeps the existing image upload, rotation recovery, and post-limit flow intact
  */
 public class CreatePostActivity extends AppCompatActivity {
 
@@ -502,19 +504,24 @@ public class CreatePostActivity extends AppCompatActivity {
             post.setLongitude(currentLongitude);
         }
 
-        firebaseManager.addForumPost(post, task -> {
-            if (isFinishing() || isDestroyed()) return;
-            if (task.isSuccessful()) {
+        firebaseManager.createForumPost(post, new FirebaseManager.ForumWriteListener() {
+            @Override
+            public void onSuccess() {
+                if (isFinishing() || isDestroyed()) return;
                 // Persist the new state so the action is saved outside the current screen.
                 viewModel.isPostFinished.set(true);
                 viewModel.isPostInProgress.set(false);
                 // Give the user immediate feedback about the result of this action.
-                Toast.makeText(this, "Post shared!", Toast.LENGTH_SHORT).show();
+                Toast.makeText(CreatePostActivity.this, "Post shared!", Toast.LENGTH_SHORT).show();
                 finish();
-            } else {
+            }
+
+            @Override
+            public void onFailure(String errorMessage) {
+                if (isFinishing() || isDestroyed()) return;
                 viewModel.isPostInProgress.set(false);
                 setPostingUi(false);
-                Toast.makeText(this, "Failed to share post", Toast.LENGTH_SHORT).show();
+                Toast.makeText(CreatePostActivity.this, errorMessage != null ? errorMessage : "Failed to share post", Toast.LENGTH_SHORT).show();
             }
         });
     }

@@ -27,8 +27,11 @@ import java.util.Map;
 /**
  * FirebaseManager: Central Firebase helper that hides Firestore, Storage, Auth, and Cloud Function details from the UI screens.
  *
- * These comments focus on what the actual code blocks are doing so the file is easier to trace
- * when you are debugging or presenting the app. Only comments were added; runtime logic was not changed.
+ * Updated for the forum/profile moderation hardening pass:
+ * - forum post/comment create and edit flows go through callable Cloud Functions
+ * - username and bio updates are also enforced again on the backend through initializeUser
+ * - the frontend still gives instant validation feedback, but the backend now enforces the same rules
+ * - existing direct Firestore helpers were left in place for unrelated legacy paths
  */
 public class FirebaseManager {
 
@@ -37,6 +40,30 @@ public class FirebaseManager {
     private final FirebaseFirestore db;
     private final FirebaseFunctions mFunctions;
     private Context context;
+
+    private String extractFunctionsErrorMessage(Exception e, String fallback) {
+        if (e == null) return fallback;
+
+        if (e instanceof FirebaseFunctionsException) {
+            FirebaseFunctionsException ffe = (FirebaseFunctionsException) e;
+
+            Object details = ffe.getDetails();
+            if (details instanceof Map) {
+                Object message = ((Map<?, ?>) details).get("message");
+                if (message instanceof String && !((String) message).trim().isEmpty()) {
+                    return (String) message;
+                }
+            }
+
+            String msg = ffe.getMessage();
+            if (msg != null && !msg.trim().isEmpty()) {
+                return msg;
+            }
+        }
+
+        String msg = e.getMessage();
+        return (msg != null && !msg.trim().isEmpty()) ? msg : fallback;
+    }
 
     // -------------------------------------------------------------------------
     // Interfaces
@@ -93,6 +120,11 @@ public class FirebaseManager {
     public interface ForumPostLimitListener {
         void onAllowed(int remaining);
         void onLimitReached();
+        void onFailure(String errorMessage);
+    }
+
+    public interface ForumWriteListener {
+        void onSuccess();
         void onFailure(String errorMessage);
     }
 
@@ -157,7 +189,7 @@ public class FirebaseManager {
                                             return;
                                         }
                                     }
-                                    listener.onFailure("Profile setup failed. Please try again.");
+                                    listener.onFailure(extractFunctionsErrorMessage(e, "Profile setup failed. Please try again."));
                                 }
                             });
                         }
@@ -205,7 +237,7 @@ public class FirebaseManager {
                         Log.d(TAG, "Availability check - Username: " + uAvail + ", Email: " + eAvail);
                         listener.onCheckComplete(uAvail, eAvail);
                     } else {
-                        String error = task.getException() != null ? task.getException().getMessage() : "Check failed.";
+                        String error = extractFunctionsErrorMessage(task.getException(), "Check failed.");
                         Log.e(TAG, "checkUsernameAndEmailAvailability failed: " + error);
                         listener.onFailure(error);
                     }
@@ -310,7 +342,7 @@ public class FirebaseManager {
                                 return;
                             }
                         }
-                        String error = e != null ? e.getMessage() : "Update failed.";
+                        String error = extractFunctionsErrorMessage(e, "Update failed.");
                         Log.e(TAG, "Atomic profile update failed: " + error);
                         listener.onFailure(error);
                     }
@@ -625,6 +657,143 @@ public class FirebaseManager {
      * Part of this method writes changes back to Firestore/storage, so this is where app actions
      * become permanent.
      */
+
+    /**
+     * Returns a user-friendly error message from a callable Cloud Function task.
+     */
+    private String getCallableErrorMessage(Task<HttpsCallableResult> task, String fallbackMessage) {
+        if (task.getException() instanceof FirebaseFunctionsException) {
+            String message = task.getException().getMessage();
+            if (message != null && !message.trim().isEmpty()) return message;
+        }
+        if (task.getException() != null && task.getException().getMessage() != null) {
+            return task.getException().getMessage();
+        }
+        return fallbackMessage;
+    }
+
+    /**
+     * Main logic block for this part of the feature.
+     * Final forum post creation now goes through a callable so the backend can enforce moderation.
+     */
+    public void createForumPost(ForumPost post, ForumWriteListener listener) {
+        Log.d(TAG, "Calling createForumPost CF for post: " + post.getId());
+
+        Map<String, Object> data = new HashMap<>();
+        data.put("postId", post.getId());
+        data.put("message", post.getMessage());
+        data.put("birdImageUrl", post.getBirdImageUrl() != null ? post.getBirdImageUrl() : "");
+        data.put("showLocation", post.isShowLocation());
+        data.put("spotted", post.isSpotted());
+        data.put("hunted", post.isHunted());
+        if (post.getLatitude() != null) data.put("latitude", post.getLatitude());
+        if (post.getLongitude() != null) data.put("longitude", post.getLongitude());
+
+        mFunctions.getHttpsCallable("createForumPost").call(data).addOnCompleteListener(task -> {
+            if (task.isSuccessful()) {
+                Log.d(TAG, "createForumPost CF succeeded.");
+                listener.onSuccess();
+            } else {
+                String error = getCallableErrorMessage(task, "Failed to share post.");
+                Log.e(TAG, "createForumPost CF failed: " + error);
+                listener.onFailure(error);
+            }
+        });
+    }
+
+    /**
+     * Main logic block for this part of the feature.
+     * Final forum comment creation now goes through a callable so the backend can enforce moderation.
+     */
+    public void createForumComment(
+            String threadId,
+            String commentId,
+            String text,
+            String parentCommentId,
+            ForumWriteListener listener
+    ) {
+        Log.d(TAG, "Calling createForumComment CF for thread: " + threadId + " commentId=" + commentId);
+
+        Map<String, Object> data = new HashMap<>();
+        data.put("threadId", threadId);
+        data.put("commentId", commentId);
+        data.put("text", text);
+        data.put("parentCommentId", parentCommentId != null ? parentCommentId : "");
+
+        mFunctions.getHttpsCallable("createForumComment").call(data).addOnCompleteListener(task -> {
+            if (task.isSuccessful()) {
+                Log.d(TAG, "createForumComment CF succeeded.");
+                listener.onSuccess();
+            } else {
+                String error = getCallableErrorMessage(task, "Failed to add comment.");
+                Log.e(TAG, "createForumComment CF failed: " + error);
+                listener.onFailure(error);
+            }
+        });
+    }
+
+    /**
+     * Applies the latest values to existing UI/data so the screen and backend stay in sync.
+     * Post edits now go through a callable so the backend can re-check ownership, edit window, and moderation.
+     */
+    public void updateForumPostContent(
+            String postId,
+            String message,
+            boolean spotted,
+            boolean hunted,
+            boolean showLocation,
+            ForumWriteListener listener
+    ) {
+        Log.d(TAG, "Calling updateForumPostContent CF for post: " + postId);
+
+        Map<String, Object> data = new HashMap<>();
+        data.put("postId", postId);
+        data.put("message", message);
+        data.put("spotted", spotted);
+        data.put("hunted", hunted);
+        data.put("showLocation", showLocation);
+
+        mFunctions.getHttpsCallable("updateForumPostContent").call(data).addOnCompleteListener(task -> {
+            if (task.isSuccessful()) {
+                Log.d(TAG, "updateForumPostContent CF succeeded.");
+                listener.onSuccess();
+            } else {
+                String error = getCallableErrorMessage(task, "Failed to update post.");
+                Log.e(TAG, "updateForumPostContent CF failed: " + error);
+                listener.onFailure(error);
+            }
+        });
+    }
+
+    /**
+     * Applies the latest values to existing UI/data so the screen and backend stay in sync.
+     * Comment edits now go through a callable so the backend can re-check ownership, edit window, and moderation.
+     */
+    public void updateForumCommentContent(
+            String threadId,
+            String commentId,
+            String text,
+            ForumWriteListener listener
+    ) {
+        Log.d(TAG, "Calling updateForumCommentContent CF for thread: " + threadId + " commentId=" + commentId);
+
+        Map<String, Object> data = new HashMap<>();
+        data.put("threadId", threadId);
+        data.put("commentId", commentId);
+        data.put("text", text);
+
+        mFunctions.getHttpsCallable("updateForumCommentContent").call(data).addOnCompleteListener(task -> {
+            if (task.isSuccessful()) {
+                Log.d(TAG, "updateForumCommentContent CF succeeded.");
+                listener.onSuccess();
+            } else {
+                String error = getCallableErrorMessage(task, "Failed to update comment.");
+                Log.e(TAG, "updateForumCommentContent CF failed: " + error);
+                listener.onFailure(error);
+            }
+        });
+    }
+
     public void addForumPost(ForumPost post, OnCompleteListener<Void> listener) {
         Log.d(TAG, "Adding forum post: " + post.getId());
         // Set up or query the Firebase layer that supplies/stores this feature's data.

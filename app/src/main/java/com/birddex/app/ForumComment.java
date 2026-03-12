@@ -1,6 +1,8 @@
 package com.birddex.app;
 
 import com.google.firebase.Timestamp;
+import com.google.firebase.firestore.DocumentId;
+import com.google.firebase.firestore.Exclude;
 import com.google.firebase.firestore.ServerTimestamp;
 import java.util.Map;
 
@@ -11,7 +13,8 @@ import java.util.Map;
  * when you are debugging or presenting the app. Only comments were added; runtime logic was not changed.
  */
 public class ForumComment {
-    private String id;
+    @DocumentId
+    private String commentId; // Renamed from id to avoid conflict with 'id' field in Firestore documents
     private String threadId;
     private String userId;
     private String username;
@@ -53,8 +56,13 @@ public class ForumComment {
     }
 
     // Getters and Setters
-    public String getId() { return id; }
-    public void setId(String id) { this.id = id; }
+    @Exclude // Prevents Firestore from writing an 'id' field while allowing code to use getId()
+    public String getId() { return commentId; }
+    public void setId(String id) { this.commentId = id; }
+
+    public String getCommentId() { return commentId; }
+    public void setCommentId(String commentId) { this.commentId = commentId; }
+
     public String getThreadId() { return threadId; }
     public void setThreadId(String threadId) { this.threadId = threadId; }
     public String getUserId() { return userId; }

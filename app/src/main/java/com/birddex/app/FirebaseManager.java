@@ -146,6 +146,10 @@ public class FirebaseManager {
         mFunctions = FirebaseFunctions.getInstance();
     }
 
+    public FirebaseUser getCurrentUser() {
+        return mAuth.getCurrentUser();
+    }
+
     // -------------------------------------------------------------------------
     // AUTH & USER PROFILE
     // -------------------------------------------------------------------------
@@ -366,6 +370,13 @@ public class FirebaseManager {
                 .document(userId)
                 .set(updates, SetOptions.merge())
                 .addOnCompleteListener(listener);
+    }
+
+    public void updateUserActiveStatus(String userId, boolean hasLoggedInBefore, Date lastActiveAt) {
+        Map<String, Object> updates = new HashMap<>();
+        updates.put("hasLoggedInBefore", hasLoggedInBefore);
+        updates.put("lastActiveAt", lastActiveAt);
+        db.collection("users").document(userId).update(updates);
     }
 
     /**

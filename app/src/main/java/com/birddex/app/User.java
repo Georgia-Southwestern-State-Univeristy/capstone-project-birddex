@@ -1,5 +1,6 @@
 package com.birddex.app;
 
+import com.google.firebase.firestore.DocumentId;
 import com.google.firebase.firestore.Exclude;
 import com.google.firebase.firestore.ServerTimestamp;
 
@@ -12,7 +13,8 @@ import java.util.Date;
  * when you are debugging or presenting the app. Only comments were added; runtime logic was not changed.
  */
 public class User {
-    private String id; // This will store the userId, typically the Firebase Auth UID
+    @DocumentId
+    private String userId; // Renamed from id to avoid conflict with 'id' field in Firestore documents
     private String email;
     private String username;
     private String bio; // Added bio field
@@ -28,6 +30,8 @@ public class User {
     private Date openAiCooldownResetTimestamp; // Renamed for rolling 24-hour cooldown
     private int followerCount; // New field for followers
     private int followingCount; // New field for following
+    private boolean hasLoggedInBefore; // New field for welcome message logic
+    private Date lastActiveAt; // New field for welcome message logic
 
     /**
      * Constructor that stores incoming dependencies/values so this object starts in a usable
@@ -45,7 +49,7 @@ public class User {
      * sightings the user sees.
      */
     public User(String id, String email, String username, Date createdAt, String defaultLocationId) {
-        this.id = id;
+        this.userId = id;
         this.email = email;
         this.username = username;
         this.bio = null; // Initialize bio
@@ -61,6 +65,8 @@ public class User {
         this.openAiCooldownResetTimestamp = null; // Will be set by Cloud Function
         this.followerCount = 0;
         this.followingCount = 0;
+        this.hasLoggedInBefore = false;
+        this.lastActiveAt = null;
     }
 
     // Full constructor including all fields for completeness
@@ -71,7 +77,7 @@ public class User {
      * sightings the user sees.
      */
     public User(String id, String email, String username, String bio, Date createdAt, String defaultLocationId, int totalBirds, int duplicateBirds, int totalPoints, String profilePictureUrl, int pfpChangesToday, Date pfpCooldownResetTimestamp, int openAiRequestsRemaining, Date openAiCooldownResetTimestamp, int followerCount, int followingCount) {
-        this.id = id;
+        this.userId = id;
         this.email = email;
         this.username = username;
         this.bio = bio; // Initialize bio
@@ -87,6 +93,8 @@ public class User {
         this.openAiCooldownResetTimestamp = openAiCooldownResetTimestamp;
         this.followerCount = followerCount;
         this.followingCount = followingCount;
+        this.hasLoggedInBefore = false;
+        this.lastActiveAt = null;
     }
 
     /**
@@ -94,14 +102,23 @@ public class User {
      */
     @Exclude
     public String getId() {
-        return id;
+        return userId;
     }
 
     /**
      * Updates object/screen state by storing a new value or reconfiguring a dependency.
      */
+    @Exclude
     public void setId(String id) {
-        this.id = id;
+        this.userId = id;
+    }
+
+    public String getUserId() {
+        return userId;
+    }
+
+    public void setUserId(String userId) {
+        this.userId = userId;
     }
 
     /**
@@ -307,5 +324,21 @@ public class User {
      */
     public void setFollowingCount(int followingCount) {
         this.followingCount = followingCount;
+    }
+
+    public boolean isHasLoggedInBefore() {
+        return hasLoggedInBefore;
+    }
+
+    public void setHasLoggedInBefore(boolean hasLoggedInBefore) {
+        this.hasLoggedInBefore = hasLoggedInBefore;
+    }
+
+    public Date getLastActiveAt() {
+        return lastActiveAt;
+    }
+
+    public void setLastActiveAt(Date lastActiveAt) {
+        this.lastActiveAt = lastActiveAt;
     }
 }

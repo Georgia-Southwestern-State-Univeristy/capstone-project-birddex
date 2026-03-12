@@ -1,5 +1,6 @@
 package com.birddex.app;
 
+import android.graphics.drawable.Drawable;
 import android.os.Bundle;
 import android.text.method.LinkMovementMethod;
 import android.util.Log;
@@ -12,6 +13,10 @@ import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatActivity;
 
 import com.bumptech.glide.Glide;
+import com.bumptech.glide.load.DataSource;
+import com.bumptech.glide.load.engine.GlideException;
+import com.bumptech.glide.request.RequestListener;
+import com.bumptech.glide.request.target.Target;
 import com.google.firebase.firestore.DocumentSnapshot;
 import com.google.firebase.firestore.FirebaseFirestore;
 import com.google.firebase.firestore.Source;
@@ -37,6 +42,13 @@ public class BirdWikiActivity extends AppCompatActivity {
     private ImageView ivBirdHeaderImage;
     private TextView tvPageTitle;
     private TextView tvPageScientificName;
+    private View contentScrollView;
+    private View loadingOverlay;
+
+    private boolean basicsLoaded = false;
+    private boolean factsLoaded = false;
+    private boolean imageLoaded = false;
+    private boolean contentShown = false;
 
     private final Map<String, TextView> factViews = new HashMap<>();
 
@@ -60,6 +72,7 @@ public class BirdWikiActivity extends AppCompatActivity {
 
         bindViews();
         initializePlaceholders();
+        showLoadingOverlay(true);
 
         String birdId = getIntent().getStringExtra(EXTRA_BIRD_ID);
         if (isBlank(birdId)) {
@@ -79,6 +92,8 @@ public class BirdWikiActivity extends AppCompatActivity {
      */
     private void bindViews() {
         // Bind or inflate the UI pieces this method needs before it can update the screen.
+        contentScrollView = findViewById(R.id.contentScrollView);
+        loadingOverlay = findViewById(R.id.loadingOverlay);
         ivBirdHeaderImage = findViewById(R.id.ivBirdHeaderImage);
         tvPageTitle = findViewById(R.id.tvPageTitle);
         tvPageScientificName = findViewById(R.id.tvPageScientificName);
@@ -166,6 +181,7 @@ public class BirdWikiActivity extends AppCompatActivity {
                                     // Both found in cache!
                                     updateGeneralFactsFromMap(genDoc.getData());
                                     updateHunterFactsFromMap(hunterDoc.getData());
+                                    markFactsLoaded();
                                 } else {
                                     // Something is missing, call Cloud Function once
                                     fetchFactsFromCloudFunction(birdId);
@@ -185,15 +201,25 @@ public class BirdWikiActivity extends AppCompatActivity {
     private void fetchBasicsFromServer(String birdId) {
         // Set up or query the Firebase layer that supplies/stores this feature's data.
         db.collection("birds").document(birdId).get(Source.SERVER)
-                .addOnSuccessListener(this::processBasics)
-                .addOnFailureListener(e -> Log.e(TAG, "Failed to load basics from server", e));
+                .addOnSuccessListener(doc -> {
+                    if (doc.exists()) processBasics(doc);
+                    else finishBasicsWithoutImage();
+                })
+                .addOnFailureListener(e -> {
+                    Log.e(TAG, "Failed to load basics from server", e);
+                    finishBasicsWithoutImage();
+                });
     }
 
     /**
      * Main logic block for this part of the feature.
      */
     private void processBasics(DocumentSnapshot doc) {
-        if (isFinishing() || isDestroyed() || !doc.exists()) return;
+        if (isFinishing() || isDestroyed()) return;
+        if (!doc.exists()) {
+            finishBasicsWithoutImage();
+            return;
+        }
 
         String commonName = doc.getString("commonName");
         String scientificName = doc.getString("scientificName");
@@ -206,8 +232,13 @@ public class BirdWikiActivity extends AppCompatActivity {
         setFact("family", family);
         setFact("species", species);
 
+        markBasicsLoaded();
+
         if (!isBlank(commonName)) {
             loadBirdImage(commonName);
+        } else {
+            ivBirdHeaderImage.setVisibility(View.GONE);
+            markImageLoaded();
         }
     }
 
@@ -243,7 +274,18 @@ public class BirdWikiActivity extends AppCompatActivity {
     private void fetchImageFromServer(String commonName) {
         // Set up or query the Firebase layer that supplies/stores this feature's data.
         db.collection("bird_images").document(commonName).get(Source.SERVER)
-                .addOnSuccessListener(this::processImage);
+                .addOnSuccessListener(doc -> {
+                    if (doc.exists()) processImage(doc);
+                    else {
+                        ivBirdHeaderImage.setVisibility(View.GONE);
+                        markImageLoaded();
+                    }
+                })
+                .addOnFailureListener(e -> {
+                    Log.e(TAG, "Failed to load bird image", e);
+                    ivBirdHeaderImage.setVisibility(View.GONE);
+                    markImageLoaded();
+                });
     }
 
     /**
@@ -252,17 +294,39 @@ public class BirdWikiActivity extends AppCompatActivity {
      * photos/cards/posts usually traces back to this code path.
      */
     private void processImage(DocumentSnapshot imageDoc) {
-        if (isFinishing() || isDestroyed() || !imageDoc.exists()) return;
+        if (isFinishing() || isDestroyed()) return;
+        if (!imageDoc.exists()) {
+            ivBirdHeaderImage.setVisibility(View.GONE);
+            markImageLoaded();
+            return;
+        }
+
         String imageUrl = imageDoc.getString("imageUrl");
 
         if (isBlank(imageUrl)) {
             ivBirdHeaderImage.setVisibility(View.GONE);
+            markImageLoaded();
             return;
         }
 
         ivBirdHeaderImage.setVisibility(View.VISIBLE);
         // Load the image asynchronously so the UI can show remote/local media without blocking the main thread.
-        Glide.with(this).load(imageUrl).into(ivBirdHeaderImage);
+        Glide.with(this)
+                .load(imageUrl)
+                .listener(new RequestListener<Drawable>() {
+                    @Override
+                    public boolean onLoadFailed(@Nullable GlideException e, Object model, Target<Drawable> target, boolean isFirstResource) {
+                        markImageLoaded();
+                        return false;
+                    }
+
+                    @Override
+                    public boolean onResourceReady(Drawable resource, Object model, Target<Drawable> target, DataSource dataSource, boolean isFirstResource) {
+                        markImageLoaded();
+                        return false;
+                    }
+                })
+                .into(ivBirdHeaderImage);
     }
 
     /**
@@ -327,7 +391,11 @@ public class BirdWikiActivity extends AppCompatActivity {
      * caller.
      */
     private void fetchFactsFromCloudFunction(String birdId) {
-        if (isGeneratingFacts || isBlank(birdId)) return;
+        if (isBlank(birdId)) {
+            markFactsLoaded();
+            return;
+        }
+        if (isGeneratingFacts) return;
         isGeneratingFacts = true;
 
         Log.d(TAG, "Fetching facts from Cloud Function for birdId: " + birdId);
@@ -340,7 +408,7 @@ public class BirdWikiActivity extends AppCompatActivity {
                 Object resultData = task.getResult().getData();
                 if (resultData instanceof Map) {
                     Map<String, Object> resultMap = (Map<String, Object>) resultData;
-                    
+
                     // Update general facts
                     Object genFactsObj = resultMap.get("generalFacts");
                     if (genFactsObj instanceof Map) {
@@ -356,6 +424,8 @@ public class BirdWikiActivity extends AppCompatActivity {
             } else {
                 Log.e(TAG, "Failed to fetch facts from Cloud Function", task.getException());
             }
+
+            markFactsLoaded();
         });
     }
 
@@ -392,12 +462,68 @@ public class BirdWikiActivity extends AppCompatActivity {
     }
 
     /**
-     * Updates object/screen state by storing a new value or reconfiguring a dependency.
+     * Applies the latest values to existing UI/data so the screen and backend stay in sync.
      */
     private void setFact(String key, String value) {
         TextView tv = factViews.get(key);
         if (tv != null) {
             tv.setText(firstNonBlank(value, "Not available yet."));
+        }
+    }
+
+    /**
+     * Updates object/screen state by storing a new value or reconfiguring a dependency.
+     */
+    private void showLoadingOverlay(boolean show) {
+        if (loadingOverlay != null) {
+            loadingOverlay.setVisibility(show ? View.VISIBLE : View.GONE);
+        }
+        if (contentScrollView != null) {
+            contentScrollView.setVisibility(show ? View.INVISIBLE : View.VISIBLE);
+        }
+    }
+
+    /**
+     * Updates object/screen state by storing a new value or reconfiguring a dependency.
+     */
+    private void finishBasicsWithoutImage() {
+        markBasicsLoaded();
+        ivBirdHeaderImage.setVisibility(View.GONE);
+        markImageLoaded();
+    }
+
+    /**
+     * Updates object/screen state by storing a new value or reconfiguring a dependency.
+     */
+    private void markBasicsLoaded() {
+        basicsLoaded = true;
+        maybeShowContent();
+    }
+
+    /**
+     * Updates object/screen state by storing a new value or reconfiguring a dependency.
+     */
+    private void markFactsLoaded() {
+        factsLoaded = true;
+        maybeShowContent();
+    }
+
+    /**
+     * Updates object/screen state by storing a new value or reconfiguring a dependency.
+     */
+    private void markImageLoaded() {
+        imageLoaded = true;
+        maybeShowContent();
+    }
+
+    /**
+     * Main logic block for this part of the feature.
+     */
+    private void maybeShowContent() {
+        if (contentShown || isFinishing() || isDestroyed()) return;
+        if (basicsLoaded && factsLoaded && imageLoaded) {
+            contentShown = true;
+            showLoadingOverlay(false);
         }
     }
 

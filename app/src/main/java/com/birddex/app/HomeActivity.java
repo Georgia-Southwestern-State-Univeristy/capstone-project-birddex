@@ -3,16 +3,22 @@ package com.birddex.app;
 import android.content.Intent;
 import android.os.Bundle;
 import android.util.Log;
+import android.view.View;
+import android.view.animation.Animation;
+import android.view.animation.AnimationUtils;
+import android.widget.TextView;
 import android.widget.Toast;
 
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.fragment.app.Fragment;
 
 import com.google.android.material.bottomnavigation.BottomNavigationView;
+import com.google.firebase.auth.FirebaseUser;
 
 import org.json.JSONObject;
 
 import java.util.ArrayList;
+import java.util.Date;
 import java.util.List;
 
 /**
@@ -33,6 +39,7 @@ public class HomeActivity extends AppCompatActivity implements NetworkMonitor.Ne
 
     private static final String TAG = "HomeActivity";
     private BottomNavigationView bottomNav;
+    private TextView welcomeMessageTv;
 
     // Tracks the last "real" tab (anything except camera)
     private int lastNonCameraTabId = R.id.nav_forum;
@@ -43,6 +50,7 @@ public class HomeActivity extends AppCompatActivity implements NetworkMonitor.Ne
     private NetworkMonitor networkMonitor; // New: NetworkMonitor instance
     private boolean isFetchingBirds = false; // Flag to prevent redundant fetches
     private boolean isNavigating = false;
+    private boolean welcomeCheckedThisResume = false;
 
     /**
      * Android calls this when the Activity is first created. This is where the screen usually
@@ -61,6 +69,7 @@ public class HomeActivity extends AppCompatActivity implements NetworkMonitor.Ne
         // Initialize the bottom navigation bar.
         // Bind or inflate the UI pieces this method needs before it can update the screen.
         bottomNav = findViewById(R.id.bottomNav);
+        welcomeMessageTv = findViewById(R.id.welcomeMessage);
 
         // Initialize EbirdApi and the bird list
         ebirdApi = new EbirdApi();
@@ -124,6 +133,62 @@ public class HomeActivity extends AppCompatActivity implements NetworkMonitor.Ne
         });
     }
 
+    private void checkWelcomeMessage() {
+        FirebaseUser currentUser = firebaseManager.getCurrentUser();
+        if (currentUser == null) return;
+
+        firebaseManager.getUserProfile(currentUser.getUid(), task -> {
+            if (task.isSuccessful() && task.getResult() != null) {
+                User user = task.getResult().toObject(User.class);
+                if (user != null) {
+                    String username = user.getUsername() != null ? user.getUsername() : "";
+                    if (!user.isHasLoggedInBefore()) {
+                        // First time login
+                        showWelcomeAnimation("Welcome to your nest " + username);
+                        firebaseManager.updateUserActiveStatus(currentUser.getUid(), true, new Date());
+                    } else {
+                        // Subsequent login
+                        Date lastActive = user.getLastActiveAt();
+                        if (lastActive != null) {
+                            long diffInMs = new Date().getTime() - lastActive.getTime();
+                            long diffInHours = diffInMs / (1000 * 60 * 60);
+                            if (diffInHours >= 2) {
+                                showWelcomeAnimation("Welcome back to your nest " + username);
+                                firebaseManager.updateUserActiveStatus(currentUser.getUid(), true, new Date());
+                            }
+                        } else {
+                            // Fallback if lastActiveAt is null for some reason
+                            firebaseManager.updateUserActiveStatus(currentUser.getUid(), true, new Date());
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    private void showWelcomeAnimation(String message) {
+        if (welcomeMessageTv == null) return;
+        
+        welcomeMessageTv.setText(message);
+        welcomeMessageTv.setVisibility(View.VISIBLE);
+        
+        Animation fadeInOut = AnimationUtils.loadAnimation(this, R.anim.fade_in_out);
+        fadeInOut.setAnimationListener(new Animation.AnimationListener() {
+            @Override
+            public void onAnimationStart(Animation animation) {}
+
+            @Override
+            public void onAnimationEnd(Animation animation) {
+                welcomeMessageTv.setVisibility(View.GONE);
+            }
+
+            @Override
+            public void onAnimationRepeat(Animation animation) {}
+        });
+        
+        welcomeMessageTv.startAnimation(fadeInOut);
+    }
+
     /**
      * Handles a new Intent delivered to an existing Activity instance.
      * It also packages extras into an Intent when this flow needs to open another Activity.
@@ -163,6 +228,11 @@ public class HomeActivity extends AppCompatActivity implements NetworkMonitor.Ne
         if (bottomNav != null && bottomNav.getSelectedItemId() != lastNonCameraTabId) {
             bottomNav.setSelectedItemId(lastNonCameraTabId);
         }
+
+        if (!welcomeCheckedThisResume) {
+            checkWelcomeMessage();
+            welcomeCheckedThisResume = true;
+        }
     }
 
     /**
@@ -174,6 +244,13 @@ public class HomeActivity extends AppCompatActivity implements NetworkMonitor.Ne
         super.onPause();
         // Unregister NetworkMonitor
         networkMonitor.unregister();
+        welcomeCheckedThisResume = false;
+
+        // Update last active time when user leaves
+        FirebaseUser currentUser = firebaseManager.getCurrentUser();
+        if (currentUser != null) {
+            firebaseManager.updateUserActiveStatus(currentUser.getUid(), true, new Date());
+        }
     }
 
     /**

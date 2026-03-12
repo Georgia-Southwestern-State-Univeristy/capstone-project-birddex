@@ -1,6 +1,8 @@
 package com.birddex.app;
 
 import com.google.firebase.Timestamp;
+import com.google.firebase.firestore.DocumentId;
+import com.google.firebase.firestore.Exclude;
 import com.google.firebase.firestore.ServerTimestamp;
 import java.util.HashMap;
 import java.util.Map;
@@ -12,7 +14,8 @@ import java.util.Map;
  * when you are debugging or presenting the app. Only comments were added; runtime logic was not changed.
  */
 public class ForumPost {
-    private String id;
+    @DocumentId
+    private String postId; // Renamed from id to avoid conflict with 'id' field in Firestore documents
     private String userId;
     private String username;
     private String userProfilePictureUrl;
@@ -75,8 +78,13 @@ public class ForumPost {
     }
 
     // Getters and Setters
-    public String getId() { return id; }
-    public void setId(String id) { this.id = id; }
+    @Exclude // Prevents Firestore from writing an 'id' field while allowing code to use getId()
+    public String getId() { return postId; }
+    public void setId(String id) { this.postId = id; }
+    
+    public String getPostId() { return postId; }
+    public void setPostId(String postId) { this.postId = postId; }
+
     public String getUserId() { return userId; }
     public void setUserId(String userId) { this.userId = userId; }
     public String getUsername() { return username; }

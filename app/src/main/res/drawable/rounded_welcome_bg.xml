@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <!-- More solid brown matching the app theme (nav_brown #8A6240) -->
+    <!-- Increased opacity to 95% (F2) for better visibility -->
+    <solid android:color="#F28A6240" />
+    <corners android:radius="24dp" />
+</shape>

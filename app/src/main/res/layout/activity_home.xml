@@ -31,4 +31,29 @@
         app:itemBackground="@drawable/bottom_nav_item_background"
         app:itemActiveIndicatorStyle="@null"/>
 
+    <TextView
+        android:id="@+id/welcomeMessage"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="40dp"
+        android:layout_marginStart="32dp"
+        android:layout_marginEnd="32dp"
+        android:background="@drawable/rounded_welcome_bg"
+        android:paddingStart="24dp"
+        android:paddingEnd="24dp"
+        android:paddingTop="16dp"
+        android:paddingBottom="16dp"
+        android:gravity="center"
+        android:drawableStart="@drawable/birddexlogo_small"
+        android:drawableEnd="@drawable/birddexlogo_small"
+        android:drawablePadding="12dp"
+        android:textColor="@color/page_cream"
+        android:textSize="20sp"
+        android:elevation="12dp"
+        android:textStyle="bold"
+        android:visibility="gone"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent" />
+
 </androidx.constraintlayout.widget.ConstraintLayout>

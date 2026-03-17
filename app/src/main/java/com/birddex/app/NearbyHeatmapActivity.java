@@ -457,6 +457,10 @@ public class NearbyHeatmapActivity extends AppCompatActivity
         View sendCommentButton = view.findViewById(R.id.btnSendComment);
         sendCommentButton.setOnClickListener(v -> {
             String text = currentPopupEditText.getText().toString().trim(); if (text.isEmpty() || user == null || ContentFilter.containsInappropriateContent(text)) return;
+            if (ForumSubmissionCooldownHelper.isCoolingDown(this)) {
+                Toast.makeText(this, ForumSubmissionCooldownHelper.buildCooldownMessage(this), Toast.LENGTH_SHORT).show();
+                return;
+            }
             sendCommentButton.setEnabled(false);
 
             String commentId = db.collection("forumThreads").document(p.getId()).collection("comments").document().getId();
@@ -465,6 +469,7 @@ public class NearbyHeatmapActivity extends AppCompatActivity
             firebaseManager.createForumComment(p.getId(), commentId, text, parentCommentId, new FirebaseManager.ForumWriteListener() {
                 @Override public void onSuccess() {
                     if (isFinishing() || isDestroyed()) return;
+                    ForumSubmissionCooldownHelper.markSubmissionSuccess(NearbyHeatmapActivity.this);
                     currentPopupEditText.setText("");
                     currentPopupEditText.setHint("Write a comment...");
                     replyingToComment = null;

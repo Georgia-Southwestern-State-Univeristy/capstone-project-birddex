@@ -2847,11 +2847,15 @@ exports.recordForumPost = onCall(async (request) => {
 
     // If the user is posting WITHOUT location, do not apply the daily limit at all.
     if (!showLocation) {
-        return {
-            allowed: true,
-            remaining: MAX_DAILY_LOCATION_POSTS,
-            locationLimited: false
-        };
+        const result = await db.runTransaction(async (t) => {
+            await assertForumSubmissionCooldownAllowed(t, userId, "post");
+            return {
+                allowed: true,
+                remaining: MAX_DAILY_LOCATION_POSTS,
+                locationLimited: false
+            };
+        });
+        return result;
     }
 
     // Use UTC date key so the count resets each day.
@@ -2863,6 +2867,7 @@ exports.recordForumPost = onCall(async (request) => {
 
     try {
         const result = await db.runTransaction(async (t) => {
+            await assertForumSubmissionCooldownAllowed(t, userId, "post");
             const snap = await t.get(postLimitRef);
 
             let locationPostsToday = 0;
@@ -2923,6 +2928,7 @@ exports.recordForumPost = onCall(async (request) => {
 const FORUM_POST_MAX_LENGTH = 500;
 const FORUM_COMMENT_MAX_LENGTH = 300;
 const FORUM_EDIT_WINDOW_MS = 5 * 60 * 1000;
+const FORUM_SUBMISSION_COOLDOWN_MS = 15 * 1000;
 
 /**
  * Reads the caller's canonical forum identity from users/{uid} so the client cannot spoof it.
@@ -2992,6 +2998,64 @@ function assertWithinForumEditWindow(timestamp, typeLabel) {
     }
 }
 
+
+
+/**
+ * Returns the user-scoped forum cooldown document ref.
+ */
+function getForumSubmissionCooldownRef(userId) {
+    return db.collection("users").doc(userId).collection("settings").doc("forumSubmissionCooldown");
+}
+
+
+/**
+ * Throws a user-facing cooldown error when the previous forum submission is still too recent.
+ */
+function maybeThrowForumSubmissionCooldownError(lastSubmissionAt, submissionType) {
+    const lastSubmissionMs = lastSubmissionAt && typeof lastSubmissionAt.toMillis === "function"
+        ? lastSubmissionAt.toMillis()
+        : null;
+
+    if (lastSubmissionMs == null) {
+        return;
+    }
+
+    const elapsedMs = admin.firestore.Timestamp.now().toMillis() - lastSubmissionMs;
+    if (elapsedMs < FORUM_SUBMISSION_COOLDOWN_MS) {
+        const remainingMs = FORUM_SUBMISSION_COOLDOWN_MS - elapsedMs;
+        const remainingSeconds = Math.max(1, Math.ceil(remainingMs / 1000));
+        throw new HttpsError(
+            "resource-exhausted",
+            `Please wait ${remainingSeconds} second${remainingSeconds === 1 ? "" : "s"} before submitting another forum ${submissionType}.`
+        );
+    }
+}
+
+/**
+ * Checks whether the user is still inside the forum submission cooldown without consuming it.
+ */
+async function assertForumSubmissionCooldownAllowed(transaction, userId, submissionType) {
+    const cooldownSnap = await transaction.get(getForumSubmissionCooldownRef(userId));
+    if (!cooldownSnap.exists) {
+        return;
+    }
+    maybeThrowForumSubmissionCooldownError(cooldownSnap.get("lastSubmissionAt"), submissionType);
+}
+
+/**
+ * Enforces the forum submission cooldown and records the new submit timestamp inside the same transaction.
+ */
+async function assertAndConsumeForumSubmissionCooldown(transaction, userId, submissionType) {
+    const cooldownRef = getForumSubmissionCooldownRef(userId);
+    await assertForumSubmissionCooldownAllowed(transaction, userId, submissionType);
+    const nowTs = admin.firestore.Timestamp.now();
+
+    transaction.set(cooldownRef, {
+        lastSubmissionAt: nowTs,
+        lastSubmissionType: submissionType,
+        updatedAt: nowTs,
+    }, { merge: true });
+}
 
 /**
  * Converts a Firebase Storage download URL back into the storage object path.
@@ -3110,6 +3174,8 @@ exports.createForumPost = onCall(async (request) => {
                 throw new HttpsError("already-exists", "That post already exists.");
             }
 
+            await assertAndConsumeForumSubmissionCooldown(t, userId, "post");
+
             const postData = {
                 userId,
                 username,
@@ -3185,6 +3251,8 @@ exports.createForumComment = onCall(async (request) => {
             if (existingCommentSnap.exists) {
                 throw new HttpsError("already-exists", "That comment already exists.");
             }
+
+            await assertAndConsumeForumSubmissionCooldown(t, userId, parentCommentId ? "reply" : "comment");
 
             let normalizedParentCommentId = null;
             let parentUsername = null;

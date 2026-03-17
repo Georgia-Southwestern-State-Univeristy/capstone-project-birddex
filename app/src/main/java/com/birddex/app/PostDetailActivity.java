@@ -525,6 +525,10 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
     private void postComment() {
         String msg = binding.etComment.getText().toString().trim();
         if (msg.isEmpty() || msg.length() > MAX_COMMENT_LENGTH || !ContentFilter.isSafe(this, msg, "Comment")) return;
+        if (ForumSubmissionCooldownHelper.isCoolingDown(this)) {
+            Toast.makeText(this, ForumSubmissionCooldownHelper.buildCooldownMessage(this), Toast.LENGTH_SHORT).show();
+            return;
+        }
         FirebaseUser user = mAuth.getCurrentUser(); if (user == null) return;
         binding.btnSendComment.setEnabled(false);
 
@@ -535,6 +539,7 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
             @Override
             public void onSuccess() {
                 if (isFinishing()) return;
+                ForumSubmissionCooldownHelper.markSubmissionSuccess(PostDetailActivity.this);
                 binding.etComment.setText("");
                 binding.etComment.setHint("Write a comment...");
                 replyingToComment = null;

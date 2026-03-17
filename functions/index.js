@@ -46,7 +46,6 @@ const CONFIG = {
     UNVERIFIED_USER_TTL_MS: 72 * 60 * 60 * 1000,      // 72 hours
     FIRESTORE_BATCH_SIZE: 400,  // Firestore max is 500; using 400 for safety
     LOCATION_PRECISION: 4,      // decimal places (~11 meters)
-    FORUM_EDIT_WINDOW_MS: 5 * 60 * 1000,
 };
 
 // ======================================================
@@ -69,6 +68,7 @@ function sanitizeUsername(username) {
     if (!/^[a-zA-Z0-9_ ]+$/.test(trimmed)) {
         throw new HttpsError("invalid-argument", "Username can only contain letters, numbers, underscores, and spaces.");
     }
+    assertForumTextAllowed(trimmed, "Username");
     return trimmed;
 }
 
@@ -80,175 +80,6 @@ function sanitizeText(text, maxLength = 5000) {
     const trimmed = text.trim();
     if (trimmed.length > maxLength) return trimmed.substring(0, maxLength);
     return trimmed.replace(/<[^>]*>/g, "");
-}
-
-// ======================================================
-// HELPER: Forum text moderation
-// ======================================================
-const FORUM_BLOCKED_WORDS = new Set([
-    "fuck", "shit", "asshole", "bitch", "cunt", "dick", "pussy", "bastard",
-    "slut", "whore", "sex", "porn", "pornography", "xxx", "nsfw", "erotic",
-    "hardcore", "softcore", "adult content", "motherfucker", "cocksucker",
-    "cockfucker", "jackass", "dipshit", "dumbass", "dumbshit", "goddamn", "piss",
-    "ahole", "biotch", "penis", "vagina", "clitoris", "testicles", "scrotum",
-    "boobs", "tits", "ass", "butt", "breasts", "genitals", "cock", "balls",
-    "clit", "labia", "erection", "masturbate", "masturbation", "orgasm", "cum",
-    "cumming", "ejaculate", "penetrate", "penetration", "intercourse", "coitus",
-    "blowjob", "handjob", "deepthroat", "rimjob", "rimming", "anal", "cummin",
-    "coom", "blowie", "his member", "wet cunt", "onlyfans", "camgirl", "camsite",
-    "stripper", "escort", "brothel", "fetish", "bdsm", "kink", "kinky",
-    "dominatrix", "submissive", "bondage", "dildo", "vibrator", "pegging",
-    "fingering", "scissoring", "grinding", "foot fetish", "roleplay sex", "nude",
-    "nudes", "naked", "topless", "lewd", "explicit", "send nudes", "milf",
-    "dilf", "sugar daddy", "sugar baby", "creampie", "facial", "spitroast",
-    "threesome", "foursome", "gangbang", "orgy", "hentai", "doujinshi",
-    "adult video", "sex tape", "gilf", "hookup", "one night stand", "booty call",
-    "smash", "get laid", "bang", "doggy style", "69", "quickie", "hooking up",
-    "sleep together", "nigger", "kike", "faggot", "dyke", "retard", "tranny",
-    "spic", "chink", "wetback", "coon", "nazi", "hitler", "negro", "beaner",
-    "gook", "gypo", "fag", "cracker", "zipperhead", "sand nigger", "turban head",
-    "darkie", "chud", "transvestite", "troon", "nigga", "dark skin", "cholo",
-    "gringo", "kill yourself", "suicide", "murder", "rape", "molest", "pedophile",
-    "underage", "terrorist", "massacre", "genocide", "kys", "rapist", "al qaeda",
-    "isis", "kkk", "klu klux klan", "kool kids klub", "cia", "fbi", "cocaine",
-    "heroin", "meth", "fentanyl", "oxycodone", "xanax", "percocet", "crack cocaine",
-    "mdma", "ecstasy", "9-11", "white power", "black lives matter", "magam", "maga",
-    "magat", "libtard", "glowie", "ice agent", "israel", "palestine",
-    "jet fuel can't melt steel beams", "jet fuel cant melt steel beams",
-    "black excellence", "white superiority", "idf", "ukraine", "from the river to the sea",
-    "from the river, to the sea", "russia", "free palestine", "trump", "biden",
-    "obama", "bill clinton", "hillary clinton", "nick fuentes", "osama", "bin laden",
-    "jd vance", "andrew tate", "tristan tate", "sneako", "epstein",
-    "ghislaine maxwell", "jeffery epstein", "benjamin netanyahu", "netanyahu",
-    "adolf hitler", "himmler", "g string", "lingerie", "thong"
-]);
-
-const FORUM_BIRD_WHITELIST = [
-    "tit", "tits", "booby", "boobies", "shag", "woodcock", "dickcissel",
-    "bushtit", "cock", "ass", "blue tit", "great tit", "tufted titmouse"
-];
-
-const FORUM_EMAIL_REGEX = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,6}/;
-const FORUM_PHONE_REGEX = /\b(\+?\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b/;
-const FORUM_URL_REGEX = /https?:\/\/\S+\s?/i;
-const FORUM_SPAM_REPETITION_REGEX = /(.)\1{4,}/;
-const FORUM_CREDIT_CARD_REGEX = /\b(?:\d[ -]*?){13,16}\b/;
-const FORUM_ZALGO_REGEX = /[\u0300-\u036F\u1DC0-\u1DFF\u20D0-\u20FF\uFE20-\uFE2F]{3,}/u;
-
-function escapeRegex(value) {
-    return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-function normalizeForumText(text) {
-    if (!text || typeof text !== "string") return "";
-    return text.toLowerCase()
-        .replace(/0/g, "o")
-        .replace(/1/g, "i")
-        .replace(/3/g, "e")
-        .replace(/4/g, "a")
-        .replace(/5/g, "s")
-        .replace(/7/g, "t")
-        .replace(/8/g, "b")
-        .replace(/@/g, "a")
-        .replace(/\$/g, "s")
-        .replace(/!/g, "i")
-        .replace(/(.)\1+/g, "$1");
-}
-
-function isForumWordWhitelisted(input, blockedWord) {
-    return FORUM_BIRD_WHITELIST.some((allowed) =>
-        input.includes(allowed) && allowed.includes(blockedWord)
-    );
-}
-
-function forumWordMatches(input, target) {
-    if (!target || target.length < 3) return false;
-    const regex = new RegExp(`\\b${escapeRegex(target)}\\b`, "i");
-    return regex.test(input);
-}
-
-function forumWordMatchesBypass(input, target) {
-    const pattern = Array.from(target)
-        .map((char) => escapeRegex(char))
-        .join("[\\W_]*");
-    const regex = new RegExp(`\\b${pattern}\\b`, "i");
-    return regex.test(input);
-}
-
-function hasBlockedForumLanguage(input) {
-    const normalizedInput = normalizeForumText(input);
-
-    for (const word of FORUM_BLOCKED_WORDS) {
-        if (isForumWordWhitelisted(input, word)) continue;
-        if (forumWordMatches(normalizedInput, normalizeForumText(word))) return true;
-        if (forumWordMatchesBypass(input, word)) return true;
-    }
-
-    return false;
-}
-
-function getForumContentViolation(text) {
-    if (!text || typeof text !== "string" || !text.trim()) return null;
-
-    if (FORUM_ZALGO_REGEX.test(text)) return "glitch text";
-
-    const unicodeNormalized = text.normalize("NFD").replace(/[^\x00-\x7F]/g, "");
-    const lower = unicodeNormalized.toLowerCase();
-
-    if (FORUM_CREDIT_CARD_REGEX.test(text)) return "sensitive financial data";
-    if (FORUM_EMAIL_REGEX.test(text)) return "an email address";
-    if (FORUM_PHONE_REGEX.test(text)) return "a phone number";
-    if (FORUM_URL_REGEX.test(text)) return "external links";
-    if (FORUM_SPAM_REPETITION_REGEX.test(text)) return "excessive character repetition";
-    if (hasBlockedForumLanguage(lower)) return "inappropriate language";
-
-    return null;
-}
-
-function assertForumContentAllowed(text, fieldName, maxLength) {
-    const sanitized = sanitizeText(text, maxLength);
-    const violation = getForumContentViolation(sanitized);
-
-    if (violation) {
-        throw new HttpsError("failed-precondition", `${fieldName} contains ${violation}.`);
-    }
-
-    return sanitized;
-}
-
-function assertForumEditWindow(createdAt, entityName) {
-    if (!createdAt || typeof createdAt.toMillis !== "function") return;
-
-    const ageMs = Date.now() - createdAt.toMillis();
-    if (ageMs > CONFIG.FORUM_EDIT_WINDOW_MS) {
-        throw new HttpsError("failed-precondition", `${entityName} can no longer be edited.`);
-    }
-}
-
-function assertProfileUsernameAllowed(username) {
-    const sanitizedUsername = sanitizeUsername(username);
-    const violation = getForumContentViolation(sanitizedUsername);
-
-    if (violation) {
-        throw new HttpsError("failed-precondition", `Username contains ${violation}.`);
-    }
-
-    return sanitizedUsername;
-}
-
-function assertProfileBioAllowed(bio) {
-    if (bio === undefined || bio === null) return undefined;
-
-    const sanitizedBio = sanitizeText(bio, 90)
-        .replace(/\n{2,}/g, "\n")
-        .replace(/ +/g, " ");
-    const violation = getForumContentViolation(sanitizedBio);
-
-    if (violation) {
-        throw new HttpsError("failed-precondition", `Bio contains ${violation}.`);
-    }
-
-    return sanitizedBio;
 }
 
 // ======================================================
@@ -544,7 +375,7 @@ async function getOrCreateAndSaveBirdFacts(birdId, commonName) {
  */
 exports.checkUsernameAndEmailAvailability = onCall(async (request) => {
     const { username, email } = request.data;
-    const sanitizedUsername = assertProfileUsernameAllowed(username);
+    const sanitizedUsername = sanitizeUsername(username);
 
     if (!email || typeof email !== "string" || email.trim().length === 0) {
         throw new HttpsError("invalid-argument", "The email field is required and must be a non-empty string.");
@@ -582,8 +413,18 @@ exports.initializeUser = onCall(async (request) => {
 
     const { username, email, bio, profilePictureUrl } = request.data;
     const uid = request.auth.uid;
-    const sanitizedUsername = assertProfileUsernameAllowed(username);
-    const sanitizedBio = assertProfileBioAllowed(bio);
+    const sanitizedUsername = sanitizeUsername(username);
+    const sanitizedBio = bio === undefined || bio === null ? undefined : sanitizeText(bio, 90);
+
+    if (bio !== undefined && bio !== null) {
+        if (typeof bio !== "string") {
+            throw new HttpsError("invalid-argument", "Bio must be a string.");
+        }
+        if (bio.trim().length > 90) {
+            throw new HttpsError("invalid-argument", "Bio must be 90 characters or fewer.");
+        }
+        assertForumTextAllowed(sanitizedBio, "Bio");
+    }
 
     // This is where the function touches Firestore documents/collections for the requested action.
     const userRef = db.collection("users").doc(uid);
@@ -3072,5 +2913,345 @@ exports.recordForumPost = onCall(async (request) => {
         logger.error("recordForumPost failed:", error);
         if (error instanceof HttpsError) throw error;
         throw new HttpsError("internal", `Failed to check post limit: ${error.message}`);
+    }
+});
+
+// ======================================================
+// Forum write callables — backend-authoritative create/edit paths
+// ======================================================
+const FORUM_POST_MAX_LENGTH = 500;
+const FORUM_COMMENT_MAX_LENGTH = 300;
+const FORUM_EDIT_WINDOW_MS = 5 * 60 * 1000;
+
+/**
+ * Reads the caller's canonical forum identity from users/{uid} so the client cannot spoof it.
+ */
+async function getForumAuthorProfileOrThrow(userId) {
+    const userSnap = await db.collection("users").doc(userId).get();
+    if (!userSnap.exists) {
+        throw new HttpsError("failed-precondition", "User profile not found.");
+    }
+
+    const userData = userSnap.data() || {};
+    const username = sanitizeText(userData.username || "", 80).trim();
+    const userProfilePictureUrl = typeof userData.profilePictureUrl === "string"
+        ? userData.profilePictureUrl.trim()
+        : "";
+
+    if (!username) {
+        throw new HttpsError("failed-precondition", "Username not found for this account.");
+    }
+
+    return { username, userProfilePictureUrl };
+}
+
+/**
+ * Normalizes a numeric coordinate and throws when the caller provides an invalid value.
+ */
+function normalizeCoordinate(value, fieldName) {
+    const num = typeof value === "number" ? value : Number(value);
+    if (!Number.isFinite(num)) {
+        throw new HttpsError("invalid-argument", `${fieldName} must be a valid number.`);
+    }
+    return num;
+}
+
+/**
+ * Returns a sanitized forum message and enforces the configured max length.
+ */
+function normalizeForumText(text, maxLength, emptyMessage) {
+    if (text == null) return "";
+    if (typeof text !== "string") {
+        throw new HttpsError("invalid-argument", "Text must be a string.");
+    }
+    const trimmed = sanitizeText(text, maxLength).trim();
+    if (!trimmed) {
+        throw new HttpsError("invalid-argument", emptyMessage);
+    }
+    if (trimmed.length > maxLength) {
+        throw new HttpsError("invalid-argument", `Text exceeds ${maxLength} characters.`);
+    }
+    return trimmed;
+}
+
+/**
+ * Ensures the resource is still inside the client-visible 5 minute edit window.
+ */
+function assertWithinForumEditWindow(timestamp, typeLabel) {
+    const createdAt = timestamp && typeof timestamp.toDate === "function"
+        ? timestamp.toDate()
+        : null;
+
+    if (!createdAt) {
+        throw new HttpsError("failed-precondition", `${typeLabel} timestamp is missing.`);
+    }
+
+    if ((Date.now() - createdAt.getTime()) > FORUM_EDIT_WINDOW_MS) {
+        throw new HttpsError("permission-denied", `The edit window for this ${typeLabel.toLowerCase()} has expired.`);
+    }
+}
+
+/**
+ * Creates a forum post through the backend so ownership, timestamps, and author fields cannot be spoofed.
+ */
+exports.createForumPost = onCall(async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
+
+    const userId = request.auth.uid;
+    const data = request.data || {};
+    const postId = sanitizeText(data.postId || "", 200).trim();
+    const message = typeof data.message === "string"
+        ? sanitizeText(data.message, FORUM_POST_MAX_LENGTH).trim()
+        : "";
+    const birdImageUrl = typeof data.birdImageUrl === "string"
+        ? data.birdImageUrl.trim()
+        : "";
+    const showLocation = data.showLocation === true;
+    const spotted = data.spotted === true;
+    const hunted = data.hunted === true;
+
+    if (!postId) {
+        throw new HttpsError("invalid-argument", "postId is required.");
+    }
+    if (!message && !birdImageUrl) {
+        throw new HttpsError("invalid-argument", "Please provide a message or an image.");
+    }
+    if (message.length > FORUM_POST_MAX_LENGTH) {
+        throw new HttpsError("invalid-argument", `Post exceeds ${FORUM_POST_MAX_LENGTH} characters.`);
+    }
+
+    let latitude = null;
+    let longitude = null;
+    if (showLocation) {
+        latitude = normalizeCoordinate(data.latitude, "latitude");
+        longitude = normalizeCoordinate(data.longitude, "longitude");
+    }
+
+    const { username, userProfilePictureUrl } = await getForumAuthorProfileOrThrow(userId);
+    const postRef = db.collection("forumThreads").doc(postId);
+
+    try {
+        await db.runTransaction(async (t) => {
+            const existing = await t.get(postRef);
+            if (existing.exists) {
+                throw new HttpsError("already-exists", "That post already exists.");
+            }
+
+            const postData = {
+                userId,
+                username,
+                userProfilePictureUrl,
+                message,
+                birdImageUrl,
+                timestamp: admin.firestore.FieldValue.serverTimestamp(),
+                likeCount: 0,
+                commentCount: 0,
+                viewCount: 0,
+                likedBy: {},
+                viewedBy: {},
+                edited: false,
+                lastEditedAt: null,
+                latitude: showLocation ? latitude : null,
+                longitude: showLocation ? longitude : null,
+                showLocation,
+                hunted,
+                spotted,
+                notificationSent: false,
+                likeNotificationSent: false,
+                lastViewedAt: null,
+            };
+
+            t.create(postRef, postData);
+        });
+
+        logger.info(`createForumPost: created post ${postId} for user ${userId}`);
+        return { success: true, postId };
+    } catch (error) {
+        logger.error("createForumPost failed:", error);
+        if (error instanceof HttpsError) throw error;
+        throw new HttpsError("internal", `Failed to create post: ${error.message}`);
+    }
+});
+
+/**
+ * Creates a forum comment/reply through the backend so the app cannot spoof the author.
+ */
+exports.createForumComment = onCall(async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
+
+    const userId = request.auth.uid;
+    const data = request.data || {};
+    const threadId = sanitizeText(data.threadId || "", 200).trim();
+    const commentId = sanitizeText(data.commentId || "", 200).trim();
+    const text = normalizeForumText(data.text, FORUM_COMMENT_MAX_LENGTH, "Comment cannot be empty.");
+    const parentCommentId = typeof data.parentCommentId === "string"
+        ? sanitizeText(data.parentCommentId, 200).trim()
+        : "";
+
+    if (!threadId) {
+        throw new HttpsError("invalid-argument", "threadId is required.");
+    }
+    if (!commentId) {
+        throw new HttpsError("invalid-argument", "commentId is required.");
+    }
+
+    const { username, userProfilePictureUrl } = await getForumAuthorProfileOrThrow(userId);
+    const threadRef = db.collection("forumThreads").doc(threadId);
+    const commentRef = threadRef.collection("comments").doc(commentId);
+
+    try {
+        await db.runTransaction(async (t) => {
+            const [threadSnap, existingCommentSnap] = await Promise.all([
+                t.get(threadRef),
+                t.get(commentRef),
+            ]);
+
+            if (!threadSnap.exists) {
+                throw new HttpsError("not-found", "Post not found.");
+            }
+            if (existingCommentSnap.exists) {
+                throw new HttpsError("already-exists", "That comment already exists.");
+            }
+
+            let normalizedParentCommentId = null;
+            let parentUsername = null;
+
+            if (parentCommentId) {
+                const parentRef = threadRef.collection("comments").doc(parentCommentId);
+                const parentSnap = await t.get(parentRef);
+                if (!parentSnap.exists) {
+                    throw new HttpsError("not-found", "Parent comment not found.");
+                }
+                normalizedParentCommentId = parentCommentId;
+                parentUsername = sanitizeText(parentSnap.data().username || "", 80).trim() || null;
+            }
+
+            t.create(commentRef, {
+                threadId,
+                userId,
+                username,
+                userProfilePictureUrl,
+                text,
+                timestamp: admin.firestore.FieldValue.serverTimestamp(),
+                likeCount: 0,
+                likedBy: {},
+                parentCommentId: normalizedParentCommentId,
+                parentUsername,
+                edited: false,
+                lastEditedAt: null,
+                likeNotificationSent: false,
+            });
+        });
+
+        logger.info(`createForumComment: created comment ${commentId} in thread ${threadId} for user ${userId}`);
+        return { success: true, commentId };
+    } catch (error) {
+        logger.error("createForumComment failed:", error);
+        if (error instanceof HttpsError) throw error;
+        throw new HttpsError("internal", `Failed to create comment: ${error.message}`);
+    }
+});
+
+/**
+ * Updates a post's editable content fields through the backend.
+ */
+exports.updateForumPostContent = onCall(async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
+
+    const userId = request.auth.uid;
+    const data = request.data || {};
+    const postId = sanitizeText(data.postId || "", 200).trim();
+    const message = normalizeForumText(data.message, FORUM_POST_MAX_LENGTH, "Post cannot be empty.");
+    const spotted = data.spotted === true;
+    const hunted = data.hunted === true;
+    const showLocation = data.showLocation === true;
+
+    if (!postId) {
+        throw new HttpsError("invalid-argument", "postId is required.");
+    }
+
+    const postRef = db.collection("forumThreads").doc(postId);
+
+    try {
+        await db.runTransaction(async (t) => {
+            const postSnap = await t.get(postRef);
+            if (!postSnap.exists) {
+                throw new HttpsError("not-found", "Post not found.");
+            }
+
+            const postData = postSnap.data() || {};
+            if (postData.userId !== userId) {
+                throw new HttpsError("permission-denied", "You can only edit your own posts.");
+            }
+
+            assertWithinForumEditWindow(postData.timestamp, "Post");
+
+            t.update(postRef, {
+                message,
+                spotted,
+                hunted,
+                showLocation,
+                edited: true,
+                lastEditedAt: admin.firestore.FieldValue.serverTimestamp(),
+            });
+        });
+
+        logger.info(`updateForumPostContent: updated post ${postId} for user ${userId}`);
+        return { success: true, postId };
+    } catch (error) {
+        logger.error("updateForumPostContent failed:", error);
+        if (error instanceof HttpsError) throw error;
+        throw new HttpsError("internal", `Failed to update post: ${error.message}`);
+    }
+});
+
+/**
+ * Updates a comment's text through the backend.
+ */
+exports.updateForumCommentContent = onCall(async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
+
+    const userId = request.auth.uid;
+    const data = request.data || {};
+    const threadId = sanitizeText(data.threadId || "", 200).trim();
+    const commentId = sanitizeText(data.commentId || "", 200).trim();
+    const text = normalizeForumText(data.text, FORUM_COMMENT_MAX_LENGTH, "Comment cannot be empty.");
+
+    if (!threadId) {
+        throw new HttpsError("invalid-argument", "threadId is required.");
+    }
+    if (!commentId) {
+        throw new HttpsError("invalid-argument", "commentId is required.");
+    }
+
+    const commentRef = db.collection("forumThreads").doc(threadId).collection("comments").doc(commentId);
+
+    try {
+        await db.runTransaction(async (t) => {
+            const commentSnap = await t.get(commentRef);
+            if (!commentSnap.exists) {
+                throw new HttpsError("not-found", "Comment not found.");
+            }
+
+            const commentData = commentSnap.data() || {};
+            if (commentData.userId !== userId) {
+                throw new HttpsError("permission-denied", "You can only edit your own comments.");
+            }
+
+            assertWithinForumEditWindow(commentData.timestamp, "Comment");
+
+            t.update(commentRef, {
+                text,
+                edited: true,
+                lastEditedAt: admin.firestore.FieldValue.serverTimestamp(),
+            });
+        });
+
+        logger.info(`updateForumCommentContent: updated comment ${commentId} in thread ${threadId} for user ${userId}`);
+        return { success: true, commentId };
+    } catch (error) {
+        logger.error("updateForumCommentContent failed:", error);
+        if (error instanceof HttpsError) throw error;
+        throw new HttpsError("internal", `Failed to update comment: ${error.message}`);
     }
 });

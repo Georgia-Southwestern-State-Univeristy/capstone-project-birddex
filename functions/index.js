@@ -19,6 +19,7 @@ const { defineSecret } = require("firebase-functions/params");
 // 3. Admin and external libraries (DECLARED ONLY ONCE)
 const admin = require("firebase-admin");
 const axios = require("axios");
+const crypto = require("crypto");
 
 if (admin.apps.length === 0) {
     admin.initializeApp();
@@ -2991,6 +2992,78 @@ function assertWithinForumEditWindow(timestamp, typeLabel) {
     }
 }
 
+
+/**
+ * Converts a Firebase Storage download URL back into the storage object path.
+ */
+function getStoragePathFromDownloadUrl(downloadUrl) {
+    if (typeof downloadUrl !== "string" || !downloadUrl.includes("/o/")) {
+        return null;
+    }
+
+    try {
+        const decodedUrl = decodeURIComponent(downloadUrl);
+        const pathStart = decodedUrl.indexOf("/o/") + 3;
+        if (pathStart < 3) return null;
+        const pathEnd = decodedUrl.indexOf("?", pathStart);
+        return decodedUrl.substring(pathStart, pathEnd !== -1 ? pathEnd : decodedUrl.length);
+    } catch (error) {
+        logger.warn("getStoragePathFromDownloadUrl: failed to parse URL", error);
+        return null;
+    }
+}
+
+/**
+ * Archives a post image into the same folder structure the Android app previously used.
+ */
+async function archiveForumPostImageIfNeeded(userId, postId, imageUrl) {
+    if (typeof imageUrl !== "string" || !imageUrl.trim()) {
+        return imageUrl || "";
+    }
+
+    const oldPath = getStoragePathFromDownloadUrl(imageUrl.trim());
+    if (!oldPath) {
+        return imageUrl;
+    }
+
+    try {
+        const bucket = storage.bucket();
+        const oldFile = bucket.file(oldPath);
+        const [exists] = await oldFile.exists();
+        if (!exists) {
+            return imageUrl;
+        }
+
+        const oldName = oldPath.split("/").pop() || `${postId}.jpg`;
+        const newPath = `archive/forum_post_images/${userId}/${postId}_${oldName}`;
+        const newFile = bucket.file(newPath);
+
+        await oldFile.copy(newFile);
+
+        let [metadata] = await newFile.getMetadata();
+        let token = metadata?.metadata?.firebaseStorageDownloadTokens || "";
+        if (!token) {
+            token = crypto.randomUUID();
+            await newFile.setMetadata({
+                metadata: {
+                    ...(metadata?.metadata || {}),
+                    firebaseStorageDownloadTokens: token,
+                },
+            });
+            [metadata] = await newFile.getMetadata();
+        }
+
+        await oldFile.delete().catch((error) => {
+            logger.warn(`archiveForumPostImageIfNeeded: could not delete old file ${oldPath}`, error);
+        });
+
+        return `https://firebasestorage.googleapis.com/v0/b/${bucket.name}/o/${encodeURIComponent(newPath)}?alt=media&token=${token}`;
+    } catch (error) {
+        logger.error(`archiveForumPostImageIfNeeded failed for post ${postId}:`, error);
+        return imageUrl;
+    }
+}
+
 /**
  * Creates a forum post through the backend so ownership, timestamps, and author fields cannot be spoofed.
  */
@@ -3253,5 +3326,158 @@ exports.updateForumCommentContent = onCall(async (request) => {
         logger.error("updateForumCommentContent failed:", error);
         if (error instanceof HttpsError) throw error;
         throw new HttpsError("internal", `Failed to update comment: ${error.message}`);
+    }
+});
+
+
+/**
+ * Deletes a forum post through the backend so ownership and archival cannot be bypassed.
+ */
+exports.deleteForumPost = onCall(async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
+
+    const userId = request.auth.uid;
+    const data = request.data || {};
+    const postId = sanitizeText(data.postId || "", 200).trim();
+    if (!postId) {
+        throw new HttpsError("invalid-argument", "postId is required.");
+    }
+
+    const postRef = db.collection("forumThreads").doc(postId);
+
+    try {
+        const postSnap = await postRef.get();
+        if (!postSnap.exists) {
+            throw new HttpsError("not-found", "Post not found.");
+        }
+
+        const postData = postSnap.data() || {};
+        if (postData.userId !== userId) {
+            throw new HttpsError("permission-denied", "You can only delete your own posts.");
+        }
+
+        const commentsSnap = await postRef.collection("comments").get();
+        const archivedImageUrl = await archiveForumPostImageIfNeeded(
+            userId,
+            postId,
+            typeof postData.birdImageUrl === "string" ? postData.birdImageUrl : ""
+        );
+
+        const batch = db.batch();
+        for (const commentDoc of commentsSnap.docs) {
+            batch.set(db.collection("deletedforum_backlog").doc(), {
+                type: "comment_archived_with_post",
+                originalId: commentDoc.id,
+                postId,
+                data: commentDoc.data(),
+                deletedBy: userId,
+                deletedAt: admin.firestore.FieldValue.serverTimestamp(),
+            });
+            batch.delete(commentDoc.ref);
+        }
+
+        batch.set(db.collection("deletedforum_backlog").doc(), {
+            type: "post",
+            originalId: postId,
+            data: {
+                ...postData,
+                birdImageUrl: archivedImageUrl,
+            },
+            deletedBy: userId,
+            deletedAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+        batch.delete(postRef);
+
+        await batch.commit();
+
+        logger.info(`deleteForumPost: deleted post ${postId} for user ${userId}`);
+        return { success: true, postId, deletedCommentCount: commentsSnap.size };
+    } catch (error) {
+        logger.error("deleteForumPost failed:", error);
+        if (error instanceof HttpsError) throw error;
+        throw new HttpsError("internal", `Failed to delete post: ${error.message}`);
+    }
+});
+
+/**
+ * Deletes a forum comment or reply through the backend so ownership and archival cannot be bypassed.
+ */
+exports.deleteForumComment = onCall(async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
+
+    const userId = request.auth.uid;
+    const data = request.data || {};
+    const threadId = sanitizeText(data.threadId || "", 200).trim();
+    const commentId = sanitizeText(data.commentId || "", 200).trim();
+
+    if (!threadId) {
+        throw new HttpsError("invalid-argument", "threadId is required.");
+    }
+    if (!commentId) {
+        throw new HttpsError("invalid-argument", "commentId is required.");
+    }
+
+    const threadRef = db.collection("forumThreads").doc(threadId);
+    const commentRef = threadRef.collection("comments").doc(commentId);
+
+    try {
+        const commentSnap = await commentRef.get();
+        if (!commentSnap.exists) {
+            throw new HttpsError("not-found", "Comment not found.");
+        }
+
+        const commentData = commentSnap.data() || {};
+        if (commentData.userId !== userId) {
+            throw new HttpsError("permission-denied", "You can only delete your own comments.");
+        }
+
+        const isReply = !!commentData.parentCommentId;
+        const batch = db.batch();
+        let deletedReplyCount = 0;
+
+        if (!isReply) {
+            const repliesSnap = await threadRef.collection("comments")
+                .where("parentCommentId", "==", commentId)
+                .get();
+
+            for (const replyDoc of repliesSnap.docs) {
+                batch.set(db.collection("deletedforum_backlog").doc(), {
+                    type: "comment_reply",
+                    originalId: replyDoc.id,
+                    data: replyDoc.data(),
+                    deletedBy: userId,
+                    deletedAt: admin.firestore.FieldValue.serverTimestamp(),
+                });
+                batch.delete(replyDoc.ref);
+                deletedReplyCount += 1;
+            }
+
+            batch.set(db.collection("deletedforum_backlog").doc(), {
+                type: "comment",
+                originalId: commentId,
+                data: commentData,
+                deletedBy: userId,
+                deletedAt: admin.firestore.FieldValue.serverTimestamp(),
+            });
+            batch.delete(commentRef);
+        } else {
+            batch.set(db.collection("deletedforum_backlog").doc(), {
+                type: "reply",
+                originalId: commentId,
+                data: commentData,
+                deletedBy: userId,
+                deletedAt: admin.firestore.FieldValue.serverTimestamp(),
+            });
+            batch.delete(commentRef);
+        }
+
+        await batch.commit();
+
+        logger.info(`deleteForumComment: deleted comment ${commentId} in thread ${threadId} for user ${userId}`);
+        return { success: true, commentId, deletedReplyCount };
+    } catch (error) {
+        logger.error("deleteForumComment failed:", error);
+        if (error instanceof HttpsError) throw error;
+        throw new HttpsError("internal", `Failed to delete comment: ${error.message}`);
     }
 });

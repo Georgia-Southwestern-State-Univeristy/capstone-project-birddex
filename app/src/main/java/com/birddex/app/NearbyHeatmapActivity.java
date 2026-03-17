@@ -198,7 +198,7 @@ public class NearbyHeatmapActivity extends AppCompatActivity
 
         SupportMapFragment mapFragment = (SupportMapFragment) getSupportFragmentManager().findFragmentById(R.id.map);
         if (mapFragment != null) mapFragment.getMapAsync(this);
-        // Give the user immediate feedback about the result of this action.
+            // Give the user immediate feedback about the result of this action.
         else { Toast.makeText(this, "Map failed to load", Toast.LENGTH_SHORT).show(); finish(); }
     }
 
@@ -454,12 +454,29 @@ public class NearbyHeatmapActivity extends AppCompatActivity
         });
 
         currentPopupEditText = view.findViewById(R.id.etComment);
-        view.findViewById(R.id.btnSendComment).setOnClickListener(v -> {
+        View sendCommentButton = view.findViewById(R.id.btnSendComment);
+        sendCommentButton.setOnClickListener(v -> {
             String text = currentPopupEditText.getText().toString().trim(); if (text.isEmpty() || user == null || ContentFilter.containsInappropriateContent(text)) return;
-            db.collection("users").document(user.getUid()).get().addOnSuccessListener(udoc -> {
-                ForumComment c = new ForumComment(p.getId(), user.getUid(), udoc.getString("username"), udoc.getString("profilePictureUrl"), text);
-                if (replyingToComment != null) { c.setParentCommentId(replyingToComment.getId()); c.setParentUsername(replyingToComment.getUsername()); }
-                db.collection("forumThreads").document(p.getId()).collection("comments").add(c).addOnSuccessListener(v2 -> { currentPopupEditText.setText(""); replyingToComment = null; refreshPopupComments(); });
+            sendCommentButton.setEnabled(false);
+
+            String commentId = db.collection("forumThreads").document(p.getId()).collection("comments").document().getId();
+            String parentCommentId = replyingToComment != null ? replyingToComment.getId() : "";
+
+            firebaseManager.createForumComment(p.getId(), commentId, text, parentCommentId, new FirebaseManager.ForumWriteListener() {
+                @Override public void onSuccess() {
+                    if (isFinishing() || isDestroyed()) return;
+                    currentPopupEditText.setText("");
+                    currentPopupEditText.setHint("Write a comment...");
+                    replyingToComment = null;
+                    sendCommentButton.setEnabled(true);
+                    refreshPopupComments();
+                }
+
+                @Override public void onFailure(String errorMessage) {
+                    if (isFinishing() || isDestroyed()) return;
+                    sendCommentButton.setEnabled(true);
+                    Toast.makeText(NearbyHeatmapActivity.this, errorMessage, Toast.LENGTH_SHORT).show();
+                }
             });
         });
 
@@ -521,13 +538,18 @@ public class NearbyHeatmapActivity extends AppCompatActivity
      * Main logic block for this part of the feature.
      */
     private void archiveAndDeletePost(ForumPost post, BottomSheetDialog dialog) {
-        FirebaseUser user = mAuth.getCurrentUser(); if (user == null) return;
-        if (post.getBirdImageUrl() != null && !post.getBirdImageUrl().isEmpty()) {
-            moveImageToArchive(user.getUid(), post.getId(), post.getBirdImageUrl(), new OnImageArchivedListener() {
-                @Override public void onSuccess(String url) { post.setBirdImageUrl(url); handleCommentsArchiveAndDeletion(user.getUid(), post, dialog); }
-                @Override public void onFailure(Exception e) { handleCommentsArchiveAndDeletion(user.getUid(), post, dialog); }
-            });
-        } else handleCommentsArchiveAndDeletion(user.getUid(), post, dialog);
+        firebaseManager.deleteForumPost(post.getId(), task -> {
+            if (isFinishing() || isDestroyed()) return;
+            if (task.isSuccessful()) {
+                if (dialog != null) dialog.dismiss();
+                loadForumPins();
+            } else {
+                String error = task.getException() != null && task.getException().getMessage() != null
+                        ? task.getException().getMessage()
+                        : "Failed to delete post.";
+                Toast.makeText(this, error, Toast.LENGTH_SHORT).show();
+            }
+        });
     }
 
     /**
@@ -672,21 +694,18 @@ public class NearbyHeatmapActivity extends AppCompatActivity
      * become permanent.
      */
     private void deleteCommentAndReplies(ForumComment c) {
-        FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser(); if (user == null || activePost == null) return;
-        if (c.getParentCommentId() == null) {
-            // Set up or query the Firebase layer that supplies/stores this feature's data.
-            db.collection("forumThreads").document(activePost.getId()).collection("comments").whereEqualTo("parentCommentId", c.getId()).get().addOnSuccessListener(snap -> {
-                WriteBatch b = db.batch();
-                // Persist the new state so the action is saved outside the current screen.
-                for (DocumentSnapshot d : snap) { backlogByUserId(b, user.getUid(), "comment_reply", d.getId(), d.getData()); b.delete(d.getReference()); }
-                backlogByUserId(b, user.getUid(), "comment", c.getId(), c); b.delete(db.collection("forumThreads").document(activePost.getId()).collection("comments").document(c.getId()));
-                b.commit().addOnSuccessListener(v -> refreshPopupComments());
-            });
-        } else {
-            WriteBatch b = db.batch(); Map<String, Object> m = new HashMap<>(); m.put("type", "reply"); m.put("originalId", c.getId()); m.put("data", c); m.put("deletedBy", user.getUid()); m.put("deletedAt", FieldValue.serverTimestamp());
-            b.set(db.collection("deletedforum_backlog").document(), m); b.delete(db.collection("forumThreads").document(activePost.getId()).collection("comments").document(c.getId()));
-            b.commit().addOnSuccessListener(v -> refreshPopupComments());
-        }
+        if (activePost == null) return;
+        firebaseManager.deleteForumComment(activePost.getId(), c.getId(), task -> {
+            if (isFinishing() || isDestroyed()) return;
+            if (task.isSuccessful()) {
+                refreshPopupComments();
+            } else {
+                String error = task.getException() != null && task.getException().getMessage() != null
+                        ? task.getException().getMessage()
+                        : "Failed to delete comment.";
+                Toast.makeText(this, error, Toast.LENGTH_SHORT).show();
+            }
+        });
     }
 
     /**

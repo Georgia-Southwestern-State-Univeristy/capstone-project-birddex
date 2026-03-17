@@ -8,7 +8,6 @@ import com.google.android.gms.tasks.Task;
 import com.google.android.gms.tasks.Tasks;
 import com.google.firebase.auth.FirebaseAuth;
 import com.google.firebase.auth.FirebaseUser;
-import com.google.firebase.firestore.DocumentReference;
 import com.google.firebase.firestore.DocumentSnapshot;
 import com.google.firebase.firestore.EventListener;
 import com.google.firebase.firestore.FirebaseFirestore;
@@ -31,7 +30,7 @@ import java.util.Map;
  * - forum post/comment create and edit flows go through callable Cloud Functions
  * - username and bio updates are also enforced again on the backend through initializeUser
  * - the frontend still gives instant validation feedback, but the backend now enforces the same rules
- * - existing direct Firestore helpers were left in place for unrelated legacy paths
+ * - unused legacy direct forum create/update helpers were removed so the frontend only uses the backend write path
  */
 public class FirebaseManager {
 
@@ -805,33 +804,6 @@ public class FirebaseManager {
         });
     }
 
-    public void addForumPost(ForumPost post, OnCompleteListener<Void> listener) {
-        Log.d(TAG, "Adding forum post: " + post.getId());
-        // Set up or query the Firebase layer that supplies/stores this feature's data.
-        db.collection("forumThreads").document(post.getId()).set(post).addOnCompleteListener(task -> {
-            if (task.isSuccessful()) Log.d(TAG, "Post added successfully.");
-            else Log.e(TAG, "Failed to add post.", task.getException());
-            listener.onComplete(task);
-        });
-    }
-
-    /**
-     * Applies the latest values to existing UI/data so the screen and backend stay in sync.
-     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
-     * changes.
-     * Part of this method writes changes back to Firestore/storage, so this is where app actions
-     * become permanent.
-     */
-    public void updateForumPost(String postId, Map<String, Object> updates, OnCompleteListener<Void> listener) {
-        Log.d(TAG, "Updating forum post: " + postId);
-        // Set up or query the Firebase layer that supplies/stores this feature's data.
-        db.collection("forumThreads").document(postId).update(updates).addOnCompleteListener(task -> {
-            if (task.isSuccessful()) Log.d(TAG, "Post updated successfully.");
-            else Log.e(TAG, "Failed to update post.", task.getException());
-            listener.onComplete(task);
-        });
-    }
-
     /**
      * Removes data/listeners/items and then updates local state so the UI matches the deletion.
      * It talks to Firebase/Firestore in this method, either to read live data or to persist app
@@ -840,27 +812,20 @@ public class FirebaseManager {
      * become permanent.
      */
     public void deleteForumPost(String postId, OnCompleteListener<Void> listener) {
-        Log.d(TAG, "Deleting forum post: " + postId);
-        // Set up or query the Firebase layer that supplies/stores this feature's data.
-        db.collection("forumThreads").document(postId).delete().addOnCompleteListener(task -> {
-            if (task.isSuccessful()) Log.d(TAG, "Post deleted.");
-            else Log.e(TAG, "Failed to delete post.", task.getException());
-            listener.onComplete(task);
-        });
-    }
+        Log.d(TAG, "Calling deleteForumPost CF for post: " + postId);
 
-    /**
-     * Main logic block for this part of the feature.
-     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
-     * changes.
-     */
-    public void addForumComment(String postId, ForumComment comment, OnCompleteListener<DocumentReference> listener) {
-        Log.d(TAG, "Adding comment to post: " + postId);
-        // Set up or query the Firebase layer that supplies/stores this feature's data.
-        db.collection("forumThreads").document(postId).collection("comments").add(comment).addOnCompleteListener(task -> {
-            if (task.isSuccessful()) Log.d(TAG, "Comment added.");
-            else Log.e(TAG, "Failed to add comment.", task.getException());
-            listener.onComplete(task);
+        Map<String, Object> data = new HashMap<>();
+        data.put("postId", postId);
+
+        mFunctions.getHttpsCallable("deleteForumPost").call(data).addOnCompleteListener(task -> {
+            if (task.isSuccessful()) {
+                Log.d(TAG, "deleteForumPost CF succeeded.");
+                if (listener != null) listener.onComplete(Tasks.forResult(null));
+            } else {
+                String error = getCallableErrorMessage(task, "Failed to delete post.");
+                Log.e(TAG, "deleteForumPost CF failed: " + error);
+                if (listener != null) listener.onComplete(Tasks.forException(new Exception(error)));
+            }
         });
     }
 
@@ -872,12 +837,21 @@ public class FirebaseManager {
      * become permanent.
      */
     public void deleteForumComment(String postId, String commentId, OnCompleteListener<Void> listener) {
-        Log.d(TAG, "Deleting comment: " + commentId + " from post: " + postId);
-        // Set up or query the Firebase layer that supplies/stores this feature's data.
-        db.collection("forumThreads").document(postId).collection("comments").document(commentId).delete().addOnCompleteListener(task -> {
-            if (task.isSuccessful()) Log.d(TAG, "Comment deleted.");
-            else Log.e(TAG, "Failed to delete comment.", task.getException());
-            listener.onComplete(task);
+        Log.d(TAG, "Calling deleteForumComment CF for thread: " + postId + " commentId=" + commentId);
+
+        Map<String, Object> data = new HashMap<>();
+        data.put("threadId", postId);
+        data.put("commentId", commentId);
+
+        mFunctions.getHttpsCallable("deleteForumComment").call(data).addOnCompleteListener(task -> {
+            if (task.isSuccessful()) {
+                Log.d(TAG, "deleteForumComment CF succeeded.");
+                if (listener != null) listener.onComplete(Tasks.forResult(null));
+            } else {
+                String error = getCallableErrorMessage(task, "Failed to delete comment.");
+                Log.e(TAG, "deleteForumComment CF failed: " + error);
+                if (listener != null) listener.onComplete(Tasks.forException(new Exception(error)));
+            }
         });
     }
 

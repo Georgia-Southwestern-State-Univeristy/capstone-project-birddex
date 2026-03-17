@@ -369,6 +369,10 @@ public class CreatePostActivity extends AppCompatActivity {
             Toast.makeText(this, "Inappropriate language detected.", Toast.LENGTH_LONG).show();
             return;
         }
+        if (ForumSubmissionCooldownHelper.isCoolingDown(this)) {
+            Toast.makeText(this, ForumSubmissionCooldownHelper.buildCooldownMessage(this), Toast.LENGTH_SHORT).show();
+            return;
+        }
 
         // Persist the new state so the action is saved outside the current screen.
         viewModel.isPostInProgress.set(true);
@@ -441,7 +445,9 @@ public class CreatePostActivity extends AppCompatActivity {
 
                 Toast.makeText(
                         CreatePostActivity.this,
-                        "Could not verify posting limit. Please try again.",
+                        errorMessage != null && !errorMessage.trim().isEmpty()
+                                ? errorMessage
+                                : "Could not verify posting limit. Please try again.",
                         Toast.LENGTH_SHORT
                 ).show();
             }
@@ -508,6 +514,7 @@ public class CreatePostActivity extends AppCompatActivity {
             @Override
             public void onSuccess() {
                 if (isFinishing() || isDestroyed()) return;
+                ForumSubmissionCooldownHelper.markSubmissionSuccess(CreatePostActivity.this);
                 // Persist the new state so the action is saved outside the current screen.
                 viewModel.isPostFinished.set(true);
                 viewModel.isPostInProgress.set(false);

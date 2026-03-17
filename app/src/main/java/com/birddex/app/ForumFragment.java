@@ -72,7 +72,7 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
     private int fetchGeneration = 0;
 
     private final Set<String> postLikeInFlight = Collections.newSetFromMap(new ConcurrentHashMap<>());
-    
+
     // FIX: Navigation guard
     private boolean isNavigating = false;
 
@@ -155,13 +155,13 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
             // Move into the next screen and pass the identifiers/data that screen needs.
             startActivity(new Intent(getActivity(), CreatePostActivity.class));
         });
-        
+
         binding.btnSocial.setOnClickListener(v -> {
             if (isNavigating) return;
             isNavigating = true;
             startActivity(new Intent(getActivity(), SocialActivity.class));
         });
-        
+
         binding.btnFilter.setOnClickListener(this::showFilterMenu);
     }
 
@@ -281,12 +281,12 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
 
         q.get().addOnSuccessListener(val -> {
             if (!isAdded() || binding == null || fetchGeneration != myGen) return;
-            
+
             // If this is the start of a new generation, clear the list now.
             if (lastVisible == null) {
                 postList.clear();
             }
-            
+
             binding.swipeRefreshLayout.setRefreshing(false);
             if (val != null && !val.isEmpty()) {
                 lastVisible = val.getDocuments().get(val.size() - 1);
@@ -320,7 +320,7 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
 
         String uid = u.getUid(); boolean liked = p.getLikedBy() != null && p.getLikedBy().containsKey(uid);
         int count = p.getLikeCount();
-        
+
         // Optimistic UI update
         if (liked) { p.setLikeCount(Math.max(0, count - 1)); p.getLikedBy().remove(uid); }
         else { p.setLikeCount(count + 1); if (p.getLikedBy() == null) p.setLikedBy(new HashMap<>()); p.getLikedBy().put(uid, true); }
@@ -365,7 +365,7 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
         isNavigating = true;
         startActivity(new Intent(getActivity(), UserSocialProfileActivity.class).putExtra(UserSocialProfileActivity.EXTRA_USER_ID, uid));
     }
-    
+
     @Override public void onMapClick(ForumPost p) {
         if (isNavigating) return;
         if (p.getLatitude() != null && p.getLongitude() != null) {
@@ -389,13 +389,17 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
      * Main logic block for this part of the feature.
      */
     private void archiveAndDeletePost(ForumPost p) {
-        FirebaseUser u = mAuth.getCurrentUser(); if (u == null) return;
-        if (p.getBirdImageUrl() != null && !p.getBirdImageUrl().isEmpty()) {
-            moveImageToArchive(u.getUid(), p.getId(), p.getBirdImageUrl(), new OnImageArchivedListener() {
-                @Override public void onSuccess(String url) { p.setBirdImageUrl(url); handleCommentsArchiveAndDeletion(u.getUid(), p); }
-                @Override public void onFailure(Exception e) { handleCommentsArchiveAndDeletion(u.getUid(), p); }
-            });
-        } else handleCommentsArchiveAndDeletion(u.getUid(), p);
+        firebaseManager.deleteForumPost(p.getId(), task -> {
+            if (!isAdded()) return;
+            if (task.isSuccessful()) {
+                refreshPosts();
+            } else {
+                String error = task.getException() != null && task.getException().getMessage() != null
+                        ? task.getException().getMessage()
+                        : "Failed to delete post.";
+                Toast.makeText(requireContext(), error, Toast.LENGTH_SHORT).show();
+            }
+        });
     }
 
     /**

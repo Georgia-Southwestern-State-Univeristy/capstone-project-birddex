@@ -352,13 +352,18 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
      * Main logic block for this part of the feature.
      */
     private void archiveAndDeletePost(ForumPost post) {
-        FirebaseUser user = mAuth.getCurrentUser(); if (user == null) return;
-        if (post.getBirdImageUrl() != null && !post.getBirdImageUrl().isEmpty()) {
-            moveImageToArchive(user.getUid(), post.getId(), post.getBirdImageUrl(), new OnImageArchivedListener() {
-                @Override public void onSuccess(String url) { post.setBirdImageUrl(url); handleCommentsArchiveAndDeletion(user.getUid(), post); }
-                @Override public void onFailure(Exception e) { handleCommentsArchiveAndDeletion(user.getUid(), post); }
-            });
-        } else handleCommentsArchiveAndDeletion(user.getUid(), post);
+        firebaseManager.deleteForumPost(post.getId(), task -> {
+            if (isFinishing() || isDestroyed()) return;
+            if (task.isSuccessful()) {
+                Toast.makeText(this, "Deleted", Toast.LENGTH_SHORT).show();
+                finish();
+            } else {
+                String error = task.getException() != null && task.getException().getMessage() != null
+                        ? task.getException().getMessage()
+                        : "Failed to delete post.";
+                Toast.makeText(this, error, Toast.LENGTH_SHORT).show();
+            }
+        });
     }
 
     /**
@@ -661,17 +666,19 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
      * become permanent.
      */
     private void deleteCommentAndReplies(ForumComment c) {
-        FirebaseUser user = mAuth.getCurrentUser(); if (user == null) return;
-        // Set up or query the Firebase layer that supplies/stores this feature's data.
-        DocumentReference ref = db.collection("forumThreads").document(postId).collection("comments").document(c.getId());
-        // Persist the new state so the action is saved outside the current screen.
-        ref.update("deleting", true).addOnSuccessListener(v -> {
-            db.collection("forumThreads").document(postId).collection("comments").whereEqualTo("parentCommentId", c.getId()).get().addOnSuccessListener(snap -> {
-                WriteBatch b = db.batch();
-                for (DocumentSnapshot d : snap) { backlogByUserId(b, user.getUid(), "comment_reply", d.getId(), d.getData()); b.delete(d.getReference()); }
-                backlogByUserId(b, user.getUid(), "comment", c.getId(), c); b.delete(ref);
-                b.commit().addOnSuccessListener(res -> { if (!isFinishing()) { lastCommentVisible = null; isLastCommentsPage = false; commentList.clear(); fetchComments(); } });
-            });
+        firebaseManager.deleteForumComment(postId, c.getId(), task -> {
+            if (isFinishing() || isDestroyed()) return;
+            if (task.isSuccessful()) {
+                lastCommentVisible = null;
+                isLastCommentsPage = false;
+                commentList.clear();
+                fetchComments();
+            } else {
+                String error = task.getException() != null && task.getException().getMessage() != null
+                        ? task.getException().getMessage()
+                        : "Failed to delete comment.";
+                Toast.makeText(this, error, Toast.LENGTH_SHORT).show();
+            }
         });
     }
 

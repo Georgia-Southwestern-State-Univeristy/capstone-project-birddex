@@ -20,4 +20,28 @@
 
     <!-- Material Design Error Color -->
     <color name="md_theme_error">#B00020</color>
+
+    <!-- Uncommon (Green Theme) -->
+    <color name="uncommon_green">#4CAF50</color> <!-- main -->
+    <color name="uncommon_green_dark">#2E7D32</color> <!-- border -->
+    <color name="uncommon_green_light">#A5D6A7</color> <!-- optional -->
+
+    <!-- Rare (Blue Theme) -->
+    <color name="rare_blue_light">#90CAF9</color>   <!-- gradient start -->
+    <color name="rare_blue">#1565C0</color>         <!-- main -->
+    <color name="rare_blue_dark">#0D47A1</color>    <!-- border -->
+    <color name="rare_blue_accent">#42A5F5</color>  <!-- optional highlight -->
+
+    <!-- EPIC (Purple Theme) -->
+    <color name="epic_purple_light">#CE93D8</color>   <!-- gradient start -->
+    <color name="epic_purple">#8E24AA</color>         <!-- main -->
+    <color name="epic_purple_dark">#4A148C</color>    <!-- border -->
+    <color name="epic_purple_accent">#BA68C8</color>  <!-- optional highlight -->
+
+    <!-- LEGENDARY (Red / Fire Theme) -->
+    <color name="legendary_red_light">#FF8A65</color>   <!-- soft orange-red -->
+    <color name="legendary_red">#D32F2F</color>         <!-- main red -->
+    <color name="legendary_red_dark">#7F0000</color>    <!-- deep border -->
+    <color name="legendary_red_accent">#FF3D00</color>  <!-- bright highlight -->
+
 </resources>

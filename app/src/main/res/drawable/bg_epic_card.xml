@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shape xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <gradient
+        android:angle="135"
+        android:startColor="@color/epic_purple_light"
+        android:endColor="@color/epic_purple" />
+
+    <corners android:radius="18dp" />
+
+    <stroke
+        android:width="2dp"
+        android:color="@color/epic_purple_dark" />
+
+</shape>

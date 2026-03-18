@@ -20,17 +20,21 @@ service cloud.firestore {
     }
 
     function onlySessionFieldUpdate() {
-  		return request.resource.data.diff(resource.data).affectedKeys()
-    	.hasOnly(['currentSessionId']) &&
-    	request.resource.data.currentSessionId is string &&
-    	request.resource.data.currentSessionId.size() > 0;
-		}
+      return request.resource.data.diff(resource.data).affectedKeys()
+        .hasOnly(['currentSessionId']) &&
+        request.resource.data.currentSessionId is string &&
+        request.resource.data.currentSessionId.size() > 0;
+    }
 
     // Fields that only Cloud Functions should ever write.
-    // If any of these are in the incoming diff, block the client write.
+    // Username, bio, and profilePictureUrl are now backend-moderated too.
     function onlyClientProfileFields() {
       return !request.resource.data.diff(resource.data).affectedKeys()
         .hasAny([
+          'username',
+          'bio',
+          'profilePictureUrl',
+
           'totalPoints', 'totalBirds', 'duplicateBirds',
           'openAiRequestsRemaining', 'openAiCooldownResetTimestamp',
           'pfpChangesToday', 'pfpCooldownResetTimestamp',
@@ -40,16 +44,31 @@ service cloud.firestore {
         ]);
     }
 
+    // Client-side forum thread engagement still allowed for now.
+    // If likes/views are later moved to Cloud Functions too, set forum thread updates to false.
+    function onlyClientForumThreadEngagementUpdate() {
+      return request.resource.data.diff(resource.data).affectedKeys()
+        .hasOnly(['likeCount', 'likedBy', 'viewCount', 'viewedBy']);
+    }
+
+    // Client-side comment likes still allowed for now.
+    // If comment likes are later moved to Cloud Functions too, set comment updates to false.
+    function onlyClientCommentLikeUpdate() {
+      return request.resource.data.diff(resource.data).affectedKeys()
+        .hasOnly(['likedBy']);
+    }
+
     // --- Users Collection ---
     match /users/{userId} {
       // Any signed-in user can read public profiles
       allow read: if isSignedIn();
 
-      // Owner can update their own profile, but cannot touch CF-managed fields
+      // Owner can update only non-CF-managed profile fields,
+      // or update currentSessionId only.
       allow update: if isOwner(userId) && (
-  			onlyClientProfileFields() ||
-  			onlySessionFieldUpdate()
-				);
+        onlyClientProfileFields() ||
+        onlySessionFieldUpdate()
+      );
 
       // Creation/deletion handled by Cloud Functions only
       allow create, delete: if false;
@@ -84,9 +103,15 @@ service cloud.firestore {
       }
 
       // --- Settings (CF-managed: cooldowns, post limits, PFP limits) ---
-      // Clients can read their own settings (e.g. to display PFP changes remaining)
-      // but cannot write — all writes go through Cloud Functions.
       match /settings/{docId} {
+        allow read: if isOwner(userId);
+        allow write: if false; // Cloud Functions only
+      }
+
+      // --- Saved Posts ---
+      // Save/unsave goes through Cloud Functions.
+      // Client can read their own saved posts feed.
+      match /savedPosts/{threadId} {
         allow read: if isOwner(userId);
         allow write: if false; // Cloud Functions only
       }
@@ -98,59 +123,32 @@ service cloud.firestore {
       allow write: if false; // Cloud Functions (initializeUser) only
     }
 
-  	match /forumThreads/{postId} {
-  		allow read: if isSignedIn();
+    // --- Forum Threads ---
+    match /forumThreads/{postId} {
+      allow read: if isSignedIn();
 
-  	// Only create if the userId field matches the requester
-  		allow create: if isSignedIn() && incomingDataOwned();
+      // Post create/edit/delete now go through Cloud Functions only.
+      allow create: if false;
+      allow delete: if false;
 
-  		allow update: if isSignedIn() && (
-    // Owner can edit for 5 minutes, but NOT location/map fields
-    (
-      isOwnerOfResource() &&
-      resource.data.createdAt != null &&
-      request.time < resource.data.createdAt + duration.value(5, "m") &&
-      !request.resource.data.diff(resource.data).affectedKeys().hasAny([
-        'showLocation',
-        'latitude',
-        'longitude',
-        'locationId',
-        'localityName',
-        'state',
-        'country',
-        'userId',
-        'createdAt'
-      ])
-    ) ||
-    // Other signed-in users can only update engagement fields
-    request.resource.data.diff(resource.data).affectedKeys()
-      .hasOnly(['likeCount', 'likedBy', 'viewCount', 'viewedBy', 'commentCount'])
-  	);
+      // Keep only engagement fields client-writable for now.
+      allow update: if isSignedIn() && onlyClientForumThreadEngagementUpdate();
 
-  			allow delete: if isSignedIn() && isOwnerOfResource();
+      match /comments/{commentId} {
+        allow read: if isSignedIn();
 
-  		match /comments/{commentId} {
-    	allow read: if isSignedIn();
+        // Comment/reply create/delete now go through Cloud Functions only.
+        allow create: if false;
+        allow delete: if false;
 
-    		allow create: if isSignedIn() && incomingDataOwned();
-
-    		allow delete: if isSignedIn() && (
-      	isOwnerOfResource() ||
-      	get(/databases/$(database)/documents/forumThreads/$(postId)).data.userId == request.auth.uid
-    		);
-
-    		allow update: if isSignedIn() && (
-      	isOwnerOfResource() ||
-      	request.resource.data.diff(resource.data).affectedKeys()
-        .hasOnly(['likedBy'])
-    		);
-  		}
-		}
+        // Keep only comment-like field client-writable for now.
+        allow update: if isSignedIn() && onlyClientCommentLikeUpdate();
+      }
+    }
 
     // --- Backlog Collection for Deletions ---
     match /deletedforum_backlog/{docId} {
-      allow create: if isSignedIn();
-      allow read, update, delete: if false;
+      allow read, write: if false; // Cloud Functions only
     }
 
     // --- Reports Collection ---
@@ -164,26 +162,27 @@ service cloud.firestore {
       allow read: if isSignedIn();
       allow write: if false;
     }
+
     match /birdFacts/{birdId} {
       allow read: if isSignedIn();
       allow write: if false;
+
       match /hunterFacts/{factId} {
         allow read: if isSignedIn();
         allow write: if false;
       }
     }
 
-    // --- User Bird Sightings (written by recordBirdSighting CF only) ---
+    // --- User Bird Sightings ---
     match /userBirds/{sightingId} {
       allow read: if isSignedIn() && isOwnerOfResource();
       allow create: if isSignedIn() && incomingDataOwned();
       allow update, delete: if isSignedIn() && isOwnerOfResource();
     }
+
     match /userBirdSightings/{sightingId} {
-      // Anyone signed in can read (powers the heatmap for all users)
       allow read: if isSignedIn();
-      // Writes are CF-only — recordBirdSighting CF uses admin SDK
-      allow write: if false;
+      allow write: if false; // Cloud Functions only
     }
 
     // --- Identifications (Internal logging only) ---
@@ -197,8 +196,6 @@ service cloud.firestore {
       allow create: if isSignedIn();
 
       // Allow updates ONLY if the coordinates haven't changed.
-      // This lets the app refresh the locality name but stops clients from
-      // changing the actual physical location of a known ID.
       allow update: if isSignedIn() &&
         request.resource.data.latitude == resource.data.latitude &&
         request.resource.data.longitude == resource.data.longitude;
@@ -223,9 +220,11 @@ service cloud.firestore {
     match /processedEvents/{eventId} {
       allow read, write: if false; // Cloud Functions only
     }
+
     match /processedAIEvents/{eventId} {
       allow read, write: if false; // Cloud Functions only
     }
+
     match /schedulerLocks/{lockId} {
       allow read, write: if false; // Cloud Functions only
     }

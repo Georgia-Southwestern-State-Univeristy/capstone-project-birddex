@@ -3549,3 +3549,109 @@ exports.deleteForumComment = onCall(async (request) => {
         throw new HttpsError("internal", `Failed to delete comment: ${error.message}`);
     }
 });
+
+
+/**
+ * Saves a forum post for the current user so it can be viewed later from the profile screen.
+ * The saved post document ID matches the thread ID so duplicate entries cannot be created.
+ */
+exports.saveForumPost = onCall(async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
+
+    const userId = request.auth.uid;
+    const data = request.data || {};
+    const threadId = sanitizeText(data.threadId || "", 200).trim();
+
+    if (!threadId) {
+        throw new HttpsError("invalid-argument", "threadId is required.");
+    }
+
+    const threadRef = db.collection("forumThreads").doc(threadId);
+    const savedRef = db.collection("users").doc(userId).collection("savedPosts").doc(threadId);
+
+    try {
+        await db.runTransaction(async (transaction) => {
+            const [threadSnap, savedSnap] = await Promise.all([
+                transaction.get(threadRef),
+                transaction.get(savedRef),
+            ]);
+
+            if (!threadSnap.exists) {
+                throw new HttpsError("not-found", "Post not found.");
+            }
+
+            if (!savedSnap.exists) {
+                transaction.set(savedRef, {
+                    threadId,
+                    savedAt: admin.firestore.FieldValue.serverTimestamp(),
+                    timestamp: admin.firestore.FieldValue.serverTimestamp(),
+                });
+            }
+        });
+
+        logger.info(`saveForumPost: saved thread ${threadId} for user ${userId}`);
+        return { success: true, threadId };
+    } catch (error) {
+        logger.error("saveForumPost failed:", error);
+        if (error instanceof HttpsError) throw error;
+        throw new HttpsError("internal", `Failed to save post: ${error.message}`);
+    }
+});
+
+/**
+ * Returns whether the current user has saved a given forum post.
+ * This lets the app resolve Save/Unsave labels without depending on client Firestore read rules.
+ */
+exports.getForumPostSaveState = onCall(async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
+
+    const userId = request.auth.uid;
+    const data = request.data || {};
+    const threadId = sanitizeText(data.threadId || "", 200).trim();
+
+    if (!threadId) {
+        throw new HttpsError("invalid-argument", "threadId is required.");
+    }
+
+    const savedRef = db.collection("users").doc(userId).collection("savedPosts").doc(threadId);
+
+    try {
+        const savedSnap = await savedRef.get();
+        return {
+            success: true,
+            threadId,
+            saved: savedSnap.exists,
+        };
+    } catch (error) {
+        logger.error("getForumPostSaveState failed:", error);
+        if (error instanceof HttpsError) throw error;
+        throw new HttpsError("internal", `Failed to read saved post state: ${error.message}`);
+    }
+});
+
+/**
+ * Removes a saved forum post entry for the current user.
+ */
+exports.unsaveForumPost = onCall(async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
+
+    const userId = request.auth.uid;
+    const data = request.data || {};
+    const threadId = sanitizeText(data.threadId || "", 200).trim();
+
+    if (!threadId) {
+        throw new HttpsError("invalid-argument", "threadId is required.");
+    }
+
+    const savedRef = db.collection("users").doc(userId).collection("savedPosts").doc(threadId);
+
+    try {
+        await savedRef.delete();
+        logger.info(`unsaveForumPost: removed saved thread ${threadId} for user ${userId}`);
+        return { success: true, threadId };
+    } catch (error) {
+        logger.error("unsaveForumPost failed:", error);
+        if (error instanceof HttpsError) throw error;
+        throw new HttpsError("internal", `Failed to unsave post: ${error.message}`);
+    }
+});

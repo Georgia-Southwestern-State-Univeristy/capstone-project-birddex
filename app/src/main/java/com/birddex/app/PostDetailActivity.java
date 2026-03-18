@@ -280,20 +280,69 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
      * Takes prepared data and presents it on screen or in a dialog/menu.
      */
     private void showPostOptions(ForumPost post, View view) {
+        FirebaseUser user = mAuth.getCurrentUser();
+        if (user == null) {
+            showResolvedPostOptions(post, view, false);
+            return;
+        }
+
+        firebaseManager.isForumPostSaved(post.getId(), task -> {
+            boolean isSaved = task.isSuccessful() && task.getResult() != null && task.getResult();
+            if (isFinishing() || isDestroyed()) return;
+            showResolvedPostOptions(post, view, isSaved);
+        });
+    }
+
+    private void showResolvedPostOptions(ForumPost post, View view, boolean isSaved) {
         PopupMenu popup = new PopupMenu(this, view);
         FirebaseUser user = mAuth.getCurrentUser();
         if (user != null && post.getUserId().equals(user.getUid())) {
             if (post.getTimestamp() != null && (System.currentTimeMillis() - post.getTimestamp().toDate().getTime() <= EDIT_WINDOW_MS)) popup.getMenu().add("Edit");
             popup.getMenu().add("Delete");
         }
+        popup.getMenu().add(isSaved ? "Unsave Post" : "Save Post");
         popup.getMenu().add("Report");
         popup.setOnMenuItemClickListener(item -> {
             if (item.getTitle().equals("Edit")) showEditPostDialog(post);
             else if (item.getTitle().equals("Delete")) showDeleteConfirmation(post);
+            else if (item.getTitle().equals("Save Post")) savePostForLater(post);
+            else if (item.getTitle().equals("Unsave Post")) unsavePost(post);
             else if (item.getTitle().equals("Report")) showReportDialog(post);
             return true;
         });
         popup.show();
+    }
+
+    private void savePostForLater(ForumPost post) {
+        firebaseManager.saveForumPost(post.getId(), new FirebaseManager.ForumWriteListener() {
+            @Override
+            public void onSuccess() {
+                if (isFinishing() || isDestroyed()) return;
+                Toast.makeText(PostDetailActivity.this, "Post saved", Toast.LENGTH_SHORT).show();
+            }
+
+            @Override
+            public void onFailure(String errorMessage) {
+                if (isFinishing() || isDestroyed()) return;
+                Toast.makeText(PostDetailActivity.this, errorMessage != null ? errorMessage : "Failed to save post.", Toast.LENGTH_SHORT).show();
+            }
+        });
+    }
+
+    private void unsavePost(ForumPost post) {
+        firebaseManager.unsaveForumPost(post.getId(), new FirebaseManager.ForumWriteListener() {
+            @Override
+            public void onSuccess() {
+                if (isFinishing() || isDestroyed()) return;
+                Toast.makeText(PostDetailActivity.this, "Post unsaved", Toast.LENGTH_SHORT).show();
+            }
+
+            @Override
+            public void onFailure(String errorMessage) {
+                if (isFinishing() || isDestroyed()) return;
+                Toast.makeText(PostDetailActivity.this, errorMessage != null ? errorMessage : "Failed to unsave post.", Toast.LENGTH_SHORT).show();
+            }
+        });
     }
 
     /**

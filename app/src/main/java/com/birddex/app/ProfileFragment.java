@@ -83,9 +83,13 @@ public class ProfileFragment extends Fragment implements
     private ForumPostAdapter postsAdapter;
 
     private List<ForumPost> postList = new ArrayList<>();
+    private final List<ForumPost> savedPostList = new ArrayList<>();
     private DocumentSnapshot lastVisible;
+    private DocumentSnapshot lastSavedVisible;
     private boolean isFetching = false;
+    private boolean isFetchingSaved = false;
     private boolean isLastPage = false;
+    private boolean isSavedLastPage = false;
 
     private String profileUserId;
     private String currentUsername, currentBio, currentProfilePictureUrl;
@@ -100,6 +104,7 @@ public class ProfileFragment extends Fragment implements
 
     private boolean isNavigating = false;
     private int fetchGeneration = 0;
+    private int savedFetchGeneration = 0;
     private int favoriteFetchGeneration = 0;
 
     public ProfileFragment() {}
@@ -188,6 +193,7 @@ public class ProfileFragment extends Fragment implements
         isNavigating = false;
         if (profileListener == null) fetchUserProfile();
         refreshPosts();
+        if (isCurrentUser) refreshSavedPosts();
     }
 
     /**
@@ -206,9 +212,14 @@ public class ProfileFragment extends Fragment implements
         rvProfilePosts.setAdapter(postsAdapter);
         rvProfilePosts.addOnScrollListener(new RecyclerView.OnScrollListener() {
             @Override public void onScrolled(@NonNull RecyclerView rv, int dx, int dy) {
-                if (dy > 0 && !isFetching && !isLastPage) {
-                    LinearLayoutManager lm = (LinearLayoutManager) rvProfilePosts.getLayoutManager();
-                    if (lm != null && lm.getChildCount() + lm.findFirstVisibleItemPosition() >= lm.getItemCount()) fetchPosts();
+                if (dy <= 0) return;
+                LinearLayoutManager lm = (LinearLayoutManager) rvProfilePosts.getLayoutManager();
+                if (lm == null || lm.getChildCount() + lm.findFirstVisibleItemPosition() < lm.getItemCount()) return;
+
+                if (isSavedTabSelected()) {
+                    if (!isFetchingSaved && !isSavedLastPage) fetchSavedPosts();
+                } else if (!isFetching && !isLastPage) {
+                    fetchPosts();
                 }
             }
         });
@@ -218,6 +229,14 @@ public class ProfileFragment extends Fragment implements
      * Updates object/screen state by storing a new value or reconfiguring a dependency.
      */
     private void setupTabs() {
+        if (isCurrentUser && profileTabLayout.getTabCount() == 2) {
+            profileTabLayout.addTab(profileTabLayout.newTab().setText("Saved"));
+        } else if (isCurrentUser && profileTabLayout.getTabCount() == 0) {
+            profileTabLayout.addTab(profileTabLayout.newTab().setText("Favorites"));
+            profileTabLayout.addTab(profileTabLayout.newTab().setText("Posts"));
+            profileTabLayout.addTab(profileTabLayout.newTab().setText("Saved"));
+        }
+
         profileTabLayout.addOnTabSelectedListener(new TabLayout.OnTabSelectedListener() {
             @Override public void onTabSelected(TabLayout.Tab tab) { applyTabState(tab.getPosition()); }
             @Override public void onTabUnselected(TabLayout.Tab tab) {}
@@ -231,14 +250,30 @@ public class ProfileFragment extends Fragment implements
      */
     private void applyTabState(int position) {
         if (!isAdded()) return;
+
         if (position == 0) {
-            rvFavoriteCards.setVisibility(View.VISIBLE); rvProfilePosts.setVisibility(View.GONE); tvProfileTabEmpty.setVisibility(View.GONE);
-        } else {
-            rvFavoriteCards.setVisibility(View.GONE);
-            rvProfilePosts.setVisibility(postList.isEmpty() ? View.GONE : View.VISIBLE);
-            tvProfileTabEmpty.setVisibility(postList.isEmpty() ? View.VISIBLE : View.GONE);
-            if (postList.isEmpty()) tvProfileTabEmpty.setText("No posts yet.");
+            rvFavoriteCards.setVisibility(View.VISIBLE);
+            rvProfilePosts.setVisibility(View.GONE);
+            tvProfileTabEmpty.setVisibility(View.GONE);
+            return;
         }
+
+        rvFavoriteCards.setVisibility(View.GONE);
+
+        if (isCurrentUser && position == getSavedTabPosition()) {
+            if (savedPostList.isEmpty() && !isFetchingSaved && !isSavedLastPage) fetchSavedPosts();
+            postsAdapter.setPosts(new ArrayList<>(savedPostList));
+            rvProfilePosts.setVisibility(savedPostList.isEmpty() ? View.GONE : View.VISIBLE);
+            tvProfileTabEmpty.setVisibility(savedPostList.isEmpty() ? View.VISIBLE : View.GONE);
+            if (savedPostList.isEmpty()) tvProfileTabEmpty.setText("No saved posts yet.");
+            return;
+        }
+
+        if (postList.isEmpty() && !isFetching && !isLastPage) fetchPosts();
+        postsAdapter.setPosts(new ArrayList<>(postList));
+        rvProfilePosts.setVisibility(postList.isEmpty() ? View.GONE : View.VISIBLE);
+        tvProfileTabEmpty.setVisibility(postList.isEmpty() ? View.VISIBLE : View.GONE);
+        if (postList.isEmpty()) tvProfileTabEmpty.setText("No posts yet.");
     }
 
     /**
@@ -418,7 +453,6 @@ public class ProfileFragment extends Fragment implements
         if (profileUserId == null || isFetching || isLastPage || !isAdded()) return;
         isFetching = true;
         final int myGen = fetchGeneration;
-        // Set up or query the Firebase layer that supplies/stores this feature's data.
         Query query = db.collection("forumThreads").whereEqualTo("userId", profileUserId).orderBy("timestamp", Query.Direction.DESCENDING).limit(PAGE_SIZE);
         if (lastVisible != null) query = query.startAfter(lastVisible);
 
@@ -430,12 +464,75 @@ public class ProfileFragment extends Fragment implements
                     ForumPost post = doc.toObject(ForumPost.class);
                     if (post != null) { post.setId(doc.getId()); postList.add(post); }
                 }
-                postsAdapter.setPosts(new ArrayList<>(postList));
                 if (value.size() < PAGE_SIZE) isLastPage = true;
             } else isLastPage = true;
             isFetching = false;
+            if (!isSavedTabSelected()) postsAdapter.setPosts(new ArrayList<>(postList));
             applyTabState(profileTabLayout.getSelectedTabPosition());
         }).addOnFailureListener(e -> { if (myGen == fetchGeneration) isFetching = false; });
+    }
+
+    private void fetchSavedPosts() {
+        if (!isCurrentUser || profileUserId == null || isFetchingSaved || isSavedLastPage || !isAdded()) return;
+        isFetchingSaved = true;
+        final int myGen = savedFetchGeneration;
+
+        Query query = db.collection("users")
+                .document(profileUserId)
+                .collection("savedPosts")
+                .orderBy("savedAt", Query.Direction.DESCENDING)
+                .limit(PAGE_SIZE);
+
+        if (lastSavedVisible != null) query = query.startAfter(lastSavedVisible);
+
+        query.get().addOnSuccessListener(value -> {
+            if (!isAdded() || myGen != savedFetchGeneration) return;
+
+            if (value != null && !value.isEmpty()) {
+                lastSavedVisible = value.getDocuments().get(value.size() - 1);
+                List<DocumentSnapshot> savedDocs = value.getDocuments();
+                List<com.google.android.gms.tasks.Task<DocumentSnapshot>> postTasks = new ArrayList<>();
+
+                for (DocumentSnapshot savedDoc : savedDocs) {
+                    String threadId = savedDoc.getString("threadId");
+                    if (threadId != null && !threadId.isEmpty()) {
+                        postTasks.add(db.collection("forumThreads").document(threadId).get());
+                    }
+                }
+
+                if (postTasks.isEmpty()) {
+                    if (value.size() < PAGE_SIZE) isSavedLastPage = true;
+                    isFetchingSaved = false;
+                    applyTabState(profileTabLayout.getSelectedTabPosition());
+                    return;
+                }
+
+                com.google.android.gms.tasks.Tasks.whenAllComplete(postTasks).addOnSuccessListener(done -> {
+                    if (!isAdded() || myGen != savedFetchGeneration) return;
+
+                    for (com.google.android.gms.tasks.Task<DocumentSnapshot> task : postTasks) {
+                        if (!task.isSuccessful() || task.getResult() == null || !task.getResult().exists()) continue;
+                        DocumentSnapshot doc = task.getResult();
+                        ForumPost post = doc.toObject(ForumPost.class);
+                        if (post != null) {
+                            post.setId(doc.getId());
+                            savedPostList.add(post);
+                        }
+                    }
+
+                    if (value.size() < PAGE_SIZE) isSavedLastPage = true;
+                    isFetchingSaved = false;
+                    if (isSavedTabSelected()) postsAdapter.setPosts(new ArrayList<>(savedPostList));
+                    applyTabState(profileTabLayout.getSelectedTabPosition());
+                }).addOnFailureListener(e -> {
+                    if (myGen == savedFetchGeneration) isFetchingSaved = false;
+                });
+            } else {
+                isSavedLastPage = true;
+                isFetchingSaved = false;
+                applyTabState(profileTabLayout.getSelectedTabPosition());
+            }
+        }).addOnFailureListener(e -> { if (myGen == savedFetchGeneration) isFetchingSaved = false; });
     }
 
     /**
@@ -445,15 +542,37 @@ public class ProfileFragment extends Fragment implements
         fetchGeneration++;
         isFetching = false; lastVisible = null; isLastPage = false;
         postList.clear();
-        if (postsAdapter != null) postsAdapter.setPosts(new ArrayList<>());
+        if (postsAdapter != null && !isSavedTabSelected()) postsAdapter.setPosts(new ArrayList<>());
         fetchPosts();
+    }
+
+    private void refreshSavedPosts() {
+        if (!isCurrentUser) return;
+        savedFetchGeneration++;
+        isFetchingSaved = false; lastSavedVisible = null; isSavedLastPage = false;
+        savedPostList.clear();
+        if (postsAdapter != null && isSavedTabSelected()) postsAdapter.setPosts(new ArrayList<>());
+        fetchSavedPosts();
+    }
+
+    private boolean isSavedTabSelected() {
+        return isCurrentUser && profileTabLayout != null && profileTabLayout.getSelectedTabPosition() == getSavedTabPosition();
+    }
+
+    private int getSavedTabPosition() {
+        return isCurrentUser ? 2 : -1;
     }
 
     /**
      * Updates object/screen state by storing a new value or reconfiguring a dependency.
      */
     private void setupSwipeRefresh() {
-        swipeRefreshLayout.setOnRefreshListener(() -> { fetchUserProfile(); refreshPosts(); swipeRefreshLayout.setRefreshing(false); });
+        swipeRefreshLayout.setOnRefreshListener(() -> {
+            fetchUserProfile();
+            refreshPosts();
+            if (isCurrentUser) refreshSavedPosts();
+            swipeRefreshLayout.setRefreshing(false);
+        });
     }
 
     @Override public void onLikeClick(ForumPost post) {
@@ -483,15 +602,61 @@ public class ProfileFragment extends Fragment implements
     }
 
     @Override public void onOptionsClick(ForumPost post, View view) {
+        if (mAuth.getCurrentUser() == null) {
+            showResolvedPostOptions(post, view, false);
+            return;
+        }
+
+        firebaseManager.isForumPostSaved(post.getId(), task -> {
+            boolean isSaved = task.isSuccessful() && task.getResult() != null && task.getResult();
+            if (!isAdded()) return;
+            showResolvedPostOptions(post, view, isSaved);
+        });
+    }
+
+    private void showResolvedPostOptions(ForumPost post, View view, boolean isSaved) {
         PopupMenu popup = new PopupMenu(requireContext(), view);
         if (mAuth.getUid() != null && mAuth.getUid().equals(post.getUserId())) popup.getMenu().add("Delete");
+        popup.getMenu().add(isSaved ? "Unsave Post" : "Save Post");
         popup.getMenu().add("Report");
         popup.setOnMenuItemClickListener(item -> {
             if (item.getTitle().equals("Delete")) showDeleteConfirmation(post);
+            else if (item.getTitle().equals("Save Post")) savePostForLater(post);
+            else if (item.getTitle().equals("Unsave Post")) unsavePost(post);
             else showReportDialog(post);
             return true;
         });
         popup.show();
+    }
+
+    private void savePostForLater(ForumPost post) {
+        firebaseManager.saveForumPost(post.getId(), new FirebaseManager.ForumWriteListener() {
+            @Override public void onSuccess() {
+                if (!isAdded()) return;
+                Toast.makeText(requireContext(), "Post saved", Toast.LENGTH_SHORT).show();
+                refreshSavedPosts();
+            }
+
+            @Override public void onFailure(String errorMessage) {
+                if (!isAdded()) return;
+                Toast.makeText(requireContext(), errorMessage != null ? errorMessage : "Failed to save post.", Toast.LENGTH_SHORT).show();
+            }
+        });
+    }
+
+    private void unsavePost(ForumPost post) {
+        firebaseManager.unsaveForumPost(post.getId(), new FirebaseManager.ForumWriteListener() {
+            @Override public void onSuccess() {
+                if (!isAdded()) return;
+                Toast.makeText(requireContext(), "Post unsaved", Toast.LENGTH_SHORT).show();
+                refreshSavedPosts();
+            }
+
+            @Override public void onFailure(String errorMessage) {
+                if (!isAdded()) return;
+                Toast.makeText(requireContext(), errorMessage != null ? errorMessage : "Failed to unsave post.", Toast.LENGTH_SHORT).show();
+            }
+        });
     }
 
     @Override public void onUserClick(String userId) {
@@ -582,7 +747,15 @@ public class ProfileFragment extends Fragment implements
         });
     }
 
-    private void showDeleteConfirmation(ForumPost post) { new AlertDialog.Builder(requireContext()).setTitle("Delete Post").setPositiveButton("Delete", (d, w) -> firebaseManager.deleteForumPost(post.getId(), t -> refreshPosts())).show(); }
+    private void showDeleteConfirmation(ForumPost post) {
+        new AlertDialog.Builder(requireContext())
+                .setTitle("Delete Post")
+                .setPositiveButton("Delete", (d, w) -> firebaseManager.deleteForumPost(post.getId(), t -> {
+                    refreshPosts();
+                    if (isCurrentUser) refreshSavedPosts();
+                }))
+                .show();
+    }
 
     /**
      * Takes prepared data and presents it on screen or in a dialog/menu.

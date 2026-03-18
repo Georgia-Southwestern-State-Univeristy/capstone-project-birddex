@@ -855,6 +855,83 @@ public class FirebaseManager {
         });
     }
 
+    /**
+     * Saves a forum post for the current user through the backend so the saved timestamp is canonical
+     * and duplicate entries are prevented server-side.
+     */
+    public void saveForumPost(String postId, ForumWriteListener listener) {
+        Log.d(TAG, "Calling saveForumPost CF for post: " + postId);
+
+        Map<String, Object> data = new HashMap<>();
+        data.put("threadId", postId);
+
+        mFunctions.getHttpsCallable("saveForumPost").call(data).addOnCompleteListener(task -> {
+            if (task.isSuccessful()) {
+                Log.d(TAG, "saveForumPost CF succeeded.");
+                if (listener != null) listener.onSuccess();
+            } else {
+                String error = getCallableErrorMessage(task, "Failed to save post.");
+                Log.e(TAG, "saveForumPost CF failed: " + error);
+                if (listener != null) listener.onFailure(error);
+            }
+        });
+    }
+
+    /**
+     * Removes a saved forum post entry for the current user through the backend.
+     */
+    public void unsaveForumPost(String postId, ForumWriteListener listener) {
+        Log.d(TAG, "Calling unsaveForumPost CF for post: " + postId);
+
+        Map<String, Object> data = new HashMap<>();
+        data.put("threadId", postId);
+
+        mFunctions.getHttpsCallable("unsaveForumPost").call(data).addOnCompleteListener(task -> {
+            if (task.isSuccessful()) {
+                Log.d(TAG, "unsaveForumPost CF succeeded.");
+                if (listener != null) listener.onSuccess();
+            } else {
+                String error = getCallableErrorMessage(task, "Failed to unsave post.");
+                Log.e(TAG, "unsaveForumPost CF failed: " + error);
+                if (listener != null) listener.onFailure(error);
+            }
+        });
+    }
+
+    /**
+     * Reads whether the current user has already saved a forum post through the backend so the
+     * Save/Unsave label does not depend on client Firestore read rules.
+     */
+    public void isForumPostSaved(String postId, OnCompleteListener<Boolean> listener) {
+        FirebaseUser user = mAuth.getCurrentUser();
+        if (user == null) {
+            if (listener != null) listener.onComplete(Tasks.forResult(false));
+            return;
+        }
+
+        Map<String, Object> data = new HashMap<>();
+        data.put("threadId", postId);
+
+        mFunctions.getHttpsCallable("getForumPostSaveState").call(data).addOnCompleteListener(task -> {
+            if (listener == null) return;
+
+            if (task.isSuccessful() && task.getResult() != null) {
+                Object raw = task.getResult().getData();
+                boolean isSaved = false;
+
+                if (raw instanceof Map) {
+                    Object saved = ((Map<?, ?>) raw).get("saved");
+                    isSaved = Boolean.TRUE.equals(saved);
+                }
+
+                listener.onComplete(Tasks.forResult(isSaved));
+            } else {
+                String error = getCallableErrorMessage(task, "Failed to check saved post state.");
+                listener.onComplete(Tasks.forException(new Exception(error)));
+            }
+        });
+    }
+
     // -------------------------------------------------------------------------
     // BIRD & SIGHTING METHODS
     // -------------------------------------------------------------------------

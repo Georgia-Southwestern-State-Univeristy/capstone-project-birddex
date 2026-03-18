@@ -349,15 +349,57 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
     }
 
     @Override public void onOptionsClick(ForumPost p, View v) {
-        PopupMenu popup = new PopupMenu(getContext(), v); FirebaseUser u = mAuth.getCurrentUser();
+        FirebaseUser u = mAuth.getCurrentUser();
+        if (u == null) {
+            showResolvedPostOptions(p, v, false);
+            return;
+        }
+
+        firebaseManager.isForumPostSaved(p.getId(), task -> {
+            boolean isSaved = task.isSuccessful() && task.getResult() != null && task.getResult();
+            if (!isAdded()) return;
+            showResolvedPostOptions(p, v, isSaved);
+        });
+    }
+
+    private void showResolvedPostOptions(ForumPost p, View v, boolean isSaved) {
+        PopupMenu popup = new PopupMenu(getContext(), v);
+        FirebaseUser u = mAuth.getCurrentUser();
         if (u != null && p.getUserId().equals(u.getUid())) popup.getMenu().add("Delete");
+        popup.getMenu().add(isSaved ? "Unsave Post" : "Save Post");
         popup.getMenu().add("Report");
         popup.setOnMenuItemClickListener(item -> {
             if (item.getTitle().equals("Delete")) showDeleteConfirmation(p);
+            else if (item.getTitle().equals("Save Post")) savePostForLater(p);
+            else if (item.getTitle().equals("Unsave Post")) unsavePost(p);
             else if (item.getTitle().equals("Report")) showReportDialog(p);
             return true;
         });
         popup.show();
+    }
+
+    private void savePostForLater(ForumPost p) {
+        firebaseManager.saveForumPost(p.getId(), new FirebaseManager.ForumWriteListener() {
+            @Override public void onSuccess() {
+                if (isAdded()) Toast.makeText(requireContext(), "Post saved", Toast.LENGTH_SHORT).show();
+            }
+
+            @Override public void onFailure(String errorMessage) {
+                if (isAdded()) Toast.makeText(requireContext(), errorMessage != null ? errorMessage : "Failed to save post.", Toast.LENGTH_SHORT).show();
+            }
+        });
+    }
+
+    private void unsavePost(ForumPost p) {
+        firebaseManager.unsaveForumPost(p.getId(), new FirebaseManager.ForumWriteListener() {
+            @Override public void onSuccess() {
+                if (isAdded()) Toast.makeText(requireContext(), "Post unsaved", Toast.LENGTH_SHORT).show();
+            }
+
+            @Override public void onFailure(String errorMessage) {
+                if (isAdded()) Toast.makeText(requireContext(), errorMessage != null ? errorMessage : "Failed to unsave post.", Toast.LENGTH_SHORT).show();
+            }
+        });
     }
 
     @Override public void onUserClick(String uid) {

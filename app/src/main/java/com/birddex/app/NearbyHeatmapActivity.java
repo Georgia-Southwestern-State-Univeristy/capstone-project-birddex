@@ -521,15 +521,64 @@ public class NearbyHeatmapActivity extends AppCompatActivity
      * Takes prepared data and presents it on screen or in a dialog/menu.
      */
     private void showPostOptions(ForumPost p, View v, BottomSheetDialog dialog) {
+        FirebaseUser user = mAuth.getCurrentUser();
+        if (user == null) {
+            showResolvedPostOptions(p, v, dialog, false);
+            return;
+        }
+
+        firebaseManager.isForumPostSaved(p.getId(), task -> {
+            boolean isSaved = task.isSuccessful() && task.getResult() != null && task.getResult();
+            if (isFinishing() || isDestroyed()) return;
+            showResolvedPostOptions(p, v, dialog, isSaved);
+        });
+    }
+
+    private void showResolvedPostOptions(ForumPost p, View v, BottomSheetDialog dialog, boolean isSaved) {
         PopupMenu popup = new PopupMenu(this, v); FirebaseUser user = mAuth.getCurrentUser();
         if (user != null && p.getUserId().equals(user.getUid())) popup.getMenu().add("Delete");
+        popup.getMenu().add(isSaved ? "Unsave Post" : "Save Post");
         popup.getMenu().add("Report");
         popup.setOnMenuItemClickListener(item -> {
             if (item.getTitle().equals("Delete")) showDeleteConfirmation(p, dialog);
+            else if (item.getTitle().equals("Save Post")) savePostForLater(p);
+            else if (item.getTitle().equals("Unsave Post")) unsavePost(p);
             else if (item.getTitle().equals("Report")) showReportDialog("post", p.getId());
             return true;
         });
         popup.show();
+    }
+
+    private void savePostForLater(ForumPost p) {
+        firebaseManager.saveForumPost(p.getId(), new FirebaseManager.ForumWriteListener() {
+            @Override
+            public void onSuccess() {
+                if (isFinishing() || isDestroyed()) return;
+                Toast.makeText(NearbyHeatmapActivity.this, "Post saved", Toast.LENGTH_SHORT).show();
+            }
+
+            @Override
+            public void onFailure(String errorMessage) {
+                if (isFinishing() || isDestroyed()) return;
+                Toast.makeText(NearbyHeatmapActivity.this, errorMessage != null ? errorMessage : "Failed to save post.", Toast.LENGTH_SHORT).show();
+            }
+        });
+    }
+
+    private void unsavePost(ForumPost p) {
+        firebaseManager.unsaveForumPost(p.getId(), new FirebaseManager.ForumWriteListener() {
+            @Override
+            public void onSuccess() {
+                if (isFinishing() || isDestroyed()) return;
+                Toast.makeText(NearbyHeatmapActivity.this, "Post unsaved", Toast.LENGTH_SHORT).show();
+            }
+
+            @Override
+            public void onFailure(String errorMessage) {
+                if (isFinishing() || isDestroyed()) return;
+                Toast.makeText(NearbyHeatmapActivity.this, errorMessage != null ? errorMessage : "Failed to unsave post.", Toast.LENGTH_SHORT).show();
+            }
+        });
     }
 
     /**

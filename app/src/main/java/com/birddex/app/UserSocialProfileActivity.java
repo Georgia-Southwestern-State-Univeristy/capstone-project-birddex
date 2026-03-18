@@ -516,11 +516,11 @@ public class UserSocialProfileActivity extends AppCompatActivity implements
         FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
         if (user == null || post.getId() == null || postLikeInFlight.contains(post.getId())) return;
         postLikeInFlight.add(post.getId());
-        
+
         String userId = user.getUid();
         if (post.getLikedBy() == null) post.setLikedBy(new HashMap<>());
         boolean currentlyLiked = post.getLikedBy().containsKey(userId);
-        
+
         // Optimistic UI update
         int currentCount = post.getLikeCount();
         if (currentlyLiked) {
@@ -579,44 +579,84 @@ public class UserSocialProfileActivity extends AppCompatActivity implements
     }
 
     @Override public void onOptionsClick(ForumPost post, View view) {
+        FirebaseUser currentUser = FirebaseAuth.getInstance().getCurrentUser();
+        if (currentUser == null) {
+            showResolvedPostOptions(post, view, false);
+            return;
+        }
+
+        firebaseManager.isForumPostSaved(post.getId(), task -> {
+            boolean isSaved = task.isSuccessful() && task.getResult() != null && task.getResult();
+            if (isFinishing() || isDestroyed()) return;
+            showResolvedPostOptions(post, view, isSaved);
+        });
+    }
+
+    private void showResolvedPostOptions(ForumPost post, View view, boolean isSaved) {
         PopupMenu popup = new PopupMenu(this, view);
         FirebaseUser currentUser = FirebaseAuth.getInstance().getCurrentUser();
         if (currentUser != null && post.getUserId().equals(currentUser.getUid())) {
             popup.getMenu().add("Delete");
         }
+        popup.getMenu().add(isSaved ? "Unsave Post" : "Save Post");
         popup.getMenu().add("Report");
         popup.setOnMenuItemClickListener(item -> {
             if (item.getTitle().equals("Delete")) {
                 new AlertDialog.Builder(this)
                         .setTitle("Delete Post")
                         .setMessage("Are you sure you want to delete this post?")
-                        /**
-                         * Updates object/screen state by storing a new value or reconfiguring a dependency.
-                         * User-facing feedback is shown here so the user knows whether the action succeeded, failed,
-                         * or needs attention.
-                         */
                         .setPositiveButton("Delete", (d, w) -> {
                             firebaseManager.deleteForumPost(post.getId(), task -> {
                                 if (task.isSuccessful()) {
                                     postList.remove(post);
                                     adapter.setPosts(new ArrayList<>(postList));
                                     tvPostCount.setText(String.valueOf(postList.size()));
-                                    // Give the user immediate feedback about the result of this action.
                                     Toast.makeText(this, "Post deleted", Toast.LENGTH_SHORT).show();
+                                } else if (task.getException() != null) {
+                                    Toast.makeText(this, task.getException().getMessage(), Toast.LENGTH_SHORT).show();
                                 }
                             });
                         })
                         .setNegativeButton("Cancel", null)
                         .show();
-            /**
-             * Main logic block for this part of the feature.
-             */
+            } else if (item.getTitle().equals("Save Post")) {
+                savePostForLater(post);
+            } else if (item.getTitle().equals("Unsave Post")) {
+                unsavePost(post);
             } else if (item.getTitle().equals("Report")) {
                 showReportDialog(post);
             }
             return true;
         });
         popup.show();
+    }
+
+    private void savePostForLater(ForumPost post) {
+        firebaseManager.saveForumPost(post.getId(), new FirebaseManager.ForumWriteListener() {
+            @Override public void onSuccess() {
+                if (isFinishing() || isDestroyed()) return;
+                Toast.makeText(UserSocialProfileActivity.this, "Post saved", Toast.LENGTH_SHORT).show();
+            }
+
+            @Override public void onFailure(String errorMessage) {
+                if (isFinishing() || isDestroyed()) return;
+                Toast.makeText(UserSocialProfileActivity.this, errorMessage != null ? errorMessage : "Failed to save post.", Toast.LENGTH_SHORT).show();
+            }
+        });
+    }
+
+    private void unsavePost(ForumPost post) {
+        firebaseManager.unsaveForumPost(post.getId(), new FirebaseManager.ForumWriteListener() {
+            @Override public void onSuccess() {
+                if (isFinishing() || isDestroyed()) return;
+                Toast.makeText(UserSocialProfileActivity.this, "Post unsaved", Toast.LENGTH_SHORT).show();
+            }
+
+            @Override public void onFailure(String errorMessage) {
+                if (isFinishing() || isDestroyed()) return;
+                Toast.makeText(UserSocialProfileActivity.this, errorMessage != null ? errorMessage : "Failed to unsave post.", Toast.LENGTH_SHORT).show();
+            }
+        });
     }
 
     /**

@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shape xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <gradient
+        android:angle="135"
+        android:startColor="@color/legendary_red_light"
+        android:endColor="@color/legendary_red" />
+
+    <corners android:radius="18dp" />
+
+    <!-- Slightly thicker border for legendary feel -->
+    <stroke
+        android:width="3dp"
+        android:color="@color/legendary_red_dark" />
+
+</shape>

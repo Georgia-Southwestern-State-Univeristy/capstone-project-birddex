@@ -1,15 +1,23 @@
 package com.birddex.app;
 
 import android.content.Intent;
+import android.graphics.Color;
+import android.os.Build;
 import android.os.Bundle;
 import android.util.Log;
 import android.view.View;
+import android.view.ViewGroup;
 import android.view.animation.Animation;
 import android.view.animation.AnimationUtils;
 import android.widget.TextView;
 import android.widget.Toast;
 
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.core.graphics.Insets;
+import androidx.core.view.ViewCompat;
+import androidx.core.view.WindowCompat;
+import androidx.core.view.WindowInsetsCompat;
+import androidx.core.view.WindowInsetsControllerCompat;
 import androidx.fragment.app.Fragment;
 
 import com.google.android.material.bottomnavigation.BottomNavigationView;
@@ -42,6 +50,8 @@ public class HomeActivity extends AppCompatActivity implements NetworkMonitor.Ne
     private static final int GEORGIA_BIRD_DATA_REFRESH_VERSION = 1;
 
     private BottomNavigationView bottomNav;
+    private View bottomNavContainer;
+    private View bottomNavSystemInset;
     private TextView welcomeMessageTv;
 
     // Tracks the last "real" tab (anything except camera)
@@ -73,7 +83,13 @@ public class HomeActivity extends AppCompatActivity implements NetworkMonitor.Ne
         // Initialize the bottom navigation bar.
         // Bind or inflate the UI pieces this method needs before it can update the screen.
         bottomNav = findViewById(R.id.bottomNav);
+        bottomNavContainer = findViewById(R.id.bottomNavContainer);
+        bottomNavSystemInset = findViewById(R.id.bottomNavSystemInset);
         welcomeMessageTv = findViewById(R.id.welcomeMessage);
+
+        // Apply bottom system-bar handling so gesture mode keeps the brown look,
+        // while 3-button mode shows a black area under the system buttons.
+        applyBottomNavInsets();
 
         // Initialize EbirdApi and the bird list
         ebirdApi = new EbirdApi(this);
@@ -137,6 +153,85 @@ public class HomeActivity extends AppCompatActivity implements NetworkMonitor.Ne
 
             return false;
         });
+    }
+
+    /**
+     * Keeps the brown bottom nav looking the same in gesture mode,
+     * but adds a black strip only for 3-button mode.
+     *
+     * This expects activity_home.xml to contain:
+     * - @id/bottomNavContainer
+     * - @id/bottomNavSystemInset
+     */
+    private void applyBottomNavInsets() {
+        if (bottomNav == null) return;
+
+        boolean isThreeButtonNav = isThreeButtonNavigationMode();
+
+        // Keep your bottom nav looking the same.
+        bottomNav.setPadding(
+                bottomNav.getPaddingLeft(),
+                dp(6),
+                bottomNav.getPaddingRight(),
+                dp(8)
+        );
+        bottomNav.setItemPaddingTop(dp(20));
+        bottomNav.setItemPaddingBottom(dp(6));
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            getWindow().setNavigationBarContrastEnforced(false);
+        }
+
+        WindowInsetsControllerCompat controller =
+                WindowCompat.getInsetsController(getWindow(), getWindow().getDecorView());
+
+        if (isThreeButtonNav) {
+            // REAL fix: make the actual system 3-button bar black.
+            getWindow().setNavigationBarColor(Color.BLACK);
+
+            if (controller != null) {
+                // Black background needs light nav icons.
+                controller.setAppearanceLightNavigationBars(false);
+            }
+
+            // Do not use the fake inset view for this approach.
+            if (bottomNavSystemInset != null) {
+                bottomNavSystemInset.setVisibility(View.GONE);
+                ViewGroup.LayoutParams params = bottomNavSystemInset.getLayoutParams();
+                params.height = 0;
+                bottomNavSystemInset.setLayoutParams(params);
+            }
+        } else {
+            // Gesture mode stays brown.
+            getWindow().setNavigationBarColor(getResources().getColor(R.color.nav_brown));
+
+            if (controller != null) {
+                controller.setAppearanceLightNavigationBars(false);
+            }
+
+            if (bottomNavSystemInset != null) {
+                bottomNavSystemInset.setVisibility(View.GONE);
+                ViewGroup.LayoutParams params = bottomNavSystemInset.getLayoutParams();
+                params.height = 0;
+                bottomNavSystemInset.setLayoutParams(params);
+            }
+        }
+    }
+
+    private boolean isThreeButtonNavigationMode() {
+        int resId = getResources().getIdentifier("config_navBarInteractionMode", "integer", "android");
+        if (resId > 0) {
+            int mode = getResources().getInteger(resId);
+            return mode == 0; // 0 = 3-button, 1 = 2-button, 2 = gesture
+        }
+        return false;
+    }
+
+    /**
+     * Helper for converting dp values to pixels.
+     */
+    private int dp(int value) {
+        return Math.round(value * getResources().getDisplayMetrics().density);
     }
 
     private void checkWelcomeMessage() {
@@ -410,6 +505,7 @@ public class HomeActivity extends AppCompatActivity implements NetworkMonitor.Ne
                 Toast.makeText(this, "Internet connection lost. Bird data may be incomplete.", Toast.LENGTH_LONG).show()
         );
     }
+
     /** * Triggers the Cloud Function to ensure the Firestore bird database
      * is synced with eBird. The function uses a 72-hour cache.
      */

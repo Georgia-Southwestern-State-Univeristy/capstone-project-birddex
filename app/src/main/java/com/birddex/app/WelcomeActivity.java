@@ -55,6 +55,7 @@ public class WelcomeActivity extends AppCompatActivity implements NetworkMonitor
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        SystemBarHelper.applyStandardNavBar(this);
         setContentView(R.layout.activity_main);
 
         mAuth = FirebaseAuth.getInstance();

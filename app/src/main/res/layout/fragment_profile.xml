@@ -16,13 +16,13 @@
         app:liftOnScroll="true">
 
         <androidx.constraintlayout.widget.ConstraintLayout
+            android:id="@+id/profileHeader"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:paddingStart="20dp"
             android:paddingTop="20dp"
             android:paddingEnd="20dp"
-            android:paddingBottom="12dp"
-            app:layout_scrollFlags="scroll">
+            android:paddingBottom="12dp">
 
             <androidx.appcompat.widget.AppCompatImageButton
                 android:id="@+id/btnEditProfile"

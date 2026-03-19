@@ -99,10 +99,16 @@ public class FavoritesAdapter extends RecyclerView.Adapter<FavoritesAdapter.VH> 
     @Override
     public VH onCreateViewHolder(@NonNull ViewGroup parent, int viewType) {
         // Bind or inflate the UI pieces this method needs before it can update the screen.
-        View v = LayoutInflater.from(parent.getContext()).inflate(R.layout.view_bird_card, parent, false);
+        View v = LayoutInflater.from(parent.getContext()).inflate(viewType, parent, false);
         VH holder = new VH(v);
         applyCompactFavoriteStyle(holder);
         return holder;
+    }
+
+    @Override
+    public int getItemViewType(int position) {
+        CollectionSlot slot = items.get(position);
+        return CardRarityHelper.getLayoutResId(slot != null ? slot.getRarity() : CardRarityHelper.COMMON);
     }
 
     /**
@@ -122,45 +128,63 @@ public class FavoritesAdapter extends RecyclerView.Adapter<FavoritesAdapter.VH> 
         rootLp.bottomMargin = (int) (4 * density);
         holder.itemView.setLayoutParams(rootLp);
 
-        ViewGroup.MarginLayoutParams cardLp =
-                (ViewGroup.MarginLayoutParams) holder.cardContainer.getLayoutParams();
-        cardLp.setMargins((int) (2 * density), (int) (2 * density), (int) (2 * density), (int) (2 * density));
-        holder.cardContainer.setLayoutParams(cardLp);
-        holder.cardContainer.setRadius(14 * density);
+        if (holder.cardContainer != null) {
+            ViewGroup.LayoutParams baseParams = holder.cardContainer.getLayoutParams();
+            if (baseParams instanceof ViewGroup.MarginLayoutParams) {
+                ViewGroup.MarginLayoutParams cardLp = (ViewGroup.MarginLayoutParams) baseParams;
+                cardLp.setMargins((int) (2 * density), (int) (2 * density), (int) (2 * density), (int) (2 * density));
+                holder.cardContainer.setLayoutParams(cardLp);
+            }
+            holder.cardContainer.setRadius(14 * density);
+            ViewGroup.LayoutParams containerLp = holder.cardContainer.getLayoutParams();
+            if (containerLp != null) {
+                containerLp.height = (int) (210 * density);
+                holder.cardContainer.setLayoutParams(containerLp);
+            }
+        }
 
-        int compactPadding = (int) (6 * density);
-        holder.cardInner.setPadding(compactPadding, compactPadding, compactPadding, compactPadding);
+        if (holder.cardInner != null) {
+            int compactPadding = (int) (6 * density);
+            holder.cardInner.setPadding(compactPadding, compactPadding, compactPadding, compactPadding);
+        }
 
-        holder.txtBirdName.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10);
-        holder.txtScientific.setTextSize(TypedValue.COMPLEX_UNIT_SP, 7);
-        holder.txtLocation.setTextSize(TypedValue.COMPLEX_UNIT_SP, 7);
-        holder.txtDateCaught.setTextSize(TypedValue.COMPLEX_UNIT_SP, 7);
+        if (holder.txtBirdName != null) {
+            holder.txtBirdName.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10);
+            holder.txtBirdName.setMinLines(2);
+            holder.txtBirdName.setMaxLines(2);
+            holder.txtBirdName.setEllipsize(TextUtils.TruncateAt.END);
+            holder.txtBirdName.setGravity(Gravity.CENTER);
+        }
 
-        holder.txtBirdName.setMinLines(2);
-        holder.txtBirdName.setMaxLines(2);
-        holder.txtBirdName.setEllipsize(TextUtils.TruncateAt.END);
-        holder.txtBirdName.setGravity(Gravity.CENTER);
+        if (holder.txtScientific != null) {
+            holder.txtScientific.setTextSize(TypedValue.COMPLEX_UNIT_SP, 7);
+            holder.txtScientific.setMaxLines(1);
+            holder.txtScientific.setEllipsize(TextUtils.TruncateAt.END);
+        }
 
-        holder.txtScientific.setMaxLines(1);
-        holder.txtScientific.setEllipsize(TextUtils.TruncateAt.END);
+        if (holder.txtLocation != null) {
+            holder.txtLocation.setTextSize(TypedValue.COMPLEX_UNIT_SP, 7);
+            holder.txtLocation.setMaxLines(2);
+            holder.txtLocation.setEllipsize(TextUtils.TruncateAt.END);
+            holder.txtLocation.setGravity(Gravity.CENTER_HORIZONTAL);
+        }
 
-        holder.txtLocation.setMaxLines(2);
-        holder.txtLocation.setEllipsize(TextUtils.TruncateAt.END);
-        holder.txtLocation.setGravity(Gravity.CENTER_HORIZONTAL);
+        if (holder.txtDateCaught != null) {
+            holder.txtDateCaught.setTextSize(TypedValue.COMPLEX_UNIT_SP, 7);
+            holder.txtDateCaught.setMaxLines(1);
+            holder.txtDateCaught.setEllipsize(TextUtils.TruncateAt.END);
+            holder.txtDateCaught.setGravity(Gravity.CENTER_HORIZONTAL);
+        }
 
-        holder.txtDateCaught.setMaxLines(1);
-        holder.txtDateCaught.setEllipsize(TextUtils.TruncateAt.END);
-        holder.txtDateCaught.setGravity(Gravity.CENTER_HORIZONTAL);
+        if (holder.txtFooter != null) {
+            holder.txtFooter.setVisibility(View.GONE);
+        }
 
-        holder.txtFooter.setVisibility(View.GONE);
-
-        ViewGroup.LayoutParams imageLp = holder.imgBird.getLayoutParams();
-        imageLp.height = (int) (82 * density);
-        holder.imgBird.setLayoutParams(imageLp);
-
-        ViewGroup.LayoutParams containerLp = holder.cardContainer.getLayoutParams();
-        containerLp.height = (int) (210 * density);
-        holder.cardContainer.setLayoutParams(containerLp);
+        if (holder.imgBird != null && holder.imgBird.getLayoutParams() != null) {
+            ViewGroup.LayoutParams imageLp = holder.imgBird.getLayoutParams();
+            imageLp.height = (int) (82 * density);
+            holder.imgBird.setLayoutParams(imageLp);
+        }
     }
 
     /**
@@ -177,29 +201,31 @@ public class FavoritesAdapter extends RecyclerView.Adapter<FavoritesAdapter.VH> 
         CollectionSlot slot = items.get(position);
         boolean hasSlot = slot != null && slot.getImageUrl() != null && !slot.getImageUrl().trim().isEmpty();
 
-        if (hasSlot) {
+        if (hasSlot && slot != null) {
             String common = slot.getCommonName();
             String sci = slot.getScientificName();
 
-            holder.txtBirdName.setText(!isBlank(common) ? common : (!isBlank(sci) ? sci : "Unknown Bird"));
-            holder.txtScientific.setText(!isBlank(sci) ? sci : "--");
-            holder.txtLocation.setText(CardFormatUtils.formatLocation(slot.getState(), slot.getLocality()));
-            holder.txtDateCaught.setText(formatShortDate(slot.getTimestamp()));
+            if (holder.txtBirdName != null) holder.txtBirdName.setText(!isBlank(common) ? common : (!isBlank(sci) ? sci : "Unknown Bird"));
+            if (holder.txtScientific != null) holder.txtScientific.setText(!isBlank(sci) ? sci : "--");
+            if (holder.txtLocation != null) holder.txtLocation.setText(CardFormatUtils.formatLocation(slot.getState(), slot.getLocality()));
+            if (holder.txtDateCaught != null) holder.txtDateCaught.setText(formatShortDate(slot.getTimestamp()));
 
-            // Load the image asynchronously so the UI can show remote/local media without blocking the main thread.
-            Glide.with(holder.itemView.getContext())
-                    .load(slot.getImageUrl())
-                    .placeholder(R.drawable.bg_image_placeholder)
-                    .fitCenter()
-                    .into(holder.imgBird);
+            if (holder.imgBird != null) {
+                // Load the image asynchronously so the UI can show remote/local media without blocking the main thread.
+                Glide.with(holder.itemView.getContext())
+                        .load(slot.getImageUrl())
+                        .placeholder(R.drawable.bg_image_placeholder)
+                        .fitCenter()
+                        .into(holder.imgBird);
+            }
 
             holder.itemView.setAlpha(1f);
         } else {
-            holder.txtBirdName.setText(editable ? "Tap to add" : "No favorite");
-            holder.txtScientific.setText("Favorite slot");
-            holder.txtLocation.setText("");
-            holder.txtDateCaught.setText(editable ? "Choose from collection" : "Nothing selected");
-            holder.imgBird.setImageResource(R.drawable.birddexlogo);
+            if (holder.txtBirdName != null) holder.txtBirdName.setText(editable ? "Tap to add" : "No favorite");
+            if (holder.txtScientific != null) holder.txtScientific.setText("Favorite slot");
+            if (holder.txtLocation != null) holder.txtLocation.setText("");
+            if (holder.txtDateCaught != null) holder.txtDateCaught.setText(editable ? "Choose from collection" : "Nothing selected");
+            if (holder.imgBird != null) holder.imgBird.setImageResource(R.drawable.birddexlogo);
             holder.itemView.setAlpha(0.94f);
         }
 

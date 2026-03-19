@@ -15,7 +15,7 @@ public class CollectionSlot {
     private String birdId;
     private Date timestamp;
     private String imageUrl;
-    private String rarity;
+    private String rarity = CardRarityHelper.COMMON;
     private int slotIndex;
 
     private String commonName;
@@ -29,6 +29,7 @@ public class CollectionSlot {
      * state.
      */
     public CollectionSlot() {
+        this.rarity = CardRarityHelper.COMMON;
     }
 
     /**
@@ -40,7 +41,7 @@ public class CollectionSlot {
         this.userBirdId = userBirdId;
         this.timestamp = timestamp;
         this.imageUrl = imageUrl;
-        this.rarity = rarity;
+        this.rarity = CardRarityHelper.normalizeRarity(rarity);
         this.slotIndex = slotIndex;
     }
 
@@ -119,14 +120,14 @@ public class CollectionSlot {
      * Returns the current value/state this class needs somewhere else in the app.
      */
     public String getRarity() {
-        return rarity;
+        return CardRarityHelper.normalizeRarity(rarity);
     }
 
     /**
      * Updates object/screen state by storing a new value or reconfiguring a dependency.
      */
     public void setRarity(String rarity) {
-        this.rarity = rarity;
+        this.rarity = CardRarityHelper.normalizeRarity(rarity);
     }
 
     /**

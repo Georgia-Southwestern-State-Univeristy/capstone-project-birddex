@@ -17,6 +17,7 @@ import com.google.firebase.firestore.SetOptions;
 import com.google.firebase.functions.FirebaseFunctions;
 import com.google.firebase.functions.FirebaseFunctionsException;
 import com.google.firebase.functions.HttpsCallableResult;
+import androidx.annotation.Nullable;
 
 import java.util.Date;
 import java.util.HashMap;
@@ -63,6 +64,16 @@ public class FirebaseManager {
         String msg = e.getMessage();
         return (msg != null && !msg.trim().isEmpty()) ? msg : fallback;
     }
+    private int objectToInt(Object value) {
+        if (value instanceof Number) return ((Number) value).intValue();
+        if (value instanceof String) {
+            try {
+                return Integer.parseInt((String) value);
+            } catch (Exception ignored) {
+            }
+        }
+        return 0;
+    }
 
     // -------------------------------------------------------------------------
     // Interfaces
@@ -99,6 +110,10 @@ public class FirebaseManager {
     public interface LeaderboardListener {
         void onDataLoaded(List<Map<String, Object>> leaderboard);
         void onError(String error);
+    }
+    public interface UpgradeCollectionSlotListener {
+        void onSuccess(String newRarity, int pointsSpent, int remainingPoints);
+        void onFailure(String errorMessage);
     }
 
     /**
@@ -1366,6 +1381,33 @@ public class FirebaseManager {
         db.collection("locations").document(location.getId()).set(location).addOnCompleteListener(listener);
     }
 
+    public void upgradeCollectionSlotRarity(@Nullable String slotId,
+                                            @Nullable String birdId,
+                                            String targetRarity,
+                                            UpgradeCollectionSlotListener listener) {
+        Log.d(TAG, "Calling upgradeCollectionSlotRarity CF. slotId=" + slotId + " birdId=" + birdId + " target=" + targetRarity);
+
+        Map<String, Object> data = new HashMap<>();
+        if (slotId != null && !slotId.trim().isEmpty()) data.put("slotId", slotId.trim());
+        if (birdId != null && !birdId.trim().isEmpty()) data.put("birdId", birdId.trim());
+        data.put("targetRarity", CardRarityHelper.normalizeRarity(targetRarity));
+
+        mFunctions.getHttpsCallable("upgradeCollectionSlotRarity")
+                .call(data)
+                .addOnCompleteListener(task -> {
+                    if (task.isSuccessful() && task.getResult() != null) {
+                        Map<String, Object> res = (Map<String, Object>) task.getResult().getData();
+                        String newRarity = res != null && res.get("newRarity") instanceof String
+                                ? (String) res.get("newRarity")
+                                : CardRarityHelper.normalizeRarity(targetRarity);
+                        int pointsSpent = objectToInt(res != null ? res.get("pointsSpent") : null);
+                        int remainingPoints = objectToInt(res != null ? res.get("remainingPoints") : null);
+                        listener.onSuccess(newRarity, pointsSpent, remainingPoints);
+                    } else {
+                        listener.onFailure(extractFunctionsErrorMessage(task.getException(), "Failed to upgrade card."));
+                    }
+                });
+    }
     /**
      * Returns the current value/state this class needs somewhere else in the app.
      * It talks to Firebase/Firestore in this method, either to read live data or to persist app

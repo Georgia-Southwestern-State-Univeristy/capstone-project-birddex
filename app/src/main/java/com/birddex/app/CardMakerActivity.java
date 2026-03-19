@@ -138,7 +138,7 @@ public class CardMakerActivity extends AppCompatActivity {
         currentCommonName     = getIntent().getStringExtra(EXTRA_BIRD_NAME);
         currentScientificName = getIntent().getStringExtra(EXTRA_SCI_NAME);
         currentConfidence     = getIntent().getStringExtra(EXTRA_CONFIDENCE);
-        currentRarity         = getIntent().getStringExtra(EXTRA_RARITY);
+        currentRarity = CardRarityHelper.normalizeRarity(getIntent().getStringExtra(EXTRA_RARITY));
         currentBirdId         = getIntent().getStringExtra(EXTRA_BIRD_ID);
         currentSpecies        = getIntent().getStringExtra(EXTRA_SPECIES);
         currentFamily         = getIntent().getStringExtra(EXTRA_FAMILY);
@@ -328,12 +328,16 @@ public class CardMakerActivity extends AppCompatActivity {
                 slotData.put("state", currentState);
                 slotData.put("locality", currentLocality);
                 slotData.put("imageUrl", originalImageUrl);
-                slotData.put("rarity", (currentRarity != null && !currentRarity.trim().isEmpty())
-                        ? currentRarity : "Unknown");
+                slotData.put("rarity", CardRarityHelper.normalizeRarity(currentRarity));
                 slotData.put("slotIndex", (int) nextIndex);
                 slotData.put("commonName", currentCommonName);
                 slotData.put("scientificName", currentScientificName);
                 transaction.set(slotRef, slotData);
+            } else {
+                String existingRarity = slotSnap.getString("rarity");
+                if (!CardRarityHelper.isValidRarity(existingRarity)) {
+                    transaction.update(slotRef, "rarity", CardRarityHelper.COMMON);
+                }
             }
 
             return null;

@@ -26,8 +26,45 @@ service cloud.firestore {
         request.resource.data.currentSessionId.size() > 0;
     }
 
+    function isValidRarity(rarity) {
+      return rarity == 'common' ||
+        rarity == 'uncommon' ||
+        rarity == 'rare' ||
+        rarity == 'epic' ||
+        rarity == 'legendary';
+    }
+
+    // New collection slots created from the client must start as common.
+    // If you later move slot creation to Cloud Functions only, change the
+    // collectionSlot create rule to false.
+    function validClientCollectionSlotCreate() {
+      return request.resource.data.keys().hasAll(['rarity']) &&
+        isValidRarity(request.resource.data.rarity) &&
+        request.resource.data.rarity == 'common';
+    }
+
+    // Client must never be able to directly change rarity or server-owned
+    // upgrade bookkeeping fields.
+    function onlyClientCollectionSlotFields() {
+      return !request.resource.data.diff(resource.data).affectedKeys()
+        .hasAny([
+          'rarity',
+          'pointsSpent',
+          'upgradeCost',
+          'nextUpgradeCost',
+          'lastUpgradeAt',
+          'upgradedAt',
+          'rarityUpdatedAt',
+          'upgradeRequestedAt',
+          'upgradeCompletedAt',
+          'upgradeVersion'
+        ]);
+    }
+
     // Fields that only Cloud Functions should ever write.
     // Username, bio, and profilePictureUrl are now backend-moderated too.
+    // totalPoints is also backend-owned so users cannot grant themselves points
+    // or fake card-upgrade affordability.
     function onlyClientProfileFields() {
       return !request.resource.data.diff(resource.data).affectedKeys()
         .hasAny([
@@ -35,11 +72,22 @@ service cloud.firestore {
           'bio',
           'profilePictureUrl',
 
-          'totalPoints', 'totalBirds', 'duplicateBirds',
-          'openAiRequestsRemaining', 'openAiCooldownResetTimestamp',
-          'pfpChangesToday', 'pfpCooldownResetTimestamp',
-          'followerCount', 'followingCount',
-          'profileSyncStatus', 'profileSyncStartedAt', 'profileSyncCompletedAt',
+          'totalPoints',
+          'totalBirds',
+          'duplicateBirds',
+
+          'openAiRequestsRemaining',
+          'openAiCooldownResetTimestamp',
+          'pfpChangesToday',
+          'pfpCooldownResetTimestamp',
+
+          'followerCount',
+          'followingCount',
+
+          'profileSyncStatus',
+          'profileSyncStartedAt',
+          'profileSyncCompletedAt',
+
           'currentSessionId'
         ]);
     }
@@ -56,6 +104,31 @@ service cloud.firestore {
     function onlyClientCommentLikeUpdate() {
       return request.resource.data.diff(resource.data).affectedKeys()
         .hasOnly(['likedBy']);
+    }
+
+    // Client can still create/update their own userBirds docs, but cannot set or edit
+    // backend-owned reward/attribution fields.
+    function validClientUserBirdCreate() {
+      return !request.resource.data.keys().hasAny([
+        'pointsAwarded',
+        'pointsAttributed',
+        'attributionStatus',
+        'attributedAt',
+        'rewardGranted',
+        'rewardGrantedAt'
+      ]);
+    }
+
+    function onlyClientUserBirdFields() {
+      return !request.resource.data.diff(resource.data).affectedKeys()
+        .hasAny([
+          'pointsAwarded',
+          'pointsAttributed',
+          'attributionStatus',
+          'attributedAt',
+          'rewardGranted',
+          'rewardGrantedAt'
+        ]);
     }
 
     // --- Users Collection ---
@@ -88,7 +161,15 @@ service cloud.firestore {
       // --- Collection Slots ---
       match /collectionSlot/{slotId} {
         allow read: if isSignedIn();
-        allow write: if isOwner(userId);
+
+        // Client may create a new slot only if it starts as common.
+        allow create: if isOwner(userId) && validClientCollectionSlotCreate();
+
+        // Client may update normal card fields, but never rarity or server-owned upgrade fields.
+        allow update: if isOwner(userId) && onlyClientCollectionSlotFields();
+
+        // Keep delete behavior the same as before.
+        allow delete: if isOwner(userId);
       }
 
       // --- Bird Images ---
@@ -173,11 +254,37 @@ service cloud.firestore {
       }
     }
 
-    // --- User Bird Sightings ---
+
+		 //-- bird images--
+		match /nuthatch_images/{docId} {
+  		allow read: if request.auth != null;
+		}
+
+		match /inaturalist_images/{docId} {
+  		allow read: if request.auth != null;
+		}
+    // --- Upgrade Card Data (read-only reference data) ---
+    match /upgradeCardData/{docId} {
+      allow read: if isSignedIn();
+      allow write: if false; // Cloud Functions / admin only
+    }
+
+    // --- User Bird Sightings / User Birds ---
     match /userBirds/{sightingId} {
       allow read: if isSignedIn() && isOwnerOfResource();
-      allow create: if isSignedIn() && incomingDataOwned();
-      allow update, delete: if isSignedIn() && isOwnerOfResource();
+
+      // Client may create their own userBirds records, but cannot attach
+      // reward/attribution fields directly.
+      allow create: if isSignedIn() &&
+        incomingDataOwned() &&
+        validClientUserBirdCreate();
+
+      // Client may update normal fields, but not backend-owned reward/attribution fields.
+      allow update: if isSignedIn() &&
+        isOwnerOfResource() &&
+        onlyClientUserBirdFields();
+
+      allow delete: if isSignedIn() && isOwnerOfResource();
     }
 
     match /userBirdSightings/{sightingId} {

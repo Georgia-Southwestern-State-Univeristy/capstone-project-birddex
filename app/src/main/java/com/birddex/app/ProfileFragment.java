@@ -44,6 +44,7 @@ import com.google.firebase.firestore.FieldValue;
 import com.google.firebase.firestore.FirebaseFirestore;
 import com.google.firebase.firestore.ListenerRegistration;
 import com.google.firebase.firestore.Query;
+import com.google.firebase.firestore.Source;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -377,16 +378,38 @@ public class ProfileFragment extends Fragment implements
     private void loadFavoriteCards() {
         if (profileUserId == null) return;
         final int myGen = ++favoriteFetchGeneration;
-        // Set up or query the Firebase layer that supplies/stores this feature's data.
-        db.collection("users").document(profileUserId).collection("collectionSlot").get().addOnSuccessListener(querySnapshot -> {
-            if (!isAdded() || myGen != favoriteFetchGeneration) return;
-            allCollectionSlots.clear();
-            for (DocumentSnapshot doc : querySnapshot.getDocuments()) {
-                CollectionSlot slot = doc.toObject(CollectionSlot.class);
-                if (slot != null) { slot.setId(doc.getId()); allCollectionSlots.add(slot); }
+        db.collection("users").document(profileUserId).collection("collectionSlot")
+                .get(Source.CACHE)
+                .addOnSuccessListener(querySnapshot -> {
+                    if (!isAdded() || myGen != favoriteFetchGeneration) return;
+                    if (querySnapshot != null && !querySnapshot.isEmpty()) {
+                        processFavoriteSlotSnapshot(querySnapshot, myGen);
+                    }
+                    fetchFavoriteCardsFromServer(profileUserId, myGen);
+                })
+                .addOnFailureListener(e -> fetchFavoriteCardsFromServer(profileUserId, myGen));
+    }
+
+    private void fetchFavoriteCardsFromServer(String userId, int generation) {
+        db.collection("users").document(userId).collection("collectionSlot")
+                .get(Source.SERVER)
+                .addOnSuccessListener(querySnapshot -> {
+                    if (!isAdded() || generation != favoriteFetchGeneration) return;
+                    processFavoriteSlotSnapshot(querySnapshot, generation);
+                });
+    }
+
+    private void processFavoriteSlotSnapshot(com.google.firebase.firestore.QuerySnapshot querySnapshot, int generation) {
+        if (!isAdded() || generation != favoriteFetchGeneration) return;
+        allCollectionSlots.clear();
+        for (DocumentSnapshot doc : querySnapshot.getDocuments()) {
+            CollectionSlot slot = doc.toObject(CollectionSlot.class);
+            if (slot != null) {
+                slot.setId(doc.getId());
+                allCollectionSlots.add(slot);
             }
-            refreshFavoritesDisplay();
-        });
+        }
+        refreshFavoritesDisplay();
     }
 
     /**
@@ -453,23 +476,90 @@ public class ProfileFragment extends Fragment implements
         if (profileUserId == null || isFetching || isLastPage || !isAdded()) return;
         isFetching = true;
         final int myGen = fetchGeneration;
-        Query query = db.collection("forumThreads").whereEqualTo("userId", profileUserId).orderBy("timestamp", Query.Direction.DESCENDING).limit(PAGE_SIZE);
-        if (lastVisible != null) query = query.startAfter(lastVisible);
 
-        query.get().addOnSuccessListener(value -> {
-            if (!isAdded() || myGen != fetchGeneration) return;
-            if (value != null && !value.isEmpty()) {
-                lastVisible = value.getDocuments().get(value.size() - 1);
-                for (DocumentSnapshot doc : value.getDocuments()) {
-                    ForumPost post = doc.toObject(ForumPost.class);
-                    if (post != null) { post.setId(doc.getId()); postList.add(post); }
+        if (lastVisible == null) {
+            Query firstPageQuery = buildProfilePostsBaseQuery();
+            firstPageQuery.get(Source.CACHE).addOnSuccessListener(value -> {
+                if (!isAdded() || myGen != fetchGeneration) return;
+                if (value != null && !value.isEmpty()) {
+                    applyProfilePostFirstPage(value, false, myGen);
                 }
-                if (value.size() < PAGE_SIZE) isLastPage = true;
-            } else isLastPage = true;
-            isFetching = false;
-            if (!isSavedTabSelected()) postsAdapter.setPosts(new ArrayList<>(postList));
-            applyTabState(profileTabLayout.getSelectedTabPosition());
-        }).addOnFailureListener(e -> { if (myGen == fetchGeneration) isFetching = false; });
+                fetchProfilePostsFirstPageFromServer(firstPageQuery, myGen);
+            }).addOnFailureListener(e -> fetchProfilePostsFirstPageFromServer(firstPageQuery, myGen));
+            return;
+        }
+
+        buildProfilePostsBaseQuery().startAfter(lastVisible).get(Source.SERVER)
+                .addOnSuccessListener(value -> {
+                    if (!isAdded() || myGen != fetchGeneration) return;
+                    appendProfilePosts(value, myGen);
+                    finishProfilePostsFetch(myGen);
+                })
+                .addOnFailureListener(e -> finishProfilePostsFetch(myGen));
+    }
+
+    private Query buildProfilePostsBaseQuery() {
+        return db.collection("forumThreads")
+                .whereEqualTo("userId", profileUserId)
+                .orderBy("timestamp", Query.Direction.DESCENDING)
+                .limit(PAGE_SIZE);
+    }
+
+    private void fetchProfilePostsFirstPageFromServer(Query firstPageQuery, int generation) {
+        firstPageQuery.get(Source.SERVER).addOnSuccessListener(value -> {
+            if (!isAdded() || generation != fetchGeneration) return;
+            applyProfilePostFirstPage(value, true, generation);
+            finishProfilePostsFetch(generation);
+        }).addOnFailureListener(e -> finishProfilePostsFetch(generation));
+    }
+
+    private void applyProfilePostFirstPage(com.google.firebase.firestore.QuerySnapshot value, boolean fromServer, int generation) {
+        if (!isAdded() || generation != fetchGeneration) return;
+        if (fromServer || (value != null && !value.isEmpty())) {
+            postList.clear();
+            lastVisible = null;
+            isLastPage = false;
+        }
+
+        if (value != null && !value.isEmpty()) {
+            lastVisible = value.getDocuments().get(value.size() - 1);
+            for (DocumentSnapshot doc : value.getDocuments()) {
+                ForumPost post = doc.toObject(ForumPost.class);
+                if (post != null) {
+                    post.setId(doc.getId());
+                    postList.add(post);
+                }
+            }
+            if (value.size() < PAGE_SIZE) isLastPage = true;
+        } else if (fromServer) {
+            isLastPage = true;
+        }
+
+        if (!isSavedTabSelected()) postsAdapter.setPosts(new ArrayList<>(postList));
+        applyTabState(profileTabLayout.getSelectedTabPosition());
+    }
+
+    private void appendProfilePosts(com.google.firebase.firestore.QuerySnapshot value, int generation) {
+        if (!isAdded() || generation != fetchGeneration) return;
+        if (value != null && !value.isEmpty()) {
+            lastVisible = value.getDocuments().get(value.size() - 1);
+            for (DocumentSnapshot doc : value.getDocuments()) {
+                ForumPost post = doc.toObject(ForumPost.class);
+                if (post != null) {
+                    post.setId(doc.getId());
+                    postList.add(post);
+                }
+            }
+            if (value.size() < PAGE_SIZE) isLastPage = true;
+        } else {
+            isLastPage = true;
+        }
+        if (!isSavedTabSelected()) postsAdapter.setPosts(new ArrayList<>(postList));
+        applyTabState(profileTabLayout.getSelectedTabPosition());
+    }
+
+    private void finishProfilePostsFetch(int generation) {
+        if (generation == fetchGeneration) isFetching = false;
     }
 
     private void fetchSavedPosts() {
@@ -477,62 +567,102 @@ public class ProfileFragment extends Fragment implements
         isFetchingSaved = true;
         final int myGen = savedFetchGeneration;
 
-        Query query = db.collection("users")
+        if (lastSavedVisible == null) {
+            Query firstPageQuery = buildSavedPostsBaseQuery();
+            firstPageQuery.get(Source.CACHE).addOnSuccessListener(value -> {
+                if (!isAdded() || myGen != savedFetchGeneration) return;
+                if (value != null && !value.isEmpty()) {
+                    resolveSavedPostsFromSnapshot(value, Source.CACHE, myGen, false);
+                }
+                fetchSavedPostsFirstPageFromServer(firstPageQuery, myGen);
+            }).addOnFailureListener(e -> fetchSavedPostsFirstPageFromServer(firstPageQuery, myGen));
+            return;
+        }
+
+        buildSavedPostsBaseQuery().startAfter(lastSavedVisible).get(Source.SERVER)
+                .addOnSuccessListener(value -> resolveSavedPostsFromSnapshot(value, Source.SERVER, myGen, false))
+                .addOnFailureListener(e -> { if (myGen == savedFetchGeneration) isFetchingSaved = false; });
+    }
+
+    private Query buildSavedPostsBaseQuery() {
+        return db.collection("users")
                 .document(profileUserId)
                 .collection("savedPosts")
                 .orderBy("savedAt", Query.Direction.DESCENDING)
                 .limit(PAGE_SIZE);
+    }
 
-        if (lastSavedVisible != null) query = query.startAfter(lastSavedVisible);
+    private void fetchSavedPostsFirstPageFromServer(Query firstPageQuery, int generation) {
+        firstPageQuery.get(Source.SERVER)
+                .addOnSuccessListener(value -> resolveSavedPostsFromSnapshot(value, Source.SERVER, generation, true))
+                .addOnFailureListener(e -> { if (generation == savedFetchGeneration) isFetchingSaved = false; });
+    }
 
-        query.get().addOnSuccessListener(value -> {
-            if (!isAdded() || myGen != savedFetchGeneration) return;
+    private void resolveSavedPostsFromSnapshot(com.google.firebase.firestore.QuerySnapshot value, Source source, int generation, boolean fromServer) {
+        if (!isAdded() || generation != savedFetchGeneration) return;
 
-            if (value != null && !value.isEmpty()) {
-                lastSavedVisible = value.getDocuments().get(value.size() - 1);
-                List<DocumentSnapshot> savedDocs = value.getDocuments();
-                List<com.google.android.gms.tasks.Task<DocumentSnapshot>> postTasks = new ArrayList<>();
+        if (fromServer || (value != null && !value.isEmpty())) {
+            if (lastSavedVisible == null || fromServer) {
+                savedPostList.clear();
+                lastSavedVisible = null;
+                isSavedLastPage = false;
+            }
+        }
 
-                for (DocumentSnapshot savedDoc : savedDocs) {
-                    String threadId = savedDoc.getString("threadId");
-                    if (threadId != null && !threadId.isEmpty()) {
-                        postTasks.add(db.collection("forumThreads").document(threadId).get());
-                    }
-                }
-
-                if (postTasks.isEmpty()) {
-                    if (value.size() < PAGE_SIZE) isSavedLastPage = true;
-                    isFetchingSaved = false;
-                    applyTabState(profileTabLayout.getSelectedTabPosition());
-                    return;
-                }
-
-                com.google.android.gms.tasks.Tasks.whenAllComplete(postTasks).addOnSuccessListener(done -> {
-                    if (!isAdded() || myGen != savedFetchGeneration) return;
-
-                    for (com.google.android.gms.tasks.Task<DocumentSnapshot> task : postTasks) {
-                        if (!task.isSuccessful() || task.getResult() == null || !task.getResult().exists()) continue;
-                        DocumentSnapshot doc = task.getResult();
-                        ForumPost post = doc.toObject(ForumPost.class);
-                        if (post != null) {
-                            post.setId(doc.getId());
-                            savedPostList.add(post);
-                        }
-                    }
-
-                    if (value.size() < PAGE_SIZE) isSavedLastPage = true;
-                    isFetchingSaved = false;
-                    if (isSavedTabSelected()) postsAdapter.setPosts(new ArrayList<>(savedPostList));
-                    applyTabState(profileTabLayout.getSelectedTabPosition());
-                }).addOnFailureListener(e -> {
-                    if (myGen == savedFetchGeneration) isFetchingSaved = false;
-                });
-            } else {
+        if (value == null || value.isEmpty()) {
+            if (fromServer) {
                 isSavedLastPage = true;
                 isFetchingSaved = false;
+                if (isSavedTabSelected()) postsAdapter.setPosts(new ArrayList<>(savedPostList));
                 applyTabState(profileTabLayout.getSelectedTabPosition());
             }
-        }).addOnFailureListener(e -> { if (myGen == savedFetchGeneration) isFetchingSaved = false; });
+            return;
+        }
+
+        DocumentSnapshot pageLastVisible = value.getDocuments().get(value.size() - 1);
+        List<com.google.android.gms.tasks.Task<DocumentSnapshot>> postTasks = new ArrayList<>();
+        for (DocumentSnapshot savedDoc : value.getDocuments()) {
+            String threadId = savedDoc.getString("threadId");
+            if (threadId != null && !threadId.isEmpty()) {
+                postTasks.add(db.collection("forumThreads").document(threadId).get(source));
+            }
+        }
+
+        if (postTasks.isEmpty()) {
+            lastSavedVisible = pageLastVisible;
+            if (value.size() < PAGE_SIZE) isSavedLastPage = true;
+            if (fromServer) isFetchingSaved = false;
+            if (isSavedTabSelected()) postsAdapter.setPosts(new ArrayList<>(savedPostList));
+            applyTabState(profileTabLayout.getSelectedTabPosition());
+            return;
+        }
+
+        com.google.android.gms.tasks.Tasks.whenAllComplete(postTasks).addOnSuccessListener(done -> {
+            if (!isAdded() || generation != savedFetchGeneration) return;
+
+            List<ForumPost> resolvedPosts = new ArrayList<>();
+            for (com.google.android.gms.tasks.Task<DocumentSnapshot> task : postTasks) {
+                if (!task.isSuccessful() || task.getResult() == null || !task.getResult().exists()) continue;
+                DocumentSnapshot doc = task.getResult();
+                ForumPost post = doc.toObject(ForumPost.class);
+                if (post != null) {
+                    post.setId(doc.getId());
+                    resolvedPosts.add(post);
+                }
+            }
+
+            if (lastSavedVisible == null || fromServer) {
+                savedPostList.clear();
+            }
+            savedPostList.addAll(resolvedPosts);
+            lastSavedVisible = pageLastVisible;
+            if (value.size() < PAGE_SIZE) isSavedLastPage = true;
+            if (fromServer) isFetchingSaved = false;
+            if (isSavedTabSelected()) postsAdapter.setPosts(new ArrayList<>(savedPostList));
+            applyTabState(profileTabLayout.getSelectedTabPosition());
+        }).addOnFailureListener(e -> {
+            if (generation == savedFetchGeneration && fromServer) isFetchingSaved = false;
+        });
     }
 
     /**

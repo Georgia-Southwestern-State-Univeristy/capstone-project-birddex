@@ -40,6 +40,7 @@ import com.google.android.gms.location.Priority;
 import com.google.firebase.Timestamp;
 import com.google.firebase.firestore.DocumentSnapshot;
 import com.google.firebase.firestore.FirebaseFirestore;
+import com.google.firebase.firestore.Source;
 
 import org.json.JSONObject;
 
@@ -103,6 +104,7 @@ public class NearbyFragment extends Fragment {
     private static final long SIGHTING_RECENCY_MS = 72L * 60 * 60 * 1000;
     private static final float MIN_DISTANCE_FOR_FETCH = 1000f;
     private static final int MAX_USER_SIGHTINGS = 500;
+    private static final long NEARBY_LOCAL_CACHE_MAX_AGE_MS = BirdCacheManager.NEARBY_CACHE_TTL_MS;
 
     /**
      * Android calls this to inflate the Fragment's XML and return the root view that will be shown
@@ -135,7 +137,7 @@ public class NearbyFragment extends Fragment {
         // Set up or query the Firebase layer that supplies/stores this feature's data.
         firebaseManager = new FirebaseManager(requireContext());
         db = FirebaseFirestore.getInstance();
-        ebirdApi = new EbirdApi();
+        ebirdApi = new EbirdApi(requireContext().getApplicationContext());
         cacheManager = new BirdCacheManager(requireContext());
         fusedLocationClient = LocationServices.getFusedLocationProviderClient(requireActivity());
 
@@ -183,8 +185,13 @@ public class NearbyFragment extends Fragment {
      * caller.
      */
     private void loadCachedData() {
-        List<Bird> c = cacheManager.getCachedNearbyBirds();
-        if (!c.isEmpty()) { adapter.updateList(c); rvNearby.setVisibility(View.VISIBLE); pbLoading.setVisibility(View.GONE); }
+        List<Bird> cached = cacheManager.getCachedNearbyBirds();
+        if (!cached.isEmpty() && cacheManager.hasFreshNearbyBirds(NEARBY_LOCAL_CACHE_MAX_AGE_MS)) {
+            adapter.updateList(cached);
+            rvNearby.setVisibility(View.VISIBLE);
+            tvNoBirds.setVisibility(View.GONE);
+            pbLoading.setVisibility(View.GONE);
+        }
     }
 
     /**
@@ -195,11 +202,28 @@ public class NearbyFragment extends Fragment {
      */
     private void handleNewLocation(Location l, boolean force) {
         currentLocation = l;
-        if (force || lastFetchLocation == null || l.distanceTo(lastFetchLocation) > MIN_DISTANCE_FOR_FETCH) {
+
+        if (!force && cacheManager.hasFreshNearbyBirdsForLocation(
+                l.getLatitude(),
+                l.getLongitude(),
+                NEARBY_LOCAL_CACHE_MAX_AGE_MS,
+                MIN_DISTANCE_FOR_FETCH
+        )) {
+            Log.d(TAG, "Using fresh nearby cache for current location.");
+            lastFetchLocation = l;
+            List<Bird> cached = cacheManager.getCachedNearbyBirds();
+            if (!cached.isEmpty()) {
+                adapter.updateList(cached);
+                rvNearby.setVisibility(View.VISIBLE);
+                tvNoBirds.setVisibility(View.GONE);
+                pbLoading.setVisibility(View.GONE);
+            }
+        } else if (force || lastFetchLocation == null || l.distanceTo(lastFetchLocation) > MIN_DISTANCE_FOR_FETCH) {
             Log.d(TAG, "Fetching new data for location: " + l.getLatitude() + ", " + l.getLongitude());
             lastFetchLocation = l;
-            fetchAllNearbyData();
+            fetchAllNearbyData(force);
         }
+
         if (geoExecutor != null && !geoExecutor.isShutdown()) {
             geoExecutor.execute(() -> {
                 String p = getCityStateFromLocation(l);
@@ -253,14 +277,17 @@ public class NearbyFragment extends Fragment {
      * Location values are handled here, so this is part of the logic that decides what area/bird
      * sightings the user sees.
      */
-    private synchronized void fetchAllNearbyData() {
+    private synchronized void fetchAllNearbyData(boolean forceRefresh) {
         if (currentLocation == null) return;
         final int myGen = ++fetchGeneration;
         // Persist the new state so the action is saved outside the current screen.
-        fetchCount.set(0); latestFirestoreResults.clear(); latestEbirdResults.clear();
-        Log.d(TAG, "Starting dual-fetch (gen=" + myGen + ")");
+        fetchCount.set(0);
+        latestFirestoreResults.clear();
+        latestEbirdResults.clear();
+        Log.d(TAG, "Starting dual-fetch (gen=" + myGen + ", force=" + forceRefresh + ")");
         if (isAdded()) getActivity().runOnUiThread(() -> { if (isAdded()) { pbLoading.setVisibility(View.VISIBLE); rvNearby.setVisibility(View.GONE); tvNoBirds.setVisibility(View.GONE); } });
-        loadUserSightingsNearby(myGen); loadEbirdNearby(myGen);
+        loadUserSightingsNearby(myGen);
+        loadEbirdNearby(myGen, forceRefresh);
     }
 
     /**
@@ -273,25 +300,68 @@ public class NearbyFragment extends Fragment {
      */
     private void loadUserSightingsNearby(final int gen) {
         // Set up or query the Firebase layer that supplies/stores this feature's data.
-        db.collection("userBirdSightings").limit(MAX_USER_SIGHTINGS).get().addOnSuccessListener(querySnapshot -> {
+        db.collection("userBirdSightings").limit(MAX_USER_SIGHTINGS).get(Source.CACHE).addOnSuccessListener(querySnapshot -> {
             if (gen != fetchGeneration) return;
-            for (DocumentSnapshot d : querySnapshot.getDocuments()) { Bird b = mapUserSightingToBird(d); if (isValidSighting(b)) { latestFirestoreResults.add(b); cacheSearchBird(b); } }
+            if (querySnapshot != null && !querySnapshot.isEmpty()) {
+                for (DocumentSnapshot d : querySnapshot.getDocuments()) {
+                    Bird b = mapUserSightingToBird(d);
+                    if (isValidSighting(b)) {
+                        latestFirestoreResults.add(b);
+                        cacheSearchBird(b);
+                    }
+                }
+            }
+            fetchUserSightingsFromServer(gen);
+        }).addOnFailureListener(e -> {
+            if (gen != fetchGeneration) return;
+            fetchUserSightingsFromServer(gen);
+        });
+    }
+
+    /**
+     * Pulls data from a local source, Firebase, or an external API and prepares it for the UI or
+     * caller.
+     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
+     * changes.
+     * There is also one-time async data loading here, so success/failure callbacks are important
+     * for the final UI state.
+     */
+    private void fetchUserSightingsFromServer(final int gen) {
+        db.collection("userBirdSightings").limit(MAX_USER_SIGHTINGS).get(Source.SERVER).addOnSuccessListener(querySnapshot -> {
+            if (gen != fetchGeneration) return;
+            latestFirestoreResults.clear();
+            for (DocumentSnapshot d : querySnapshot.getDocuments()) {
+                Bird b = mapUserSightingToBird(d);
+                if (isValidSighting(b)) {
+                    latestFirestoreResults.add(b);
+                    cacheSearchBird(b);
+                }
+            }
             checkIfAllFetched(gen);
-        }).addOnFailureListener(e -> { if (gen == fetchGeneration) checkIfAllFetched(gen); });
+        }).addOnFailureListener(e -> {
+            if (gen == fetchGeneration) checkIfAllFetched(gen);
+        });
     }
 
     /**
      * Pulls data from a local source, Firebase, or an external API and prepares it for the UI or
      * caller.
      */
-    private void loadEbirdNearby(final int gen) {
-        ebirdApi.fetchCoreGeorgiaBirdList(new EbirdApi.EbirdCoreBirdListCallback() {
+    private void loadEbirdNearby(final int gen, boolean forceRefresh) {
+        ebirdApi.fetchCoreGeorgiaBirdList(forceRefresh, new EbirdApi.EbirdCoreBirdListCallback() {
             @Override public void onSuccess(List<JSONObject> birdsJson) {
                 if (gen != fetchGeneration) return;
-                for (JSONObject j : birdsJson) { Bird b = parseBirdJson(j); if (isValidSighting(b)) latestEbirdResults.add(b); }
+                latestEbirdResults.clear();
+                for (JSONObject j : birdsJson) {
+                    Bird b = parseBirdJson(j);
+                    if (isValidSighting(b)) latestEbirdResults.add(b);
+                }
                 checkIfAllFetched(gen);
             }
-            @Override public void onFailure(Exception e) { if (gen == fetchGeneration) checkIfAllFetched(gen); }
+
+            @Override public void onFailure(Exception e) {
+                if (gen == fetchGeneration) checkIfAllFetched(gen);
+            }
         });
     }
 
@@ -307,7 +377,7 @@ public class NearbyFragment extends Fragment {
             if (t1 == null && t2 == null) return 0; if (t1 == null) return 1; if (t2 == null) return -1;
             return t2.compareTo(t1);
         });
-        cacheManager.saveNearbyBirds(combined);
+        cacheManager.saveNearbyBirds(combined, currentLocation != null ? currentLocation.getLatitude() : null, currentLocation != null ? currentLocation.getLongitude() : null);
         if (isAdded()) getActivity().runOnUiThread(() -> { if (isAdded()) { pbLoading.setVisibility(View.GONE); if (combined.isEmpty()) { rvNearby.setVisibility(View.GONE); tvNoBirds.setVisibility(View.VISIBLE); } else { adapter.updateList(combined); tvNoBirds.setVisibility(View.GONE); rvNearby.setVisibility(View.VISIBLE); } } });
     }
 

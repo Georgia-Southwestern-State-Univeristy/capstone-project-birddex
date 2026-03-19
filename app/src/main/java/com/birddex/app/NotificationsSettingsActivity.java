@@ -16,40 +16,30 @@ import com.google.firebase.auth.FirebaseAuth;
 import com.google.firebase.auth.FirebaseUser;
 
 /**
- * NotificationsSettingsActivity: Activity class for one BirdDex screen. It owns screen setup, user actions, and navigation for this part of the app.
- *
- * These comments focus on what the actual code blocks are doing so the file is easier to trace
- * when you are debugging or presenting the app. Only comments were added; runtime logic was not changed.
+ * NotificationsSettingsActivity: Activity class for managing user notification preferences.
  */
 public class NotificationsSettingsActivity extends AppCompatActivity {
 
     private static final String TAG = "NotificationsSettings";
-    private SwitchCompat switchNotifications, switchReplies;
-    private Spinner spinnerCooldown;
+    private SwitchCompat switchNotifications, switchReplies, switchTrackedBirds;
+    private Spinner spinnerCooldown, spinnerTrackedCooldown, spinnerTrackedDistance;
     private ImageView btnBack;
     private final SettingsApi settingsApi = new SettingsApi();
 
-    /**
-     * Android calls this when the Activity is first created. This is where the screen usually
-     * inflates its layout, grabs views, creates helpers, and wires listeners.
-     * It grabs layout/view references here so later code can read from them, update them, or
-     * attach listeners.
-     * It wires user actions here, so taps on buttons/cards/menus trigger the next step in the
-     * flow.
-     */
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_notifications_settings);
 
-        // Bind or inflate the UI pieces this method needs before it can update the screen.
         switchNotifications = findViewById(R.id.switchNotifications);
         switchReplies = findViewById(R.id.switchReplies);
+        switchTrackedBirds = findViewById(R.id.switchTrackedBirds);
         spinnerCooldown = findViewById(R.id.spinnerCooldown);
+        spinnerTrackedCooldown = findViewById(R.id.spinnerTrackedCooldown);
+        spinnerTrackedDistance = findViewById(R.id.spinnerTrackedDistance);
         btnBack = findViewById(R.id.btnBack);
 
         if (btnBack != null) {
-            // Attach the user interaction that should run when this control is tapped.
             btnBack.setOnClickListener(v -> finish());
         }
 
@@ -59,38 +49,42 @@ public class NotificationsSettingsActivity extends AppCompatActivity {
             return;
         }
 
-        setupCooldownSpinner();
+        setupSpinners();
         loadSettings(user.getUid());
     }
 
-    /**
-     * Updates object/screen state by storing a new value or reconfiguring a dependency.
-     * It prepares or refreshes adapter-backed lists/grids here so the latest model objects are
-     * rendered on screen.
-     */
-    private void setupCooldownSpinner() {
+    private void setupSpinners() {
+        // General Cooldown
         String[] options = {"Off", "2 Hours", "6 Hours"};
         ArrayAdapter<String> adapter = new ArrayAdapter<>(this, android.R.layout.simple_spinner_item, options);
         adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
         if (spinnerCooldown != null) {
-            // Hook the data source to the list/grid adapter so model objects can render as UI rows/cards.
             spinnerCooldown.setAdapter(adapter);
+        }
+
+        // Tracked Birds Cooldown
+        String[] trackedOptions = {"Every spotting", "Every 2 hours"};
+        ArrayAdapter<String> trackedAdapter = new ArrayAdapter<>(this, android.R.layout.simple_spinner_item, trackedOptions);
+        trackedAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        if (spinnerTrackedCooldown != null) {
+            spinnerTrackedCooldown.setAdapter(trackedAdapter);
+        }
+
+        // Tracked Birds Distance
+        String[] distanceOptions = {"Any distance", "Within 150 miles"};
+        ArrayAdapter<String> distanceAdapter = new ArrayAdapter<>(this, android.R.layout.simple_spinner_item, distanceOptions);
+        distanceAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        if (spinnerTrackedDistance != null) {
+            spinnerTrackedDistance.setAdapter(distanceAdapter);
         }
     }
 
-    /**
-     * Pulls data from a local source, Firebase, or an external API and prepares it for the UI or
-     * caller.
-     * User-facing feedback is shown here so the user knows whether the action succeeded, failed,
-     * or needs attention.
-     */
     private void loadSettings(String uid) {
         settingsApi.getSettings(uid, new SettingsApi.SettingsCallback() {
             @Override
             public void onSuccess(UserSettings settings) {
                 if (isFinishing() || isDestroyed()) return;
 
-                // Disable listeners while setting initial values to avoid loops
                 if (switchNotifications != null) {
                     switchNotifications.setOnCheckedChangeListener(null);
                     switchNotifications.setChecked(settings.notificationsEnabled);
@@ -101,6 +95,11 @@ public class NotificationsSettingsActivity extends AppCompatActivity {
                     switchReplies.setChecked(settings.repliesEnabled);
                 }
 
+                if (switchTrackedBirds != null) {
+                    switchTrackedBirds.setOnCheckedChangeListener(null);
+                    switchTrackedBirds.setChecked(settings.trackedBirdsNotificationsEnabled);
+                }
+
                 if (spinnerCooldown != null) {
                     spinnerCooldown.setOnItemSelectedListener(null);
                     int selection = 0;
@@ -109,7 +108,18 @@ public class NotificationsSettingsActivity extends AppCompatActivity {
                     spinnerCooldown.setSelection(selection);
                 }
 
-                // Re-attach listeners after UI is ready
+                if (spinnerTrackedCooldown != null) {
+                    spinnerTrackedCooldown.setOnItemSelectedListener(null);
+                    int selection = (settings.trackedBirdsCooldownHours == 2) ? 1 : 0;
+                    spinnerTrackedCooldown.setSelection(selection);
+                }
+
+                if (spinnerTrackedDistance != null) {
+                    spinnerTrackedDistance.setOnItemSelectedListener(null);
+                    int selection = (settings.trackedBirdsMaxDistanceMiles == 150) ? 1 : 0;
+                    spinnerTrackedDistance.setSelection(selection);
+                }
+
                 setupListeners(uid);
             }
 
@@ -117,17 +127,13 @@ public class NotificationsSettingsActivity extends AppCompatActivity {
             public void onFailure(Exception e, String message) {
                 Log.e(TAG, "Load settings failed: " + message, e);
                 if (!isFinishing() && !isDestroyed()) {
-                    // Give the user immediate feedback about the result of this action.
                     Toast.makeText(NotificationsSettingsActivity.this, message, Toast.LENGTH_SHORT).show();
-                    setupListeners(uid); // Still attach listeners so they can try to save
+                    setupListeners(uid);
                 }
             }
         });
     }
 
-    /**
-     * Updates object/screen state by storing a new value or reconfiguring a dependency.
-     */
     private void setupListeners(String uid) {
         if (switchNotifications != null) {
             switchNotifications.setOnCheckedChangeListener((buttonView, isChecked) -> {
@@ -141,6 +147,12 @@ public class NotificationsSettingsActivity extends AppCompatActivity {
             });
         }
 
+        if (switchTrackedBirds != null) {
+            switchTrackedBirds.setOnCheckedChangeListener((buttonView, isChecked) -> {
+                settingsApi.setTrackedBirdsNotificationsEnabled(uid, isChecked, null);
+            });
+        }
+
         if (spinnerCooldown != null) {
             spinnerCooldown.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
                 @Override
@@ -150,9 +162,29 @@ public class NotificationsSettingsActivity extends AppCompatActivity {
                     else if (position == 2) hours = 6;
                     settingsApi.setNotificationCooldownHours(uid, hours, null);
                 }
+                @Override public void onNothingSelected(AdapterView<?> parent) {}
+            });
+        }
 
+        if (spinnerTrackedCooldown != null) {
+            spinnerTrackedCooldown.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
                 @Override
-                public void onNothingSelected(AdapterView<?> parent) {}
+                public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
+                    int hours = (position == 1) ? 2 : 0;
+                    settingsApi.setTrackedBirdsCooldownHours(uid, hours, null);
+                }
+                @Override public void onNothingSelected(AdapterView<?> parent) {}
+            });
+        }
+
+        if (spinnerTrackedDistance != null) {
+            spinnerTrackedDistance.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
+                @Override
+                public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
+                    int miles = (position == 1) ? 150 : -1;
+                    settingsApi.setTrackedBirdsMaxDistanceMiles(uid, miles, null);
+                }
+                @Override public void onNothingSelected(AdapterView<?> parent) {}
             });
         }
     }

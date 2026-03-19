@@ -23,26 +23,49 @@
             android:orientation="vertical"
             android:padding="16dp">
 
-            <TextView
-                android:id="@+id/tvPageTitle"
+            <RelativeLayout
                 android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="Bird Name"
-                android:textColor="#202122"
-                android:textSize="30sp"
-                android:textStyle="bold"
-                android:fontFamily="serif" />
+                android:layout_height="wrap_content">
 
-            <TextView
-                android:id="@+id/tvPageScientificName"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="4dp"
-                android:text="Scientific name"
-                android:textColor="#54595D"
-                android:textSize="18sp"
-                android:textStyle="italic"
-                android:fontFamily="serif" />
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_toStartOf="@id/btnTrackBird"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:id="@+id/tvPageTitle"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="Bird Name"
+                        android:textColor="#202122"
+                        android:textSize="30sp"
+                        android:textStyle="bold"
+                        android:fontFamily="serif" />
+
+                    <TextView
+                        android:id="@+id/tvPageScientificName"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="4dp"
+                        android:text="Scientific name"
+                        android:textColor="#54595D"
+                        android:textSize="18sp"
+                        android:textStyle="italic"
+                        android:fontFamily="serif" />
+                </LinearLayout>
+
+                <ImageButton
+                    android:id="@+id/btnTrackBird"
+                    android:layout_width="48dp"
+                    android:layout_height="48dp"
+                    android:layout_alignParentEnd="true"
+                    android:layout_centerVertical="true"
+                    android:background="?attr/selectableItemBackgroundBorderless"
+                    android:contentDescription="Track bird"
+                    android:scaleType="fitCenter"
+                    android:src="@drawable/ic_favorite_border" />
+            </RelativeLayout>
 
             <!-- Bird image for when nuthatch finished -->
 

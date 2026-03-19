@@ -75,6 +75,8 @@ public class ProfileFragment extends Fragment implements
     private TabLayout profileTabLayout;
     private RecyclerView rvFavoriteCards, rvProfilePosts;
     private SwipeRefreshLayout swipeRefreshLayout;
+    private AppBarLayout profileAppBar;
+    private View profileHeader;
 
     private FirebaseAuth mAuth;
     private FirebaseFirestore db;
@@ -170,6 +172,8 @@ public class ProfileFragment extends Fragment implements
         btnEditProfile = v.findViewById(R.id.btnEditProfile);
         btnFollowers = v.findViewById(R.id.btnFollowers);
         btnFollowing = v.findViewById(R.id.btnFollowing);
+        profileAppBar = v.findViewById(R.id.profileAppBar);
+        profileHeader = v.findViewById(R.id.profileHeader);
         profileTabLayout = v.findViewById(R.id.profileTabLayout);
         tvProfileTabEmpty = v.findViewById(R.id.tvProfileTabEmpty);
         rvFavoriteCards = v.findViewById(R.id.rvFavoriteCards);
@@ -205,14 +209,20 @@ public class ProfileFragment extends Fragment implements
     private void setupRecyclerViews() {
         // Hook the data source to the list/grid adapter so model objects can render as UI rows/cards.
         favoritesAdapter = new FavoritesAdapter(isCurrentUser, this);
-        rvFavoriteCards.setLayoutManager(new GridLayoutManager(requireContext(), 3) { @Override public boolean canScrollVertically() { return false; } });
+        rvFavoriteCards.setLayoutManager(new GridLayoutManager(requireContext(), 3) {
+            @Override
+            public boolean canScrollVertically() {
+                return false;
+            }
+        });
         rvFavoriteCards.setAdapter(favoritesAdapter);
 
         postsAdapter = new ForumPostAdapter(this);
         rvProfilePosts.setLayoutManager(new LinearLayoutManager(requireContext()));
         rvProfilePosts.setAdapter(postsAdapter);
         rvProfilePosts.addOnScrollListener(new RecyclerView.OnScrollListener() {
-            @Override public void onScrolled(@NonNull RecyclerView rv, int dx, int dy) {
+            @Override
+            public void onScrolled(@NonNull RecyclerView rv, int dx, int dy) {
                 if (dy <= 0) return;
                 LinearLayoutManager lm = (LinearLayoutManager) rvProfilePosts.getLayoutManager();
                 if (lm == null || lm.getChildCount() + lm.findFirstVisibleItemPosition() < lm.getItemCount()) return;
@@ -231,17 +241,24 @@ public class ProfileFragment extends Fragment implements
      */
     private void setupTabs() {
         if (isCurrentUser && profileTabLayout.getTabCount() == 2) {
-            profileTabLayout.addTab(profileTabLayout.newTab().setText("Saved"));
+            profileTabLayout.addTab(profileTabLayout.newTab().setIcon(R.drawable.outline_bookmark_24));
         } else if (isCurrentUser && profileTabLayout.getTabCount() == 0) {
-            profileTabLayout.addTab(profileTabLayout.newTab().setText("Favorites"));
-            profileTabLayout.addTab(profileTabLayout.newTab().setText("Posts"));
-            profileTabLayout.addTab(profileTabLayout.newTab().setText("Saved"));
+            profileTabLayout.addTab(profileTabLayout.newTab().setIcon(R.drawable.ic_collection));
+            profileTabLayout.addTab(profileTabLayout.newTab().setIcon(R.drawable.ic_forum));
+            profileTabLayout.addTab(profileTabLayout.newTab().setIcon(R.drawable.outline_bookmark_24));
         }
 
         profileTabLayout.addOnTabSelectedListener(new TabLayout.OnTabSelectedListener() {
-            @Override public void onTabSelected(TabLayout.Tab tab) { applyTabState(tab.getPosition()); }
-            @Override public void onTabUnselected(TabLayout.Tab tab) {}
-            @Override public void onTabReselected(TabLayout.Tab tab) {}
+            @Override
+            public void onTabSelected(TabLayout.Tab tab) {
+                applyTabState(tab.getPosition());
+            }
+
+            @Override
+            public void onTabUnselected(TabLayout.Tab tab) {}
+
+            @Override
+            public void onTabReselected(TabLayout.Tab tab) {}
         });
         applyTabState(0);
     }
@@ -251,6 +268,8 @@ public class ProfileFragment extends Fragment implements
      */
     private void applyTabState(int position) {
         if (!isAdded()) return;
+
+        updateAppBarScrollBehavior(position);
 
         if (position == 0) {
             rvFavoriteCards.setVisibility(View.VISIBLE);
@@ -279,22 +298,68 @@ public class ProfileFragment extends Fragment implements
 
     /**
      * Updates object/screen state by storing a new value or reconfiguring a dependency.
+     */
+    private void updateAppBarScrollBehavior(int position) {
+        if (profileAppBar == null || profileHeader == null || profileTabLayout == null || swipeRefreshLayout == null) return;
+
+        AppBarLayout.LayoutParams headerParams = (AppBarLayout.LayoutParams) profileHeader.getLayoutParams();
+        AppBarLayout.LayoutParams tabParams = (AppBarLayout.LayoutParams) profileTabLayout.getLayoutParams();
+
+        if (position == 0) {
+            headerParams.setScrollFlags(0);
+            tabParams.setScrollFlags(0);
+            profileHeader.setLayoutParams(headerParams);
+            profileTabLayout.setLayoutParams(tabParams);
+            profileAppBar.setLiftOnScroll(false);
+            profileAppBar.setExpanded(true, false);
+            swipeRefreshLayout.setNestedScrollingEnabled(false);
+            rvFavoriteCards.setNestedScrollingEnabled(false);
+            rvFavoriteCards.stopScroll();
+            return;
+        }
+
+        headerParams.setScrollFlags(
+                AppBarLayout.LayoutParams.SCROLL_FLAG_SCROLL
+                        | AppBarLayout.LayoutParams.SCROLL_FLAG_EXIT_UNTIL_COLLAPSED
+        );
+        tabParams.setScrollFlags(0);
+        profileHeader.setLayoutParams(headerParams);
+        profileTabLayout.setLayoutParams(tabParams);
+        profileAppBar.setLiftOnScroll(true);
+        swipeRefreshLayout.setNestedScrollingEnabled(true);
+        rvFavoriteCards.setNestedScrollingEnabled(false);
+    }
+
+    /**
+     * Updates object/screen state by storing a new value or reconfiguring a dependency.
      * It wires user actions here, so taps on buttons/cards/menus trigger the next step in the
      * flow.
      * It also packages extras into an Intent when this flow needs to open another Activity.
      */
     private void setupUI() {
         if (isCurrentUser) {
-            btnEditProfile.setVisibility(View.VISIBLE); btnSettings.setVisibility(View.VISIBLE); btnFollow.setVisibility(View.GONE);
+            btnEditProfile.setVisibility(View.VISIBLE);
+            btnSettings.setVisibility(View.VISIBLE);
+            btnFollow.setVisibility(View.GONE);
             // Attach the user interaction that should run when this control is tapped.
-            btnSettings.setOnClickListener(v -> { if (!isNavigating) { isNavigating = true; startActivity(new Intent(requireContext(), SettingsActivity.class)); } });
+            btnSettings.setOnClickListener(v -> {
+                if (!isNavigating) {
+                    isNavigating = true;
+                    startActivity(new Intent(requireContext(), SettingsActivity.class));
+                }
+            });
             btnEditProfile.setOnClickListener(v -> {
                 if (isNavigating) return;
                 isNavigating = true;
-                editProfileLauncher.launch(new Intent(requireContext(), EditProfileActivity.class).putExtra("username", currentUsername).putExtra("bio", currentBio).putExtra("profilePictureUrl", currentProfilePictureUrl));
+                editProfileLauncher.launch(new Intent(requireContext(), EditProfileActivity.class)
+                        .putExtra("username", currentUsername)
+                        .putExtra("bio", currentBio)
+                        .putExtra("profilePictureUrl", currentProfilePictureUrl));
             });
         } else {
-            btnEditProfile.setVisibility(View.GONE); btnSettings.setVisibility(View.GONE); btnFollow.setVisibility(View.VISIBLE);
+            btnEditProfile.setVisibility(View.GONE);
+            btnSettings.setVisibility(View.GONE);
+            btnFollow.setVisibility(View.VISIBLE);
             btnFollow.setOnClickListener(v -> toggleFollow());
             checkFollowingStatus();
         }
@@ -319,7 +384,9 @@ public class ProfileFragment extends Fragment implements
         if (profileUserId == null || isNavigating) return;
         isNavigating = true;
         // Move into the next screen and pass the identifiers/data that screen needs.
-        startActivity(new Intent(requireContext(), SocialActivity.class).putExtra(SocialActivity.EXTRA_USER_ID, profileUserId).putExtra(SocialActivity.EXTRA_SHOW_FOLLOWING, showFollowing));
+        startActivity(new Intent(requireContext(), SocialActivity.class)
+                .putExtra(SocialActivity.EXTRA_USER_ID, profileUserId)
+                .putExtra(SocialActivity.EXTRA_SHOW_FOLLOWING, showFollowing));
     }
 
     /**
@@ -347,9 +414,12 @@ public class ProfileFragment extends Fragment implements
      * photos/cards/posts usually traces back to this code path.
      */
     private void handleUserSnapshot(DocumentSnapshot doc) {
-        User user = doc.toObject(User.class); if (user == null) return;
+        User user = doc.toObject(User.class);
+        if (user == null) return;
         Log.d(TAG, "handleUserSnapshot — bio: " + user.getBio());
-        currentUsername = user.getUsername(); currentBio = user.getBio(); currentProfilePictureUrl = user.getProfilePictureUrl();
+        currentUsername = user.getUsername();
+        currentBio = user.getBio();
+        currentProfilePictureUrl = user.getProfilePictureUrl();
         tvUsername.setText(currentUsername != null ? currentUsername : "User");
         tvBio.setText(currentBio != null && !currentBio.isEmpty() ? currentBio : "No bio yet.");
         tvPoints.setText("Total Points: " + user.getTotalPoints());
@@ -427,7 +497,9 @@ public class ProfileFragment extends Fragment implements
      */
     private CollectionSlot findSlotById(String id) {
         if (id == null || id.isEmpty()) return null;
-        for (CollectionSlot slot : allCollectionSlots) if (id.equals(slot.getId())) return slot;
+        for (CollectionSlot slot : allCollectionSlots) {
+            if (id.equals(slot.getId())) return slot;
+        }
         return null;
     }
 
@@ -453,13 +525,21 @@ public class ProfileFragment extends Fragment implements
             firebaseManager.unfollowUser(profileUserId, task -> {
                 if (!isAdded()) return;
                 btnFollow.setEnabled(true);
-                if (task.isSuccessful()) { isFollowing = false; btnFollow.setText("Follow"); refreshPosts(); }
+                if (task.isSuccessful()) {
+                    isFollowing = false;
+                    btnFollow.setText("Follow");
+                    refreshPosts();
+                }
             });
         } else {
             firebaseManager.followUser(profileUserId, task -> {
                 if (!isAdded()) return;
                 btnFollow.setEnabled(true);
-                if (task.isSuccessful()) { isFollowing = true; btnFollow.setText("Following"); refreshPosts(); }
+                if (task.isSuccessful()) {
+                    isFollowing = true;
+                    btnFollow.setText("Following");
+                    refreshPosts();
+                }
             });
         }
     }
@@ -581,7 +661,9 @@ public class ProfileFragment extends Fragment implements
 
         buildSavedPostsBaseQuery().startAfter(lastSavedVisible).get(Source.SERVER)
                 .addOnSuccessListener(value -> resolveSavedPostsFromSnapshot(value, Source.SERVER, myGen, false))
-                .addOnFailureListener(e -> { if (myGen == savedFetchGeneration) isFetchingSaved = false; });
+                .addOnFailureListener(e -> {
+                    if (myGen == savedFetchGeneration) isFetchingSaved = false;
+                });
     }
 
     private Query buildSavedPostsBaseQuery() {
@@ -595,7 +677,9 @@ public class ProfileFragment extends Fragment implements
     private void fetchSavedPostsFirstPageFromServer(Query firstPageQuery, int generation) {
         firstPageQuery.get(Source.SERVER)
                 .addOnSuccessListener(value -> resolveSavedPostsFromSnapshot(value, Source.SERVER, generation, true))
-                .addOnFailureListener(e -> { if (generation == savedFetchGeneration) isFetchingSaved = false; });
+                .addOnFailureListener(e -> {
+                    if (generation == savedFetchGeneration) isFetchingSaved = false;
+                });
     }
 
     private void resolveSavedPostsFromSnapshot(com.google.firebase.firestore.QuerySnapshot value, Source source, int generation, boolean fromServer) {
@@ -670,7 +754,9 @@ public class ProfileFragment extends Fragment implements
      */
     private void refreshPosts() {
         fetchGeneration++;
-        isFetching = false; lastVisible = null; isLastPage = false;
+        isFetching = false;
+        lastVisible = null;
+        isLastPage = false;
         postList.clear();
         if (postsAdapter != null && !isSavedTabSelected()) postsAdapter.setPosts(new ArrayList<>());
         fetchPosts();
@@ -679,7 +765,9 @@ public class ProfileFragment extends Fragment implements
     private void refreshSavedPosts() {
         if (!isCurrentUser) return;
         savedFetchGeneration++;
-        isFetchingSaved = false; lastSavedVisible = null; isSavedLastPage = false;
+        isFetchingSaved = false;
+        lastSavedVisible = null;
+        isSavedLastPage = false;
         savedPostList.clear();
         if (postsAdapter != null && isSavedTabSelected()) postsAdapter.setPosts(new ArrayList<>());
         fetchSavedPosts();
@@ -705,7 +793,8 @@ public class ProfileFragment extends Fragment implements
         });
     }
 
-    @Override public void onLikeClick(ForumPost post) {
+    @Override
+    public void onLikeClick(ForumPost post) {
         FirebaseUser u = mAuth.getCurrentUser();
         if (u == null || post.getId() == null) return;
         String uid = u.getUid();
@@ -713,25 +802,39 @@ public class ProfileFragment extends Fragment implements
         boolean liked = post.getLikedBy().containsKey(uid);
         int count = post.getLikeCount();
 
-        if (liked) { post.setLikeCount(Math.max(0, count - 1)); post.getLikedBy().remove(uid); }
-        else { post.setLikeCount(count + 1); post.getLikedBy().put(uid, true); }
+        if (liked) {
+            post.setLikeCount(Math.max(0, count - 1));
+            post.getLikedBy().remove(uid);
+        } else {
+            post.setLikeCount(count + 1);
+            post.getLikedBy().put(uid, true);
+        }
         postsAdapter.notifyDataSetChanged();
 
         db.collection("forumThreads").document(post.getId()).update("likedBy." + uid, liked ? FieldValue.delete() : true)
                 .addOnFailureListener(e -> {
-                    post.setLikeCount(count); if (liked) post.getLikedBy().put(uid, true); else post.getLikedBy().remove(uid);
+                    post.setLikeCount(count);
+                    if (liked) post.getLikedBy().put(uid, true);
+                    else post.getLikedBy().remove(uid);
                     postsAdapter.notifyDataSetChanged();
                 });
     }
 
-    @Override public void onCommentClick(ForumPost post) { onPostClick(post); }
-    @Override public void onPostClick(ForumPost post) {
-        if (isNavigating) return;
-        isNavigating = true;
-        startActivity(new Intent(requireContext(), PostDetailActivity.class).putExtra(PostDetailActivity.EXTRA_POST_ID, post.getId()));
+    @Override
+    public void onCommentClick(ForumPost post) {
+        onPostClick(post);
     }
 
-    @Override public void onOptionsClick(ForumPost post, View view) {
+    @Override
+    public void onPostClick(ForumPost post) {
+        if (isNavigating) return;
+        isNavigating = true;
+        startActivity(new Intent(requireContext(), PostDetailActivity.class)
+                .putExtra(PostDetailActivity.EXTRA_POST_ID, post.getId()));
+    }
+
+    @Override
+    public void onOptionsClick(ForumPost post, View view) {
         if (mAuth.getCurrentUser() == null) {
             showResolvedPostOptions(post, view, false);
             return;
@@ -761,13 +864,15 @@ public class ProfileFragment extends Fragment implements
 
     private void savePostForLater(ForumPost post) {
         firebaseManager.saveForumPost(post.getId(), new FirebaseManager.ForumWriteListener() {
-            @Override public void onSuccess() {
+            @Override
+            public void onSuccess() {
                 if (!isAdded()) return;
                 Toast.makeText(requireContext(), "Post saved", Toast.LENGTH_SHORT).show();
                 refreshSavedPosts();
             }
 
-            @Override public void onFailure(String errorMessage) {
+            @Override
+            public void onFailure(String errorMessage) {
                 if (!isAdded()) return;
                 Toast.makeText(requireContext(), errorMessage != null ? errorMessage : "Failed to save post.", Toast.LENGTH_SHORT).show();
             }
@@ -776,46 +881,64 @@ public class ProfileFragment extends Fragment implements
 
     private void unsavePost(ForumPost post) {
         firebaseManager.unsaveForumPost(post.getId(), new FirebaseManager.ForumWriteListener() {
-            @Override public void onSuccess() {
+            @Override
+            public void onSuccess() {
                 if (!isAdded()) return;
                 Toast.makeText(requireContext(), "Post unsaved", Toast.LENGTH_SHORT).show();
                 refreshSavedPosts();
             }
 
-            @Override public void onFailure(String errorMessage) {
+            @Override
+            public void onFailure(String errorMessage) {
                 if (!isAdded()) return;
                 Toast.makeText(requireContext(), errorMessage != null ? errorMessage : "Failed to unsave post.", Toast.LENGTH_SHORT).show();
             }
         });
     }
 
-    @Override public void onUserClick(String userId) {
+    @Override
+    public void onUserClick(String userId) {
         if (isNavigating || userId.equals(profileUserId)) return;
         isNavigating = true;
-        startActivity(new Intent(requireContext(), UserSocialProfileActivity.class).putExtra(UserSocialProfileActivity.EXTRA_USER_ID, userId));
+        startActivity(new Intent(requireContext(), UserSocialProfileActivity.class)
+                .putExtra(UserSocialProfileActivity.EXTRA_USER_ID, userId));
     }
 
-    @Override public void onMapClick(ForumPost post) {
+    @Override
+    public void onMapClick(ForumPost post) {
         if (isNavigating || post.getLatitude() == null) return;
         isNavigating = true;
-        startActivity(new Intent(requireContext(), NearbyHeatmapActivity.class).putExtra(NearbyHeatmapActivity.EXTRA_CENTER_LAT, post.getLatitude()).putExtra(NearbyHeatmapActivity.EXTRA_CENTER_LNG, post.getLongitude()).putExtra("extra_post_id", post.getId()));
+        startActivity(new Intent(requireContext(), NearbyHeatmapActivity.class)
+                .putExtra(NearbyHeatmapActivity.EXTRA_CENTER_LAT, post.getLatitude())
+                .putExtra(NearbyHeatmapActivity.EXTRA_CENTER_LNG, post.getLongitude())
+                .putExtra("extra_post_id", post.getId()));
     }
 
-    @Override public void onFavoriteClicked(int position, @Nullable CollectionSlot slot) {
-        if (slot == null) { if (isCurrentUser) showFavoritePickerDialog(position); }
-        else {
+    @Override
+    public void onFavoriteClicked(int position, @Nullable CollectionSlot slot) {
+        if (slot == null) {
+            if (isCurrentUser) showFavoritePickerDialog(position);
+        } else {
             if (isNavigating) return;
             isNavigating = true;
             Intent intent = new Intent(requireContext(), ViewBirdCardActivity.class);
-            intent.putExtra(CollectionCardAdapter.EXTRA_IMAGE_URL, slot.getImageUrl()); intent.putExtra(CollectionCardAdapter.EXTRA_COMMON_NAME, slot.getCommonName());
-            intent.putExtra(CollectionCardAdapter.EXTRA_SCI_NAME, slot.getScientificName()); intent.putExtra(CollectionCardAdapter.EXTRA_STATE, slot.getState());
-            intent.putExtra(CollectionCardAdapter.EXTRA_LOCALITY, slot.getLocality()); intent.putExtra(CollectionCardAdapter.EXTRA_BIRD_ID, slot.getBirdId());
+            intent.putExtra(CollectionCardAdapter.EXTRA_IMAGE_URL, slot.getImageUrl());
+            intent.putExtra(CollectionCardAdapter.EXTRA_COMMON_NAME, slot.getCommonName());
+            intent.putExtra(CollectionCardAdapter.EXTRA_SCI_NAME, slot.getScientificName());
+            intent.putExtra(CollectionCardAdapter.EXTRA_STATE, slot.getState());
+            intent.putExtra(CollectionCardAdapter.EXTRA_LOCALITY, slot.getLocality());
+            intent.putExtra(CollectionCardAdapter.EXTRA_BIRD_ID, slot.getBirdId());
             if (slot.getTimestamp() != null) intent.putExtra(CollectionCardAdapter.EXTRA_CAUGHT_TIME, slot.getTimestamp().getTime());
             startActivity(intent);
         }
     }
 
-    @Override public boolean onFavoriteLongPressed(int position, @Nullable CollectionSlot slot) { if (!isCurrentUser) return false; showFavoritePickerDialog(position); return true; }
+    @Override
+    public boolean onFavoriteLongPressed(int position, @Nullable CollectionSlot slot) {
+        if (!isCurrentUser) return false;
+        showFavoritePickerDialog(position);
+        return true;
+    }
 
     /**
      * Takes prepared data and presents it on screen or in a dialog/menu.
@@ -830,28 +953,58 @@ public class ProfileFragment extends Fragment implements
         if (allCollectionSlots.isEmpty()) return;
         // Bind or inflate the UI pieces this method needs before it can update the screen.
         View dv = LayoutInflater.from(requireContext()).inflate(R.layout.dialog_favorite_picker, null);
-        EditText et = dv.findViewById(R.id.etSearch); ListView lv = dv.findViewById(R.id.listView); Button clr = dv.findViewById(R.id.btnClear);
+        EditText et = dv.findViewById(R.id.etSearch);
+        ListView lv = dv.findViewById(R.id.listView);
+        Button clr = dv.findViewById(R.id.btnClear);
         List<CollectionSlot> filtered = new ArrayList<>(allCollectionSlots);
         ArrayAdapter<String> adp = new ArrayAdapter<>(requireContext(), android.R.layout.simple_list_item_1, getSlotNames(filtered));
         // Hook the data source to the list/grid adapter so model objects can render as UI rows/cards.
         lv.setAdapter(adp);
-        AlertDialog dialog = new AlertDialog.Builder(requireContext()).setTitle("Pick Favorite").setView(dv).setNegativeButton("Cancel", null).create();
+        AlertDialog dialog = new AlertDialog.Builder(requireContext())
+                .setTitle("Pick Favorite")
+                .setView(dv)
+                .setNegativeButton("Cancel", null)
+                .create();
+
         et.addTextChangedListener(new android.text.TextWatcher() {
-            @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
-            @Override public void onTextChanged(CharSequence s, int start, int before, int count) {
-                filtered.clear(); String q = s.toString().toLowerCase();
-                for (CollectionSlot sl : allCollectionSlots) if (sl.getCommonName() != null && sl.getCommonName().toLowerCase().contains(q)) filtered.add(sl);
-                adp.clear(); adp.addAll(getSlotNames(filtered)); adp.notifyDataSetChanged();
+            @Override
+            public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
+
+            @Override
+            public void onTextChanged(CharSequence s, int start, int before, int count) {
+                filtered.clear();
+                String q = s.toString().toLowerCase();
+                for (CollectionSlot sl : allCollectionSlots) {
+                    if (sl.getCommonName() != null && sl.getCommonName().toLowerCase().contains(q)) filtered.add(sl);
+                }
+                adp.clear();
+                adp.addAll(getSlotNames(filtered));
+                adp.notifyDataSetChanged();
             }
-            @Override public void afterTextChanged(android.text.Editable s) {}
+
+            @Override
+            public void afterTextChanged(android.text.Editable s) {}
         });
-        lv.setOnItemClickListener((parent, view, which, id) -> { saveFavoriteSelection(position, filtered.get(which).getId()); dialog.dismiss(); });
+
+        lv.setOnItemClickListener((parent, view, which, id) -> {
+            saveFavoriteSelection(position, filtered.get(which).getId());
+            dialog.dismiss();
+        });
+
         // Attach the user interaction that should run when this control is tapped.
-        clr.setOnClickListener(v -> { saveFavoriteSelection(position, ""); dialog.dismiss(); });
+        clr.setOnClickListener(v -> {
+            saveFavoriteSelection(position, "");
+            dialog.dismiss();
+        });
+
         dialog.show();
     }
 
-    private List<String> getSlotNames(List<CollectionSlot> slots) { List<String> ns = new ArrayList<>(); for (CollectionSlot s : slots) ns.add(s.getCommonName()); return ns; }
+    private List<String> getSlotNames(List<CollectionSlot> slots) {
+        List<String> ns = new ArrayList<>();
+        for (CollectionSlot s : slots) ns.add(s.getCommonName());
+        return ns;
+    }
 
     /**
      * Builds data from the current screen/object state and writes it out to storage, Firebase, or
@@ -864,15 +1017,18 @@ public class ProfileFragment extends Fragment implements
     private void saveFavoriteSelection(int pos, String key) {
         while (favoriteCardKeys.size() < FAVORITE_SLOT_COUNT) favoriteCardKeys.add("");
         // Persist the new state so the action is saved outside the current screen.
-        favoriteCardKeys.set(pos, key); refreshFavoritesDisplay();
+        favoriteCardKeys.set(pos, key);
+        refreshFavoritesDisplay();
         if (profileUserId == null) return;
         // Set up or query the Firebase layer that supplies/stores this feature's data.
         DocumentReference ref = db.collection("users").document(profileUserId);
         db.runTransaction(t -> {
-            DocumentSnapshot snap = t.get(ref); List<String> keys = (List<String>) snap.get("favoriteCardKeys");
+            DocumentSnapshot snap = t.get(ref);
+            List<String> keys = (List<String>) snap.get("favoriteCardKeys");
             keys = (keys == null) ? new ArrayList<>() : new ArrayList<>(keys);
             while (keys.size() < FAVORITE_SLOT_COUNT) keys.add("");
-            keys.set(pos, key); t.update(ref, "favoriteCardKeys", keys);
+            keys.set(pos, key);
+            t.update(ref, "favoriteCardKeys", keys);
             return null;
         });
     }
@@ -902,14 +1058,29 @@ public class ProfileFragment extends Fragment implements
      * Takes prepared data and presents it on screen or in a dialog/menu.
      */
     private void showOtherReportDialog(OnReasonEnteredListener l) {
-        AlertDialog.Builder b = new AlertDialog.Builder(requireContext()); b.setTitle("Report Reason");
-        final EditText i = new EditText(requireContext()); i.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE); i.setHint("Reason..."); i.setFilters(new InputFilter[]{new InputFilter.LengthFilter(200)});
-        FrameLayout c = new FrameLayout(requireContext()); FrameLayout.LayoutParams p = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT); p.leftMargin = p.rightMargin = 40; i.setLayoutParams(p); c.addView(i); b.setView(c);
-        b.setPositiveButton("Submit", (d, w) -> { String r = i.getText().toString().trim(); if (!r.isEmpty()) l.onReasonEntered(r); });
-        b.setNegativeButton("Cancel", (d, w) -> d.cancel()); b.show();
+        AlertDialog.Builder b = new AlertDialog.Builder(requireContext());
+        b.setTitle("Report Reason");
+        final EditText i = new EditText(requireContext());
+        i.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE);
+        i.setHint("Reason...");
+        i.setFilters(new InputFilter[]{new InputFilter.LengthFilter(200)});
+        FrameLayout c = new FrameLayout(requireContext());
+        FrameLayout.LayoutParams p = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        p.leftMargin = p.rightMargin = 40;
+        i.setLayoutParams(p);
+        c.addView(i);
+        b.setView(c);
+        b.setPositiveButton("Submit", (d, w) -> {
+            String r = i.getText().toString().trim();
+            if (!r.isEmpty()) l.onReasonEntered(r);
+        });
+        b.setNegativeButton("Cancel", (d, w) -> d.cancel());
+        b.show();
     }
 
-    private interface OnReasonEnteredListener { void onReasonEntered(String r); }
+    private interface OnReasonEnteredListener {
+        void onReasonEntered(String r);
+    }
 
     /**
      * Main logic block for this part of the feature.
@@ -917,10 +1088,20 @@ public class ProfileFragment extends Fragment implements
      * or needs attention.
      */
     private void submitReport(ForumPost post, String r) {
-        FirebaseUser u = mAuth.getCurrentUser(); if (u == null) return;
+        FirebaseUser u = mAuth.getCurrentUser();
+        if (u == null) return;
         // Give the user immediate feedback about the result of this action.
-        firebaseManager.addReport(new Report("post", post.getId(), u.getUid(), r), t -> { if (isAdded() && t.isSuccessful()) Toast.makeText(getContext(), "Reported", Toast.LENGTH_SHORT).show(); });
+        firebaseManager.addReport(new Report("post", post.getId(), u.getUid(), r), t -> {
+            if (isAdded() && t.isSuccessful()) Toast.makeText(getContext(), "Reported", Toast.LENGTH_SHORT).show();
+        });
     }
 
-    @Override public void onStop() { super.onStop(); if (profileListener != null) { profileListener.remove(); profileListener = null; } }
+    @Override
+    public void onStop() {
+        super.onStop();
+        if (profileListener != null) {
+            profileListener.remove();
+            profileListener = null;
+        }
+    }
 }

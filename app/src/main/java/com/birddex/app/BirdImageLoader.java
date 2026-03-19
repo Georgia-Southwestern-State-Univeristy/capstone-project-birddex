@@ -40,6 +40,12 @@ public final class BirdImageLoader {
     /**
      * Loads a bird image into the provided ImageView by trying the species code/document id first,
      * then falling back to common/scientific name lookups.
+     *
+     * Cache flow:
+     * 1. In-memory resolved URL cache
+     * 2. Firestore local cache
+     * 3. Firestore server
+     * 4. Glide memory/disk cache for the actual image file
      */
     public static void loadBirdImageInto(@NonNull ImageView imageView,
                                          @Nullable String birdId,
@@ -82,20 +88,21 @@ public final class BirdImageLoader {
         if (!isStillBound(imageView, requestKey)) return;
 
         if (!isBlank(birdId)) {
-            db.collection(collectionName).document(birdId).get(Source.SERVER)
-                    .addOnSuccessListener(doc -> {
+            getDocumentCacheThenServer(collectionName, birdId,
+                    doc -> {
                         if (!isStillBound(imageView, requestKey)) return;
-                        if (doc.exists()) {
+                        if (doc != null && doc.exists()) {
                             processImageDoc(imageView, requestKey, birdId, commonName, scientificName, doc);
                         } else {
                             queryFallbacks(imageView, requestKey, collectionName, birdId, commonName, scientificName, onNotFound);
                         }
-                    })
-                    .addOnFailureListener(e -> {
+                    },
+                    e -> {
                         Log.e(TAG, "Failed direct image lookup in " + collectionName + " for birdId=" + birdId, e);
                         if (!isStillBound(imageView, requestKey)) return;
                         queryFallbacks(imageView, requestKey, collectionName, birdId, commonName, scientificName, onNotFound);
-                    });
+                    }
+            );
         } else {
             queryFallbacks(imageView, requestKey, collectionName, birdId, commonName, scientificName, onNotFound);
         }
@@ -133,19 +140,69 @@ public final class BirdImageLoader {
             return;
         }
 
-        db.collection(collectionName)
-                .whereEqualTo(fieldName, value)
-                .limit(1)
-                .get(Source.SERVER)
-                .addOnSuccessListener(querySnapshot -> {
+        getSingleQueryResultCacheThenServer(collectionName, fieldName, value,
+                querySnapshot -> {
                     if (!isStillBound(imageView, requestKey)) return;
                     handleQueryResult(imageView, requestKey, birdId, commonName, scientificName, querySnapshot, onNotFound);
-                })
-                .addOnFailureListener(e -> {
+                },
+                e -> {
                     Log.e(TAG, "Failed image query in " + collectionName + " where " + fieldName + "=" + value, e);
                     if (!isStillBound(imageView, requestKey)) return;
                     onNotFound.run();
-                });
+                }
+        );
+    }
+
+    private static void getDocumentCacheThenServer(@NonNull String collectionName,
+                                                   @NonNull String docId,
+                                                   @NonNull DocumentHandler onSuccess,
+                                                   @NonNull FailureHandler onFailure) {
+        db.collection(collectionName).document(docId).get(Source.CACHE)
+                .addOnSuccessListener(cacheDoc -> {
+                    if (cacheDoc.exists()) {
+                        onSuccess.handle(cacheDoc);
+                    } else {
+                        db.collection(collectionName).document(docId).get(Source.SERVER)
+                                .addOnSuccessListener(onSuccess::handle)
+                                .addOnFailureListener(onFailure::handle);
+                    }
+                })
+                .addOnFailureListener(cacheError ->
+                        db.collection(collectionName).document(docId).get(Source.SERVER)
+                                .addOnSuccessListener(onSuccess::handle)
+                                .addOnFailureListener(onFailure::handle)
+                );
+    }
+
+    private static void getSingleQueryResultCacheThenServer(@NonNull String collectionName,
+                                                            @NonNull String fieldName,
+                                                            @NonNull String value,
+                                                            @NonNull QueryHandler onSuccess,
+                                                            @NonNull FailureHandler onFailure) {
+        db.collection(collectionName)
+                .whereEqualTo(fieldName, value)
+                .limit(1)
+                .get(Source.CACHE)
+                .addOnSuccessListener(cacheSnapshot -> {
+                    if (cacheSnapshot != null && !cacheSnapshot.isEmpty()) {
+                        onSuccess.handle(cacheSnapshot);
+                    } else {
+                        db.collection(collectionName)
+                                .whereEqualTo(fieldName, value)
+                                .limit(1)
+                                .get(Source.SERVER)
+                                .addOnSuccessListener(onSuccess::handle)
+                                .addOnFailureListener(onFailure::handle);
+                    }
+                })
+                .addOnFailureListener(cacheError ->
+                        db.collection(collectionName)
+                                .whereEqualTo(fieldName, value)
+                                .limit(1)
+                                .get(Source.SERVER)
+                                .addOnSuccessListener(onSuccess::handle)
+                                .addOnFailureListener(onFailure::handle)
+                );
     }
 
     private static void handleQueryResult(@NonNull ImageView imageView,
@@ -316,5 +373,17 @@ public final class BirdImageLoader {
         if (!isBlank(b)) return b.trim();
         if (!isBlank(c)) return c.trim();
         return fallback;
+    }
+
+    private interface DocumentHandler {
+        void handle(@NonNull DocumentSnapshot documentSnapshot);
+    }
+
+    private interface QueryHandler {
+        void handle(@Nullable QuerySnapshot querySnapshot);
+    }
+
+    private interface FailureHandler {
+        void handle(@NonNull Exception e);
     }
 }

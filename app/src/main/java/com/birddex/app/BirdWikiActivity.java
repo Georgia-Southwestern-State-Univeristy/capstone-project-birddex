@@ -1,5 +1,6 @@
 package com.birddex.app;
 
+import android.content.SharedPreferences;
 import android.graphics.drawable.Drawable;
 import android.os.Bundle;
 import android.os.Handler;
@@ -7,9 +8,11 @@ import android.os.Looper;
 import android.text.method.LinkMovementMethod;
 import android.util.Log;
 import android.view.View;
+import android.widget.ImageButton;
 import android.widget.ImageView;
 import android.widget.TextView;
 import android.widget.Toast;
+
 
 import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatActivity;
@@ -24,6 +27,11 @@ import com.google.firebase.firestore.FirebaseFirestore;
 import com.google.firebase.firestore.QuerySnapshot;
 import com.google.firebase.firestore.Source;
 
+import org.json.JSONArray;
+import org.json.JSONException;
+import org.json.JSONObject;
+
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -40,11 +48,19 @@ public class BirdWikiActivity extends AppCompatActivity {
     public static final String EXTRA_BIRD_ID = "birdId";
     private static final long LOADING_TIMEOUT_MS = 10000L;
 
+    // Local app cache for Cloud Function facts so the page does not repeatedly call
+    // the function when Firestore cache is missing but recent facts were already fetched.
+    private static final String FACTS_CACHE_PREFS = "birdwiki_facts_cache";
+    private static final long FACTS_CACHE_TTL_MS = 12L * 60L * 60L * 1000L;
+
+
+
     private FirebaseFirestore db;
     private FirebaseManager firebaseManager;
     private boolean isGeneratingFacts = false;
 
     private ImageView ivBirdHeaderImage;
+    private ImageButton btnTrackBird;
     private TextView tvPageTitle;
     private TextView tvPageScientificName;
     private View contentScrollView;
@@ -54,6 +70,7 @@ public class BirdWikiActivity extends AppCompatActivity {
     private boolean factsLoaded = false;
     private boolean imageLoaded = false;
     private boolean contentShown = false;
+    private boolean isCurrentBirdTracked = false;
 
     private String currentBirdId;
     private String currentCommonName;
@@ -85,6 +102,7 @@ public class BirdWikiActivity extends AppCompatActivity {
     @Override
     protected void onCreate(@Nullable Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        SystemBarHelper.applyStandardNavBar(this);
         setContentView(R.layout.activity_bird_wiki);
 
         // Set up or query the Firebase layer that supplies/stores this feature's data.
@@ -127,8 +145,13 @@ public class BirdWikiActivity extends AppCompatActivity {
         contentScrollView = findViewById(R.id.contentScrollView);
         loadingOverlay = findViewById(R.id.loadingOverlay);
         ivBirdHeaderImage = findViewById(R.id.ivBirdHeaderImage);
+        btnTrackBird = findViewById(R.id.btnTrackBird);
         tvPageTitle = findViewById(R.id.tvPageTitle);
         tvPageScientificName = findViewById(R.id.tvPageScientificName);
+
+        if (btnTrackBird != null) {
+            btnTrackBird.setOnClickListener(v -> toggleTrackedBirdState());
+        }
 
         registerFactView("family", R.id.tvFamily);
         registerFactView("species", R.id.tvSpecies);
@@ -204,24 +227,74 @@ public class BirdWikiActivity extends AppCompatActivity {
                 })
                 .addOnFailureListener(e -> fetchBasicsFromServer(birdId));
 
-        // 2. Coordinate Facts Loading (Check cache first for both)
+        // 2. Coordinate Facts Loading (Check Firestore cache first for both)
         db.collection("birdFacts").document(birdId).get(Source.CACHE)
                 .addOnSuccessListener(genDoc -> {
                     db.collection("birdFacts").document(birdId).collection("hunterFacts").document(birdId).get(Source.CACHE)
                             .addOnSuccessListener(hunterDoc -> {
                                 if (genDoc.exists() && hunterDoc.exists()) {
-                                    // Both found in cache!
+                                    // Both found in Firestore cache.
                                     updateGeneralFactsFromMap(genDoc.getData());
                                     updateHunterFactsFromMap(hunterDoc.getData());
                                     markFactsLoaded();
                                 } else {
-                                    // Something is missing, call Cloud Function once
-                                    fetchFactsFromCloudFunction(birdId);
+                                    // Firestore cache missed something. Try the local app cache
+                                    // before calling the Cloud Function again.
+                                    Map<String, Object> cachedFacts = getCachedFactsFromLocalCache(birdId);
+                                    if (cachedFacts != null) {
+                                        Object genFactsObj = cachedFacts.get("generalFacts");
+                                        if (genFactsObj instanceof Map) {
+                                            updateGeneralFactsFromMap((Map<String, Object>) genFactsObj);
+                                        }
+
+                                        Object hunterFactsObj = cachedFacts.get("hunterFacts");
+                                        if (hunterFactsObj instanceof Map) {
+                                            updateHunterFactsFromMap((Map<String, Object>) hunterFactsObj);
+                                        }
+
+                                        markFactsLoaded();
+                                    } else {
+                                        fetchFactsFromCloudFunction(birdId);
+                                    }
                                 }
                             })
-                            .addOnFailureListener(e -> fetchFactsFromCloudFunction(birdId));
+                            .addOnFailureListener(e -> {
+                                Map<String, Object> cachedFacts = getCachedFactsFromLocalCache(birdId);
+                                if (cachedFacts != null) {
+                                    Object genFactsObj = cachedFacts.get("generalFacts");
+                                    if (genFactsObj instanceof Map) {
+                                        updateGeneralFactsFromMap((Map<String, Object>) genFactsObj);
+                                    }
+
+                                    Object hunterFactsObj = cachedFacts.get("hunterFacts");
+                                    if (hunterFactsObj instanceof Map) {
+                                        updateHunterFactsFromMap((Map<String, Object>) hunterFactsObj);
+                                    }
+
+                                    markFactsLoaded();
+                                } else {
+                                    fetchFactsFromCloudFunction(birdId);
+                                }
+                            });
                 })
-                .addOnFailureListener(e -> fetchFactsFromCloudFunction(birdId));
+                .addOnFailureListener(e -> {
+                    Map<String, Object> cachedFacts = getCachedFactsFromLocalCache(birdId);
+                    if (cachedFacts != null) {
+                        Object genFactsObj = cachedFacts.get("generalFacts");
+                        if (genFactsObj instanceof Map) {
+                            updateGeneralFactsFromMap((Map<String, Object>) genFactsObj);
+                        }
+
+                        Object hunterFactsObj = cachedFacts.get("hunterFacts");
+                        if (hunterFactsObj instanceof Map) {
+                            updateHunterFactsFromMap((Map<String, Object>) hunterFactsObj);
+                        }
+
+                        markFactsLoaded();
+                    } else {
+                        fetchFactsFromCloudFunction(birdId);
+                    }
+                });
     }
 
     /**
@@ -271,6 +344,7 @@ public class BirdWikiActivity extends AppCompatActivity {
         markBasicsLoaded();
 
         loadBirdImage(currentBirdId, currentCommonName, currentScientificName);
+        loadTrackedBirdState();
     }
 
     /**
@@ -320,17 +394,39 @@ public class BirdWikiActivity extends AppCompatActivity {
 
         if (!isBlank(birdId)) {
             // First try the document ID directly because your image collections are keyed by species code.
-            db.collection(collectionName).document(birdId).get(Source.SERVER)
-                    .addOnSuccessListener(doc -> {
-                        if (doc.exists()) {
-                            processImage(doc);
+            // Cache first avoids unnecessary server reads when the image doc is already in Firestore cache.
+            db.collection(collectionName).document(birdId).get(Source.CACHE)
+                    .addOnSuccessListener(cacheDoc -> {
+                        if (cacheDoc.exists()) {
+                            processImage(cacheDoc);
                         } else {
-                            queryBirdImageFallbacks(collectionName, birdId, commonName, scientificName, onNotFound);
+                            db.collection(collectionName).document(birdId).get(Source.SERVER)
+                                    .addOnSuccessListener(serverDoc -> {
+                                        if (serverDoc.exists()) {
+                                            processImage(serverDoc);
+                                        } else {
+                                            queryBirdImageFallbacks(collectionName, birdId, commonName, scientificName, onNotFound);
+                                        }
+                                    })
+                                    .addOnFailureListener(e -> {
+                                        Log.e(TAG, "Failed direct image lookup in " + collectionName + " for birdId=" + birdId, e);
+                                        queryBirdImageFallbacks(collectionName, birdId, commonName, scientificName, onNotFound);
+                                    });
                         }
                     })
                     .addOnFailureListener(e -> {
-                        Log.e(TAG, "Failed direct image lookup in " + collectionName + " for birdId=" + birdId, e);
-                        queryBirdImageFallbacks(collectionName, birdId, commonName, scientificName, onNotFound);
+                        db.collection(collectionName).document(birdId).get(Source.SERVER)
+                                .addOnSuccessListener(serverDoc -> {
+                                    if (serverDoc.exists()) {
+                                        processImage(serverDoc);
+                                    } else {
+                                        queryBirdImageFallbacks(collectionName, birdId, commonName, scientificName, onNotFound);
+                                    }
+                                })
+                                .addOnFailureListener(serverError -> {
+                                    Log.e(TAG, "Failed direct image lookup in " + collectionName + " for birdId=" + birdId, serverError);
+                                    queryBirdImageFallbacks(collectionName, birdId, commonName, scientificName, onNotFound);
+                                });
                     });
         } else {
             queryBirdImageFallbacks(collectionName, birdId, commonName, scientificName, onNotFound);
@@ -377,11 +473,32 @@ public class BirdWikiActivity extends AppCompatActivity {
         db.collection(collectionName)
                 .whereEqualTo(fieldName, value)
                 .limit(1)
-                .get(Source.SERVER)
-                .addOnSuccessListener(querySnapshot -> processImageQueryResult(querySnapshot, onNotFound))
+                .get(Source.CACHE)
+                .addOnSuccessListener(cacheSnapshot -> {
+                    if (cacheSnapshot != null && !cacheSnapshot.isEmpty()) {
+                        processImageQueryResult(cacheSnapshot, onNotFound);
+                    } else {
+                        db.collection(collectionName)
+                                .whereEqualTo(fieldName, value)
+                                .limit(1)
+                                .get(Source.SERVER)
+                                .addOnSuccessListener(serverSnapshot -> processImageQueryResult(serverSnapshot, onNotFound))
+                                .addOnFailureListener(e -> {
+                                    Log.e(TAG, "Failed image query in " + collectionName + " where " + fieldName + "=" + value, e);
+                                    onNotFound.run();
+                                });
+                    }
+                })
                 .addOnFailureListener(e -> {
-                    Log.e(TAG, "Failed image query in " + collectionName + " where " + fieldName + "=" + value, e);
-                    onNotFound.run();
+                    db.collection(collectionName)
+                            .whereEqualTo(fieldName, value)
+                            .limit(1)
+                            .get(Source.SERVER)
+                            .addOnSuccessListener(serverSnapshot -> processImageQueryResult(serverSnapshot, onNotFound))
+                            .addOnFailureListener(serverError -> {
+                                Log.e(TAG, "Failed image query in " + collectionName + " where " + fieldName + "=" + value, serverError);
+                                onNotFound.run();
+                            });
                 });
     }
 
@@ -550,6 +667,10 @@ public class BirdWikiActivity extends AppCompatActivity {
                 if (resultData instanceof Map) {
                     Map<String, Object> resultMap = (Map<String, Object>) resultData;
 
+                    // Save the successful Cloud Function result locally so the page can reuse it
+                    // later without calling the function again right away.
+                    saveFactsToLocalCache(birdId, resultMap);
+
                     // Update general facts
                     Object genFactsObj = resultMap.get("generalFacts");
                     if (genFactsObj instanceof Map) {
@@ -609,6 +730,69 @@ public class BirdWikiActivity extends AppCompatActivity {
         TextView tv = factViews.get(key);
         if (tv != null) {
             tv.setText(firstNonBlank(value, "Not available yet."));
+        }
+    }
+
+
+
+    private void loadTrackedBirdState() {
+        if (isBlank(currentBirdId)) return;
+
+        firebaseManager.isBirdTracked(currentBirdId, new FirebaseManager.TrackedBirdStateListener() {
+            @Override
+            public void onResult(boolean isTracked) {
+                isCurrentBirdTracked = isTracked;
+                updateTrackButtonUI();
+            }
+
+            @Override
+            public void onFailure(String errorMessage) {
+                Log.e(TAG, "Failed to load tracked bird state: " + errorMessage);
+            }
+        });
+    }
+
+    /**
+     * Updates object/screen state by storing a new value or reconfiguring a dependency.
+     */
+    private void updateTrackButtonUI() {
+        if (btnTrackBird != null) {
+            btnTrackBird.setImageResource(isCurrentBirdTracked ? R.drawable.ic_favorite : R.drawable.ic_favorite_border);
+            btnTrackBird.setContentDescription(isCurrentBirdTracked ? "Untrack bird" : "Track bird");
+        }
+    }
+
+    private void toggleTrackedBirdState() {
+        if (isBlank(currentBirdId)) {
+            Toast.makeText(this, "Bird info is not ready yet.", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        if (isCurrentBirdTracked) {
+            firebaseManager.untrackBird(currentBirdId, task -> {
+                if (task.isSuccessful()) {
+                    isCurrentBirdTracked = false;
+                    updateTrackButtonUI();
+                    Toast.makeText(this, "Bird untracked", Toast.LENGTH_SHORT).show();
+                } else {
+                    Toast.makeText(this, "Failed to untrack bird.", Toast.LENGTH_SHORT).show();
+                }
+            });
+        } else {
+            firebaseManager.trackBird(
+                    currentBirdId,
+                    currentCommonName,
+                    currentScientificName,
+                    task -> {
+                        if (task.isSuccessful()) {
+                            isCurrentBirdTracked = true;
+                            updateTrackButtonUI();
+                            Toast.makeText(this, "Bird tracked", Toast.LENGTH_SHORT).show();
+                        } else {
+                            Toast.makeText(this, "Failed to track bird.", Toast.LENGTH_SHORT).show();
+                        }
+                    }
+            );
         }
     }
 
@@ -692,5 +876,141 @@ public class BirdWikiActivity extends AppCompatActivity {
      */
     private String getString(Object val) {
         return val == null ? null : String.valueOf(val);
+    }
+
+    /**
+     * Returns cached Cloud Function facts if they are still fresh enough to reuse.
+     */
+    @Nullable
+    private Map<String, Object> getCachedFactsFromLocalCache(String birdId) {
+        if (isBlank(birdId)) return null;
+
+        SharedPreferences prefs = getSharedPreferences(FACTS_CACHE_PREFS, MODE_PRIVATE);
+        long cachedAt = prefs.getLong(birdId + "_ts", 0L);
+        String json = prefs.getString(birdId + "_json", null);
+
+        if (cachedAt <= 0L || isBlank(json)) {
+            return null;
+        }
+
+        long ageMs = System.currentTimeMillis() - cachedAt;
+        if (ageMs > FACTS_CACHE_TTL_MS) {
+            prefs.edit()
+                    .remove(birdId + "_ts")
+                    .remove(birdId + "_json")
+                    .apply();
+            return null;
+        }
+
+        try {
+            JSONObject jsonObject = new JSONObject(json);
+            return jsonObjectToMap(jsonObject);
+        } catch (JSONException e) {
+            Log.e(TAG, "Failed to parse cached facts JSON for birdId=" + birdId, e);
+            prefs.edit()
+                    .remove(birdId + "_ts")
+                    .remove(birdId + "_json")
+                    .apply();
+            return null;
+        }
+    }
+
+    /**
+     * Saves the Cloud Function facts result locally so it can be reused on later opens.
+     */
+    private void saveFactsToLocalCache(String birdId, Map<String, Object> resultMap) {
+        if (isBlank(birdId) || resultMap == null || resultMap.isEmpty()) return;
+
+        try {
+            JSONObject jsonObject = mapToJsonObject(resultMap);
+            getSharedPreferences(FACTS_CACHE_PREFS, MODE_PRIVATE)
+                    .edit()
+                    .putLong(birdId + "_ts", System.currentTimeMillis())
+                    .putString(birdId + "_json", jsonObject.toString())
+                    .apply();
+        } catch (JSONException e) {
+            Log.e(TAG, "Failed to save facts cache for birdId=" + birdId, e);
+        }
+    }
+
+    /**
+     * Converts a Java Map into JSON for local storage.
+     */
+    private JSONObject mapToJsonObject(Map<String, Object> map) throws JSONException {
+        JSONObject object = new JSONObject();
+        for (Map.Entry<String, Object> entry : map.entrySet()) {
+            object.put(entry.getKey(), toJsonValue(entry.getValue()));
+        }
+        return object;
+    }
+
+    /**
+     * Converts nested Java values into JSON-safe values.
+     */
+    private Object toJsonValue(Object value) throws JSONException {
+        if (value == null) return JSONObject.NULL;
+
+        if (value instanceof Map) {
+            return mapToJsonObject((Map<String, Object>) value);
+        }
+
+        if (value instanceof List) {
+            JSONArray array = new JSONArray();
+            for (Object item : (List<?>) value) {
+                array.put(toJsonValue(item));
+            }
+            return array;
+        }
+
+        if (value instanceof String ||
+                value instanceof Number ||
+                value instanceof Boolean) {
+            return value;
+        }
+
+        return String.valueOf(value);
+    }
+
+    /**
+     * Converts JSON back into a Java Map after reading the local cache.
+     */
+    private Map<String, Object> jsonObjectToMap(JSONObject object) throws JSONException {
+        Map<String, Object> map = new HashMap<>();
+        JSONArray names = object.names();
+        if (names == null) {
+            return map;
+        }
+
+        for (int i = 0; i < names.length(); i++) {
+            String key = names.getString(i);
+            Object value = object.get(key);
+            map.put(key, fromJsonValue(value));
+        }
+
+        return map;
+    }
+
+    /**
+     * Converts JSON values back into normal Java values.
+     */
+    private Object fromJsonValue(Object value) throws JSONException {
+        if (value == null || value == JSONObject.NULL) {
+            return null;
+        }
+
+        if (value instanceof JSONObject) {
+            return jsonObjectToMap((JSONObject) value);
+        }
+
+        if (value instanceof JSONArray) {
+            JSONArray array = (JSONArray) value;
+            List<Object> list = new ArrayList<>();
+            for (int i = 0; i < array.length(); i++) {
+                list.add(fromJsonValue(array.get(i)));
+            }
+            return list;
+        }
+
+        return value;
     }
 }

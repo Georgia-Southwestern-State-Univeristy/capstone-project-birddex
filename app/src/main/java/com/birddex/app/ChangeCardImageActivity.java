@@ -83,6 +83,7 @@ public class ChangeCardImageActivity extends AppCompatActivity {
     @Override
     protected void onCreate(@Nullable Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        SystemBarHelper.applyStandardNavBar(this);
         setContentView(R.layout.activity_change_card_image);
         // Bind or inflate the UI pieces this method needs before it can update the screen.
         View root = findViewById(R.id.rootChangeCardImage);

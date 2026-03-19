@@ -1,15 +1,23 @@
 package com.birddex.app;
 
 import android.content.Intent;
+import android.graphics.Color;
+import android.os.Build;
 import android.os.Bundle;
 import android.util.Log;
 import android.view.View;
+import android.view.ViewGroup;
 import android.view.animation.Animation;
 import android.view.animation.AnimationUtils;
 import android.widget.TextView;
 import android.widget.Toast;
 
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.core.graphics.Insets;
+import androidx.core.view.ViewCompat;
+import androidx.core.view.WindowCompat;
+import androidx.core.view.WindowInsetsCompat;
+import androidx.core.view.WindowInsetsControllerCompat;
 import androidx.fragment.app.Fragment;
 
 import com.google.android.material.bottomnavigation.BottomNavigationView;
@@ -25,7 +33,7 @@ import java.util.List;
  * HomeActivity serves as the main navigation hub of the application.
  * It uses a BottomNavigationView to switch between different fragments
  * and pre-loads the core Georgia bird list in the background.
- * 
+ *
  * Race Condition fixes:
  *  - Added isNavigating guard for camera launch.
  */
@@ -38,13 +46,19 @@ import java.util.List;
 public class HomeActivity extends AppCompatActivity implements NetworkMonitor.NetworkStatusListener {
 
     private static final String TAG = "HomeActivity";
+    private static final long GEORGIA_SYNC_CHECK_TTL_MS = 24L * 60L * 60L * 1000L;
+    private static final int GEORGIA_BIRD_DATA_REFRESH_VERSION = 1;
+
     private BottomNavigationView bottomNav;
+    private View bottomNavContainer;
+    private View bottomNavSystemInset;
     private TextView welcomeMessageTv;
 
     // Tracks the last "real" tab (anything except camera)
     private int lastNonCameraTabId = R.id.nav_forum;
 
     private EbirdApi ebirdApi; // New: EbirdApi instance
+    private BirdCacheManager birdCacheManager;
     private FirebaseManager firebaseManager;
     private List<JSONObject> allGeorgiaBirds; // New: To hold the core bird list
     private NetworkMonitor networkMonitor; // New: NetworkMonitor instance
@@ -69,10 +83,17 @@ public class HomeActivity extends AppCompatActivity implements NetworkMonitor.Ne
         // Initialize the bottom navigation bar.
         // Bind or inflate the UI pieces this method needs before it can update the screen.
         bottomNav = findViewById(R.id.bottomNav);
+        bottomNavContainer = findViewById(R.id.bottomNavContainer);
+        bottomNavSystemInset = findViewById(R.id.bottomNavSystemInset);
         welcomeMessageTv = findViewById(R.id.welcomeMessage);
 
+        // Apply bottom system-bar handling so gesture mode keeps the brown look,
+        // while 3-button mode shows a black area under the system buttons.
+        applyBottomNavInsets();
+
         // Initialize EbirdApi and the bird list
-        ebirdApi = new EbirdApi();
+        ebirdApi = new EbirdApi(this);
+        birdCacheManager = new BirdCacheManager(this);
         // Set up or query the Firebase layer that supplies/stores this feature's data.
         firebaseManager = new FirebaseManager(this);
         allGeorgiaBirds = new ArrayList<>();
@@ -80,9 +101,10 @@ public class HomeActivity extends AppCompatActivity implements NetworkMonitor.Ne
         // Initialize NetworkMonitor
         networkMonitor = new NetworkMonitor(this, this);
 
-        // Load the core Georgia bird list in the background
+        // Load the cached Georgia bird list immediately, then refresh only when needed.
+        loadCachedGeorgiaBirdListImmediately();
         fetchCoreGeorgiaBirdList();
-        checkBirdDataSync();
+        maybeCheckBirdDataSync(false);
 
         // Check for deep links or specific navigation requests
         handleIntent(getIntent());
@@ -102,7 +124,7 @@ public class HomeActivity extends AppCompatActivity implements NetworkMonitor.Ne
             if (id == R.id.nav_camera) {
                 if (isNavigating) return false;
                 isNavigating = true;
-                
+
                 // Move into the next screen and pass the identifiers/data that screen needs.
                 startActivity(new Intent(HomeActivity.this, ImageUploadActivity.class));
 
@@ -131,6 +153,85 @@ public class HomeActivity extends AppCompatActivity implements NetworkMonitor.Ne
 
             return false;
         });
+    }
+
+    /**
+     * Keeps the brown bottom nav looking the same in gesture mode,
+     * but adds a black strip only for 3-button mode.
+     *
+     * This expects activity_home.xml to contain:
+     * - @id/bottomNavContainer
+     * - @id/bottomNavSystemInset
+     */
+    private void applyBottomNavInsets() {
+        if (bottomNav == null) return;
+
+        boolean isThreeButtonNav = isThreeButtonNavigationMode();
+
+        // Keep your bottom nav looking the same.
+        bottomNav.setPadding(
+                bottomNav.getPaddingLeft(),
+                dp(6),
+                bottomNav.getPaddingRight(),
+                dp(8)
+        );
+        bottomNav.setItemPaddingTop(dp(20));
+        bottomNav.setItemPaddingBottom(dp(6));
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            getWindow().setNavigationBarContrastEnforced(false);
+        }
+
+        WindowInsetsControllerCompat controller =
+                WindowCompat.getInsetsController(getWindow(), getWindow().getDecorView());
+
+        if (isThreeButtonNav) {
+            // REAL fix: make the actual system 3-button bar black.
+            getWindow().setNavigationBarColor(Color.BLACK);
+
+            if (controller != null) {
+                // Black background needs light nav icons.
+                controller.setAppearanceLightNavigationBars(false);
+            }
+
+            // Do not use the fake inset view for this approach.
+            if (bottomNavSystemInset != null) {
+                bottomNavSystemInset.setVisibility(View.GONE);
+                ViewGroup.LayoutParams params = bottomNavSystemInset.getLayoutParams();
+                params.height = 0;
+                bottomNavSystemInset.setLayoutParams(params);
+            }
+        } else {
+            // Gesture mode stays brown.
+            getWindow().setNavigationBarColor(getResources().getColor(R.color.nav_brown));
+
+            if (controller != null) {
+                controller.setAppearanceLightNavigationBars(false);
+            }
+
+            if (bottomNavSystemInset != null) {
+                bottomNavSystemInset.setVisibility(View.GONE);
+                ViewGroup.LayoutParams params = bottomNavSystemInset.getLayoutParams();
+                params.height = 0;
+                bottomNavSystemInset.setLayoutParams(params);
+            }
+        }
+    }
+
+    private boolean isThreeButtonNavigationMode() {
+        int resId = getResources().getIdentifier("config_navBarInteractionMode", "integer", "android");
+        if (resId > 0) {
+            int mode = getResources().getInteger(resId);
+            return mode == 0; // 0 = 3-button, 1 = 2-button, 2 = gesture
+        }
+        return false;
+    }
+
+    /**
+     * Helper for converting dp values to pixels.
+     */
+    private int dp(int value) {
+        return Math.round(value * getResources().getDisplayMetrics().density);
     }
 
     private void checkWelcomeMessage() {
@@ -168,10 +269,10 @@ public class HomeActivity extends AppCompatActivity implements NetworkMonitor.Ne
 
     private void showWelcomeAnimation(String message) {
         if (welcomeMessageTv == null) return;
-        
+
         welcomeMessageTv.setText(message);
         welcomeMessageTv.setVisibility(View.VISIBLE);
-        
+
         Animation fadeInOut = AnimationUtils.loadAnimation(this, R.anim.fade_in_out);
         fadeInOut.setAnimationListener(new Animation.AnimationListener() {
             @Override
@@ -185,7 +286,7 @@ public class HomeActivity extends AppCompatActivity implements NetworkMonitor.Ne
             @Override
             public void onAnimationRepeat(Animation animation) {}
         });
-        
+
         welcomeMessageTv.startAnimation(fadeInOut);
     }
 
@@ -257,6 +358,17 @@ public class HomeActivity extends AppCompatActivity implements NetworkMonitor.Ne
      * Fetches the core list of Georgia birds in the background.
      * This data can then be used by other fragments as needed.
      */
+    private void loadCachedGeorgiaBirdListImmediately() {
+        if (birdCacheManager == null) return;
+
+        List<JSONObject> cachedBirds = birdCacheManager.getCachedCoreGeorgiaBirds();
+        if (!cachedBirds.isEmpty()) {
+            allGeorgiaBirds.clear();
+            allGeorgiaBirds.addAll(cachedBirds);
+            Log.d(TAG, "Loaded " + allGeorgiaBirds.size() + " cached Georgia birds immediately on app launch.");
+        }
+    }
+
     /**
      * Pulls data from a local source, Firebase, or an external API and prepares it for the UI or
      * caller.
@@ -266,9 +378,9 @@ public class HomeActivity extends AppCompatActivity implements NetworkMonitor.Ne
     private void fetchCoreGeorgiaBirdList() {
         if (isFetchingBirds) return;
 
-        if (!networkMonitor.isConnected()) {
-            Log.w(TAG, "Attempted to fetchCoreGeorgiaBirdList but no network in HomeActivity.");
-            // Give the user immediate feedback about the result of this action.
+        boolean hasCachedList = birdCacheManager != null && !birdCacheManager.getCachedCoreGeorgiaBirds().isEmpty();
+        if (!networkMonitor.isConnected() && !hasCachedList) {
+            Log.w(TAG, "Attempted to fetchCoreGeorgiaBirdList but no network and no cached Georgia list in HomeActivity.");
             Toast.makeText(this, "No internet to fetch bird list.", Toast.LENGTH_SHORT).show();
             return;
         }
@@ -280,21 +392,60 @@ public class HomeActivity extends AppCompatActivity implements NetworkMonitor.Ne
                 isFetchingBirds = false;
                 allGeorgiaBirds.clear();
                 allGeorgiaBirds.addAll(birds);
-                Log.d(TAG, "Loaded " + allGeorgiaBirds.size() + " core Georgia birds from Cloud cache.");
+                Log.d(TAG, "Loaded " + allGeorgiaBirds.size() + " core Georgia birds.");
             }
 
             @Override
             public void onFailure(Exception e) {
                 isFetchingBirds = false;
                 Log.e(TAG, "Failed to fetch core bird list in HomeActivity: " + e.getMessage(), e);
-                Toast.makeText(HomeActivity.this, "Failed to load core bird data in background.", Toast.LENGTH_LONG).show();
+                if (allGeorgiaBirds.isEmpty()) {
+                    Toast.makeText(HomeActivity.this, "Failed to load core bird data in background.", Toast.LENGTH_LONG).show();
+                }
             }
         });
     }
 
     /**
+     * Main logic block for this part of the feature.
+     */
+    private boolean shouldCheckBirdDataSync(boolean forceRefresh) {
+        if (birdCacheManager == null) return true;
+        return birdCacheManager.shouldCheckGeorgiaBirdSync(
+                forceRefresh,
+                GEORGIA_SYNC_CHECK_TTL_MS,
+                GEORGIA_BIRD_DATA_REFRESH_VERSION
+        );
+    }
+
+    /**
+     * Main logic block for this part of the feature.
+     */
+    private void maybeCheckBirdDataSync(boolean forceRefresh) {
+        if (!forceRefresh && !shouldCheckBirdDataSync(false)) {
+            Log.d(TAG, "Skipping Georgia bird sync check on launch. Cache and sync-check state are still fresh.");
+            return;
+        }
+
+        if (!networkMonitor.isConnected()) {
+            Log.w(TAG, "Skipping Georgia bird sync check because the device is offline.");
+            return;
+        }
+
+        checkBirdDataSync();
+    }
+
+    /**
+     * Main logic block for this part of the feature.
+     */
+    public void refreshGeorgiaBirdDataManually() {
+        fetchCoreGeorgiaBirdList();
+        maybeCheckBirdDataSync(true);
+    }
+
+    /**
      * Replaces the current fragment in the container with the specified fragment.
-     * FIX: Uses commitAllowingStateLoss() to prevent IllegalStateException if 
+     * FIX: Uses commitAllowingStateLoss() to prevent IllegalStateException if
      * the fragment is replaced while the activity is in the background (e.g. via network callback).
      * @param fragment The new fragment to display.
      */
@@ -331,9 +482,12 @@ public class HomeActivity extends AppCompatActivity implements NetworkMonitor.Ne
         Log.d(TAG, "Network became available in HomeActivity.");
         runOnUiThread(() -> {
             if (allGeorgiaBirds.isEmpty()) {
-                // Give the user immediate feedback about the result of this action.
                 Toast.makeText(this, "Internet connection restored. Retrying bird list fetch.", Toast.LENGTH_SHORT).show();
                 fetchCoreGeorgiaBirdList();
+            }
+
+            if (shouldCheckBirdDataSync(false)) {
+                maybeCheckBirdDataSync(false);
             }
         });
     }
@@ -351,6 +505,7 @@ public class HomeActivity extends AppCompatActivity implements NetworkMonitor.Ne
                 Toast.makeText(this, "Internet connection lost. Bird data may be incomplete.", Toast.LENGTH_LONG).show()
         );
     }
+
     /** * Triggers the Cloud Function to ensure the Firestore bird database
      * is synced with eBird. The function uses a 72-hour cache.
      */
@@ -361,6 +516,10 @@ public class HomeActivity extends AppCompatActivity implements NetworkMonitor.Ne
         firebaseManager.syncGeorgiaBirdList(task -> {
             if (task.isSuccessful()) {
                 Log.d(TAG, "Bird data sync check complete.");
+                if (birdCacheManager != null) {
+                    birdCacheManager.markGeorgiaSyncCheckNow();
+                    birdCacheManager.setGeorgiaDataRefreshVersion(GEORGIA_BIRD_DATA_REFRESH_VERSION);
+                }
             } else {
                 Log.e(TAG, "Automatic bird sync failed", task.getException());
             }

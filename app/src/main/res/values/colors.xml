@@ -50,4 +50,6 @@
     <color name="legendary_red_dark">#7F0000</color>    <!-- deep border -->
     <color name="legendary_red_accent">#FF3D00</color>  <!-- bright highlight -->
 
+    <color name="tan_highlight">#C79663</color>
+
 </resources>

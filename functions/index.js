@@ -48,7 +48,24 @@ const CONFIG = {
     FIRESTORE_BATCH_SIZE: 400,  // Firestore max is 500; using 400 for safety
     LOCATION_PRECISION: 4,      // decimal places (~11 meters)
 };
+// ======================================================
+// HELPER: Input Sanitization
+// ======================================================
 
+function assertForumTextAllowed(text, fieldName = "Text") {
+    if (text === undefined || text === null || text === "") return;
+
+    if (typeof text !== "string") {
+        throw new HttpsError("invalid-argument", `${fieldName} must be a string.`);
+    }
+
+    const trimmed = text.trim();
+
+    // Reject obvious control characters except normal whitespace.
+    if (/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/.test(trimmed)) {
+        throw new HttpsError("invalid-argument", `${fieldName} contains invalid characters.`);
+    }
+}
 // ======================================================
 // HELPER: Input Sanitization
 // ======================================================
@@ -288,13 +305,12 @@ The JSON object should have these keys and corresponding facts:
 // ======================================================
 // HELPER: Bird Card rarity
 // ======================================================
-const CARD_RARITIES = ["common", "uncommon", "rare", "epic", "legendary", "mythic"];
+const CARD_RARITIES = ["common", "uncommon", "rare", "epic", "legendary"];
 const CARD_RARITY_STEP_COSTS = {
     uncommon: 10,
     rare: 20,
     epic: 30,
     legendary: 50,
-    mythic: 100,
 };
 
 function normalizeCardRarity(rarity) {

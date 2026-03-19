@@ -35,6 +35,7 @@ import com.google.firebase.firestore.FieldValue;
 import com.google.firebase.firestore.FirebaseFirestore;
 import com.google.firebase.firestore.MetadataChanges;
 import com.google.firebase.firestore.Query;
+import com.google.firebase.firestore.Source;
 import com.google.firebase.firestore.WriteBatch;
 import com.google.firebase.storage.FirebaseStorage;
 import com.google.firebase.storage.StorageReference;
@@ -79,6 +80,7 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
     private DocumentSnapshot lastCommentVisible;
     private boolean isFetchingComments = false;
     private boolean isLastCommentsPage = false;
+    private int commentFetchGeneration = 0;
     private boolean postLikeInFlight = false;
 
     private ForumComment replyingToComment = null;
@@ -101,6 +103,7 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        SystemBarHelper.applyStandardNavBar(this);
         // Bind or inflate the UI pieces this method needs before it can update the screen.
         binding = ActivityPostDetailBinding.inflate(getLayoutInflater());
         setContentView(binding.getRoot());
@@ -153,17 +156,28 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
      */
     private void loadCurrentUser() {
         FirebaseUser user = mAuth.getCurrentUser();
-        // Set up or query the Firebase layer that supplies/stores this feature's data.
-        if (user != null) db.collection("users").document(user.getUid()).get()
+        if (user == null) return;
+        db.collection("users").document(user.getUid()).get(Source.CACHE)
                 .addOnSuccessListener(doc -> {
                     if (isFinishing() || isDestroyed()) return;
-                    if (doc.exists()) {
-                        currentUsername = doc.getString("username");
-                        currentUserPfpUrl = doc.getString("profilePictureUrl");
-                        // Load the image asynchronously so the UI can show remote/local media without blocking the main thread.
-                        Glide.with(this).load(currentUserPfpUrl).placeholder(R.drawable.ic_profile).into(binding.ivCurrentUserPfp);
-                    }
+                    if (doc != null && doc.exists()) bindCurrentUserSnapshot(doc);
+                    loadCurrentUserFromServer(user.getUid());
+                })
+                .addOnFailureListener(e -> loadCurrentUserFromServer(user.getUid()));
+    }
+
+    private void loadCurrentUserFromServer(String userId) {
+        db.collection("users").document(userId).get(Source.SERVER)
+                .addOnSuccessListener(doc -> {
+                    if (isFinishing() || isDestroyed()) return;
+                    if (doc != null && doc.exists()) bindCurrentUserSnapshot(doc);
                 });
+    }
+
+    private void bindCurrentUserSnapshot(DocumentSnapshot doc) {
+        currentUsername = doc.getString("username");
+        currentUserPfpUrl = doc.getString("profilePictureUrl");
+        Glide.with(this).load(currentUserPfpUrl).placeholder(R.drawable.ic_profile).into(binding.ivCurrentUserPfp);
     }
 
     /**
@@ -199,16 +213,30 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
      * become permanent.
      */
     private void handleViewTracking(String userId, ForumPost post) {
-        hasMarkedAsViewed = true;
-        Map<String, Object> updates = new HashMap<>();
-        if (post.getViewedBy() == null || !post.getViewedBy().containsKey(userId)) updates.put("viewedBy." + userId, true);
-        if (userId.equals(post.getUserId())) {
-            if (post.isNotificationSent()) updates.put("notificationSent", false);
-            if (post.isLikeNotificationSent()) updates.put("likeNotificationSent", false);
-            updates.put("lastViewedAt", FieldValue.serverTimestamp());
+        if (post == null || post.getId() == null) return;
+
+        if (post.getViewedBy() != null && post.getViewedBy().containsKey(userId)) {
+            hasMarkedAsViewed = true;
+            return;
         }
-        // Set up or query the Firebase layer that supplies/stores this feature's data.
-        if (!updates.isEmpty()) db.collection("forumThreads").document(postId).update(updates);
+
+        hasMarkedAsViewed = true;
+
+        if (post.getViewedBy() == null) {
+            post.setViewedBy(new HashMap<>());
+        }
+        post.getViewedBy().put(userId, true);
+
+        db.collection("forumThreads")
+                .document(postId)
+                .update("viewedBy." + userId, true)
+                .addOnFailureListener(e -> {
+                    Log.e(TAG, "Failed to mark forum post as viewed", e);
+                    hasMarkedAsViewed = false;
+                    if (post.getViewedBy() != null) {
+                        post.getViewedBy().remove(userId);
+                    }
+                });
     }
 
     /**
@@ -547,19 +575,90 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
     private void fetchComments() {
         if (isFetchingComments || isLastCommentsPage) return;
         isFetchingComments = true;
-        // Set up or query the Firebase layer that supplies/stores this feature's data.
-        Query q = db.collection("forumThreads").document(postId).collection("comments").orderBy("timestamp", Query.Direction.ASCENDING).limit(COMMENTS_PAGE_SIZE);
-        if (lastCommentVisible != null) q = q.startAfter(lastCommentVisible);
-        q.get().addOnSuccessListener(val -> {
-            if (isFinishing() || isDestroyed()) return;
-            if (val != null && !val.isEmpty()) {
-                lastCommentVisible = val.getDocuments().get(val.size() - 1);
-                for (DocumentSnapshot d : val.getDocuments()) { ForumComment c = d.toObject(ForumComment.class); if (c != null) { c.setId(d.getId()); commentList.add(c); } }
-                adapter.setComments(new ArrayList<>(commentList));
-                if (val.size() < COMMENTS_PAGE_SIZE) isLastCommentsPage = true;
-            } else isLastCommentsPage = true;
-            isFetchingComments = false;
-        }).addOnFailureListener(e -> isFetchingComments = false);
+        final int myGen = commentFetchGeneration;
+
+        if (lastCommentVisible == null) {
+            Query firstPageQuery = buildCommentsBaseQuery();
+            firstPageQuery.get(Source.CACHE).addOnSuccessListener(val -> {
+                if (isFinishing() || isDestroyed() || myGen != commentFetchGeneration) return;
+                if (val != null && !val.isEmpty()) {
+                    applyCommentsSnapshot(val, false, myGen);
+                }
+                fetchCommentsFirstPageFromServer(firstPageQuery, myGen);
+            }).addOnFailureListener(e -> fetchCommentsFirstPageFromServer(firstPageQuery, myGen));
+            return;
+        }
+
+        buildCommentsBaseQuery().startAfter(lastCommentVisible).get(Source.SERVER)
+                .addOnSuccessListener(val -> {
+                    if (isFinishing() || isDestroyed() || myGen != commentFetchGeneration) return;
+                    appendCommentsSnapshot(val, myGen);
+                    finishCommentsFetch(myGen);
+                })
+                .addOnFailureListener(e -> finishCommentsFetch(myGen));
+    }
+
+    private Query buildCommentsBaseQuery() {
+        return db.collection("forumThreads")
+                .document(postId)
+                .collection("comments")
+                .orderBy("timestamp", Query.Direction.ASCENDING)
+                .limit(COMMENTS_PAGE_SIZE);
+    }
+
+    private void fetchCommentsFirstPageFromServer(Query firstPageQuery, int generation) {
+        firstPageQuery.get(Source.SERVER).addOnSuccessListener(val -> {
+            if (isFinishing() || isDestroyed() || generation != commentFetchGeneration) return;
+            applyCommentsSnapshot(val, true, generation);
+            finishCommentsFetch(generation);
+        }).addOnFailureListener(e -> finishCommentsFetch(generation));
+    }
+
+    private void applyCommentsSnapshot(com.google.firebase.firestore.QuerySnapshot value, boolean fromServer, int generation) {
+        if (isFinishing() || isDestroyed() || generation != commentFetchGeneration) return;
+        if (fromServer || (value != null && !value.isEmpty())) {
+            commentList.clear();
+            lastCommentVisible = null;
+            isLastCommentsPage = false;
+        }
+
+        if (value != null && !value.isEmpty()) {
+            lastCommentVisible = value.getDocuments().get(value.size() - 1);
+            for (DocumentSnapshot d : value.getDocuments()) {
+                ForumComment c = d.toObject(ForumComment.class);
+                if (c != null) {
+                    c.setId(d.getId());
+                    commentList.add(c);
+                }
+            }
+            if (value.size() < COMMENTS_PAGE_SIZE) isLastCommentsPage = true;
+        } else if (fromServer) {
+            isLastCommentsPage = true;
+        }
+
+        adapter.setComments(new ArrayList<>(commentList));
+    }
+
+    private void appendCommentsSnapshot(com.google.firebase.firestore.QuerySnapshot value, int generation) {
+        if (isFinishing() || isDestroyed() || generation != commentFetchGeneration) return;
+        if (value != null && !value.isEmpty()) {
+            lastCommentVisible = value.getDocuments().get(value.size() - 1);
+            for (DocumentSnapshot d : value.getDocuments()) {
+                ForumComment c = d.toObject(ForumComment.class);
+                if (c != null) {
+                    c.setId(d.getId());
+                    commentList.add(c);
+                }
+            }
+            if (value.size() < COMMENTS_PAGE_SIZE) isLastCommentsPage = true;
+        } else {
+            isLastCommentsPage = true;
+        }
+        adapter.setComments(new ArrayList<>(commentList));
+    }
+
+    private void finishCommentsFetch(int generation) {
+        if (generation == commentFetchGeneration) isFetchingComments = false;
     }
 
     /**
@@ -593,6 +692,7 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
                 binding.etComment.setHint("Write a comment...");
                 replyingToComment = null;
                 binding.btnSendComment.setEnabled(true);
+                commentFetchGeneration++;
                 lastCommentVisible = null;
                 isLastCommentsPage = false;
                 commentList.clear();
@@ -723,6 +823,7 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
         firebaseManager.deleteForumComment(postId, c.getId(), task -> {
             if (isFinishing() || isDestroyed()) return;
             if (task.isSuccessful()) {
+                commentFetchGeneration++;
                 lastCommentVisible = null;
                 isLastCommentsPage = false;
                 commentList.clear();

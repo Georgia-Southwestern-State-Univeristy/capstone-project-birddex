@@ -14,10 +14,10 @@ import com.google.firebase.firestore.FirebaseFirestore;
 import com.google.firebase.firestore.ListenerRegistration;
 import com.google.firebase.firestore.QuerySnapshot;
 import com.google.firebase.firestore.SetOptions;
+import com.google.firebase.firestore.Source;
 import com.google.firebase.functions.FirebaseFunctions;
 import com.google.firebase.functions.FirebaseFunctionsException;
 import com.google.firebase.functions.HttpsCallableResult;
-import androidx.annotation.Nullable;
 
 import java.util.Date;
 import java.util.HashMap;
@@ -64,16 +64,6 @@ public class FirebaseManager {
         String msg = e.getMessage();
         return (msg != null && !msg.trim().isEmpty()) ? msg : fallback;
     }
-    private int objectToInt(Object value) {
-        if (value instanceof Number) return ((Number) value).intValue();
-        if (value instanceof String) {
-            try {
-                return Integer.parseInt((String) value);
-            } catch (Exception ignored) {
-            }
-        }
-        return 0;
-    }
 
     // -------------------------------------------------------------------------
     // Interfaces
@@ -111,8 +101,9 @@ public class FirebaseManager {
         void onDataLoaded(List<Map<String, Object>> leaderboard);
         void onError(String error);
     }
-    public interface UpgradeCollectionSlotListener {
-        void onSuccess(String newRarity, int pointsSpent, int remainingPoints);
+
+    public interface TrackedBirdStateListener {
+        void onResult(boolean isTracked);
         void onFailure(String errorMessage);
     }
 
@@ -271,11 +262,18 @@ public class FirebaseManager {
      */
     public void getUserProfile(String userId, OnCompleteListener<DocumentSnapshot> listener) {
         Log.d(TAG, "Fetching user profile: " + userId);
-        // Set up or query the Firebase layer that supplies/stores this feature's data.
-        db.collection("users").document(userId).get().addOnCompleteListener(task -> {
-            if (task.isSuccessful()) Log.d(TAG, "Profile fetch success for: " + userId);
-            else Log.e(TAG, "Profile fetch failed for: " + userId, task.getException());
-            listener.onComplete(task);
+        db.collection("users").document(userId).get(Source.CACHE).addOnCompleteListener(cacheTask -> {
+            if (cacheTask.isSuccessful() && cacheTask.getResult() != null && cacheTask.getResult().exists()) {
+                Log.d(TAG, "Profile cache hit for: " + userId);
+                listener.onComplete(cacheTask);
+                return;
+            }
+
+            db.collection("users").document(userId).get(Source.SERVER).addOnCompleteListener(serverTask -> {
+                if (serverTask.isSuccessful()) Log.d(TAG, "Profile fetch success for: " + userId);
+                else Log.e(TAG, "Profile fetch failed for: " + userId, serverTask.getException());
+                listener.onComplete(serverTask);
+            });
         });
     }
 
@@ -415,6 +413,93 @@ public class FirebaseManager {
             else Log.e(TAG, "archiveAndDeleteUser CF failure.", task.getException());
             listener.onComplete(task);
         });
+    }
+
+
+
+
+    public void trackBird(String birdId, String commonName, String scientificName, OnCompleteListener<Void> listener) {
+        FirebaseUser currentUser = mAuth.getCurrentUser();
+        if (currentUser == null) {
+            if (listener != null) {
+                listener.onComplete(Tasks.forException(new IllegalStateException("User not authenticated.")));
+            }
+            return;
+        }
+
+        Log.d(TAG, "Tracking bird: " + birdId + " for user: " + currentUser.getUid());
+
+        Map<String, Object> data = new HashMap<>();
+        data.put("birdId", birdId);
+        data.put("commonName", commonName != null ? commonName : "");
+        data.put("scientificName", scientificName != null ? scientificName : "");
+        data.put("trackedAt", new Date());
+
+        db.collection("users")
+                .document(currentUser.getUid())
+                .collection("trackedBirds")
+                .document(birdId)
+                .set(data, SetOptions.merge())
+                .addOnCompleteListener(listener);
+    }
+    public void untrackBird(String birdId, OnCompleteListener<Void> listener) {
+        FirebaseUser currentUser = mAuth.getCurrentUser();
+        if (currentUser == null) {
+            if (listener != null) {
+                listener.onComplete(Tasks.forException(new IllegalStateException("User not authenticated.")));
+            }
+            return;
+        }
+
+        Log.d(TAG, "Untracking bird: " + birdId + " for user: " + currentUser.getUid());
+
+        db.collection("users")
+                .document(currentUser.getUid())
+                .collection("trackedBirds")
+                .document(birdId)
+                .delete()
+                .addOnCompleteListener(listener);
+    }
+
+
+    public void isBirdTracked(String birdId, TrackedBirdStateListener listener) {
+        FirebaseUser currentUser = mAuth.getCurrentUser();
+        if (currentUser == null) {
+            listener.onFailure("User not authenticated.");
+            return;
+        }
+
+        Log.d(TAG, "Checking tracked state for bird: " + birdId + " user: " + currentUser.getUid());
+
+        db.collection("users")
+                .document(currentUser.getUid())
+                .collection("trackedBirds")
+                .document(birdId)
+                .get(Source.SERVER)
+                .addOnSuccessListener(doc -> listener.onResult(doc.exists()))
+                .addOnFailureListener(e -> {
+                    Log.e(TAG, "Failed to check tracked bird state.", e);
+                    listener.onFailure(e.getMessage() != null ? e.getMessage() : "Failed to check tracked state.");
+                });
+    }
+
+
+    public void getTrackedBirds(OnCompleteListener<QuerySnapshot> listener) {
+        FirebaseUser currentUser = mAuth.getCurrentUser();
+        if (currentUser == null) {
+            if (listener != null) {
+                listener.onComplete(Tasks.forException(new IllegalStateException("User not authenticated.")));
+            }
+            return;
+        }
+
+        Log.d(TAG, "Fetching tracked birds for user: " + currentUser.getUid());
+
+        db.collection("users")
+                .document(currentUser.getUid())
+                .collection("trackedBirds")
+                .get(Source.SERVER)
+                .addOnCompleteListener(listener);
     }
 
     /**
@@ -977,8 +1062,13 @@ public class FirebaseManager {
      */
     public void getBirdById(String birdId, OnCompleteListener<DocumentSnapshot> listener) {
         Log.d(TAG, "Fetching bird: " + birdId);
-        // Set up or query the Firebase layer that supplies/stores this feature's data.
-        db.collection("birds").document(birdId).get().addOnCompleteListener(listener);
+        db.collection("birds").document(birdId).get(Source.CACHE).addOnCompleteListener(cacheTask -> {
+            if (cacheTask.isSuccessful() && cacheTask.getResult() != null && cacheTask.getResult().exists()) {
+                listener.onComplete(cacheTask);
+                return;
+            }
+            db.collection("birds").document(birdId).get(Source.SERVER).addOnCompleteListener(listener);
+        });
     }
 
     /**
@@ -990,8 +1080,13 @@ public class FirebaseManager {
      */
     public void getAllBirds(OnCompleteListener<QuerySnapshot> listener) {
         Log.d(TAG, "Fetching all birds.");
-        // Set up or query the Firebase layer that supplies/stores this feature's data.
-        db.collection("birds").get().addOnCompleteListener(listener);
+        db.collection("birds").get(Source.CACHE).addOnCompleteListener(cacheTask -> {
+            if (cacheTask.isSuccessful() && cacheTask.getResult() != null && !cacheTask.getResult().isEmpty()) {
+                listener.onComplete(cacheTask);
+                return;
+            }
+            db.collection("birds").get(Source.SERVER).addOnCompleteListener(listener);
+        });
     }
 
     /**
@@ -1228,8 +1323,13 @@ public class FirebaseManager {
      */
     public void getBirdFactById(String birdFactsId, OnCompleteListener<DocumentSnapshot> listener) {
         Log.d(TAG, "Fetching bird fact: " + birdFactsId);
-        // Set up or query the Firebase layer that supplies/stores this feature's data.
-        db.collection("birdFacts").document(birdFactsId).get().addOnCompleteListener(listener);
+        db.collection("birdFacts").document(birdFactsId).get(Source.CACHE).addOnCompleteListener(cacheTask -> {
+            if (cacheTask.isSuccessful() && cacheTask.getResult() != null && cacheTask.getResult().exists()) {
+                listener.onComplete(cacheTask);
+                return;
+            }
+            db.collection("birdFacts").document(birdFactsId).get(Source.SERVER).addOnCompleteListener(listener);
+        });
     }
 
     /**
@@ -1381,33 +1481,6 @@ public class FirebaseManager {
         db.collection("locations").document(location.getId()).set(location).addOnCompleteListener(listener);
     }
 
-    public void upgradeCollectionSlotRarity(@Nullable String slotId,
-                                            @Nullable String birdId,
-                                            String targetRarity,
-                                            UpgradeCollectionSlotListener listener) {
-        Log.d(TAG, "Calling upgradeCollectionSlotRarity CF. slotId=" + slotId + " birdId=" + birdId + " target=" + targetRarity);
-
-        Map<String, Object> data = new HashMap<>();
-        if (slotId != null && !slotId.trim().isEmpty()) data.put("slotId", slotId.trim());
-        if (birdId != null && !birdId.trim().isEmpty()) data.put("birdId", birdId.trim());
-        data.put("targetRarity", CardRarityHelper.normalizeRarity(targetRarity));
-
-        mFunctions.getHttpsCallable("upgradeCollectionSlotRarity")
-                .call(data)
-                .addOnCompleteListener(task -> {
-                    if (task.isSuccessful() && task.getResult() != null) {
-                        Map<String, Object> res = (Map<String, Object>) task.getResult().getData();
-                        String newRarity = res != null && res.get("newRarity") instanceof String
-                                ? (String) res.get("newRarity")
-                                : CardRarityHelper.normalizeRarity(targetRarity);
-                        int pointsSpent = objectToInt(res != null ? res.get("pointsSpent") : null);
-                        int remainingPoints = objectToInt(res != null ? res.get("remainingPoints") : null);
-                        listener.onSuccess(newRarity, pointsSpent, remainingPoints);
-                    } else {
-                        listener.onFailure(extractFunctionsErrorMessage(task.getException(), "Failed to upgrade card."));
-                    }
-                });
-    }
     /**
      * Returns the current value/state this class needs somewhere else in the app.
      * It talks to Firebase/Firestore in this method, either to read live data or to persist app

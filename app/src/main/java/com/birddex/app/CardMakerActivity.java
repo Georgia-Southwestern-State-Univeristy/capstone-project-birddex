@@ -115,6 +115,7 @@ public class CardMakerActivity extends AppCompatActivity {
     @Override
     protected void onCreate(@Nullable Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        SystemBarHelper.applyStandardNavBar(this);
         setContentView(R.layout.activity_card_maker);
 
         viewModel       = new ViewModelProvider(this).get(CardMakerViewModel.class);

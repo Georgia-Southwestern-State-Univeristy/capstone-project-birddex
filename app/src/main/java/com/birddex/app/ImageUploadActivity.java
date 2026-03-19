@@ -26,6 +26,7 @@ public class ImageUploadActivity extends AppCompatActivity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        SystemBarHelper.applyStandardNavBar(this);
 
         // Dynamically create a layout container for the fragment.
         FrameLayout frameLayout = new FrameLayout(this);

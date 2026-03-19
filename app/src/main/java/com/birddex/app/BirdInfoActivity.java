@@ -54,6 +54,7 @@ public class BirdInfoActivity extends AppCompatActivity {
     @Override
     protected void onCreate(@Nullable Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        SystemBarHelper.applyStandardNavBar(this);
         setContentView(R.layout.activity_bird_info);
 
         // Bind or inflate the UI pieces this method needs before it can update the screen.

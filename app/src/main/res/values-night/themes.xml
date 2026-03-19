@@ -1,7 +1,21 @@
 <resources xmlns:tools="http://schemas.android.com/tools">
     <!-- Base application theme. -->
     <style name="Base.Theme.BirdDex" parent="Theme.Material3.DayNight.NoActionBar">
-        <!-- Customize your dark theme here. -->
-        <!-- <item name="colorPrimary">@color/my_dark_primary</item> -->
+        <!-- Navigation (Primary) -->
+        <item name="colorPrimary">@color/nav_brown</item>
+        <item name="colorOnPrimary">@color/page_cream</item>
+
+        <!-- Pages -->
+        <item name="colorSurface">@color/page_cream</item>
+        <item name="colorOnBackground">@color/on_page</item>
+        <item name="colorOnSurface">@color/on_page</item>
+        <item name="colorOnSurfaceVariant">@color/on_page_variant</item>
+
+        <!-- System bars -->
+        <item name="android:statusBarColor">@color/nav_brown</item>
+        <item name="android:navigationBarColor">@android:color/black</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar">false</item>
+        <item name="android:enforceNavigationBarContrast">false</item>
     </style>
 </resources>

@@ -47,7 +47,7 @@
                 <ImageView
                     android:id="@+id/imgBird"
                     android:layout_width="0dp"
-                    android:layout_height="300dp"
+                    android:layout_height="340dp"
                     android:layout_marginTop="12dp"
                     android:adjustViewBounds="true"
                     android:background="@android:color/transparent"
@@ -106,7 +106,7 @@
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="16dp"
-                    android:background="#1565C0"
+                    android:background="@color/rare_blue"
                     android:padding="10dp"
                     android:text="BirdDex • Captured by you"
                     android:textColor="#FFFFFF"

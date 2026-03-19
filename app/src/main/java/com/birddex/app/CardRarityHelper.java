@@ -18,13 +18,15 @@ public final class CardRarityHelper {
     public static final String RARE = "rare";
     public static final String EPIC = "epic";
     public static final String LEGENDARY = "legendary";
+    public static final String MYTHIC = "mythic";
 
-    private static final List<String> ORDER = Arrays.asList(
+    public static final List<String> ORDER = Arrays.asList(
             COMMON,
             UNCOMMON,
             RARE,
             EPIC,
-            LEGENDARY
+            LEGENDARY,
+            MYTHIC
     );
 
     private CardRarityHelper() {
@@ -60,10 +62,12 @@ public final class CardRarityHelper {
             case EPIC:
                 return R.layout.view_bird_card_epic;
             case LEGENDARY:
+                return R.layout.view_bird_card_legendary;
+            case MYTHIC:
                 return R.layout.view_bird_card_mythic;
             case COMMON:
             default:
-                return R.layout.view_bird_card;
+                return R.layout.view_bird_card_common;
         }
     }
 
@@ -77,6 +81,8 @@ public final class CardRarityHelper {
                 return 60;
             case LEGENDARY:
                 return 110;
+            case MYTHIC:
+                return 210;
             case COMMON:
             default:
                 return 0;
@@ -117,6 +123,8 @@ public final class CardRarityHelper {
                 return 30; // rare -> epic
             case 4:
                 return 50; // epic -> legendary
+            case 5:
+                return 100; // legendary -> mythic
             default:
                 return 0;
         }

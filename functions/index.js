@@ -288,12 +288,13 @@ The JSON object should have these keys and corresponding facts:
 // ======================================================
 // HELPER: Bird Card rarity
 // ======================================================
-const CARD_RARITIES = ["common", "uncommon", "rare", "epic", "legendary"];
+const CARD_RARITIES = ["common", "uncommon", "rare", "epic", "legendary", "mythic"];
 const CARD_RARITY_STEP_COSTS = {
     uncommon: 10,
     rare: 20,
     epic: 30,
     legendary: 50,
+    mythic: 100,
 };
 
 function normalizeCardRarity(rarity) {

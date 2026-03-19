@@ -40,14 +40,15 @@ public class ViewBirdCardActivity extends AppCompatActivity {
     public static final String EXTRA_ALLOW_IMAGE_CHANGE = "com.birddex.app.extra.ALLOW_IMAGE_CHANGE";
 
     private ImageView imgBird;
-    private Button btnChangeCardImage, btnBirdInfo;
+    private Button btnChangeCardImage, btnBirdInfo, btnUpgradeCard;
     private TextView txtLocation, txtDateCaught;
 
     private String currentImageUrl, currentBirdId, currentState, currentLocality;
+    private String currentSlotId, currentRarity;
     private Date currentCaughtDate;
 
     private ActivityResultLauncher<Intent> changeCardImageLauncher;
-    
+
     // FIX: Generation counter to ignore stale resolution callbacks
     private int resolutionGeneration = 0;
     private boolean isResolving = false;
@@ -80,7 +81,7 @@ public class ViewBirdCardActivity extends AppCompatActivity {
             final int myGen = ++resolutionGeneration;
             isResolving = true;
             updateButtonsEnabled(false);
-            
+
             resolveSelectionAndApply(user.getUid(), new ImageChoice(url, ts > 0 ? new Date(ts) : null, normalizeBlankToNull(refId)), myGen);
         });
 
@@ -100,11 +101,14 @@ public class ViewBirdCardActivity extends AppCompatActivity {
         imgBird = findViewById(R.id.imgBird);
         btnChangeCardImage = findViewById(R.id.btnChangeCardImage);
         btnBirdInfo = findViewById(R.id.btnBirdInfo);
+        btnUpgradeCard = findViewById(R.id.btnUpgradeCard);
         txtLocation = findViewById(R.id.txtLocation);
         txtDateCaught = findViewById(R.id.txtDateCaught);
 
         currentImageUrl = getIntent().getStringExtra(CollectionCardAdapter.EXTRA_IMAGE_URL);
         currentBirdId = getIntent().getStringExtra(CollectionCardAdapter.EXTRA_BIRD_ID);
+        currentSlotId = getIntent().getStringExtra(CollectionCardAdapter.EXTRA_SLOT_ID);
+        currentRarity = CardRarityHelper.normalizeRarity(getIntent().getStringExtra(CollectionCardAdapter.EXTRA_RARITY));
         currentState = normalizeBlankToNull(getIntent().getStringExtra(CollectionCardAdapter.EXTRA_STATE));
         currentLocality = normalizeBlankToNull(getIntent().getStringExtra(CollectionCardAdapter.EXTRA_LOCALITY));
         long time = getIntent().getLongExtra(CollectionCardAdapter.EXTRA_CAUGHT_TIME, -1L);
@@ -125,13 +129,37 @@ public class ViewBirdCardActivity extends AppCompatActivity {
         if (isBlank(currentBirdId)) {
             if (allowChange) { btnChangeCardImage.setEnabled(false); btnChangeCardImage.setText("No ID"); }
             btnBirdInfo.setEnabled(false);
+            btnUpgradeCard.setEnabled(false);
         } else {
             // Attach the user interaction that should run when this control is tapped.
             if (allowChange) btnChangeCardImage.setOnClickListener(v -> openImagePicker());
             // Move into the next screen and pass the identifiers/data that screen needs.
             btnBirdInfo.setOnClickListener(v -> startActivity(new Intent(this, BirdWikiActivity.class).putExtra(BirdWikiActivity.EXTRA_BIRD_ID, currentBirdId)));
+            
+            if (isBlank(currentSlotId)) {
+                btnUpgradeCard.setEnabled(false);
+            } else {
+                btnUpgradeCard.setOnClickListener(v -> openUpgradeScreen());
+            }
         }
         findViewById(R.id.btnBack).setOnClickListener(v -> finish());
+    }
+
+    /**
+     * Moves the user to the upgrade screen and passes along the required extras.
+     */
+    private void openUpgradeScreen() {
+        Intent i = new Intent(this, UpgradeActivity.class);
+        i.putExtra(CollectionCardAdapter.EXTRA_SLOT_ID, currentSlotId);
+        i.putExtra(CollectionCardAdapter.EXTRA_BIRD_ID, currentBirdId);
+        i.putExtra(CollectionCardAdapter.EXTRA_RARITY, currentRarity);
+        i.putExtra(CollectionCardAdapter.EXTRA_IMAGE_URL, currentImageUrl);
+        i.putExtra(CollectionCardAdapter.EXTRA_COMMON_NAME, ((TextView) findViewById(R.id.txtBirdName)).getText().toString());
+        i.putExtra(CollectionCardAdapter.EXTRA_SCI_NAME, ((TextView) findViewById(R.id.txtScientific)).getText().toString());
+        i.putExtra(CollectionCardAdapter.EXTRA_STATE, currentState);
+        i.putExtra(CollectionCardAdapter.EXTRA_LOCALITY, currentLocality);
+        if (currentCaughtDate != null) i.putExtra(CollectionCardAdapter.EXTRA_CAUGHT_TIME, currentCaughtDate.getTime());
+        startActivity(i);
     }
 
     /**
@@ -293,6 +321,7 @@ public class ViewBirdCardActivity extends AppCompatActivity {
     private void updateButtonsEnabled(boolean enabled) {
         if (btnChangeCardImage != null) btnChangeCardImage.setEnabled(enabled);
         if (btnBirdInfo != null) btnBirdInfo.setEnabled(enabled);
+        if (btnUpgradeCard != null) btnUpgradeCard.setEnabled(enabled);
     }
 
     private boolean isBlank(String v) { return v == null || v.trim().isEmpty(); }

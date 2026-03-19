@@ -22,14 +22,13 @@
         <FrameLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:background="@drawable/bg_legendary_card"
+            android:background="@drawable/bg_mythic_card"
             android:padding="3dp">
 
             <androidx.constraintlayout.widget.ConstraintLayout
                 android:id="@+id/cardInner"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-
                 android:padding="16dp">
 
                 <TextView
@@ -48,7 +47,7 @@
                 <ImageView
                     android:id="@+id/imgBird"
                     android:layout_width="0dp"
-                    android:layout_height="300dp"
+                    android:layout_height="340dp"
                     android:layout_marginTop="12dp"
                     android:adjustViewBounds="true"
                     android:background="@android:color/transparent"
@@ -107,7 +106,7 @@
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="16dp"
-                    android:background="@color/legendary_gold"
+                    android:background="@color/legendary_red"
                     android:padding="10dp"
                     android:text="BirdDex • Captured by you"
                     android:textColor="#FFFFFF"

@@ -2,6 +2,7 @@ package com.birddex.app;
 
 import android.graphics.drawable.Drawable;
 import android.util.Log;
+import android.util.LruCache;
 import android.view.View;
 import android.widget.ImageView;
 
@@ -29,6 +30,10 @@ public final class BirdImageLoader {
     private static final String TAG = "BirdImageLoader";
     private static final FirebaseFirestore db = FirebaseFirestore.getInstance();
 
+    // Simple in-memory cache so repeated birds do not keep hitting Firestore.
+    private static final LruCache<String, String> imageUrlCache = new LruCache<>(500);
+    private static final Object cacheLock = new Object();
+
     private BirdImageLoader() {
     }
 
@@ -42,12 +47,19 @@ public final class BirdImageLoader {
                                          @Nullable String scientificName) {
         String requestKey = firstNonBlank(birdId, commonName, scientificName, "__none__");
         imageView.setTag(requestKey);
+        Glide.with(imageView).clear(imageView);
         imageView.setImageDrawable(null);
         imageView.setVisibility(View.INVISIBLE);
-        Glide.with(imageView).clear(imageView);
 
         if (isBlank(birdId) && isBlank(commonName) && isBlank(scientificName)) {
             imageView.setVisibility(View.GONE);
+            return;
+        }
+
+        // Fast path: use the in-memory URL cache if this bird was already resolved earlier.
+        String cachedUrl = getCachedUrl(birdId, commonName, scientificName);
+        if (!isBlank(cachedUrl)) {
+            loadResolvedUrl(imageView, requestKey, cachedUrl);
             return;
         }
 
@@ -74,7 +86,7 @@ public final class BirdImageLoader {
                     .addOnSuccessListener(doc -> {
                         if (!isStillBound(imageView, requestKey)) return;
                         if (doc.exists()) {
-                            processImageDoc(imageView, requestKey, doc);
+                            processImageDoc(imageView, requestKey, birdId, commonName, scientificName, doc);
                         } else {
                             queryFallbacks(imageView, requestKey, collectionName, birdId, commonName, scientificName, onNotFound);
                         }
@@ -98,9 +110,9 @@ public final class BirdImageLoader {
                                        @NonNull Runnable onNotFound) {
         if (!isStillBound(imageView, requestKey)) return;
 
-        queryByField(imageView, requestKey, collectionName, "speciesCode", birdId, () ->
-                queryByField(imageView, requestKey, collectionName, "commonName", commonName, () ->
-                        queryByField(imageView, requestKey, collectionName, "scientificName", scientificName, onNotFound)
+        queryByField(imageView, requestKey, collectionName, "speciesCode", birdId, birdId, commonName, scientificName, () ->
+                queryByField(imageView, requestKey, collectionName, "commonName", commonName, birdId, commonName, scientificName, () ->
+                        queryByField(imageView, requestKey, collectionName, "scientificName", scientificName, birdId, commonName, scientificName, onNotFound)
                 )
         );
     }
@@ -110,6 +122,9 @@ public final class BirdImageLoader {
                                      @NonNull String collectionName,
                                      @NonNull String fieldName,
                                      @Nullable String value,
+                                     @Nullable String birdId,
+                                     @Nullable String commonName,
+                                     @Nullable String scientificName,
                                      @NonNull Runnable onNotFound) {
         if (!isStillBound(imageView, requestKey)) return;
 
@@ -124,7 +139,7 @@ public final class BirdImageLoader {
                 .get(Source.SERVER)
                 .addOnSuccessListener(querySnapshot -> {
                     if (!isStillBound(imageView, requestKey)) return;
-                    handleQueryResult(imageView, requestKey, querySnapshot, onNotFound);
+                    handleQueryResult(imageView, requestKey, birdId, commonName, scientificName, querySnapshot, onNotFound);
                 })
                 .addOnFailureListener(e -> {
                     Log.e(TAG, "Failed image query in " + collectionName + " where " + fieldName + "=" + value, e);
@@ -135,12 +150,15 @@ public final class BirdImageLoader {
 
     private static void handleQueryResult(@NonNull ImageView imageView,
                                           @NonNull String requestKey,
+                                          @Nullable String birdId,
+                                          @Nullable String commonName,
+                                          @Nullable String scientificName,
                                           @Nullable QuerySnapshot querySnapshot,
                                           @NonNull Runnable onNotFound) {
         if (!isStillBound(imageView, requestKey)) return;
 
         if (querySnapshot != null && !querySnapshot.isEmpty()) {
-            processImageDoc(imageView, requestKey, querySnapshot.getDocuments().get(0));
+            processImageDoc(imageView, requestKey, birdId, commonName, scientificName, querySnapshot.getDocuments().get(0));
         } else {
             onNotFound.run();
         }
@@ -148,6 +166,9 @@ public final class BirdImageLoader {
 
     private static void processImageDoc(@NonNull ImageView imageView,
                                         @NonNull String requestKey,
+                                        @Nullable String birdId,
+                                        @Nullable String commonName,
+                                        @Nullable String scientificName,
                                         @NonNull DocumentSnapshot imageDoc) {
         if (!isStillBound(imageView, requestKey)) return;
 
@@ -158,10 +179,20 @@ public final class BirdImageLoader {
             return;
         }
 
+        cacheResolvedUrl(birdId, commonName, scientificName, imageUrl);
+        loadResolvedUrl(imageView, requestKey, imageUrl);
+    }
+
+    private static void loadResolvedUrl(@NonNull ImageView imageView,
+                                        @NonNull String requestKey,
+                                        @NonNull String imageUrl) {
+        if (!isStillBound(imageView, requestKey)) return;
+
         imageView.setVisibility(View.VISIBLE);
 
         Glide.with(imageView)
                 .load(imageUrl)
+                .thumbnail(0.25f)
                 .listener(new RequestListener<Drawable>() {
                     @Override
                     public boolean onLoadFailed(@Nullable GlideException e, Object model, Target<Drawable> target, boolean isFirstResource) {
@@ -202,6 +233,69 @@ public final class BirdImageLoader {
         }
 
         return null;
+    }
+
+    @Nullable
+    private static String getCachedUrl(@Nullable String birdId,
+                                       @Nullable String commonName,
+                                       @Nullable String scientificName) {
+        synchronized (cacheLock) {
+            String idKey = buildIdCacheKey(birdId);
+            if (idKey != null) {
+                String byId = imageUrlCache.get(idKey);
+                if (!isBlank(byId)) return byId;
+            }
+
+            String commonKey = buildCommonNameCacheKey(commonName);
+            if (commonKey != null) {
+                String byCommon = imageUrlCache.get(commonKey);
+                if (!isBlank(byCommon)) return byCommon;
+            }
+
+            String scientificKey = buildScientificNameCacheKey(scientificName);
+            if (scientificKey != null) {
+                String byScientific = imageUrlCache.get(scientificKey);
+                if (!isBlank(byScientific)) return byScientific;
+            }
+        }
+        return null;
+    }
+
+    private static void cacheResolvedUrl(@Nullable String birdId,
+                                         @Nullable String commonName,
+                                         @Nullable String scientificName,
+                                         @NonNull String imageUrl) {
+        synchronized (cacheLock) {
+            String idKey = buildIdCacheKey(birdId);
+            if (idKey != null) {
+                imageUrlCache.put(idKey, imageUrl);
+            }
+
+            String commonKey = buildCommonNameCacheKey(commonName);
+            if (commonKey != null) {
+                imageUrlCache.put(commonKey, imageUrl);
+            }
+
+            String scientificKey = buildScientificNameCacheKey(scientificName);
+            if (scientificKey != null) {
+                imageUrlCache.put(scientificKey, imageUrl);
+            }
+        }
+    }
+
+    @Nullable
+    private static String buildIdCacheKey(@Nullable String birdId) {
+        return isBlank(birdId) ? null : "id:" + birdId.trim().toLowerCase();
+    }
+
+    @Nullable
+    private static String buildCommonNameCacheKey(@Nullable String commonName) {
+        return isBlank(commonName) ? null : "common:" + commonName.trim().toLowerCase();
+    }
+
+    @Nullable
+    private static String buildScientificNameCacheKey(@Nullable String scientificName) {
+        return isBlank(scientificName) ? null : "scientific:" + scientificName.trim().toLowerCase();
     }
 
     private static boolean isStillBound(@NonNull ImageView imageView, @NonNull String requestKey) {

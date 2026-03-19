@@ -15,6 +15,7 @@ import android.text.format.DateUtils;
 import android.util.Log;
 import android.util.TypedValue;
 import android.view.LayoutInflater;
+import androidx.annotation.Nullable;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.EditText;
@@ -908,24 +909,138 @@ public class NearbyHeatmapActivity extends AppCompatActivity
      * attach listeners.
      */
     private void showBirdListBottomSheet(@NonNull HotspotBucket b) {
-        BottomSheetDialog dialog = new BottomSheetDialog(this); dialog.setContentView(R.layout.bottom_sheet_heatmap_birds);
-        // Bind or inflate the UI pieces this method needs before it can update the screen.
+        BottomSheetDialog dialog = new BottomSheetDialog(this);
+        dialog.setContentView(R.layout.bottom_sheet_heatmap_birds);
+
         View bs = dialog.findViewById(com.google.android.material.R.id.design_bottom_sheet);
-        if (bs != null) { bs.setBackgroundColor(Color.TRANSPARENT); ViewGroup.LayoutParams p = bs.getLayoutParams(); p.height = (int) (getResources().getDisplayMetrics().heightPixels * 0.58f); bs.setLayoutParams(p); BottomSheetBehavior<View> behavior = BottomSheetBehavior.from(bs); behavior.setState(BottomSheetBehavior.STATE_EXPANDED); }
-        ((TextView) dialog.findViewById(R.id.tvSheetSummary)).setText("Unverified: " + b.userCount + "  •  Verified: " + b.eBirdCount);
-        LinearLayout container = dialog.findViewById(R.id.birdListContainer); container.removeAllViews();
+        if (bs != null) {
+            bs.setBackgroundColor(Color.TRANSPARENT);
+            ViewGroup.LayoutParams p = bs.getLayoutParams();
+            p.height = (int) (getResources().getDisplayMetrics().heightPixels * 0.58f);
+            bs.setLayoutParams(p);
+            BottomSheetBehavior<View> behavior = BottomSheetBehavior.from(bs);
+            behavior.setState(BottomSheetBehavior.STATE_EXPANDED);
+        }
+
+        ((TextView) dialog.findViewById(R.id.tvSheetSummary))
+                .setText("Unverified: " + b.userCount + "  •  Verified: " + b.eBirdCount);
+
+        LinearLayout container = dialog.findViewById(R.id.birdListContainer);
+        if (container == null) {
+            dialog.show();
+            return;
+        }
+
+        container.removeAllViews();
+
         List<BirdSheetRow> rows = new ArrayList<>(b.birdRows.values());
         Collections.sort(rows, (a, c) -> String.CASE_INSENSITIVE_ORDER.compare(a.displayName, c.displayName));
+
         LayoutInflater inf = LayoutInflater.from(this);
         for (BirdSheetRow item : rows) {
             View row = inf.inflate(R.layout.item_heatmap_bird_placeholder, container, false);
+
             ((TextView) row.findViewById(R.id.tvBirdName)).setText(item.displayName);
             ((TextView) row.findViewById(R.id.tvBirdCount)).setText(item.count + " sightings");
+
             ImageView ivBird = row.findViewById(R.id.ivBirdPlaceholder);
             BirdImageLoader.loadBirdImageInto(ivBird, item.birdId, item.commonName, item.scientificName);
+
+            row.setClickable(true);
+            row.setFocusable(true);
+            row.setOnClickListener(v -> openBirdWikiFromHeatmapRow(item, dialog));
+
             container.addView(row);
         }
+
         dialog.show();
+    }
+
+    private void openBirdWikiFromHeatmapRow(@NonNull BirdSheetRow item, @NonNull BottomSheetDialog dialog) {
+        String birdId = safeTrim(item.birdId);
+        if (birdId != null) {
+            launchBirdWiki(birdId, dialog);
+            return;
+        }
+
+        String commonName = safeTrim(item.commonName);
+        String scientificName = safeTrim(item.scientificName);
+
+        if (commonName == null && scientificName == null) {
+            Toast.makeText(this, "Bird info unavailable for this hotspot entry.", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        resolveBirdIdAndOpen(commonName, scientificName, dialog);
+    }
+
+    private void resolveBirdIdAndOpen(@Nullable String commonName,
+                                      @Nullable String scientificName,
+                                      @NonNull BottomSheetDialog dialog) {
+        if (commonName != null) {
+            db.collection("birds")
+                    .whereEqualTo("commonName", commonName)
+                    .limit(1)
+                    .get(Source.DEFAULT)
+                    .addOnSuccessListener(querySnapshot -> {
+                        if (querySnapshot != null && !querySnapshot.isEmpty()) {
+                            launchBirdWiki(querySnapshot.getDocuments().get(0).getId(), dialog);
+                        } else if (scientificName != null) {
+                            resolveBirdIdByScientificName(scientificName, dialog);
+                        } else {
+                            Toast.makeText(this, "Could not open bird info for this entry.", Toast.LENGTH_SHORT).show();
+                        }
+                    })
+                    .addOnFailureListener(e -> {
+                        Log.e(TAG, "Failed to resolve bird by commonName=" + commonName, e);
+                        if (scientificName != null) {
+                            resolveBirdIdByScientificName(scientificName, dialog);
+                        } else {
+                            Toast.makeText(this, "Could not open bird info for this entry.", Toast.LENGTH_SHORT).show();
+                        }
+                    });
+            return;
+        }
+
+        resolveBirdIdByScientificName(scientificName, dialog);
+    }
+
+    private void resolveBirdIdByScientificName(@Nullable String scientificName,
+                                               @NonNull BottomSheetDialog dialog) {
+        if (scientificName == null) {
+            Toast.makeText(this, "Could not open bird info for this entry.", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        db.collection("birds")
+                .whereEqualTo("scientificName", scientificName)
+                .limit(1)
+                .get(Source.DEFAULT)
+                .addOnSuccessListener(querySnapshot -> {
+                    if (querySnapshot != null && !querySnapshot.isEmpty()) {
+                        launchBirdWiki(querySnapshot.getDocuments().get(0).getId(), dialog);
+                    } else {
+                        Toast.makeText(this, "Could not open bird info for this entry.", Toast.LENGTH_SHORT).show();
+                    }
+                })
+                .addOnFailureListener(e -> {
+                    Log.e(TAG, "Failed to resolve bird by scientificName=" + scientificName, e);
+                    Toast.makeText(this, "Could not open bird info for this entry.", Toast.LENGTH_SHORT).show();
+                });
+    }
+
+    private void launchBirdWiki(@NonNull String birdId, @NonNull BottomSheetDialog dialog) {
+        dialog.dismiss();
+        Intent intent = new Intent(this, BirdWikiActivity.class);
+        intent.putExtra(BirdWikiActivity.EXTRA_BIRD_ID, birdId);
+        startActivity(intent);
+    }
+
+    @Nullable
+    private String safeTrim(@Nullable String value) {
+        if (value == null) return null;
+        String trimmed = value.trim();
+        return trimmed.isEmpty() ? null : trimmed;
     }
 
     /**

@@ -49,11 +49,14 @@
             <ImageView
                 android:id="@+id/ivBirdHeaderImage"
                 android:layout_width="match_parent"
-                android:layout_height="220dp"
+                android:layout_height="wrap_content"
                 android:layout_marginTop="14dp"
-                android:background="#EAECF0"
+                android:adjustViewBounds="true"
+                android:background="@android:color/transparent"
                 android:contentDescription="Bird image"
-                android:scaleType="centerCrop"
+                android:maxHeight="260dp"
+                android:minHeight="180dp"
+                android:scaleType="fitCenter"
                 android:visibility="gone" />
 
             <!-- Family -->
@@ -392,7 +395,7 @@
                 android:textColor="#202122"
                 android:textSize="16sp" />
 
-            <!-- Unique Behaviors -->
+            <!-- Unique Behaviors Specific -->
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
@@ -420,12 +423,12 @@
                 android:textColor="#202122"
                 android:textSize="16sp" />
 
-            <!-- Record-Setting Facts -->
+            <!-- Record Setting Facts -->
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="18dp"
-                android:text="Record-Setting Facts"
+                android:text="Record Setting Facts"
                 android:textColor="#202122"
                 android:textSize="22sp"
                 android:textStyle="bold"
@@ -448,12 +451,12 @@
                 android:textColor="#202122"
                 android:textSize="16sp" />
 
-            <!-- Cultural / Historical Notes -->
+            <!-- Cultural Historical Notes -->
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="18dp"
-                android:text="Cultural / Historical Notes"
+                android:text="Cultural &amp; Historical Notes"
                 android:textColor="#202122"
                 android:textSize="22sp"
                 android:textStyle="bold"
@@ -476,12 +479,12 @@
                 android:textColor="#202122"
                 android:textSize="16sp" />
 
-            <!-- How to Help -->
+            <!-- How To Help -->
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="18dp"
-                android:text="How to Help"
+                android:text="How To Help"
                 android:textColor="#202122"
                 android:textSize="22sp"
                 android:textStyle="bold"
@@ -532,12 +535,12 @@
                 android:textColor="#202122"
                 android:textSize="16sp" />
 
-            <!-- Best Angles / Behaviors -->
+            <!-- Best Angles Behaviors -->
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="18dp"
-                android:text="Best Angles / Behaviors"
+                android:text="Best Angles &amp; Behaviors"
                 android:textColor="#202122"
                 android:textSize="22sp"
                 android:textStyle="bold"
@@ -560,12 +563,12 @@
                 android:textColor="#202122"
                 android:textSize="16sp" />
 
-            <!-- Best Lighting Times -->
+            <!-- Times Best Lighting -->
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="18dp"
-                android:text="Best Lighting Times"
+                android:text="Times &amp; Best Lighting"
                 android:textColor="#202122"
                 android:textSize="22sp"
                 android:textStyle="bold"
@@ -620,7 +623,7 @@
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="20dp"
+                android:layout_marginTop="18dp"
                 android:text="Hunter Facts"
                 android:textColor="#202122"
                 android:textSize="22sp"
@@ -694,10 +697,10 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="8dp"
-                android:layout_marginBottom="8dp"
+                android:layout_marginBottom="12dp"
                 android:autoLink="web"
-                android:linksClickable="true"
                 android:lineSpacingExtra="3dp"
+                android:linksClickable="true"
                 android:text="Not available yet."
                 android:textColor="#3366CC"
                 android:textSize="16sp" />
@@ -705,26 +708,23 @@
         </LinearLayout>
     </ScrollView>
 
-    <!-- Simple loading circle overlay -->
     <FrameLayout
         android:id="@+id/loadingOverlay"
         android:layout_width="0dp"
         android:layout_height="0dp"
-        android:background="#99424242"
-        android:visibility="visible"
+        android:background="#CCDDDDDD"
         android:clickable="true"
         android:focusable="true"
-        android:elevation="10dp"
+        android:visibility="gone"
         app:layout_constraintTop_toTopOf="parent"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent">
 
         <ProgressBar
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_gravity="center"
-            android:indeterminateTint="@color/page_cream" />
+            android:layout_width="56dp"
+            android:layout_height="56dp"
+            android:layout_gravity="center" />
     </FrameLayout>
 
 </androidx.constraintlayout.widget.ConstraintLayout>

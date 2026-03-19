@@ -301,6 +301,43 @@ The JSON object should have these keys and corresponding facts:
     }
 }
 
+
+// ======================================================
+// HELPER: Bird Card rarity
+// ======================================================
+const CARD_RARITIES = ["common", "uncommon", "rare", "epic", "legendary"];
+const CARD_RARITY_STEP_COSTS = {
+    uncommon: 10,
+    rare: 20,
+    epic: 30,
+    legendary: 50,
+};
+
+function normalizeCardRarity(rarity) {
+    if (!rarity || typeof rarity !== "string") return "common";
+    const normalized = rarity.trim().toLowerCase();
+    return CARD_RARITIES.includes(normalized) ? normalized : "common";
+}
+
+function getCardRarityIndex(rarity) {
+    return CARD_RARITIES.indexOf(normalizeCardRarity(rarity));
+}
+
+function getCardUpgradeCost(currentRarity, targetRarity) {
+    const currentIndex = getCardRarityIndex(currentRarity);
+    const targetIndex = getCardRarityIndex(targetRarity);
+
+    if (currentIndex < 0 || targetIndex < 0 || targetIndex <= currentIndex) {
+        throw new HttpsError("invalid-argument", "Target rarity must be higher than the current rarity.");
+    }
+
+    let total = 0;
+    for (let i = currentIndex + 1; i <= targetIndex; i++) {
+        total += CARD_RARITY_STEP_COSTS[CARD_RARITIES[i]] || 0;
+    }
+    return total;
+}
+
 // ======================================================
 // HELPER: Get or generate bird facts (lazy, with staleness check)
 // ======================================================
@@ -520,12 +557,9 @@ exports.createUserDocument = auth.user().onCreate(async (user) => {
             totalBirds: 0,
             duplicateBirds: 0,
             totalPoints: 0,
-            notificationsEnabled: false,
+            notificationsEnabled: true,
             repliesEnabled: true,
-            notificationCooldownHours: 2,
-            trackedBirdsNotificationsEnabled: false,
-            trackedBirdsCooldownHours: 0,
-            trackedBirdsMaxDistanceMiles: -1
+            notificationCooldownHours: 2
         }, { merge: true });
         logger.info(`Created user document for ${uid}`);
     } catch (error) {
@@ -1101,6 +1135,28 @@ exports.getBirdDetailsAndFacts = onCall({ secrets: [OPENAI_API_KEY], timeoutSeco
     }
 });
 
+// ======================================================
+// searchBirdImage (Nuthatch API)
+// ======================================================
+/**
+ * Main backend logic block for this Firebase Functions file.
+ * It also calls an external API, which is where third-party bird/AI/network data enters the
+ * backend flow.
+ * Input/permission checks happen here first so invalid requests fail before any expensive
+ * backend work starts.
+ */
+exports.searchBirdImage = onCall({ secrets: [NUTHATCH_API_KEY], timeoutSeconds: 15 }, async (request) => {
+    try {
+        const response = await axios.get(
+            `https://nuthatch.lastelm.software/v2/birds?name=${encodeURIComponent(request.data.searchTerm)}&hasImg=true`,
+            { headers: { "api-key": NUTHATCH_API_KEY.value() }, timeout: 10000 }
+        );
+        return { data: response.data };
+    } catch (error) {
+        logger.error("Nuthatch API failed:", error);
+        throw new HttpsError("internal", `Nuthatch API request failed: ${error.message}`);
+    }
+});
 
 // ======================================================
 // cleanupUserData — on Auth delete (v1)
@@ -3663,27 +3719,11 @@ exports.unsaveForumPost = onCall(async (request) => {
  * Input/permission checks happen here first so invalid requests fail before any expensive
  * backend work starts.
  */
-function normalizeCardRarity(rarity) {
-    const value = String(rarity || "").trim().toLowerCase();
-    switch (value) {
-        case "common":
-            return "Common";
-        case "uncommon":
-            return "Uncommon";
-        case "rare":
-            return "Rare";
-        case "epic":
-            return "Epic";
-        case "legendary":
-            return "Legendary";
-        default:
-            throw new HttpsError("invalid-argument", `Invalid rarity: ${rarity}`);
-    }
-}
 exports.upgradeCollectionSlotRarity = onCall(async (request) => {
     if (!request.auth) {
         throw new HttpsError("unauthenticated", "Login required.");
     }
+
     const userId = request.auth.uid;
     const rawSlotId = request.data && typeof request.data.slotId === "string"
         ? request.data.slotId.trim()
@@ -3694,51 +3734,62 @@ exports.upgradeCollectionSlotRarity = onCall(async (request) => {
     const rawTargetRarity = request.data && typeof request.data.targetRarity === "string"
         ? request.data.targetRarity
         : null;
+
     if (!rawTargetRarity) {
         throw new HttpsError("invalid-argument", "targetRarity is required.");
     }
+
     const targetRarity = normalizeCardRarity(rawTargetRarity);
     const slotId = rawSlotId || (rawBirdId ? `${userId}_${rawBirdId}` : "");
+
     if (!slotId) {
         throw new HttpsError("invalid-argument", "slotId or birdId is required.");
     }
+
     const userRef = db.collection("users").doc(userId);
     const slotRef = db.collection("users").doc(userId).collection("collectionSlot").doc(slotId);
+
     try {
         const result = await db.runTransaction(async (transaction) => {
             const [userSnap, slotSnap] = await Promise.all([
                 transaction.get(userRef),
                 transaction.get(slotRef),
             ]);
+
             if (!userSnap.exists) {
                 throw new HttpsError("not-found", "User profile not found.");
             }
+
             if (!slotSnap.exists) {
                 throw new HttpsError("not-found", "Collection slot not found.");
             }
+
             const userData = userSnap.data() || {};
             const slotData = slotSnap.data() || {};
+
             const currentRarity = normalizeCardRarity(slotData.rarity);
             const upgradeCost = getCardUpgradeCost(currentRarity, targetRarity);
             const currentPoints = Number(userData.totalPoints || 0);
-            if (!Number.isFinite(currentPoints)) {
-                throw new HttpsError("internal", "User points are invalid.");
-            }
+
             if (currentPoints < upgradeCost) {
                 throw new HttpsError(
                     "failed-precondition",
                     `Not enough points. Need ${upgradeCost}, but only have ${currentPoints}.`
                 );
             }
+
             const remainingPoints = currentPoints - upgradeCost;
+
             transaction.update(userRef, {
                 totalPoints: remainingPoints,
                 updatedAt: admin.firestore.FieldValue.serverTimestamp(),
             });
+
             transaction.update(slotRef, {
                 rarity: targetRarity,
                 updatedAt: admin.firestore.FieldValue.serverTimestamp(),
             });
+
             return {
                 slotId,
                 oldRarity: currentRarity,
@@ -3747,9 +3798,11 @@ exports.upgradeCollectionSlotRarity = onCall(async (request) => {
                 remainingPoints,
             };
         });
+
         logger.info(
             `upgradeCollectionSlotRarity: userId=${userId} slotId=${result.slotId} ${result.oldRarity} -> ${result.newRarity} spent=${result.pointsSpent} remaining=${result.remainingPoints}`
         );
+
         return {
             success: true,
             ...result,
@@ -3759,230 +3812,4 @@ exports.upgradeCollectionSlotRarity = onCall(async (request) => {
         if (error instanceof HttpsError) throw error;
         throw new HttpsError("internal", `Failed to upgrade card: ${error.message}`);
     }
-});
-
-// ======================================================
-// HELPER: (for the function below) tracked bird notification fan-out
-// ======================================================
-function haversineMiles(lat1, lon1, lat2, lon2) {
-    const toRad = (deg) => deg * Math.PI / 180;
-    const R = 3958.8; // Earth radius in miles
-
-    const dLat = toRad(lat2 - lat1);
-    const dLon = toRad(lon2 - lon1);
-
-    const a =
-        Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-        Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
-        Math.sin(dLon / 2) * Math.sin(dLon / 2);
-
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-    return R * c;
-}
-// ======================================================
-// HELPER: tracked bird notification fan-out
-// ======================================================
-async function notifyTrackedBirdWatchers({
-    sightingId,
-    birdId,
-    commonName,
-    scientificName,
-    latitude,
-    longitude,
-    localityName,
-    source,
-    sourceUserId
-}) {
-    if (!birdId || !sightingId) return null;
-
-    const trackedSnap = await db.collectionGroup("trackedBirds")
-        .where("birdId", "==", birdId)
-        .get();
-
-    if (trackedSnap.empty) return null;
-
-    await Promise.all(trackedSnap.docs.map(async (trackedDoc) => {
-        try {
-            const userRef = trackedDoc.ref.parent.parent;
-            if (!userRef) return null;
-
-            const recipientUserId = userRef.id;
-            if (!recipientUserId) return null;
-
-            // Do not notify someone about their own user-created sighting.
-            if (sourceUserId && recipientUserId === sourceUserId) return null;
-
-            const trackedData = trackedDoc.data() || {};
-            if (trackedData.lastNotifiedSightingId === sightingId) return null;
-
-            const recipientDoc = await userRef.get();
-            if (!recipientDoc.exists) return null;
-
-            const recipientData = recipientDoc.data() || {};
-            const {
-                fcmToken,
-                notificationsEnabled = true,
-                trackedBirdsNotificationsEnabled = true,
-                trackedBirdsCooldownHours = 0,
-                trackedBirdsMaxDistanceMiles = -1,
-                lastKnownLatitude = null,
-                lastKnownLongitude = null
-            } = recipientData;
-
-            if (!notificationsEnabled || !trackedBirdsNotificationsEnabled || !fcmToken) {
-                return null;
-            }
-
-            // Distance filter: -1 means any distance, 150 means within 150 miles.
-            if (
-                trackedBirdsMaxDistanceMiles > 0 &&
-                typeof latitude === "number" &&
-                typeof longitude === "number"
-            ) {
-                if (
-                    typeof lastKnownLatitude !== "number" ||
-                    typeof lastKnownLongitude !== "number"
-                ) {
-                    return null;
-                }
-
-                const distanceMiles = haversineMiles(
-                    lastKnownLatitude,
-                    lastKnownLongitude,
-                    latitude,
-                    longitude
-                );
-
-                if (distanceMiles > trackedBirdsMaxDistanceMiles) {
-                    return null;
-                }
-            }
-
-            const lastNotifiedAt = trackedData.lastNotifiedAt;
-            if (
-                trackedBirdsCooldownHours > 0 &&
-                lastNotifiedAt &&
-                (Date.now() - lastNotifiedAt.toDate().getTime()) < trackedBirdsCooldownHours * 60 * 60 * 1000
-            ) {
-                return null;
-            }
-
-            const eventLogRef = db.collection("processedEvents")
-                .doc(`TRACKED_BIRD_NOTIFY_${recipientUserId}_${sightingId}`);
-
-            let shouldSend = false;
-
-            await db.runTransaction(async (t) => {
-                const eventDoc = await t.get(eventLogRef);
-                if (eventDoc.exists) return;
-
-                t.set(eventLogRef, {
-                    processedAt: admin.firestore.FieldValue.serverTimestamp(),
-                    type: "TRACKED_BIRD_NOTIFY",
-                    recipientUserId,
-                    sightingId,
-                    birdId,
-                    source: source || "unknown"
-                });
-
-                shouldSend = true;
-            });
-
-            if (!shouldSend) return null;
-
-            const title = "Tracked bird spotted!";
-            const localitySuffix = localityName ? ` near ${localityName}` : " nearby";
-            const body = `${commonName || scientificName || birdId} was reported${localitySuffix}.`;
-
-            try {
-                await messaging.send({
-                    token: fcmToken,
-                    notification: { title, body },
-                    data: {
-                        type: "tracked_bird",
-                        birdId: String(birdId),
-                        commonName: String(commonName || ""),
-                        scientificName: String(scientificName || ""),
-                        sightingId: String(sightingId),
-                        source: String(source || "unknown"),
-                        latitude: latitude != null ? String(latitude) : "",
-                        longitude: longitude != null ? String(longitude) : "",
-                        localityName: String(localityName || "")
-                    }
-                });
-
-                await trackedDoc.ref.set({
-                    lastNotifiedAt: admin.firestore.FieldValue.serverTimestamp(),
-                    lastNotifiedSightingId: sightingId,
-                    lastNotificationSource: source || "unknown"
-                }, { merge: true });
-            } catch (error) {
-                if (error.code === "messaging/registration-token-not-registered") {
-                    await userRef.update({
-                        fcmToken: admin.firestore.FieldValue.delete()
-                    });
-                } else {
-                    logger.error("Error sending tracked bird notification:", error);
-                }
-
-                await eventLogRef.delete().catch(() => null);
-            }
-        } catch (error) {
-            logger.error("notifyTrackedBirdWatchers recipient failed:", error);
-        }
-
-        return null;
-    }));
-
-    return null;
-}
-
-// ======================================================
-// onUserBirdSightingCreated — notify tracked bird watchers
-// ======================================================
-exports.onUserBirdSightingCreated = onDocumentCreated("userBirdSightings/{sightingId}", async (event) => {
-    try {
-        const data = event.data?.data();
-        if (!data) return null;
-
-        await notifyTrackedBirdWatchers({
-            sightingId: event.params.sightingId,
-            birdId: data.birdId,
-            commonName: data.commonName,
-            scientificName: data.scientificName,
-            latitude: typeof data.latitude === "number" ? data.latitude : (data.location?.latitude ?? null),
-            longitude: typeof data.longitude === "number" ? data.longitude : (data.location?.longitude ?? null),
-            localityName: data.locality || data.location?.localityName || "",
-            source: "userBirdSightings",
-            sourceUserId: data.userId || data.user_sighting?.userId || null
-        });
-    } catch (error) {
-        logger.error("Error in onUserBirdSightingCreated:", error);
-    }
-    return null;
-});
-
-// ======================================================
-// onEBirdApiSightingCreated — notify tracked bird watchers
-// ======================================================
-exports.onEBirdApiSightingCreated = onDocumentCreated("eBirdApiSightings/{sightingId}", async (event) => {
-    try {
-        const data = event.data?.data();
-        if (!data) return null;
-
-        await notifyTrackedBirdWatchers({
-            sightingId: event.params.sightingId,
-            birdId: data.speciesCode,
-            commonName: data.commonName,
-            scientificName: data.scientificName,
-            latitude: data.location?.latitude ?? null,
-            longitude: data.location?.longitude ?? null,
-            localityName: data.location?.localityName || "",
-            source: "eBirdApiSightings",
-            sourceUserId: null
-        });
-    } catch (error) {
-        logger.error("Error in onEBirdApiSightingCreated:", error);
-    }
-    return null;
 });

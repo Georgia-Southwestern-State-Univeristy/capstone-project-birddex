@@ -33,8 +33,27 @@
             android:background="@color/page_cream"
             android:orientation="vertical">
 
-            <include
-                layout="@layout/view_bird_card" />
+            <!-- Placeholder for card layouts based on rarity -->
+            <FrameLayout
+                android:id="@+id/cardPlaceholder"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content">
+                <include layout="@layout/view_bird_card" />
+            </FrameLayout>
+
+            <Button
+                android:id="@+id/btnUpgradeCard"
+                android:layout_width="match_parent"
+                android:layout_height="48dp"
+                android:layout_marginStart="12dp"
+                android:layout_marginTop="12dp"
+                android:layout_marginEnd="12dp"
+                android:gravity="center"
+                android:minHeight="48dp"
+                android:text="Upgrade Card"
+                android:textAllCaps="false"
+                android:textSize="16sp"
+                android:textStyle="bold" />
 
             <LinearLayout
                 android:layout_width="match_parent"
@@ -42,35 +61,35 @@
                 android:layout_marginStart="12dp"
                 android:layout_marginTop="8dp"
                 android:layout_marginEnd="12dp"
-                android:layout_marginBottom="20dp"
+                android:layout_marginBottom="24dp"
                 android:orientation="horizontal"
                 android:weightSum="2">
 
                 <Button
                     android:id="@+id/btnChangeCardImage"
                     android:layout_width="0dp"
-                    android:layout_height="72dp"
+                    android:layout_height="48dp"
                     android:layout_weight="1"
                     android:layout_marginEnd="6dp"
                     android:gravity="center"
-                    android:lines="2"
-                    android:minHeight="72dp"
-                    android:text="Change&#10;Image"
+                    android:lines="1"
+                    android:minHeight="48dp"
+                    android:text="Change Image"
                     android:textAllCaps="false"
-                    android:textSize="16sp" />
+                    android:textSize="14sp" />
 
                 <Button
                     android:id="@+id/btnBirdInfo"
                     android:layout_width="0dp"
-                    android:layout_height="72dp"
+                    android:layout_height="48dp"
                     android:layout_weight="1"
                     android:layout_marginStart="6dp"
                     android:gravity="center"
-                    android:lines="2"
-                    android:minHeight="72dp"
-                    android:text="Bird&#10;Info"
+                    android:lines="1"
+                    android:minHeight="48dp"
+                    android:text="Bird Info"
                     android:textAllCaps="false"
-                    android:textSize="16sp" />
+                    android:textSize="14sp" />
             </LinearLayout>
         </LinearLayout>
     </ScrollView>

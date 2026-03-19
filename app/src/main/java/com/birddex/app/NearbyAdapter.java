@@ -9,7 +9,6 @@ import android.widget.TextView;
 import androidx.annotation.NonNull;
 import androidx.recyclerview.widget.RecyclerView;
 
-import com.bumptech.glide.Glide;
 import com.google.android.material.imageview.ShapeableImageView;
 
 import java.text.SimpleDateFormat;
@@ -83,9 +82,7 @@ public class NearbyAdapter extends RecyclerView.Adapter<NearbyAdapter.NearbyView
         }
 
         // Load the image asynchronously so the UI can show remote/local media without blocking the main thread.
-        Glide.with(holder.itemView.getContext())
-                .load(R.drawable.bird_image)
-                .into(holder.ivBirdImage);
+        BirdImageLoader.loadBirdImageInto(holder.ivBirdImage, bird.getId(), bird.getCommonName(), bird.getScientificName());
 
         // Attach the user interaction that should run when this control is tapped.
         holder.itemView.setOnClickListener(v -> {

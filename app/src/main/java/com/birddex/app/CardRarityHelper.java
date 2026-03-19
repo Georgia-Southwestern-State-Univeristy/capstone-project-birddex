@@ -60,7 +60,7 @@ public final class CardRarityHelper {
             case EPIC:
                 return R.layout.view_bird_card_epic;
             case LEGENDARY:
-                return R.layout.view_bird_card_legendary;
+                return R.layout.view_bird_card_mythic;
             case COMMON:
             default:
                 return R.layout.view_bird_card;

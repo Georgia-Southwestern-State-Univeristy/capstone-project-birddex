@@ -38,7 +38,13 @@
     <color name="epic_purple_dark">#4A148C</color>    <!-- border -->
     <color name="epic_purple_accent">#BA68C8</color>  <!-- optional highlight -->
 
-    <!-- LEGENDARY (Red / Fire Theme) -->
+    <!-- LEGENDARY (Gold Theme) -->
+    <color name="legendary_gold_light">#FFE082</color>   <!-- soft gold -->
+    <color name="legendary_gold">#FFC107</color>         <!-- main gold -->
+    <color name="legendary_gold_dark">#FF8F00</color>    <!-- deep border -->
+    <color name="legendary_gold_accent">#FFD54F</color>  <!-- highlight -->
+
+    <!-- Mythic (Red / Fire Theme) -->
     <color name="legendary_red_light">#FF8A65</color>   <!-- soft orange-red -->
     <color name="legendary_red">#D32F2F</color>         <!-- main red -->
     <color name="legendary_red_dark">#7F0000</color>    <!-- deep border -->

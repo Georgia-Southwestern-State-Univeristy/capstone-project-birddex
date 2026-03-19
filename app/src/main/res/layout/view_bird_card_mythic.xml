@@ -29,6 +29,7 @@
                 android:id="@+id/cardInner"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
+
                 android:padding="16dp">
 
                 <TextView
@@ -72,8 +73,8 @@
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:gravity="center"
-                        android:textAlignment="center"
                         android:text="Cyanocitta cristata"
+                        android:textAlignment="center"
                         android:textColor="#555555"
                         android:textSize="16sp" />
 
@@ -83,8 +84,8 @@
                         android:layout_height="wrap_content"
                         android:layout_marginTop="6dp"
                         android:gravity="center"
-                        android:textAlignment="center"
                         android:text="Location: --"
+                        android:textAlignment="center"
                         android:textColor="#555555"
                         android:textSize="18sp"
                         android:textStyle="bold" />
@@ -95,8 +96,8 @@
                         android:layout_height="wrap_content"
                         android:layout_marginTop="6dp"
                         android:gravity="center"
-                        android:textAlignment="center"
                         android:text="Date caught: --"
+                        android:textAlignment="center"
                         android:textColor="#555555"
                         android:textSize="16sp" />
                 </LinearLayout>
@@ -106,7 +107,7 @@
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="16dp"
-                    android:background="@color/legendary_red"
+                    android:background="@color/legendary_gold"
                     android:padding="10dp"
                     android:text="BirdDex • Captured by you"
                     android:textColor="#FFFFFF"

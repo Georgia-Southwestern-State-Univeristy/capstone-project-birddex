@@ -284,6 +284,43 @@ The JSON object should have these keys and corresponding facts:
     }
 }
 
+
+// ======================================================
+// HELPER: Bird Card rarity
+// ======================================================
+const CARD_RARITIES = ["common", "uncommon", "rare", "epic", "legendary"];
+const CARD_RARITY_STEP_COSTS = {
+    uncommon: 10,
+    rare: 20,
+    epic: 30,
+    legendary: 50,
+};
+
+function normalizeCardRarity(rarity) {
+    if (!rarity || typeof rarity !== "string") return "common";
+    const normalized = rarity.trim().toLowerCase();
+    return CARD_RARITIES.includes(normalized) ? normalized : "common";
+}
+
+function getCardRarityIndex(rarity) {
+    return CARD_RARITIES.indexOf(normalizeCardRarity(rarity));
+}
+
+function getCardUpgradeCost(currentRarity, targetRarity) {
+    const currentIndex = getCardRarityIndex(currentRarity);
+    const targetIndex = getCardRarityIndex(targetRarity);
+
+    if (currentIndex < 0 || targetIndex < 0 || targetIndex <= currentIndex) {
+        throw new HttpsError("invalid-argument", "Target rarity must be higher than the current rarity.");
+    }
+
+    let total = 0;
+    for (let i = currentIndex + 1; i <= targetIndex; i++) {
+        total += CARD_RARITY_STEP_COSTS[CARD_RARITIES[i]] || 0;
+    }
+    return total;
+}
+
 // ======================================================
 // HELPER: Get or generate bird facts (lazy, with staleness check)
 // ======================================================
@@ -3653,5 +3690,109 @@ exports.unsaveForumPost = onCall(async (request) => {
         logger.error("unsaveForumPost failed:", error);
         if (error instanceof HttpsError) throw error;
         throw new HttpsError("internal", `Failed to unsave post: ${error.message}`);
+    }
+});
+// ======================================================
+// upgradeCollectionSlotRarity — server-side rarity upgrade with point spending
+// ======================================================
+/**
+ * Main backend logic block for this Firebase Functions file.
+ * This code reads/writes Firestore documents, so it is part of the persistent backend state
+ * for the app.
+ * Input/permission checks happen here first so invalid requests fail before any expensive
+ * backend work starts.
+ */
+exports.upgradeCollectionSlotRarity = onCall(async (request) => {
+    if (!request.auth) {
+        throw new HttpsError("unauthenticated", "Login required.");
+    }
+
+    const userId = request.auth.uid;
+    const rawSlotId = request.data && typeof request.data.slotId === "string"
+        ? request.data.slotId.trim()
+        : "";
+    const rawBirdId = request.data && typeof request.data.birdId === "string"
+        ? request.data.birdId.trim()
+        : "";
+    const rawTargetRarity = request.data && typeof request.data.targetRarity === "string"
+        ? request.data.targetRarity
+        : null;
+
+    if (!rawTargetRarity) {
+        throw new HttpsError("invalid-argument", "targetRarity is required.");
+    }
+
+    const targetRarity = normalizeCardRarity(rawTargetRarity);
+    const slotId = rawSlotId || (rawBirdId ? `${userId}_${rawBirdId}` : "");
+
+    if (!slotId) {
+        throw new HttpsError("invalid-argument", "slotId or birdId is required.");
+    }
+
+    const userRef = db.collection("users").doc(userId);
+    const slotRef = db.collection("users").doc(userId).collection("collectionSlot").doc(slotId);
+
+    try {
+        const result = await db.runTransaction(async (transaction) => {
+            const [userSnap, slotSnap] = await Promise.all([
+                transaction.get(userRef),
+                transaction.get(slotRef),
+            ]);
+
+            if (!userSnap.exists) {
+                throw new HttpsError("not-found", "User profile not found.");
+            }
+
+            if (!slotSnap.exists) {
+                throw new HttpsError("not-found", "Collection slot not found.");
+            }
+
+            const userData = userSnap.data() || {};
+            const slotData = slotSnap.data() || {};
+
+            const currentRarity = normalizeCardRarity(slotData.rarity);
+            const upgradeCost = getCardUpgradeCost(currentRarity, targetRarity);
+            const currentPoints = Number(userData.totalPoints || 0);
+
+            if (currentPoints < upgradeCost) {
+                throw new HttpsError(
+                    "failed-precondition",
+                    `Not enough points. Need ${upgradeCost}, but only have ${currentPoints}.`
+                );
+            }
+
+            const remainingPoints = currentPoints - upgradeCost;
+
+            transaction.update(userRef, {
+                totalPoints: remainingPoints,
+                updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            });
+
+            transaction.update(slotRef, {
+                rarity: targetRarity,
+                updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            });
+
+            return {
+                slotId,
+                oldRarity: currentRarity,
+                newRarity: targetRarity,
+                pointsSpent: upgradeCost,
+                remainingPoints,
+            };
+        });
+
+        logger.info(
+            `upgradeCollectionSlotRarity: userId=${userId} slotId=${result.slotId} ${result.oldRarity} -> ${result.newRarity} spent=${result.pointsSpent} remaining=${result.remainingPoints}`
+        );
+
+        return {
+            success: true,
+            ...result,
+        };
+    } catch (error) {
+        logger.error("upgradeCollectionSlotRarity failed:", error);
+        if (error instanceof HttpsError) throw error;
+        throw new HttpsError("internal", `Failed to upgrade card: ${error.message}`);
     }
 });

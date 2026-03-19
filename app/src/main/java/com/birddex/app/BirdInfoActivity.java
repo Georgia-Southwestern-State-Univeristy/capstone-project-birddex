@@ -108,7 +108,7 @@ public class BirdInfoActivity extends AppCompatActivity {
             i.putExtra(CardMakerActivity.EXTRA_BIRD_NAME, currentCommonName);
             i.putExtra(CardMakerActivity.EXTRA_SCI_NAME, currentScientificName);
             i.putExtra(CardMakerActivity.EXTRA_CONFIDENCE, "--");
-            i.putExtra(CardMakerActivity.EXTRA_RARITY, "Unknown");
+            i.putExtra(CardMakerActivity.EXTRA_RARITY, CardRarityHelper.COMMON);
             i.putExtra(CardMakerActivity.EXTRA_BIRD_ID, currentBirdId);
             i.putExtra(CardMakerActivity.EXTRA_SPECIES, currentSpecies);
             i.putExtra(CardMakerActivity.EXTRA_FAMILY, currentFamily);

@@ -13,6 +13,7 @@ import android.widget.LinearLayout;
 import android.widget.TextView;
 
 import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 
 import java.io.File;
 import java.io.FileOutputStream;
@@ -53,8 +54,15 @@ public class BirdCardGenerator {
     public static View buildCardView(@NonNull Context context,
                                      @NonNull Bitmap birdBitmap,
                                      @NonNull BirdCardData data) {
+        return buildCardView(context, birdBitmap, data, CardRarityHelper.COMMON);
+    }
+
+    public static View buildCardView(@NonNull Context context,
+                                     @NonNull Bitmap birdBitmap,
+                                     @NonNull BirdCardData data,
+                                     @Nullable String rarity) {
         FrameLayout fakeRoot = new FrameLayout(context);
-        View v = LayoutInflater.from(context).inflate(R.layout.view_bird_card, fakeRoot, false);
+        View v = LayoutInflater.from(context).inflate(CardRarityHelper.getLayoutResId(rarity), fakeRoot, false);
 
         TextView txtBirdName = v.findViewById(R.id.txtBirdName);
         TextView txtScientific = v.findViewById(R.id.txtScientific);

@@ -40,6 +40,8 @@ public class CollectionCardAdapter extends RecyclerView.Adapter<CollectionCardAd
     public static final String EXTRA_LOCALITY = "com.birddex.app.extra.LOCALITY";
     public static final String EXTRA_CAUGHT_TIME = "com.birddex.app.extra.CAUGHT_TIME";
     public static final String EXTRA_BIRD_ID = "com.birddex.app.extra.BIRD_ID";
+    public static final String EXTRA_SLOT_ID = "com.birddex.app.extra.SLOT_ID";
+    public static final String EXTRA_RARITY = "com.birddex.app.extra.RARITY";
 
     private final List<CollectionSlot> slots;
     private boolean isNavigating = false;
@@ -60,7 +62,10 @@ public class CollectionCardAdapter extends RecyclerView.Adapter<CollectionCardAd
     }
 
     static class VH extends RecyclerView.ViewHolder {
-        CardView cardContainer; View cardInner; TextView txtBirdName; ImageView imgBird;
+        CardView cardContainer;
+        View cardInner;
+        TextView txtBirdName;
+        ImageView imgBird;
         TextView txtScientific, txtLocation, txtDateCaught, txtFooter;
 
         /**
@@ -95,7 +100,7 @@ public class CollectionCardAdapter extends RecyclerView.Adapter<CollectionCardAd
     @Override
     public VH onCreateViewHolder(@NonNull ViewGroup parent, int viewType) {
         // Bind or inflate the UI pieces this method needs before it can update the screen.
-        View v = LayoutInflater.from(parent.getContext()).inflate(R.layout.view_bird_card, parent, false);
+        View v = LayoutInflater.from(parent.getContext()).inflate(viewType, parent, false);
         float density = parent.getResources().getDisplayMetrics().density;
         int spacing = (int) (2 * density);
         int parentWidth = parent.getMeasuredWidth() > 0 ? parent.getMeasuredWidth() : parent.getResources().getDisplayMetrics().widthPixels;
@@ -107,6 +112,12 @@ public class CollectionCardAdapter extends RecyclerView.Adapter<CollectionCardAd
         return holder;
     }
 
+    @Override
+    public int getItemViewType(int position) {
+        CollectionSlot slot = slots.get(position);
+        return CardRarityHelper.getLayoutResId(slot != null ? slot.getRarity() : CardRarityHelper.COMMON);
+    }
+
     /**
      * Main logic block for this part of the feature.
      * Location values are handled here, so this is part of the logic that decides what area/bird
@@ -114,22 +125,63 @@ public class CollectionCardAdapter extends RecyclerView.Adapter<CollectionCardAd
      */
     private void applyCompactCollectionStyle(@NonNull VH holder) {
         float d = holder.itemView.getResources().getDisplayMetrics().density;
-        ViewGroup.MarginLayoutParams lp = (ViewGroup.MarginLayoutParams) holder.cardContainer.getLayoutParams();
-        lp.setMargins((int)d, (int)d, (int)d, (int)d); holder.cardContainer.setLayoutParams(lp);
-        holder.cardContainer.setRadius(16 * d);
-        int p = (int) (6 * d); holder.cardInner.setPadding(p, p, p, p);
-        holder.txtBirdName.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
-        holder.txtScientific.setTextSize(TypedValue.COMPLEX_UNIT_SP, 8);
-        holder.txtLocation.setTextSize(TypedValue.COMPLEX_UNIT_SP, 6);
-        holder.txtDateCaught.setTextSize(TypedValue.COMPLEX_UNIT_SP, 8);
-        holder.txtDateCaught.setGravity(Gravity.CENTER_HORIZONTAL);
-        holder.txtFooter.setVisibility(View.GONE);
-        holder.txtBirdName.setMinLines(2); holder.txtBirdName.setMaxLines(2); holder.txtBirdName.setEllipsize(TextUtils.TruncateAt.END); holder.txtBirdName.setGravity(Gravity.CENTER);
-        holder.txtScientific.setMaxLines(1); holder.txtScientific.setEllipsize(TextUtils.TruncateAt.END);
-        holder.txtLocation.setMaxLines(2); holder.txtLocation.setEllipsize(TextUtils.TruncateAt.END);
-        holder.txtDateCaught.setMaxLines(1); holder.txtDateCaught.setEllipsize(TextUtils.TruncateAt.END);
-        ViewGroup.LayoutParams imgLp = holder.imgBird.getLayoutParams(); imgLp.height = (int) (92 * d); holder.imgBird.setLayoutParams(imgLp);
-        ViewGroup.LayoutParams conLp = holder.cardContainer.getLayoutParams(); conLp.height = (int) (245 * d); holder.cardContainer.setLayoutParams(conLp);
+
+        if (holder.cardContainer != null) {
+            ViewGroup.LayoutParams baseParams = holder.cardContainer.getLayoutParams();
+            if (baseParams instanceof ViewGroup.MarginLayoutParams) {
+                ViewGroup.MarginLayoutParams lp = (ViewGroup.MarginLayoutParams) baseParams;
+                lp.setMargins((int) d, (int) d, (int) d, (int) d);
+                holder.cardContainer.setLayoutParams(lp);
+            }
+            holder.cardContainer.setRadius(16 * d);
+            ViewGroup.LayoutParams conLp = holder.cardContainer.getLayoutParams();
+            if (conLp != null) {
+                conLp.height = (int) (245 * d);
+                holder.cardContainer.setLayoutParams(conLp);
+            }
+        }
+
+        if (holder.cardInner != null) {
+            int p = (int) (6 * d);
+            holder.cardInner.setPadding(p, p, p, p);
+        }
+
+        if (holder.txtBirdName != null) {
+            holder.txtBirdName.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+            holder.txtBirdName.setMinLines(2);
+            holder.txtBirdName.setMaxLines(2);
+            holder.txtBirdName.setEllipsize(TextUtils.TruncateAt.END);
+            holder.txtBirdName.setGravity(Gravity.CENTER);
+        }
+
+        if (holder.txtScientific != null) {
+            holder.txtScientific.setTextSize(TypedValue.COMPLEX_UNIT_SP, 8);
+            holder.txtScientific.setMaxLines(1);
+            holder.txtScientific.setEllipsize(TextUtils.TruncateAt.END);
+        }
+
+        if (holder.txtLocation != null) {
+            holder.txtLocation.setTextSize(TypedValue.COMPLEX_UNIT_SP, 6);
+            holder.txtLocation.setMaxLines(2);
+            holder.txtLocation.setEllipsize(TextUtils.TruncateAt.END);
+        }
+
+        if (holder.txtDateCaught != null) {
+            holder.txtDateCaught.setTextSize(TypedValue.COMPLEX_UNIT_SP, 8);
+            holder.txtDateCaught.setGravity(Gravity.CENTER_HORIZONTAL);
+            holder.txtDateCaught.setMaxLines(1);
+            holder.txtDateCaught.setEllipsize(TextUtils.TruncateAt.END);
+        }
+
+        if (holder.txtFooter != null) {
+            holder.txtFooter.setVisibility(View.GONE);
+        }
+
+        if (holder.imgBird != null && holder.imgBird.getLayoutParams() != null) {
+            ViewGroup.LayoutParams imgLp = holder.imgBird.getLayoutParams();
+            imgLp.height = (int) (92 * d);
+            holder.imgBird.setLayoutParams(imgLp);
+        }
     }
 
     /**
@@ -148,32 +200,49 @@ public class CollectionCardAdapter extends RecyclerView.Adapter<CollectionCardAd
 
         // Attach the user interaction that should run when this control is tapped.
         holder.itemView.setOnClickListener(v -> {
-            if (!hasImage || isNavigating) return;
+            if (!hasImage || isNavigating || slot == null) return;
             isNavigating = true;
             Intent i = new Intent(v.getContext(), ViewBirdCardActivity.class);
-            i.putExtra(EXTRA_IMAGE_URL, url); i.putExtra(EXTRA_COMMON_NAME, slot.getCommonName());
-            i.putExtra(EXTRA_SCI_NAME, slot.getScientificName()); i.putExtra(EXTRA_STATE, slot.getState());
-            i.putExtra(EXTRA_LOCALITY, slot.getLocality()); i.putExtra(EXTRA_BIRD_ID, slot.getBirdId());
+            i.putExtra(EXTRA_IMAGE_URL, url);
+            i.putExtra(EXTRA_COMMON_NAME, slot.getCommonName());
+            i.putExtra(EXTRA_SCI_NAME, slot.getScientificName());
+            i.putExtra(EXTRA_STATE, slot.getState());
+            i.putExtra(EXTRA_LOCALITY, slot.getLocality());
+            i.putExtra(EXTRA_BIRD_ID, slot.getBirdId());
+            i.putExtra(EXTRA_SLOT_ID, slot.getId());
+            i.putExtra(EXTRA_RARITY, slot.getRarity());
             if (slot.getTimestamp() != null) i.putExtra(EXTRA_CAUGHT_TIME, slot.getTimestamp().getTime());
             // Move into the next screen and pass the identifiers/data that screen needs.
             v.getContext().startActivity(i);
         });
 
-        if (hasImage) {
+        if (hasImage && slot != null) {
             String n = slot.getCommonName(), s = slot.getScientificName();
-            holder.txtBirdName.setText(!isBlank(n) ? n : (!isBlank(s) ? s : "Unknown Bird"));
-            holder.txtScientific.setText(!isBlank(s) ? s : "--");
-            holder.txtLocation.setText(CardFormatUtils.formatLocation(slot.getState(), slot.getLocality()));
-            holder.txtDateCaught.setText(slot.getTimestamp() != null ? new SimpleDateFormat("M/d/yy", Locale.US).format(slot.getTimestamp()) : "--");
-            // Load the image asynchronously so the UI can show remote/local media without blocking the main thread.
-            Glide.with(holder.itemView.getContext()).load(url).fitCenter().into(holder.imgBird);
+            if (holder.txtBirdName != null) holder.txtBirdName.setText(!isBlank(n) ? n : (!isBlank(s) ? s : "Unknown Bird"));
+            if (holder.txtScientific != null) holder.txtScientific.setText(!isBlank(s) ? s : "--");
+            if (holder.txtLocation != null) holder.txtLocation.setText(CardFormatUtils.formatLocation(slot.getState(), slot.getLocality()));
+            if (holder.txtDateCaught != null) holder.txtDateCaught.setText(slot.getTimestamp() != null ? new SimpleDateFormat("M/d/yy", Locale.US).format(slot.getTimestamp()) : "--");
+            if (holder.imgBird != null) {
+                // Load the image asynchronously so the UI can show remote/local media without blocking the main thread.
+                Glide.with(holder.itemView.getContext()).load(url).fitCenter().into(holder.imgBird);
+            }
             holder.itemView.setAlpha(1f);
         } else {
-            holder.txtBirdName.setText("Unknown Bird"); holder.txtScientific.setText("--"); holder.txtLocation.setText("Location: --"); holder.txtDateCaught.setText("Date: --");
-            holder.imgBird.setImageResource(R.drawable.birddexlogo); holder.itemView.setAlpha(0.88f);
+            if (holder.txtBirdName != null) holder.txtBirdName.setText("Unknown Bird");
+            if (holder.txtScientific != null) holder.txtScientific.setText("--");
+            if (holder.txtLocation != null) holder.txtLocation.setText("Location: --");
+            if (holder.txtDateCaught != null) holder.txtDateCaught.setText("Date: --");
+            if (holder.imgBird != null) holder.imgBird.setImageResource(R.drawable.birddexlogo);
+            holder.itemView.setAlpha(0.88f);
         }
     }
 
-    @Override public int getItemCount() { return slots.size(); }
-    private boolean isBlank(String v) { return v == null || v.trim().isEmpty(); }
+    @Override
+    public int getItemCount() {
+        return slots.size();
+    }
+
+    private boolean isBlank(String v) {
+        return v == null || v.trim().isEmpty();
+    }
 }

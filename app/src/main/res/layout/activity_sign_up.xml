@@ -109,6 +109,7 @@
                 android:background="@drawable/bg_input"
                 android:hint="Enter username..."
                 android:inputType="textPersonName"
+                android:maxLength="15"
                 android:paddingStart="12dp"
                 android:paddingEnd="12dp"
                 android:textSize="13sp"/>

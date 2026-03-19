@@ -80,8 +80,8 @@ function sanitizeUsername(username) {
     }
     // Trim edges and collapse multiple internal spaces into one
     const trimmed = username.trim().replace(/ {2,}/g, " ");
-    if (trimmed.length < 3 || trimmed.length > 30) {
-        throw new HttpsError("invalid-argument", "Username must be between 3 and 30 characters.");
+    if (trimmed.length < 3 || trimmed.length > 15) {
+        throw new HttpsError("invalid-argument", "Username must be between 3 and 15 characters.");
     }
     if (!/^[a-zA-Z0-9_ ]+$/.test(trimmed)) {
         throw new HttpsError("invalid-argument", "Username can only contain letters, numbers, underscores, and spaces.");

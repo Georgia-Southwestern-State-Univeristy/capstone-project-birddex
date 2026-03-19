@@ -102,6 +102,11 @@ public class FirebaseManager {
         void onError(String error);
     }
 
+    public interface TrackedBirdStateListener {
+        void onResult(boolean isTracked);
+        void onFailure(String errorMessage);
+    }
+
     /**
      * Callback for recordBirdSighting CF.
      * onCooldown() is called when the same species was already recorded within 24 h —
@@ -408,6 +413,93 @@ public class FirebaseManager {
             else Log.e(TAG, "archiveAndDeleteUser CF failure.", task.getException());
             listener.onComplete(task);
         });
+    }
+
+
+
+
+    public void trackBird(String birdId, String commonName, String scientificName, OnCompleteListener<Void> listener) {
+        FirebaseUser currentUser = mAuth.getCurrentUser();
+        if (currentUser == null) {
+            if (listener != null) {
+                listener.onComplete(Tasks.forException(new IllegalStateException("User not authenticated.")));
+            }
+            return;
+        }
+
+        Log.d(TAG, "Tracking bird: " + birdId + " for user: " + currentUser.getUid());
+
+        Map<String, Object> data = new HashMap<>();
+        data.put("birdId", birdId);
+        data.put("commonName", commonName != null ? commonName : "");
+        data.put("scientificName", scientificName != null ? scientificName : "");
+        data.put("trackedAt", new Date());
+
+        db.collection("users")
+                .document(currentUser.getUid())
+                .collection("trackedBirds")
+                .document(birdId)
+                .set(data, SetOptions.merge())
+                .addOnCompleteListener(listener);
+    }
+    public void untrackBird(String birdId, OnCompleteListener<Void> listener) {
+        FirebaseUser currentUser = mAuth.getCurrentUser();
+        if (currentUser == null) {
+            if (listener != null) {
+                listener.onComplete(Tasks.forException(new IllegalStateException("User not authenticated.")));
+            }
+            return;
+        }
+
+        Log.d(TAG, "Untracking bird: " + birdId + " for user: " + currentUser.getUid());
+
+        db.collection("users")
+                .document(currentUser.getUid())
+                .collection("trackedBirds")
+                .document(birdId)
+                .delete()
+                .addOnCompleteListener(listener);
+    }
+
+
+    public void isBirdTracked(String birdId, TrackedBirdStateListener listener) {
+        FirebaseUser currentUser = mAuth.getCurrentUser();
+        if (currentUser == null) {
+            listener.onFailure("User not authenticated.");
+            return;
+        }
+
+        Log.d(TAG, "Checking tracked state for bird: " + birdId + " user: " + currentUser.getUid());
+
+        db.collection("users")
+                .document(currentUser.getUid())
+                .collection("trackedBirds")
+                .document(birdId)
+                .get(Source.SERVER)
+                .addOnSuccessListener(doc -> listener.onResult(doc.exists()))
+                .addOnFailureListener(e -> {
+                    Log.e(TAG, "Failed to check tracked bird state.", e);
+                    listener.onFailure(e.getMessage() != null ? e.getMessage() : "Failed to check tracked state.");
+                });
+    }
+
+
+    public void getTrackedBirds(OnCompleteListener<QuerySnapshot> listener) {
+        FirebaseUser currentUser = mAuth.getCurrentUser();
+        if (currentUser == null) {
+            if (listener != null) {
+                listener.onComplete(Tasks.forException(new IllegalStateException("User not authenticated.")));
+            }
+            return;
+        }
+
+        Log.d(TAG, "Fetching tracked birds for user: " + currentUser.getUid());
+
+        db.collection("users")
+                .document(currentUser.getUid())
+                .collection("trackedBirds")
+                .get(Source.SERVER)
+                .addOnCompleteListener(listener);
     }
 
     /**

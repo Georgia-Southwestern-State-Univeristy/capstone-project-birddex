@@ -8,9 +8,11 @@ import android.os.Looper;
 import android.text.method.LinkMovementMethod;
 import android.util.Log;
 import android.view.View;
+import android.widget.ImageButton;
 import android.widget.ImageView;
 import android.widget.TextView;
 import android.widget.Toast;
+
 
 import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatActivity;
@@ -51,11 +53,14 @@ public class BirdWikiActivity extends AppCompatActivity {
     private static final String FACTS_CACHE_PREFS = "birdwiki_facts_cache";
     private static final long FACTS_CACHE_TTL_MS = 12L * 60L * 60L * 1000L;
 
+
+
     private FirebaseFirestore db;
     private FirebaseManager firebaseManager;
     private boolean isGeneratingFacts = false;
 
     private ImageView ivBirdHeaderImage;
+    private ImageButton btnTrackBird;
     private TextView tvPageTitle;
     private TextView tvPageScientificName;
     private View contentScrollView;
@@ -65,6 +70,7 @@ public class BirdWikiActivity extends AppCompatActivity {
     private boolean factsLoaded = false;
     private boolean imageLoaded = false;
     private boolean contentShown = false;
+    private boolean isCurrentBirdTracked = false;
 
     private String currentBirdId;
     private String currentCommonName;
@@ -139,8 +145,13 @@ public class BirdWikiActivity extends AppCompatActivity {
         contentScrollView = findViewById(R.id.contentScrollView);
         loadingOverlay = findViewById(R.id.loadingOverlay);
         ivBirdHeaderImage = findViewById(R.id.ivBirdHeaderImage);
+        btnTrackBird = findViewById(R.id.btnTrackBird);
         tvPageTitle = findViewById(R.id.tvPageTitle);
         tvPageScientificName = findViewById(R.id.tvPageScientificName);
+
+        if (btnTrackBird != null) {
+            btnTrackBird.setOnClickListener(v -> toggleTrackedBirdState());
+        }
 
         registerFactView("family", R.id.tvFamily);
         registerFactView("species", R.id.tvSpecies);
@@ -333,6 +344,7 @@ public class BirdWikiActivity extends AppCompatActivity {
         markBasicsLoaded();
 
         loadBirdImage(currentBirdId, currentCommonName, currentScientificName);
+        loadTrackedBirdState();
     }
 
     /**
@@ -718,6 +730,69 @@ public class BirdWikiActivity extends AppCompatActivity {
         TextView tv = factViews.get(key);
         if (tv != null) {
             tv.setText(firstNonBlank(value, "Not available yet."));
+        }
+    }
+
+
+
+    private void loadTrackedBirdState() {
+        if (isBlank(currentBirdId)) return;
+
+        firebaseManager.isBirdTracked(currentBirdId, new FirebaseManager.TrackedBirdStateListener() {
+            @Override
+            public void onResult(boolean isTracked) {
+                isCurrentBirdTracked = isTracked;
+                updateTrackButtonUI();
+            }
+
+            @Override
+            public void onFailure(String errorMessage) {
+                Log.e(TAG, "Failed to load tracked bird state: " + errorMessage);
+            }
+        });
+    }
+
+    /**
+     * Updates object/screen state by storing a new value or reconfiguring a dependency.
+     */
+    private void updateTrackButtonUI() {
+        if (btnTrackBird != null) {
+            btnTrackBird.setImageResource(isCurrentBirdTracked ? R.drawable.ic_favorite : R.drawable.ic_favorite_border);
+            btnTrackBird.setContentDescription(isCurrentBirdTracked ? "Untrack bird" : "Track bird");
+        }
+    }
+
+    private void toggleTrackedBirdState() {
+        if (isBlank(currentBirdId)) {
+            Toast.makeText(this, "Bird info is not ready yet.", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        if (isCurrentBirdTracked) {
+            firebaseManager.untrackBird(currentBirdId, task -> {
+                if (task.isSuccessful()) {
+                    isCurrentBirdTracked = false;
+                    updateTrackButtonUI();
+                    Toast.makeText(this, "Bird untracked", Toast.LENGTH_SHORT).show();
+                } else {
+                    Toast.makeText(this, "Failed to untrack bird.", Toast.LENGTH_SHORT).show();
+                }
+            });
+        } else {
+            firebaseManager.trackBird(
+                    currentBirdId,
+                    currentCommonName,
+                    currentScientificName,
+                    task -> {
+                        if (task.isSuccessful()) {
+                            isCurrentBirdTracked = true;
+                            updateTrackButtonUI();
+                            Toast.makeText(this, "Bird tracked", Toast.LENGTH_SHORT).show();
+                        } else {
+                            Toast.makeText(this, "Failed to track bird.", Toast.LENGTH_SHORT).show();
+                        }
+                    }
+            );
         }
     }
 

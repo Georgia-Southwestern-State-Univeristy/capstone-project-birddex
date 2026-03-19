@@ -16,7 +16,6 @@ import com.google.firebase.firestore.FirebaseFirestore;
 import com.google.firebase.messaging.FirebaseMessagingService;
 import com.google.firebase.messaging.RemoteMessage;
 
-import java.util.HashMap;
 import java.util.Map;
 
 /**
@@ -80,13 +79,48 @@ public class MyFirebaseMessagingService extends FirebaseMessagingService {
         String title = data.get("title");
         String body = data.get("body");
         String postId = data.get("postId");
+        String type = data.get("type");
 
-        Intent intent = new Intent(this, PostDetailActivity.class);
-        intent.putExtra(PostDetailActivity.EXTRA_POST_ID, postId);
+        Intent intent;
+
+        if ("tracked_bird".equals(type)) {
+            String latRaw = data.get("latitude");
+            String lngRaw = data.get("longitude");
+            String sightingId = data.get("sightingId");
+            String birdId = data.get("birdId");
+            String commonName = data.get("commonName");
+
+            if (latRaw != null && lngRaw != null) {
+                intent = new Intent(this, NearbyHeatmapActivity.class);
+
+                try {
+                    intent.putExtra(NearbyHeatmapActivity.EXTRA_CENTER_LAT, Double.parseDouble(latRaw));
+                    intent.putExtra(NearbyHeatmapActivity.EXTRA_CENTER_LNG, Double.parseDouble(lngRaw));
+                } catch (NumberFormatException e) {
+                    Log.w(TAG, "Tracked bird notification had invalid coordinates.", e);
+                }
+
+                intent.putExtra("extra_tracked_sighting_id", sightingId);
+                intent.putExtra("extra_tracked_bird_id", birdId);
+                intent.putExtra("extra_tracked_bird_name", commonName);
+            } else {
+                intent = new Intent(this, HomeActivity.class);
+            }
+        } else if (postId != null && !postId.trim().isEmpty()) {
+            intent = new Intent(this, PostDetailActivity.class);
+            intent.putExtra(PostDetailActivity.EXTRA_POST_ID, postId);
+        } else {
+            intent = new Intent(this, HomeActivity.class);
+        }
+
         intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP);
 
-        PendingIntent pendingIntent = PendingIntent.getActivity(this, 0, intent,
-                PendingIntent.FLAG_ONE_SHOT | PendingIntent.FLAG_IMMUTABLE);
+        PendingIntent pendingIntent = PendingIntent.getActivity(
+                this,
+                (int) System.currentTimeMillis(),
+                intent,
+                PendingIntent.FLAG_ONE_SHOT | PendingIntent.FLAG_IMMUTABLE
+        );
 
         NotificationCompat.Builder notificationBuilder =
                 new NotificationCompat.Builder(this, CHANNEL_ID)
@@ -99,13 +133,19 @@ public class MyFirebaseMessagingService extends FirebaseMessagingService {
         NotificationManager notificationManager =
                 (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
 
+        if (notificationManager == null) {
+            return;
+        }
+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            NotificationChannel channel = new NotificationChannel(CHANNEL_ID,
+            NotificationChannel channel = new NotificationChannel(
+                    CHANNEL_ID,
                     "Forum Notifications",
-                    NotificationManager.IMPORTANCE_DEFAULT);
+                    NotificationManager.IMPORTANCE_DEFAULT
+            );
             notificationManager.createNotificationChannel(channel);
         }
 
-        notificationManager.notify(0, notificationBuilder.build());
+        notificationManager.notify((int) System.currentTimeMillis(), notificationBuilder.build());
     }
 }

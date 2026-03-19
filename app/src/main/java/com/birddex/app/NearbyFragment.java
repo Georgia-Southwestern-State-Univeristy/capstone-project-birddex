@@ -86,6 +86,8 @@ public class NearbyFragment extends Fragment {
     private FirebaseFirestore db;
     private EbirdApi ebirdApi;
     private BirdCacheManager cacheManager;
+    private Location lastSavedTrackedBirdLocation;
+    private long lastSavedTrackedBirdLocationAt = 0L;
 
     private boolean isUpdating = false;
     private boolean isSearchDataLoading = false;
@@ -102,8 +104,11 @@ public class NearbyFragment extends Fragment {
     private static final long LOCATION_UPDATE_INTERVAL_MS = 3 * 60 * 1000;
     private static final double SEARCH_RADIUS_METERS = 50000;
     private static final long SIGHTING_RECENCY_MS = 72L * 60 * 60 * 1000;
+
     private static final float MIN_DISTANCE_FOR_FETCH = 1000f;
     private static final int MAX_USER_SIGHTINGS = 500;
+    private static final float TRACKED_BIRD_LOCATION_SAVE_MIN_DISTANCE_METERS = 1609.34f; // ~1 mile
+    private static final long TRACKED_BIRD_LOCATION_SAVE_MIN_INTERVAL_MS = 30L * 60L * 1000L; // 30 minutes
     private static final long NEARBY_LOCAL_CACHE_MAX_AGE_MS = BirdCacheManager.NEARBY_CACHE_TTL_MS;
 
     /**
@@ -202,6 +207,7 @@ public class NearbyFragment extends Fragment {
      */
     private void handleNewLocation(Location l, boolean force) {
         currentLocation = l;
+        maybeSaveTrackedBirdNotificationLocation(l);
 
         if (!force && cacheManager.hasFreshNearbyBirdsForLocation(
                 l.getLatitude(),
@@ -232,6 +238,57 @@ public class NearbyFragment extends Fragment {
         }
     }
 
+    private void maybeSaveTrackedBirdNotificationLocation(Location location) {
+        if (location == null || firebaseManager == null || firebaseManager.getCurrentUser() == null) {
+            return;
+        }
+
+        // Skip obviously poor fixes if accuracy is available and very bad.
+        if (location.hasAccuracy() && location.getAccuracy() > 200f) {
+            return;
+        }
+
+        long now = System.currentTimeMillis();
+
+        boolean shouldSaveBecauseNeverSaved =
+                lastSavedTrackedBirdLocation == null || lastSavedTrackedBirdLocationAt <= 0L;
+
+        boolean shouldSaveBecauseOld =
+                !shouldSaveBecauseNeverSaved &&
+                        (now - lastSavedTrackedBirdLocationAt) >= TRACKED_BIRD_LOCATION_SAVE_MIN_INTERVAL_MS;
+
+        boolean shouldSaveBecauseMoved = false;
+        if (!shouldSaveBecauseNeverSaved && lastSavedTrackedBirdLocation != null) {
+            shouldSaveBecauseMoved =
+                    location.distanceTo(lastSavedTrackedBirdLocation) >= TRACKED_BIRD_LOCATION_SAVE_MIN_DISTANCE_METERS;
+        }
+
+        if (!shouldSaveBecauseNeverSaved && !shouldSaveBecauseOld && !shouldSaveBecauseMoved) {
+            return;
+        }
+
+        String uid = firebaseManager.getCurrentUser().getUid();
+        if (uid == null || uid.trim().isEmpty()) {
+            return;
+        }
+
+        Map<String, Object> updates = new java.util.HashMap<>();
+        updates.put("lastKnownLatitude", location.getLatitude());
+        updates.put("lastKnownLongitude", location.getLongitude());
+        updates.put("lastKnownLocationUpdatedAt", new Date());
+
+        db.collection("users")
+                .document(uid)
+                .update(updates)
+                .addOnSuccessListener(unused -> {
+                    lastSavedTrackedBirdLocation = new Location(location);
+                    lastSavedTrackedBirdLocationAt = now;
+                    Log.d(TAG, "Saved tracked-bird notification location for user.");
+                })
+                .addOnFailureListener(e ->
+                        Log.e(TAG, "Failed to save tracked-bird notification location.", e)
+                );
+    }
     /**
      * Main logic block for this part of the feature.
      * Location values are handled here, so this is part of the logic that decides what area/bird

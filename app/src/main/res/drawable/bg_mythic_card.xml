@@ -3,13 +3,14 @@
 
     <gradient
         android:angle="135"
-        android:startColor="@color/legendary_gold_light"
-        android:endColor="@color/legendary_gold" />
+        android:startColor="@color/legendary_red_light"
+        android:endColor="@color/legendary_red" />
 
     <corners android:radius="18dp" />
 
+    <!-- Slightly thicker border for legendary feel -->
     <stroke
         android:width="3dp"
-        android:color="@color/legendary_gold_dark" />
+        android:color="@color/legendary_red_dark" />
 
 </shape>

@@ -80,8 +80,8 @@ function sanitizeUsername(username) {
     }
     // Trim edges and collapse multiple internal spaces into one
     const trimmed = username.trim().replace(/ {2,}/g, " ");
-    if (trimmed.length < 3 || trimmed.length > 15) {
-        throw new HttpsError("invalid-argument", "Username must be between 3 and 15 characters.");
+    if (trimmed.length < 3 || trimmed.length > 30) {
+        throw new HttpsError("invalid-argument", "Username must be between 3 and 30 characters.");
     }
     if (!/^[a-zA-Z0-9_ ]+$/.test(trimmed)) {
         throw new HttpsError("invalid-argument", "Username can only contain letters, numbers, underscores, and spaces.");
@@ -98,6 +98,245 @@ function sanitizeText(text, maxLength = 5000) {
     const trimmed = text.trim();
     if (trimmed.length > maxLength) return trimmed.substring(0, maxLength);
     return trimmed.replace(/<[^>]*>/g, "");
+}
+// ======================================================
+// logfilteredContentAttempt
+// ======================================================
+// Add this callable to your current updated index.js so client-side blocks can still be logged.
+// ======================================================
+// logFilteredContentAttempt — client-side blocked content logger
+// ======================================================
+exports.logFilteredContentAttempt = onCall(async (request) => {
+    if (!request.auth) {
+        throw new HttpsError("unauthenticated", "Login required.");
+    }
+
+    const userId = request.auth.uid;
+    const data = request.data || {};
+
+    const submissionType = typeof data.submissionType === "string"
+        ? data.submissionType.trim()
+        : "";
+    const fieldName = typeof data.fieldName === "string"
+        ? data.fieldName.trim()
+        : "";
+    const text = typeof data.text === "string"
+        ? data.text
+        : "";
+    const threadId = typeof data.threadId === "string"
+        ? data.threadId.trim()
+        : null;
+    const commentId = typeof data.commentId === "string"
+        ? data.commentId.trim()
+        : null;
+    const extra = data.extra && typeof data.extra === "object"
+        ? data.extra
+        : {};
+
+    if (!submissionType) {
+        throw new HttpsError("invalid-argument", "submissionType is required.");
+    }
+
+    if (!fieldName) {
+        throw new HttpsError("invalid-argument", "fieldName is required.");
+    }
+
+    await logFilteredContent({
+        userId,
+        submissionType,
+        fieldName,
+        text,
+        threadId,
+        commentId,
+        extra: {
+            source: "client_block",
+            ...extra,
+        },
+    });
+
+    return { success: true };
+});
+
+// ======================================================
+// HELPER: Server-side content filter + logging
+// Mirrors the app-side ContentFilter so blocked content is not stored even if
+// the client is bypassed or modified.
+// ======================================================
+const FILTERED_CONTENT_LOG_COLLECTION = "filteredContentLogs";
+const SERVER_NSFW_WORDS = [
+    "fuck", "shit", "asshole", "bitch", "cunt", "dick", "pussy", "bastard",
+    "slut", "whore", "sex", "porn", "pornography", "xxx", "nsfw", "erotic",
+    "hardcore", "softcore", "adult content", "motherfucker", "cocksucker",
+    "cockfucker", "jackass", "dipshit", "dumbass", "dumbshit", "goddamn", "piss",
+    "ahole", "biotch", "penis", "vagina", "clitoris", "testicles", "scrotum",
+    "boobs", "tits", "ass", "butt", "breasts", "genitals", "cock", "balls",
+    "clit", "labia", "erection", "masturbate", "masturbation", "orgasm", "cum",
+    "cumming", "ejaculate", "penetrate", "penetration", "intercourse", "coitus",
+    "blowjob", "handjob", "deepthroat", "rimjob", "rimming", "anal", "cummin",
+    "coom", "blowie", "his member", "wet cunt", "onlyfans", "camgirl", "camsite",
+    "stripper", "escort", "brothel", "fetish", "bdsm", "kink", "kinky",
+    "dominatrix", "submissive", "bondage", "dildo", "vibrator", "pegging",
+    "fingering", "scissoring", "grinding", "foot fetish", "roleplay sex", "nude",
+    "nudes", "naked", "topless", "lewd", "explicit", "send nudes", "milf",
+    "dilf", "sugar daddy", "sugar baby", "creampie", "facial", "spitroast",
+    "threesome", "foursome", "gangbang", "orgy", "hentai", "doujinshi",
+    "adult video", "sex tape", "gilf", "hookup", "one night stand", "booty call",
+    "smash", "get laid", "bang", "doggy style", "69", "quickie", "hooking up",
+    "sleep together", "nigger", "kike", "faggot", "dyke", "retard", "tranny",
+    "spic", "chink", "wetback", "coon", "nazi", "hitler", "negro", "beaner",
+    "gook", "gypo", "fag", "cracker", "zipperhead", "sand nigger", "turban head",
+    "darkie", "chud", "transvestite", "troon", "nigga", "dark skin", "cholo",
+    "gringo", "kill yourself", "suicide", "murder", "rape", "molest", "pedophile",
+    "underage", "terrorist", "massacre", "genocide", "kys", "rapist", "al qaeda",
+    "isis", "kkk", "klu klux klan", "kool kids klub", "cia", "fbi", "cocaine",
+    "heroin", "meth", "fentanyl", "oxycodone", "xanax", "percocet", "crack cocaine",
+    "mdma", "ecstasy", "9-11", "white power", "black lives matter", "magam", "maga",
+    "magat", "libtard", "glowie", "ice agent", "israel", "palestine",
+    "jet fuel can't melt steel beams", "jet fuel cant melt steel beams", "black excellence",
+    "white superiority", "idf", "ukraine", "from the river to the sea",
+    "from the river, to the sea", "russia", "free palestine", "trump", "biden",
+    "obama", "bill clinton", "hillary clinton", "nick fuentes", "osama", "bin laden",
+    "jd vance", "andrew tate", "tristan tate", "sneako", "epstein", "ghislaine maxwell",
+    "jeffery epstein", "benjamin netanyahu", "netanyahu", "adolf hitler", "himmler",
+    "g string", "lingerie", "thong"
+];
+const SERVER_BIRD_WHITELIST = [
+    "tit", "tits", "booby", "boobies", "shag", "woodcock", "dickcissel",
+    "bushtit", "cock", "ass", "blue tit", "great tit", "tufted titmouse"
+];
+const EMAIL_PATTERN = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,6}/;
+const PHONE_PATTERN = /\b(\+?\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b/;
+const URL_PATTERN = /https?:\/\/\S+\s?/i;
+const SPAM_REPETITION_PATTERN = /(.)\1{4,}/;
+const CREDIT_CARD_PATTERN = /\b(?:\d[ -]*?){13,16}\b/;
+const ZALGO_PATTERN = /[\u0300-\u036F\u1DC0-\u1DFF\u20D0-\u20FF\uFE20-\uFE2F]{3,}/;
+
+function normalizeContentFilterText(text) {
+    if (text == null) return "";
+    return String(text).toLowerCase()
+        .replace(/0/g, "o")
+        .replace(/1/g, "i")
+        .replace(/3/g, "e")
+        .replace(/4/g, "a")
+        .replace(/5/g, "s")
+        .replace(/7/g, "t")
+        .replace(/8/g, "b")
+        .replace(/@/g, "a")
+        .replace(/\$/g, "s")
+        .replace(/!/g, "i")
+        .replace(/(.)\1+/g, "$1");
+}
+
+function escapeRegex(value) {
+    return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\$&");
+}
+
+function checkBlockedWordMatch(input, target) {
+    if (!target || target.length < 3) return false;
+    const regex = new RegExp(`\b${escapeRegex(target)}\b`, "i");
+    return regex.test(input);
+}
+
+function checkBlockedWordWithBypass(input, word) {
+    let regexString = "\b";
+    for (let i = 0; i < word.length; i += 1) {
+        regexString += escapeRegex(word[i]);
+        if (i < word.length - 1) {
+            regexString += "[\\W_]*";
+        }
+    }
+    regexString += "\b";
+    return new RegExp(regexString, "i").test(input);
+}
+
+function isBirdWhitelistMatch(rawInput, blockedWord) {
+    const input = String(rawInput || "").toLowerCase();
+    return SERVER_BIRD_WHITELIST.some((white) => input.includes(white) && white.includes(blockedWord));
+}
+
+function getBlockedContentReason(text) {
+    if (text == null || String(text).trim() === "") return null;
+
+    if (ZALGO_PATTERN.test(String(text))) return "glitch text";
+
+    const unicodeNormalized = String(text)
+        .normalize("NFD")
+        .replace(/[^\p{ASCII}]/gu, "");
+    const lower = unicodeNormalized.toLowerCase();
+
+    if (CREDIT_CARD_PATTERN.test(String(text))) return "sensitive financial data";
+    if (EMAIL_PATTERN.test(String(text))) return "an email address";
+    if (PHONE_PATTERN.test(String(text))) return "a phone number";
+    if (URL_PATTERN.test(String(text))) return "external links";
+    if (SPAM_REPETITION_PATTERN.test(String(text))) return "excessive character repetition";
+
+    const normalized = normalizeContentFilterText(lower);
+    for (const word of SERVER_NSFW_WORDS) {
+        const normalizedWord = normalizeContentFilterText(word);
+        if (isBirdWhitelistMatch(lower, normalizedWord)) continue;
+        if (checkBlockedWordMatch(normalized, normalizedWord) || checkBlockedWordWithBypass(lower, word.toLowerCase())) {
+            return "inappropriate language";
+        }
+    }
+
+    return null;
+}
+
+async function logFilteredContent({
+    userId = null,
+    submissionType,
+    fieldName,
+    text,
+    threadId = null,
+    commentId = null,
+    extra = {}
+}) {
+    try {
+        await db.collection(FILTERED_CONTENT_LOG_COLLECTION).add({
+            userId,
+            submissionType,
+            fieldName,
+            threadId,
+            commentId,
+            textPreview: typeof text === "string" ? text.substring(0, 500) : "",
+            textLength: typeof text === "string" ? text.length : 0,
+            createdAt: admin.firestore.FieldValue.serverTimestamp(),
+            ...extra,
+        });
+    } catch (error) {
+        logger.error("Failed to log filtered content:", error);
+    }
+}
+
+async function assertNoBlockedContentOrThrow({
+    userId = null,
+    submissionType,
+    fieldName,
+    text,
+    threadId = null,
+    commentId = null,
+    extra = {}
+}) {
+    const reason = getBlockedContentReason(text);
+    if (!reason) return;
+
+    await logFilteredContent({
+        userId,
+        submissionType,
+        fieldName,
+        text,
+        threadId,
+        commentId,
+        extra: {
+            blockedReason: reason,
+            ...extra,
+        },
+    });
+
+    throw new HttpsError(
+        "invalid-argument",
+        `Your ${fieldName} contains ${reason} and could not be submitted.`
+    );
 }
 
 // ======================================================
@@ -301,43 +540,6 @@ The JSON object should have these keys and corresponding facts:
     }
 }
 
-
-// ======================================================
-// HELPER: Bird Card rarity
-// ======================================================
-const CARD_RARITIES = ["common", "uncommon", "rare", "epic", "legendary"];
-const CARD_RARITY_STEP_COSTS = {
-    uncommon: 10,
-    rare: 20,
-    epic: 30,
-    legendary: 50,
-};
-
-function normalizeCardRarity(rarity) {
-    if (!rarity || typeof rarity !== "string") return "common";
-    const normalized = rarity.trim().toLowerCase();
-    return CARD_RARITIES.includes(normalized) ? normalized : "common";
-}
-
-function getCardRarityIndex(rarity) {
-    return CARD_RARITIES.indexOf(normalizeCardRarity(rarity));
-}
-
-function getCardUpgradeCost(currentRarity, targetRarity) {
-    const currentIndex = getCardRarityIndex(currentRarity);
-    const targetIndex = getCardRarityIndex(targetRarity);
-
-    if (currentIndex < 0 || targetIndex < 0 || targetIndex <= currentIndex) {
-        throw new HttpsError("invalid-argument", "Target rarity must be higher than the current rarity.");
-    }
-
-    let total = 0;
-    for (let i = currentIndex + 1; i <= targetIndex; i++) {
-        total += CARD_RARITY_STEP_COSTS[CARD_RARITIES[i]] || 0;
-    }
-    return total;
-}
-
 // ======================================================
 // HELPER: Get or generate bird facts (lazy, with staleness check)
 // ======================================================
@@ -481,6 +683,24 @@ exports.initializeUser = onCall(async (request) => {
         assertForumTextAllowed(sanitizedBio, "Bio");
     }
 
+    await assertNoBlockedContentOrThrow({
+        userId: uid,
+        submissionType: "username_create_or_update",
+        fieldName: "username",
+        text: sanitizedUsername,
+        extra: { email: email || request.auth.token.email || null }
+    });
+
+    if (sanitizedBio !== undefined) {
+        await assertNoBlockedContentOrThrow({
+            userId: uid,
+            submissionType: "bio_create_or_update",
+            fieldName: "bio",
+            text: sanitizedBio,
+            extra: { email: email || request.auth.token.email || null }
+        });
+    }
+
     // This is where the function touches Firestore documents/collections for the requested action.
     const userRef = db.collection("users").doc(uid);
     // Dedicated username registry: doc ID = username, guaranteed unique by Firestore
@@ -557,9 +777,12 @@ exports.createUserDocument = auth.user().onCreate(async (user) => {
             totalBirds: 0,
             duplicateBirds: 0,
             totalPoints: 0,
-            notificationsEnabled: true,
+            notificationsEnabled: false,
             repliesEnabled: true,
-            notificationCooldownHours: 2
+            notificationCooldownHours: 2,
+            trackedBirdsNotificationsEnabled: false,
+            trackedBirdsCooldownHours: 0,
+            trackedBirdsMaxDistanceMiles: -1
         }, { merge: true });
         logger.info(`Created user document for ${uid}`);
     } catch (error) {
@@ -1135,28 +1358,6 @@ exports.getBirdDetailsAndFacts = onCall({ secrets: [OPENAI_API_KEY], timeoutSeco
     }
 });
 
-// ======================================================
-// searchBirdImage (Nuthatch API)
-// ======================================================
-/**
- * Main backend logic block for this Firebase Functions file.
- * It also calls an external API, which is where third-party bird/AI/network data enters the
- * backend flow.
- * Input/permission checks happen here first so invalid requests fail before any expensive
- * backend work starts.
- */
-exports.searchBirdImage = onCall({ secrets: [NUTHATCH_API_KEY], timeoutSeconds: 15 }, async (request) => {
-    try {
-        const response = await axios.get(
-            `https://nuthatch.lastelm.software/v2/birds?name=${encodeURIComponent(request.data.searchTerm)}&hasImg=true`,
-            { headers: { "api-key": NUTHATCH_API_KEY.value() }, timeout: 10000 }
-        );
-        return { data: response.data };
-    } catch (error) {
-        logger.error("Nuthatch API failed:", error);
-        throw new HttpsError("internal", `Nuthatch API request failed: ${error.message}`);
-    }
-});
 
 // ======================================================
 // cleanupUserData — on Auth delete (v1)
@@ -3211,6 +3412,14 @@ exports.createForumPost = onCall(async (request) => {
         throw new HttpsError("invalid-argument", `Post exceeds ${FORUM_POST_MAX_LENGTH} characters.`);
     }
 
+    await assertNoBlockedContentOrThrow({
+        userId,
+        submissionType: "forum_post_create",
+        fieldName: "post",
+        text: message,
+        threadId: postId,
+    });
+
     let latitude = null;
     let longitude = null;
     if (showLocation) {
@@ -3287,6 +3496,15 @@ exports.createForumComment = onCall(async (request) => {
     if (!commentId) {
         throw new HttpsError("invalid-argument", "commentId is required.");
     }
+
+    await assertNoBlockedContentOrThrow({
+        userId,
+        submissionType: parentCommentId ? "forum_reply_create" : "forum_comment_create",
+        fieldName: parentCommentId ? "reply" : "comment",
+        text,
+        threadId,
+        commentId,
+    });
 
     const { username, userProfilePictureUrl } = await getForumAuthorProfileOrThrow(userId);
     const threadRef = db.collection("forumThreads").doc(threadId);
@@ -3365,6 +3583,14 @@ exports.updateForumPostContent = onCall(async (request) => {
         throw new HttpsError("invalid-argument", "postId is required.");
     }
 
+    await assertNoBlockedContentOrThrow({
+        userId,
+        submissionType: "forum_post_update",
+        fieldName: "post",
+        text: message,
+        threadId: postId,
+    });
+
     const postRef = db.collection("forumThreads").doc(postId);
 
     try {
@@ -3418,6 +3644,15 @@ exports.updateForumCommentContent = onCall(async (request) => {
     if (!commentId) {
         throw new HttpsError("invalid-argument", "commentId is required.");
     }
+
+    await assertNoBlockedContentOrThrow({
+        userId,
+        submissionType: "forum_comment_update",
+        fieldName: "comment",
+        text,
+        threadId,
+        commentId,
+    });
 
     const commentRef = db.collection("forumThreads").doc(threadId).collection("comments").doc(commentId);
 
@@ -3719,11 +3954,27 @@ exports.unsaveForumPost = onCall(async (request) => {
  * Input/permission checks happen here first so invalid requests fail before any expensive
  * backend work starts.
  */
+function normalizeCardRarity(rarity) {
+    const value = String(rarity || "").trim().toLowerCase();
+    switch (value) {
+        case "common":
+            return "Common";
+        case "uncommon":
+            return "Uncommon";
+        case "rare":
+            return "Rare";
+        case "epic":
+            return "Epic";
+        case "legendary":
+            return "Legendary";
+        default:
+            throw new HttpsError("invalid-argument", `Invalid rarity: ${rarity}`);
+    }
+}
 exports.upgradeCollectionSlotRarity = onCall(async (request) => {
     if (!request.auth) {
         throw new HttpsError("unauthenticated", "Login required.");
     }
-
     const userId = request.auth.uid;
     const rawSlotId = request.data && typeof request.data.slotId === "string"
         ? request.data.slotId.trim()
@@ -3734,62 +3985,51 @@ exports.upgradeCollectionSlotRarity = onCall(async (request) => {
     const rawTargetRarity = request.data && typeof request.data.targetRarity === "string"
         ? request.data.targetRarity
         : null;
-
     if (!rawTargetRarity) {
         throw new HttpsError("invalid-argument", "targetRarity is required.");
     }
-
     const targetRarity = normalizeCardRarity(rawTargetRarity);
     const slotId = rawSlotId || (rawBirdId ? `${userId}_${rawBirdId}` : "");
-
     if (!slotId) {
         throw new HttpsError("invalid-argument", "slotId or birdId is required.");
     }
-
     const userRef = db.collection("users").doc(userId);
     const slotRef = db.collection("users").doc(userId).collection("collectionSlot").doc(slotId);
-
     try {
         const result = await db.runTransaction(async (transaction) => {
             const [userSnap, slotSnap] = await Promise.all([
                 transaction.get(userRef),
                 transaction.get(slotRef),
             ]);
-
             if (!userSnap.exists) {
                 throw new HttpsError("not-found", "User profile not found.");
             }
-
             if (!slotSnap.exists) {
                 throw new HttpsError("not-found", "Collection slot not found.");
             }
-
             const userData = userSnap.data() || {};
             const slotData = slotSnap.data() || {};
-
             const currentRarity = normalizeCardRarity(slotData.rarity);
             const upgradeCost = getCardUpgradeCost(currentRarity, targetRarity);
             const currentPoints = Number(userData.totalPoints || 0);
-
+            if (!Number.isFinite(currentPoints)) {
+                throw new HttpsError("internal", "User points are invalid.");
+            }
             if (currentPoints < upgradeCost) {
                 throw new HttpsError(
                     "failed-precondition",
                     `Not enough points. Need ${upgradeCost}, but only have ${currentPoints}.`
                 );
             }
-
             const remainingPoints = currentPoints - upgradeCost;
-
             transaction.update(userRef, {
                 totalPoints: remainingPoints,
                 updatedAt: admin.firestore.FieldValue.serverTimestamp(),
             });
-
             transaction.update(slotRef, {
                 rarity: targetRarity,
                 updatedAt: admin.firestore.FieldValue.serverTimestamp(),
             });
-
             return {
                 slotId,
                 oldRarity: currentRarity,
@@ -3798,11 +4038,9 @@ exports.upgradeCollectionSlotRarity = onCall(async (request) => {
                 remainingPoints,
             };
         });
-
         logger.info(
             `upgradeCollectionSlotRarity: userId=${userId} slotId=${result.slotId} ${result.oldRarity} -> ${result.newRarity} spent=${result.pointsSpent} remaining=${result.remainingPoints}`
         );
-
         return {
             success: true,
             ...result,
@@ -3812,4 +4050,230 @@ exports.upgradeCollectionSlotRarity = onCall(async (request) => {
         if (error instanceof HttpsError) throw error;
         throw new HttpsError("internal", `Failed to upgrade card: ${error.message}`);
     }
+});
+
+// ======================================================
+// HELPER: (for the function below) tracked bird notification fan-out
+// ======================================================
+function haversineMiles(lat1, lon1, lat2, lon2) {
+    const toRad = (deg) => deg * Math.PI / 180;
+    const R = 3958.8; // Earth radius in miles
+
+    const dLat = toRad(lat2 - lat1);
+    const dLon = toRad(lon2 - lon1);
+
+    const a =
+        Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+        Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
+        Math.sin(dLon / 2) * Math.sin(dLon / 2);
+
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return R * c;
+}
+// ======================================================
+// HELPER: tracked bird notification fan-out
+// ======================================================
+async function notifyTrackedBirdWatchers({
+    sightingId,
+    birdId,
+    commonName,
+    scientificName,
+    latitude,
+    longitude,
+    localityName,
+    source,
+    sourceUserId
+}) {
+    if (!birdId || !sightingId) return null;
+
+    const trackedSnap = await db.collectionGroup("trackedBirds")
+        .where("birdId", "==", birdId)
+        .get();
+
+    if (trackedSnap.empty) return null;
+
+    await Promise.all(trackedSnap.docs.map(async (trackedDoc) => {
+        try {
+            const userRef = trackedDoc.ref.parent.parent;
+            if (!userRef) return null;
+
+            const recipientUserId = userRef.id;
+            if (!recipientUserId) return null;
+
+            // Do not notify someone about their own user-created sighting.
+            if (sourceUserId && recipientUserId === sourceUserId) return null;
+
+            const trackedData = trackedDoc.data() || {};
+            if (trackedData.lastNotifiedSightingId === sightingId) return null;
+
+            const recipientDoc = await userRef.get();
+            if (!recipientDoc.exists) return null;
+
+            const recipientData = recipientDoc.data() || {};
+            const {
+                fcmToken,
+                notificationsEnabled = true,
+                trackedBirdsNotificationsEnabled = true,
+                trackedBirdsCooldownHours = 0,
+                trackedBirdsMaxDistanceMiles = -1,
+                lastKnownLatitude = null,
+                lastKnownLongitude = null
+            } = recipientData;
+
+            if (!notificationsEnabled || !trackedBirdsNotificationsEnabled || !fcmToken) {
+                return null;
+            }
+
+            // Distance filter: -1 means any distance, 150 means within 150 miles.
+            if (
+                trackedBirdsMaxDistanceMiles > 0 &&
+                typeof latitude === "number" &&
+                typeof longitude === "number"
+            ) {
+                if (
+                    typeof lastKnownLatitude !== "number" ||
+                    typeof lastKnownLongitude !== "number"
+                ) {
+                    return null;
+                }
+
+                const distanceMiles = haversineMiles(
+                    lastKnownLatitude,
+                    lastKnownLongitude,
+                    latitude,
+                    longitude
+                );
+
+                if (distanceMiles > trackedBirdsMaxDistanceMiles) {
+                    return null;
+                }
+            }
+
+            const lastNotifiedAt = trackedData.lastNotifiedAt;
+            if (
+                trackedBirdsCooldownHours > 0 &&
+                lastNotifiedAt &&
+                (Date.now() - lastNotifiedAt.toDate().getTime()) < trackedBirdsCooldownHours * 60 * 60 * 1000
+            ) {
+                return null;
+            }
+
+            const eventLogRef = db.collection("processedEvents")
+                .doc(`TRACKED_BIRD_NOTIFY_${recipientUserId}_${sightingId}`);
+
+            let shouldSend = false;
+
+            await db.runTransaction(async (t) => {
+                const eventDoc = await t.get(eventLogRef);
+                if (eventDoc.exists) return;
+
+                t.set(eventLogRef, {
+                    processedAt: admin.firestore.FieldValue.serverTimestamp(),
+                    type: "TRACKED_BIRD_NOTIFY",
+                    recipientUserId,
+                    sightingId,
+                    birdId,
+                    source: source || "unknown"
+                });
+
+                shouldSend = true;
+            });
+
+            if (!shouldSend) return null;
+
+            const title = "Tracked bird spotted!";
+            const localitySuffix = localityName ? ` near ${localityName}` : " nearby";
+            const body = `${commonName || scientificName || birdId} was reported${localitySuffix}.`;
+
+            try {
+                await messaging.send({
+                    token: fcmToken,
+                    notification: { title, body },
+                    data: {
+                        type: "tracked_bird",
+                        birdId: String(birdId),
+                        commonName: String(commonName || ""),
+                        scientificName: String(scientificName || ""),
+                        sightingId: String(sightingId),
+                        source: String(source || "unknown"),
+                        latitude: latitude != null ? String(latitude) : "",
+                        longitude: longitude != null ? String(longitude) : "",
+                        localityName: String(localityName || "")
+                    }
+                });
+
+                await trackedDoc.ref.set({
+                    lastNotifiedAt: admin.firestore.FieldValue.serverTimestamp(),
+                    lastNotifiedSightingId: sightingId,
+                    lastNotificationSource: source || "unknown"
+                }, { merge: true });
+            } catch (error) {
+                if (error.code === "messaging/registration-token-not-registered") {
+                    await userRef.update({
+                        fcmToken: admin.firestore.FieldValue.delete()
+                    });
+                } else {
+                    logger.error("Error sending tracked bird notification:", error);
+                }
+
+                await eventLogRef.delete().catch(() => null);
+            }
+        } catch (error) {
+            logger.error("notifyTrackedBirdWatchers recipient failed:", error);
+        }
+
+        return null;
+    }));
+
+    return null;
+}
+
+// ======================================================
+// onUserBirdSightingCreated — notify tracked bird watchers
+// ======================================================
+exports.onUserBirdSightingCreated = onDocumentCreated("userBirdSightings/{sightingId}", async (event) => {
+    try {
+        const data = event.data?.data();
+        if (!data) return null;
+
+        await notifyTrackedBirdWatchers({
+            sightingId: event.params.sightingId,
+            birdId: data.birdId,
+            commonName: data.commonName,
+            scientificName: data.scientificName,
+            latitude: typeof data.latitude === "number" ? data.latitude : (data.location?.latitude ?? null),
+            longitude: typeof data.longitude === "number" ? data.longitude : (data.location?.longitude ?? null),
+            localityName: data.locality || data.location?.localityName || "",
+            source: "userBirdSightings",
+            sourceUserId: data.userId || data.user_sighting?.userId || null
+        });
+    } catch (error) {
+        logger.error("Error in onUserBirdSightingCreated:", error);
+    }
+    return null;
+});
+
+// ======================================================
+// onEBirdApiSightingCreated — notify tracked bird watchers
+// ======================================================
+exports.onEBirdApiSightingCreated = onDocumentCreated("eBirdApiSightings/{sightingId}", async (event) => {
+    try {
+        const data = event.data?.data();
+        if (!data) return null;
+
+        await notifyTrackedBirdWatchers({
+            sightingId: event.params.sightingId,
+            birdId: data.speciesCode,
+            commonName: data.commonName,
+            scientificName: data.scientificName,
+            latitude: data.location?.latitude ?? null,
+            longitude: data.location?.longitude ?? null,
+            localityName: data.location?.localityName || "",
+            source: "eBirdApiSightings",
+            sourceUserId: null
+        });
+    } catch (error) {
+        logger.error("Error in onEBirdApiSightingCreated:", error);
+    }
+    return null;
 });

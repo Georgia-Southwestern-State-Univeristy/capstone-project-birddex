@@ -366,8 +366,8 @@ public class CreatePostActivity extends AppCompatActivity {
             Toast.makeText(this, "Post too long", Toast.LENGTH_SHORT).show();
             return;
         }
-        if (ContentFilter.containsInappropriateContent(msg)) {
-            Toast.makeText(this, "Inappropriate language detected.", Toast.LENGTH_LONG).show();
+        if (!ContentFilter.isSafe(this, msg, "Post")) {
+            firebaseManager.logFilteredContentAttempt("forum_post_create_client_block", "post", msg, null, null);
             return;
         }
         if (ForumSubmissionCooldownHelper.isCoolingDown(this)) {

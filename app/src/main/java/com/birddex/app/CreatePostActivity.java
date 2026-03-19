@@ -107,6 +107,7 @@ public class CreatePostActivity extends AppCompatActivity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        SystemBarHelper.applyStandardNavBar(this);
         // Bind or inflate the UI pieces this method needs before it can update the screen.
         binding = ActivityCreatePostBinding.inflate(getLayoutInflater());
         setContentView(binding.getRoot());

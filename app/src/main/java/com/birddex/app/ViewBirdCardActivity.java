@@ -61,6 +61,7 @@ public class ViewBirdCardActivity extends AppCompatActivity {
     @Override
     protected void onCreate(@Nullable Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        SystemBarHelper.applyStandardNavBar(this);
         setContentView(R.layout.activity_view_bird_card);
 
         changeCardImageLauncher = registerForActivityResult(new ActivityResultContracts.StartActivityForResult(), result -> {

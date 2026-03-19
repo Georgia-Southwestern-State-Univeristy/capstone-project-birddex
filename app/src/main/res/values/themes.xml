@@ -11,8 +11,11 @@
         <item name="colorOnSurface">@color/on_page</item>
         <item name="colorOnSurfaceVariant">@color/on_page_variant</item>
 
-        <!-- Optional nice-to-have -->
+        <!-- System bars -->
         <item name="android:statusBarColor">@color/nav_brown</item>
+        <item name="android:navigationBarColor">@android:color/black</item>        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar">false</item>
+        <item name="android:enforceNavigationBarContrast">false</item>
     </style>
 
     <style name="Theme.BirdDex" parent="Base.Theme.BirdDex" />

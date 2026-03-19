@@ -181,6 +181,7 @@ public class NearbyHeatmapActivity extends AppCompatActivity
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        SystemBarHelper.applyStandardNavBar(this);
         setContentView(R.layout.activity_nearby_heatmap);
 
         // Set up or query the Firebase layer that supplies/stores this feature's data.

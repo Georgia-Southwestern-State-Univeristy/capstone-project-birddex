@@ -42,6 +42,7 @@ public class LoadingActivity extends AppCompatActivity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        SystemBarHelper.applyStandardNavBar(this);
         setContentView(R.layout.activity_loading);
 
         // Bind or inflate the UI pieces this method needs before it can update the screen.

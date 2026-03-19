@@ -3,17 +3,20 @@ package com.birddex.app;
 import android.widget.EditText;
 
 /**
-/**
+ /**
  * for: Support/helper/model class used by other BirdDex screens so logic can stay reusable and organized.
  *
  * These comments focus on what the actual code blocks are doing so the file is easier to trace
  * when you are debugging or presenting the app. Only comments were added; runtime logic was not changed.
  */
- /* sign_IN_upValidator is a utility class for validating user input fields in forms.
- * It provides methods to check for required fields, proper email formatting, 
+/* sign_IN_upValidator is a utility class for validating user input fields in forms.
+ * It provides methods to check for required fields, proper email formatting,
  * and password length constraints for sign-up, sign-in, and password reset.
  */
 public class sign_IN_upValidator {
+
+    private static final int MIN_USERNAME_LENGTH = 3;
+    private static final int MAX_USERNAME_LENGTH = 15;
 
     /**
      * Validates the fields for the Sign Up form.
@@ -35,6 +38,12 @@ public class sign_IN_upValidator {
         // Check if username is empty.
         if (usernameStr.isEmpty()) {
             username.setError("Required.");
+            valid = false;
+        } else if (usernameStr.length() < MIN_USERNAME_LENGTH) {
+            username.setError("Username must be at least 3 characters.");
+            valid = false;
+        } else if (usernameStr.length() > MAX_USERNAME_LENGTH) {
+            username.setError("Username cannot be longer than 15 characters.");
             valid = false;
         } else if (ContentFilter.containsInappropriateContent(usernameStr)) {
             username.setError("Inappropriate username.");
@@ -119,7 +128,7 @@ public class sign_IN_upValidator {
     public boolean validateForgotPasswordForm(EditText email) {
         boolean valid = true;
         String emailStr = email.getText().toString();
-        
+
         // Check if email is empty or incorrectly formatted.
         if (emailStr.isEmpty()) {
             email.setError("Required.");

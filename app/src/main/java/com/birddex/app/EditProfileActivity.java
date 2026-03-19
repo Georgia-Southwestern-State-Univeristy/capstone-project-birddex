@@ -57,6 +57,7 @@ public class EditProfileActivity extends AppCompatActivity implements NetworkMon
     private static final String TAG = "EditProfileActivity";
     private static final int REQUEST_READ_EXTERNAL_STORAGE = 100;
     private static final int MAX_BIO_LENGTH = 90;
+    private static final int MAX_USERNAME_LENGTH = 15;
 
     private TextInputEditText etUsername;
     private TextInputEditText etBio;
@@ -171,6 +172,16 @@ public class EditProfileActivity extends AppCompatActivity implements NetworkMon
 
             if (newUsername.isEmpty()) {
                 etUsername.setError("Username cannot be empty");
+                return;
+            }
+
+            if (newUsername.length() < 3) {
+                etUsername.setError("Username must be at least 3 characters.");
+                return;
+            }
+
+            if (newUsername.length() > MAX_USERNAME_LENGTH) {
+                etUsername.setError("Username cannot be longer than 15 characters.");
                 return;
             }
 

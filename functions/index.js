@@ -284,43 +284,6 @@ The JSON object should have these keys and corresponding facts:
     }
 }
 
-
-// ======================================================
-// HELPER: Bird Card rarity
-// ======================================================
-const CARD_RARITIES = ["common", "uncommon", "rare", "epic", "legendary"];
-const CARD_RARITY_STEP_COSTS = {
-    uncommon: 10,
-    rare: 20,
-    epic: 30,
-    legendary: 50,
-};
-
-function normalizeCardRarity(rarity) {
-    if (!rarity || typeof rarity !== "string") return "common";
-    const normalized = rarity.trim().toLowerCase();
-    return CARD_RARITIES.includes(normalized) ? normalized : "common";
-}
-
-function getCardRarityIndex(rarity) {
-    return CARD_RARITIES.indexOf(normalizeCardRarity(rarity));
-}
-
-function getCardUpgradeCost(currentRarity, targetRarity) {
-    const currentIndex = getCardRarityIndex(currentRarity);
-    const targetIndex = getCardRarityIndex(targetRarity);
-
-    if (currentIndex < 0 || targetIndex < 0 || targetIndex <= currentIndex) {
-        throw new HttpsError("invalid-argument", "Target rarity must be higher than the current rarity.");
-    }
-
-    let total = 0;
-    for (let i = currentIndex + 1; i <= targetIndex; i++) {
-        total += CARD_RARITY_STEP_COSTS[CARD_RARITIES[i]] || 0;
-    }
-    return total;
-}
-
 // ======================================================
 // HELPER: Get or generate bird facts (lazy, with staleness check)
 // ======================================================
@@ -1118,28 +1081,6 @@ exports.getBirdDetailsAndFacts = onCall({ secrets: [OPENAI_API_KEY], timeoutSeco
     }
 });
 
-// ======================================================
-// searchBirdImage (Nuthatch API)
-// ======================================================
-/**
- * Main backend logic block for this Firebase Functions file.
- * It also calls an external API, which is where third-party bird/AI/network data enters the
- * backend flow.
- * Input/permission checks happen here first so invalid requests fail before any expensive
- * backend work starts.
- */
-exports.searchBirdImage = onCall({ secrets: [NUTHATCH_API_KEY], timeoutSeconds: 15 }, async (request) => {
-    try {
-        const response = await axios.get(
-            `https://nuthatch.lastelm.software/v2/birds?name=${encodeURIComponent(request.data.searchTerm)}&hasImg=true`,
-            { headers: { "api-key": NUTHATCH_API_KEY.value() }, timeout: 10000 }
-        );
-        return { data: response.data };
-    } catch (error) {
-        logger.error("Nuthatch API failed:", error);
-        throw new HttpsError("internal", `Nuthatch API request failed: ${error.message}`);
-    }
-});
 
 // ======================================================
 // cleanupUserData — on Auth delete (v1)

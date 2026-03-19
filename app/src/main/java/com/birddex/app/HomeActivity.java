@@ -25,7 +25,7 @@ import java.util.List;
  * HomeActivity serves as the main navigation hub of the application.
  * It uses a BottomNavigationView to switch between different fragments
  * and pre-loads the core Georgia bird list in the background.
- * 
+ *
  * Race Condition fixes:
  *  - Added isNavigating guard for camera launch.
  */
@@ -38,6 +38,9 @@ import java.util.List;
 public class HomeActivity extends AppCompatActivity implements NetworkMonitor.NetworkStatusListener {
 
     private static final String TAG = "HomeActivity";
+    private static final long GEORGIA_SYNC_CHECK_TTL_MS = 24L * 60L * 60L * 1000L;
+    private static final int GEORGIA_BIRD_DATA_REFRESH_VERSION = 1;
+
     private BottomNavigationView bottomNav;
     private TextView welcomeMessageTv;
 
@@ -45,6 +48,7 @@ public class HomeActivity extends AppCompatActivity implements NetworkMonitor.Ne
     private int lastNonCameraTabId = R.id.nav_forum;
 
     private EbirdApi ebirdApi; // New: EbirdApi instance
+    private BirdCacheManager birdCacheManager;
     private FirebaseManager firebaseManager;
     private List<JSONObject> allGeorgiaBirds; // New: To hold the core bird list
     private NetworkMonitor networkMonitor; // New: NetworkMonitor instance
@@ -72,7 +76,8 @@ public class HomeActivity extends AppCompatActivity implements NetworkMonitor.Ne
         welcomeMessageTv = findViewById(R.id.welcomeMessage);
 
         // Initialize EbirdApi and the bird list
-        ebirdApi = new EbirdApi();
+        ebirdApi = new EbirdApi(this);
+        birdCacheManager = new BirdCacheManager(this);
         // Set up or query the Firebase layer that supplies/stores this feature's data.
         firebaseManager = new FirebaseManager(this);
         allGeorgiaBirds = new ArrayList<>();
@@ -80,9 +85,10 @@ public class HomeActivity extends AppCompatActivity implements NetworkMonitor.Ne
         // Initialize NetworkMonitor
         networkMonitor = new NetworkMonitor(this, this);
 
-        // Load the core Georgia bird list in the background
+        // Load the cached Georgia bird list immediately, then refresh only when needed.
+        loadCachedGeorgiaBirdListImmediately();
         fetchCoreGeorgiaBirdList();
-        checkBirdDataSync();
+        maybeCheckBirdDataSync(false);
 
         // Check for deep links or specific navigation requests
         handleIntent(getIntent());
@@ -102,7 +108,7 @@ public class HomeActivity extends AppCompatActivity implements NetworkMonitor.Ne
             if (id == R.id.nav_camera) {
                 if (isNavigating) return false;
                 isNavigating = true;
-                
+
                 // Move into the next screen and pass the identifiers/data that screen needs.
                 startActivity(new Intent(HomeActivity.this, ImageUploadActivity.class));
 
@@ -168,10 +174,10 @@ public class HomeActivity extends AppCompatActivity implements NetworkMonitor.Ne
 
     private void showWelcomeAnimation(String message) {
         if (welcomeMessageTv == null) return;
-        
+
         welcomeMessageTv.setText(message);
         welcomeMessageTv.setVisibility(View.VISIBLE);
-        
+
         Animation fadeInOut = AnimationUtils.loadAnimation(this, R.anim.fade_in_out);
         fadeInOut.setAnimationListener(new Animation.AnimationListener() {
             @Override
@@ -185,7 +191,7 @@ public class HomeActivity extends AppCompatActivity implements NetworkMonitor.Ne
             @Override
             public void onAnimationRepeat(Animation animation) {}
         });
-        
+
         welcomeMessageTv.startAnimation(fadeInOut);
     }
 
@@ -257,6 +263,17 @@ public class HomeActivity extends AppCompatActivity implements NetworkMonitor.Ne
      * Fetches the core list of Georgia birds in the background.
      * This data can then be used by other fragments as needed.
      */
+    private void loadCachedGeorgiaBirdListImmediately() {
+        if (birdCacheManager == null) return;
+
+        List<JSONObject> cachedBirds = birdCacheManager.getCachedCoreGeorgiaBirds();
+        if (!cachedBirds.isEmpty()) {
+            allGeorgiaBirds.clear();
+            allGeorgiaBirds.addAll(cachedBirds);
+            Log.d(TAG, "Loaded " + allGeorgiaBirds.size() + " cached Georgia birds immediately on app launch.");
+        }
+    }
+
     /**
      * Pulls data from a local source, Firebase, or an external API and prepares it for the UI or
      * caller.
@@ -266,9 +283,9 @@ public class HomeActivity extends AppCompatActivity implements NetworkMonitor.Ne
     private void fetchCoreGeorgiaBirdList() {
         if (isFetchingBirds) return;
 
-        if (!networkMonitor.isConnected()) {
-            Log.w(TAG, "Attempted to fetchCoreGeorgiaBirdList but no network in HomeActivity.");
-            // Give the user immediate feedback about the result of this action.
+        boolean hasCachedList = birdCacheManager != null && !birdCacheManager.getCachedCoreGeorgiaBirds().isEmpty();
+        if (!networkMonitor.isConnected() && !hasCachedList) {
+            Log.w(TAG, "Attempted to fetchCoreGeorgiaBirdList but no network and no cached Georgia list in HomeActivity.");
             Toast.makeText(this, "No internet to fetch bird list.", Toast.LENGTH_SHORT).show();
             return;
         }
@@ -280,21 +297,60 @@ public class HomeActivity extends AppCompatActivity implements NetworkMonitor.Ne
                 isFetchingBirds = false;
                 allGeorgiaBirds.clear();
                 allGeorgiaBirds.addAll(birds);
-                Log.d(TAG, "Loaded " + allGeorgiaBirds.size() + " core Georgia birds from Cloud cache.");
+                Log.d(TAG, "Loaded " + allGeorgiaBirds.size() + " core Georgia birds.");
             }
 
             @Override
             public void onFailure(Exception e) {
                 isFetchingBirds = false;
                 Log.e(TAG, "Failed to fetch core bird list in HomeActivity: " + e.getMessage(), e);
-                Toast.makeText(HomeActivity.this, "Failed to load core bird data in background.", Toast.LENGTH_LONG).show();
+                if (allGeorgiaBirds.isEmpty()) {
+                    Toast.makeText(HomeActivity.this, "Failed to load core bird data in background.", Toast.LENGTH_LONG).show();
+                }
             }
         });
     }
 
     /**
+     * Main logic block for this part of the feature.
+     */
+    private boolean shouldCheckBirdDataSync(boolean forceRefresh) {
+        if (birdCacheManager == null) return true;
+        return birdCacheManager.shouldCheckGeorgiaBirdSync(
+                forceRefresh,
+                GEORGIA_SYNC_CHECK_TTL_MS,
+                GEORGIA_BIRD_DATA_REFRESH_VERSION
+        );
+    }
+
+    /**
+     * Main logic block for this part of the feature.
+     */
+    private void maybeCheckBirdDataSync(boolean forceRefresh) {
+        if (!forceRefresh && !shouldCheckBirdDataSync(false)) {
+            Log.d(TAG, "Skipping Georgia bird sync check on launch. Cache and sync-check state are still fresh.");
+            return;
+        }
+
+        if (!networkMonitor.isConnected()) {
+            Log.w(TAG, "Skipping Georgia bird sync check because the device is offline.");
+            return;
+        }
+
+        checkBirdDataSync();
+    }
+
+    /**
+     * Main logic block for this part of the feature.
+     */
+    public void refreshGeorgiaBirdDataManually() {
+        fetchCoreGeorgiaBirdList();
+        maybeCheckBirdDataSync(true);
+    }
+
+    /**
      * Replaces the current fragment in the container with the specified fragment.
-     * FIX: Uses commitAllowingStateLoss() to prevent IllegalStateException if 
+     * FIX: Uses commitAllowingStateLoss() to prevent IllegalStateException if
      * the fragment is replaced while the activity is in the background (e.g. via network callback).
      * @param fragment The new fragment to display.
      */
@@ -331,9 +387,12 @@ public class HomeActivity extends AppCompatActivity implements NetworkMonitor.Ne
         Log.d(TAG, "Network became available in HomeActivity.");
         runOnUiThread(() -> {
             if (allGeorgiaBirds.isEmpty()) {
-                // Give the user immediate feedback about the result of this action.
                 Toast.makeText(this, "Internet connection restored. Retrying bird list fetch.", Toast.LENGTH_SHORT).show();
                 fetchCoreGeorgiaBirdList();
+            }
+
+            if (shouldCheckBirdDataSync(false)) {
+                maybeCheckBirdDataSync(false);
             }
         });
     }
@@ -361,6 +420,10 @@ public class HomeActivity extends AppCompatActivity implements NetworkMonitor.Ne
         firebaseManager.syncGeorgiaBirdList(task -> {
             if (task.isSuccessful()) {
                 Log.d(TAG, "Bird data sync check complete.");
+                if (birdCacheManager != null) {
+                    birdCacheManager.markGeorgiaSyncCheckNow();
+                    birdCacheManager.setGeorgiaDataRefreshVersion(GEORGIA_BIRD_DATA_REFRESH_VERSION);
+                }
             } else {
                 Log.e(TAG, "Automatic bird sync failed", task.getException());
             }

@@ -30,6 +30,7 @@ import com.google.firebase.firestore.DocumentSnapshot;
 import com.google.firebase.firestore.FieldValue;
 import com.google.firebase.firestore.FirebaseFirestore;
 import com.google.firebase.firestore.Query;
+import com.google.firebase.firestore.Source;
 import com.google.firebase.firestore.WriteBatch;
 import com.google.firebase.storage.FirebaseStorage;
 import com.google.firebase.storage.StorageReference;
@@ -101,6 +102,12 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
         setupClickListeners();
         loadUserProfilePicture();
         setupSwipeRefresh();
+
+        // Load the forum immediately the first time this view is created.
+        if (postList.isEmpty() && !isFetching) {
+            refreshPosts();
+        }
+
         return binding.getRoot();
     }
 
@@ -112,10 +119,6 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
     public void onResume() {
         super.onResume();
         isNavigating = false; // Reset on return
-        if (binding != null) {
-            pendingRefreshRunnable = () -> { if (binding != null && !isFetching) refreshPosts(); };
-            binding.getRoot().postDelayed(pendingRefreshRunnable, 1500);
-        }
     }
 
     /**
@@ -178,7 +181,19 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
             String selected = item.getTitle().toString();
             if (!selected.equals(currentFilter)) {
                 currentFilter = selected;
-                requireContext().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit().putString(KEY_FILTER, currentFilter).apply();
+                requireContext()
+                        .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                        .edit()
+                        .putString(KEY_FILTER, currentFilter)
+                        .apply();
+
+                // Switch the visible feed immediately so the old filter's posts
+                // are not still shown while the new filter is loading.
+                postList.clear();
+                lastVisible = null;
+                isLastPage = false;
+                adapter.setPosts(new ArrayList<>());
+
                 refreshPosts();
             }
             return true;
@@ -234,18 +249,46 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
      */
     private void fetchFollowedIdsAndLoad(int generation) {
         FirebaseUser user = mAuth.getCurrentUser();
-        if (user == null) return;
+        if (user == null) {
+            if (binding != null) binding.swipeRefreshLayout.setRefreshing(false);
+            return;
+        }
+
         isFetching = true;
-        // Set up or query the Firebase layer that supplies/stores this feature's data.
-        db.collection("users").document(user.getUid()).collection("following").get().addOnSuccessListener(snap -> {
-            if (!isAdded() || fetchGeneration != generation) return;
-            followedIds.clear();
-            for (DocumentSnapshot doc : snap.getDocuments()) followedIds.add(doc.getId());
-            isFetching = false;
-            fetchPosts();
-        }).addOnFailureListener(e -> {
-            if (fetchGeneration == generation) { isFetching = false; if (binding != null) binding.swipeRefreshLayout.setRefreshing(false); }
-        });
+
+        db.collection("users")
+                .document(user.getUid())
+                .collection("following")
+                .get()
+                .addOnSuccessListener(snap -> {
+                    if (!isAdded() || fetchGeneration != generation) return;
+
+                    followedIds.clear();
+                    for (DocumentSnapshot doc : snap.getDocuments()) {
+                        followedIds.add(doc.getId());
+                    }
+
+                    if (followedIds.isEmpty()) {
+                        postList.clear();
+                        lastVisible = null;
+                        isLastPage = true;
+                        adapter.setPosts(new ArrayList<>());
+                        isFetching = false;
+                        if (binding != null) binding.swipeRefreshLayout.setRefreshing(false);
+
+                        Toast.makeText(requireContext(), "You are not following anyone yet.", Toast.LENGTH_SHORT).show();
+                        return;
+                    }
+
+                    isFetching = false;
+                    fetchPosts();
+                })
+                .addOnFailureListener(e -> {
+                    if (fetchGeneration == generation) {
+                        isFetching = false;
+                        if (binding != null) binding.swipeRefreshLayout.setRefreshing(false);
+                    }
+                });
     }
 
     /**
@@ -270,37 +313,96 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
 
         isFetching = true;
         final int myGen = fetchGeneration;
-        // Set up or query the Firebase layer that supplies/stores this feature's data.
-        Query q = db.collection("forumThreads").orderBy("timestamp", Query.Direction.DESCENDING);
-        if ("Following".equals(currentFilter)) q = q.whereIn("userId", followedIds.size() > 30 ? followedIds.subList(0, 30) : followedIds);
-        q = q.limit(PAGE_SIZE);
-        if (lastVisible != null) q = q.startAfter(lastVisible);
+        final boolean showGraphic = getContext().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .getBoolean(KEY_GRAPHIC_CONTENT, false);
 
-        SharedPreferences prefs = getContext().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
-        boolean showGraphic = prefs.getBoolean(KEY_GRAPHIC_CONTENT, false);
-
-        q.get().addOnSuccessListener(val -> {
-            if (!isAdded() || binding == null || fetchGeneration != myGen) return;
-
-            // If this is the start of a new generation, clear the list now.
-            if (lastVisible == null) {
-                postList.clear();
-            }
-
-            binding.swipeRefreshLayout.setRefreshing(false);
-            if (val != null && !val.isEmpty()) {
-                lastVisible = val.getDocuments().get(val.size() - 1);
-                for (DocumentSnapshot doc : val.getDocuments()) {
-                    ForumPost p = doc.toObject(ForumPost.class);
-                    if (p != null) { p.setId(doc.getId()); if (showGraphic || !p.isHunted()) postList.add(p); }
+        if (lastVisible == null) {
+            Query firstPageQuery = buildForumBaseQuery();
+            firstPageQuery.get(Source.CACHE).addOnSuccessListener(val -> {
+                if (!isAdded() || binding == null || fetchGeneration != myGen) return;
+                if (val != null && !val.isEmpty()) {
+                    applyForumFirstPageSnapshot(val, showGraphic, false, myGen);
                 }
-                adapter.setPosts(new ArrayList<>(postList));
-                if (val.size() < PAGE_SIZE) isLastPage = true;
-            } else isLastPage = true;
+                fetchForumFirstPageFromServer(firstPageQuery, showGraphic, myGen);
+            }).addOnFailureListener(e -> fetchForumFirstPageFromServer(firstPageQuery, showGraphic, myGen));
+            return;
+        }
+
+        buildForumBaseQuery()
+                .startAfter(lastVisible)
+                .get(Source.SERVER)
+                .addOnSuccessListener(val -> {
+                    if (!isAdded() || binding == null || fetchGeneration != myGen) return;
+                    appendForumPageSnapshot(val, showGraphic, myGen);
+                    finishForumFetch(myGen);
+                })
+                .addOnFailureListener(e -> finishForumFetch(myGen));
+    }
+
+    private Query buildForumBaseQuery() {
+        Query q = db.collection("forumThreads").orderBy("timestamp", Query.Direction.DESCENDING);
+        if ("Following".equals(currentFilter)) {
+            q = q.whereIn("userId", followedIds.size() > 30 ? followedIds.subList(0, 30) : followedIds);
+        }
+        return q.limit(PAGE_SIZE);
+    }
+
+    private void fetchForumFirstPageFromServer(Query firstPageQuery, boolean showGraphic, int generation) {
+        firstPageQuery.get(Source.SERVER).addOnSuccessListener(val -> {
+            if (!isAdded() || binding == null || fetchGeneration != generation) return;
+            applyForumFirstPageSnapshot(val, showGraphic, true, generation);
+            finishForumFetch(generation);
+        }).addOnFailureListener(e -> finishForumFetch(generation));
+    }
+
+    private void applyForumFirstPageSnapshot(com.google.firebase.firestore.QuerySnapshot value, boolean showGraphic, boolean fromServer, int generation) {
+        if (!isAdded() || binding == null || fetchGeneration != generation) return;
+        if (fromServer || (value != null && !value.isEmpty())) {
+            postList.clear();
+            lastVisible = null;
+            isLastPage = false;
+        }
+
+        if (value != null && !value.isEmpty()) {
+            lastVisible = value.getDocuments().get(value.size() - 1);
+            for (DocumentSnapshot doc : value.getDocuments()) {
+                ForumPost p = doc.toObject(ForumPost.class);
+                if (p != null) {
+                    p.setId(doc.getId());
+                    if (showGraphic || !p.isHunted()) postList.add(p);
+                }
+            }
+            if (value.size() < PAGE_SIZE) isLastPage = true;
+        } else if (fromServer) {
+            isLastPage = true;
+        }
+
+        adapter.setPosts(new ArrayList<>(postList));
+    }
+
+    private void appendForumPageSnapshot(com.google.firebase.firestore.QuerySnapshot value, boolean showGraphic, int generation) {
+        if (!isAdded() || binding == null || fetchGeneration != generation) return;
+        if (value != null && !value.isEmpty()) {
+            lastVisible = value.getDocuments().get(value.size() - 1);
+            for (DocumentSnapshot doc : value.getDocuments()) {
+                ForumPost p = doc.toObject(ForumPost.class);
+                if (p != null) {
+                    p.setId(doc.getId());
+                    if (showGraphic || !p.isHunted()) postList.add(p);
+                }
+            }
+            adapter.setPosts(new ArrayList<>(postList));
+            if (value.size() < PAGE_SIZE) isLastPage = true;
+        } else {
+            isLastPage = true;
+        }
+    }
+
+    private void finishForumFetch(int generation) {
+        if (fetchGeneration == generation) {
             isFetching = false;
-        }).addOnFailureListener(e -> {
-            if (fetchGeneration == myGen) { isFetching = false; if (binding != null) binding.swipeRefreshLayout.setRefreshing(false); }
-        });
+            if (binding != null) binding.swipeRefreshLayout.setRefreshing(false);
+        }
     }
 
     /**

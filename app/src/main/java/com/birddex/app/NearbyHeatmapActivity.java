@@ -261,6 +261,41 @@ public class NearbyHeatmapActivity extends AppCompatActivity
             }
         });
     }
+    private void markPostViewedFromHeatmap(String userId, ForumPost post, TextView tvViewCount) {
+        if (post == null || post.getId() == null) return;
+
+        if (post.getViewedBy() != null && post.getViewedBy().containsKey(userId)) {
+            return;
+        }
+
+        if (post.getViewedBy() == null) {
+            post.setViewedBy(new HashMap<>());
+        }
+
+        post.getViewedBy().put(userId, true);
+        post.setViewCount(post.getViewCount() + 1);
+
+        if (tvViewCount != null) {
+            tvViewCount.setText(post.getViewCount() + " views");
+        }
+
+        db.collection("forumThreads")
+                .document(post.getId())
+                .update("viewedBy." + userId, true)
+                .addOnFailureListener(e -> {
+                    Log.e(TAG, "Failed to mark heatmap post as viewed", e);
+
+                    if (post.getViewedBy() != null) {
+                        post.getViewedBy().remove(userId);
+                    }
+
+                    post.setViewCount(Math.max(0, post.getViewCount() - 1));
+
+                    if (tvViewCount != null) {
+                        tvViewCount.setText(post.getViewCount() + " views");
+                    }
+                });
+    }
 
     /**
      * Pulls data from a local source, Firebase, or an external API and prepares it for the UI or
@@ -395,9 +430,19 @@ public class NearbyHeatmapActivity extends AppCompatActivity
         // Bind or inflate the UI pieces this method needs before it can update the screen.
         activePost = p; BottomSheetDialog dialog = new BottomSheetDialog(this); View view = getLayoutInflater().inflate(R.layout.bottom_sheet_post_view, null); dialog.setContentView(view);
         FirebaseUser user = mAuth.getCurrentUser();
-        // Set up or query the Firebase layer that supplies/stores this feature's data.
-        if (user != null && user.getUid().equals(p.getUserId()) && p.isNotificationSent()) db.collection("forumThreads").document(p.getId()).update("notificationSent", false);
 
+        // Count a heatmap view when the user presses the post's pin and opens the post bottom sheet.
+        // Because this writes to the same viewedBy map used by the forum post screen, the same user
+        // will only count once for the same post across both places.
+        TextView tvViewCount = view.findViewById(R.id.tvViewCount);
+        if (user != null) {
+            markPostViewedFromHeatmap(user.getUid(), p, tvViewCount);
+        }
+
+        // Keep the existing owner notification reset behavior as-is.
+        if (user != null && user.getUid().equals(p.getUserId()) && p.isNotificationSent()) {
+            db.collection("forumThreads").document(p.getId()).update("notificationSent", false);
+        }
         View content = view.findViewById(R.id.postContent);
         ((TextView) content.findViewById(R.id.tvPostUsername)).setText(p.getUsername());
         ((TextView) content.findViewById(R.id.tvPostMessage)).setText(p.isEdited() ? p.getMessage() + " (edited)" : p.getMessage());

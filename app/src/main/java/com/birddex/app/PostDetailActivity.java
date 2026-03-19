@@ -212,16 +212,30 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
      * become permanent.
      */
     private void handleViewTracking(String userId, ForumPost post) {
-        hasMarkedAsViewed = true;
-        Map<String, Object> updates = new HashMap<>();
-        if (post.getViewedBy() == null || !post.getViewedBy().containsKey(userId)) updates.put("viewedBy." + userId, true);
-        if (userId.equals(post.getUserId())) {
-            if (post.isNotificationSent()) updates.put("notificationSent", false);
-            if (post.isLikeNotificationSent()) updates.put("likeNotificationSent", false);
-            updates.put("lastViewedAt", FieldValue.serverTimestamp());
+        if (post == null || post.getId() == null) return;
+
+        if (post.getViewedBy() != null && post.getViewedBy().containsKey(userId)) {
+            hasMarkedAsViewed = true;
+            return;
         }
-        // Set up or query the Firebase layer that supplies/stores this feature's data.
-        if (!updates.isEmpty()) db.collection("forumThreads").document(postId).update(updates);
+
+        hasMarkedAsViewed = true;
+
+        if (post.getViewedBy() == null) {
+            post.setViewedBy(new HashMap<>());
+        }
+        post.getViewedBy().put(userId, true);
+
+        db.collection("forumThreads")
+                .document(postId)
+                .update("viewedBy." + userId, true)
+                .addOnFailureListener(e -> {
+                    Log.e(TAG, "Failed to mark forum post as viewed", e);
+                    hasMarkedAsViewed = false;
+                    if (post.getViewedBy() != null) {
+                        post.getViewedBy().remove(userId);
+                    }
+                });
     }
 
     /**

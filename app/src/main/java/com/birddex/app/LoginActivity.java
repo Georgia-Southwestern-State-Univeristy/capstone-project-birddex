@@ -8,21 +8,14 @@ import android.widget.EditText;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
 
+import com.google.firebase.FirebaseNetworkException;
+import com.google.firebase.FirebaseTooManyRequestsException;
 import com.google.firebase.auth.FirebaseAuth;
 import com.google.firebase.auth.FirebaseUser;
 
-/**
- * LoginActivity handles the user authentication process.
- * Fixes: Added isNavigating guard to prevent redundant activity launches.
- */
-/**
- * LoginActivity: Activity class for one BirdDex screen. It owns screen setup, user actions, and navigation for this part of the app.
- *
- * These comments focus on what the actual code blocks are doing so the file is easier to trace
- * when you are debugging or presenting the app. Only comments were added; runtime logic was not changed.
- */
 public class LoginActivity extends AppCompatActivity {
 
     private FirebaseManager firebaseManager;
@@ -34,27 +27,15 @@ public class LoginActivity extends AppCompatActivity {
     private View loadingOverlay;
     private boolean isNavigating = false;
 
-    /**
-     * Android calls this when the Activity is first created. This is where the screen usually
-     * inflates its layout, grabs views, creates helpers, and wires listeners.
-     * It grabs layout/view references here so later code can read from them, update them, or
-     * attach listeners.
-     * It wires user actions here, so taps on buttons/cards/menus trigger the next step in the
-     * flow.
-     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
-     * changes.
-     */
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         SystemBarHelper.applyStandardNavBar(this);
         setContentView(R.layout.activity_login);
 
-        // Set up or query the Firebase layer that supplies/stores this feature's data.
         firebaseManager = new FirebaseManager(this);
         signINupValidator = new sign_IN_upValidator();
 
-        // Bind or inflate the UI pieces this method needs before it can update the screen.
         emailEditText = findViewById(R.id.etEmail);
         passwordEditText = findViewById(R.id.etPassword);
         btnLogin = findViewById(R.id.btnLogin);
@@ -63,53 +44,68 @@ public class LoginActivity extends AppCompatActivity {
         TextView tvForgot = findViewById(R.id.tvForgot);
         TextView tvSignUp = findViewById(R.id.tvSignUp);
 
-        // Attach the user interaction that should run when this control is tapped.
         btnLogin.setOnClickListener(v -> {
             if (isNavigating) return;
+
             if (signINupValidator.validateSignInForm(emailEditText, passwordEditText)) {
                 String email = emailEditText.getText().toString().trim();
                 String password = passwordEditText.getText().toString();
-                
+
                 setLoadingState(true);
+
                 firebaseManager.signIn(email, password, new FirebaseManager.AuthListener() {
                     @Override
                     public void onSuccess(FirebaseUser user) {
-                        if (user != null && user.isEmailVerified()) {
-                            if (isNavigating) return;
-                            isNavigating = true;
-
-                            SessionManager sessionManager = new SessionManager(LoginActivity.this);
-                            String sessionId = sessionManager.createSession(user.getUid());
-
-                            firebaseManager.updateSessionId(user.getUid(), sessionId, task -> {
-                                setLoadingState(false);
-
-                                if (task.isSuccessful()) {
-                                    startActivity(new Intent(LoginActivity.this, HomeActivity.class));
-                                    finish();
-                                } else {
-                                    FirebaseAuth.getInstance().signOut();
-                                    sessionManager.clearSession(user.getUid());
-                                    isNavigating = false;
-
-                                    String msg = (task.getException() != null)
-                                            ? task.getException().getMessage()
-                                            : "Failed to start session.";
-
-                                    Toast.makeText(LoginActivity.this,
-                                            "Login failed: " + msg,
-                                            Toast.LENGTH_LONG).show();
-                                }
-                            });
-                        } else if (user != null) {
-                            FirebaseAuth.getInstance().signOut();
-                            setLoadingState(false);
-                            Toast.makeText(LoginActivity.this, "Please verify your email address.", Toast.LENGTH_LONG).show();
-                            user.sendEmailVerification();
-                        } else {
+                        if (user == null) {
                             setLoadingState(false);
                             Toast.makeText(LoginActivity.this, "Login failed.", Toast.LENGTH_SHORT).show();
+                            return;
                         }
+
+                        user.reload().addOnCompleteListener(reloadTask -> {
+                            FirebaseUser refreshedUser = FirebaseAuth.getInstance().getCurrentUser();
+
+                            if (reloadTask.isSuccessful() && refreshedUser != null && refreshedUser.isEmailVerified()) {
+                                continueVerifiedLogin(refreshedUser);
+                                return;
+                            }
+
+                            if (refreshedUser == null) {
+                                setLoadingState(false);
+                                Toast.makeText(LoginActivity.this, "Login failed.", Toast.LENGTH_SHORT).show();
+                                return;
+                            }
+
+                            refreshedUser.sendEmailVerification().addOnCompleteListener(emailTask -> {
+                                FirebaseAuth.getInstance().signOut();
+                                setLoadingState(false);
+
+                                if (emailTask.isSuccessful()) {
+                                    showPopup(
+                                            "Email Not Verified",
+                                            "A new verification link has been sent to your email. Please check your inbox and spam folder before trying to log in again."
+                                    );
+                                    return;
+                                }
+
+                                Exception e = emailTask.getException();
+                                String message;
+
+                                if (e instanceof FirebaseTooManyRequestsException) {
+                                    message = "Too many verification emails were requested in a short time. Please wait a little and try again.";
+                                } else if (e instanceof FirebaseNetworkException) {
+                                    message = "BirdDex could not resend the verification email because of a network issue. Check your connection and try again.";
+                                } else {
+                                    String firebaseMessage = e != null ? e.getMessage() : null;
+                                    if (firebaseMessage == null || firebaseMessage.trim().isEmpty()) {
+                                        firebaseMessage = "BirdDex could not resend a new verification link right now.";
+                                    }
+                                    message = firebaseMessage;
+                                }
+
+                                showPopup("Email Not Verified", message);
+                            });
+                        });
                     }
 
                     @Override
@@ -118,31 +114,83 @@ public class LoginActivity extends AppCompatActivity {
                         Toast.makeText(LoginActivity.this, errorMessage, Toast.LENGTH_SHORT).show();
                     }
 
-                    @Override public void onUsernameTaken() {}
-                    @Override public void onEmailTaken() {}
+                    @Override
+                    public void onUsernameTaken() {}
+
+                    @Override
+                    public void onEmailTaken() {}
                 });
             }
         });
 
-        tvForgot.setOnClickListener(v -> { if (!isNavigating) startActivity(new Intent(this, ForgotPasswordActivity.class)); });
-        tvSignUp.setOnClickListener(v -> { if (!isNavigating) startActivity(new Intent(this, SignUpActivity.class)); });
+        tvForgot.setOnClickListener(v -> {
+            if (!isNavigating) {
+                startActivity(new Intent(this, ForgotPasswordActivity.class));
+            }
+        });
+
+        tvSignUp.setOnClickListener(v -> {
+            if (!isNavigating) {
+                startActivity(new Intent(this, SignUpActivity.class));
+            }
+        });
     }
 
-    /**
-     * Updates object/screen state by storing a new value or reconfiguring a dependency.
-     */
+    private void continueVerifiedLogin(FirebaseUser user) {
+        if (isNavigating) return;
+        isNavigating = true;
+
+        SessionManager sessionManager = new SessionManager(LoginActivity.this);
+        String sessionId = sessionManager.createSession(user.getUid());
+
+        firebaseManager.updateSessionId(user.getUid(), sessionId, task -> {
+            setLoadingState(false);
+
+            if (task.isSuccessful()) {
+                startActivity(new Intent(LoginActivity.this, HomeActivity.class));
+                finish();
+            } else {
+                FirebaseAuth.getInstance().signOut();
+                sessionManager.clearSession(user.getUid());
+                isNavigating = false;
+
+                String msg = (task.getException() != null)
+                        ? task.getException().getMessage()
+                        : "Failed to start session.";
+
+                Toast.makeText(
+                        LoginActivity.this,
+                        "Login failed: " + msg,
+                        Toast.LENGTH_LONG
+                ).show();
+            }
+        });
+    }
+
+    private void showPopup(String title, String message) {
+        if (isFinishing() || isDestroyed()) return;
+
+        new AlertDialog.Builder(this)
+                .setTitle(title)
+                .setMessage(message)
+                .setPositiveButton("OK", null)
+                .show();
+    }
+
     private void setLoadingState(boolean loading) {
-        if (loadingOverlay != null) loadingOverlay.setVisibility(loading ? View.VISIBLE : View.GONE);
-        if (btnLogin != null) btnLogin.setEnabled(!loading);
+        if (loadingOverlay != null) {
+            loadingOverlay.setVisibility(loading ? View.VISIBLE : View.GONE);
+        }
+        if (btnLogin != null) {
+            btnLogin.setEnabled(!loading);
+        }
     }
 
-    /**
-     * Runs when the screen is leaving the foreground, so it is used to pause work or save
-     * transient state.
-     */
     @Override
     protected void onPause() {
         super.onPause();
-        if (loadingOverlay != null) loadingOverlay.setVisibility(View.GONE);
+        if (loadingOverlay != null) {
+            loadingOverlay.setVisibility(View.GONE);
+        }
     }
 }

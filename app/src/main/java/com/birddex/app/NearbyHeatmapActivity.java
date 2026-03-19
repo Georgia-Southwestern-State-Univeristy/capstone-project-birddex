@@ -598,8 +598,18 @@ public class NearbyHeatmapActivity extends AppCompatActivity
         View sendCommentButton = view.findViewById(R.id.btnSendComment);
         sendCommentButton.setOnClickListener(v -> {
             String text = currentPopupEditText.getText().toString().trim();
-            if (text.isEmpty() || user == null || ContentFilter.containsInappropriateContent(text))
+            if (text.isEmpty() || user == null)
                 return;
+            if (!ContentFilter.isSafe(this, text, replyingToComment != null ? "Reply" : "Comment")) {
+                firebaseManager.logFilteredContentAttempt(
+                        replyingToComment != null ? "forum_reply_create_client_block" : "forum_comment_create_client_block",
+                        replyingToComment != null ? "reply" : "comment",
+                        text,
+                        p.getId(),
+                        null
+                );
+                return;
+            }
             if (ForumSubmissionCooldownHelper.isCoolingDown(this)) {
                 Toast.makeText(this, ForumSubmissionCooldownHelper.buildCooldownMessage(this), Toast.LENGTH_SHORT).show();
                 return;

@@ -401,7 +401,10 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
      * or needs attention.
      */
     private void updatePost(ForumPost post, String msg, boolean spotted, boolean hunted, boolean loc) {
-        if (!ContentFilter.isSafe(this, msg, "Post")) return;
+        if (!ContentFilter.isSafe(this, msg, "Post")) {
+            firebaseManager.logFilteredContentAttempt("forum_post_update_client_block", "post", msg, post.getId(), null);
+            return;
+        }
 
         firebaseManager.updateForumPostContent(post.getId(), msg, spotted, hunted, loc, new FirebaseManager.ForumWriteListener() {
             @Override
@@ -672,7 +675,17 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
      */
     private void postComment() {
         String msg = binding.etComment.getText().toString().trim();
-        if (msg.isEmpty() || msg.length() > MAX_COMMENT_LENGTH || !ContentFilter.isSafe(this, msg, "Comment")) return;
+        if (msg.isEmpty() || msg.length() > MAX_COMMENT_LENGTH) return;
+        if (!ContentFilter.isSafe(this, msg, replyingToComment != null ? "Reply" : "Comment")) {
+            firebaseManager.logFilteredContentAttempt(
+                    replyingToComment != null ? "forum_reply_create_client_block" : "forum_comment_create_client_block",
+                    replyingToComment != null ? "reply" : "comment",
+                    msg,
+                    postId,
+                    null
+            );
+            return;
+        }
         if (ForumSubmissionCooldownHelper.isCoolingDown(this)) {
             Toast.makeText(this, ForumSubmissionCooldownHelper.buildCooldownMessage(this), Toast.LENGTH_SHORT).show();
             return;
@@ -786,7 +799,10 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
      * become permanent.
      */
     private void updateComment(ForumComment c, String msg) {
-        if (!ContentFilter.isSafe(this, msg, "Comment")) return;
+        if (!ContentFilter.isSafe(this, msg, "Comment")) {
+            firebaseManager.logFilteredContentAttempt("forum_comment_update_client_block", "comment", msg, postId, c.getId());
+            return;
+        }
 
         firebaseManager.updateForumCommentContent(postId, c.getId(), msg, new FirebaseManager.ForumWriteListener() {
             @Override

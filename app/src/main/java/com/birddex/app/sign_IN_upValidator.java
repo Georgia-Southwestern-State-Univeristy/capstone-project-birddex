@@ -15,9 +15,6 @@ import android.widget.EditText;
  */
 public class sign_IN_upValidator {
 
-    private static final int MIN_USERNAME_LENGTH = 3;
-    private static final int MAX_USERNAME_LENGTH = 15;
-
     /**
      * Validates the fields for the Sign Up form.
      * @param username EditText for user's username.
@@ -38,15 +35,6 @@ public class sign_IN_upValidator {
         // Check if username is empty.
         if (usernameStr.isEmpty()) {
             username.setError("Required.");
-            valid = false;
-        } else if (usernameStr.length() < MIN_USERNAME_LENGTH) {
-            username.setError("Username must be at least 3 characters.");
-            valid = false;
-        } else if (usernameStr.length() > MAX_USERNAME_LENGTH) {
-            username.setError("Username cannot be longer than 15 characters.");
-            valid = false;
-        } else if (ContentFilter.containsInappropriateContent(usernameStr)) {
-            username.setError("Inappropriate username.");
             valid = false;
         } else {
             username.setError(null);

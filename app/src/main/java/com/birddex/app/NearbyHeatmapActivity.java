@@ -843,7 +843,8 @@ public class NearbyHeatmapActivity extends AppCompatActivity
         for (DocumentSnapshot d : snap.getDocuments()) {
             Double lat = getAnyDouble(d, "location.latitude", "lastSeenLatitudeGeorgia", "latitude", "lat"), lng = getAnyDouble(d, "location.longitude", "lastSeenLongitudeGeorgia", "longitude", "lng");
             if (lat == null || lng == null || shouldBeFiltered(lat, lng, getAnyTimeMillis(d, user ? "timestamp" : "observationDate"))) continue;
-            hl.add(new WeightedLatLng(new LatLng(lat, lng), user ? 1.8 : 1.0)); hsl.add(new HotspotSighting(lat, lng, extractBirdName(d), user));
+            hl.add(new WeightedLatLng(new LatLng(lat, lng), user ? 1.8 : 1.0));
+            hsl.add(buildHotspotSighting(d, lat, lng, user));
         }
         rebuildHotspotBuckets(); onCollectionFinished(gen);
     }
@@ -863,8 +864,8 @@ public class NearbyHeatmapActivity extends AppCompatActivity
      */
     private void rebuildHotspotBuckets() {
         hotspotBuckets.clear();
-        for (HotspotSighting s : userHotspotSightings) addToHotspotBucket(s.lat, s.lng, s.birdName, true);
-        for (HotspotSighting s : eBirdHotspotSightings) addToHotspotBucket(s.lat, s.lng, s.birdName, false);
+        for (HotspotSighting s : userHotspotSightings) addToHotspotBucket(s, true);
+        for (HotspotSighting s : eBirdHotspotSightings) addToHotspotBucket(s, false);
     }
 
     /**
@@ -913,12 +914,15 @@ public class NearbyHeatmapActivity extends AppCompatActivity
         if (bs != null) { bs.setBackgroundColor(Color.TRANSPARENT); ViewGroup.LayoutParams p = bs.getLayoutParams(); p.height = (int) (getResources().getDisplayMetrics().heightPixels * 0.58f); bs.setLayoutParams(p); BottomSheetBehavior<View> behavior = BottomSheetBehavior.from(bs); behavior.setState(BottomSheetBehavior.STATE_EXPANDED); }
         ((TextView) dialog.findViewById(R.id.tvSheetSummary)).setText("Unverified: " + b.userCount + "  •  Verified: " + b.eBirdCount);
         LinearLayout container = dialog.findViewById(R.id.birdListContainer); container.removeAllViews();
-        List<String> names = new ArrayList<>(b.birdCounts.keySet()); Collections.sort(names, String.CASE_INSENSITIVE_ORDER);
+        List<BirdSheetRow> rows = new ArrayList<>(b.birdRows.values());
+        Collections.sort(rows, (a, c) -> String.CASE_INSENSITIVE_ORDER.compare(a.displayName, c.displayName));
         LayoutInflater inf = LayoutInflater.from(this);
-        for (String n : names) {
+        for (BirdSheetRow item : rows) {
             View row = inf.inflate(R.layout.item_heatmap_bird_placeholder, container, false);
-            ((TextView) row.findViewById(R.id.tvBirdName)).setText(n);
-            ((TextView) row.findViewById(R.id.tvBirdCount)).setText(b.birdCounts.get(n) + " sightings");
+            ((TextView) row.findViewById(R.id.tvBirdName)).setText(item.displayName);
+            ((TextView) row.findViewById(R.id.tvBirdCount)).setText(item.count + " sightings");
+            ImageView ivBird = row.findViewById(R.id.ivBirdPlaceholder);
+            BirdImageLoader.loadBirdImageInto(ivBird, item.birdId, item.commonName, item.scientificName);
             container.addView(row);
         }
         dialog.show();
@@ -929,14 +933,31 @@ public class NearbyHeatmapActivity extends AppCompatActivity
      * Location values are handled here, so this is part of the logic that decides what area/bird
      * sightings the user sees.
      */
-    private void addToHotspotBucket(double lat, double lng, String name, boolean user) {
-        double blat = Math.round(lat / HOTSPOT_BUCKET_SIZE) * HOTSPOT_BUCKET_SIZE, blng = Math.round(lng / HOTSPOT_BUCKET_SIZE) * HOTSPOT_BUCKET_SIZE;
+    private void addToHotspotBucket(@NonNull HotspotSighting sighting, boolean user) {
+        double blat = Math.round(sighting.lat / HOTSPOT_BUCKET_SIZE) * HOTSPOT_BUCKET_SIZE, blng = Math.round(sighting.lng / HOTSPOT_BUCKET_SIZE) * HOTSPOT_BUCKET_SIZE;
         String key = String.format(Locale.US, "%.4f,%.4f", blat, blng);
         HotspotBucket b = hotspotBuckets.get(key); if (b == null) { b = new HotspotBucket(); hotspotBuckets.put(key, b); }
-        b.add(lat, lng, name, user);
+        b.add(sighting, user);
     }
 
-    private String extractBirdName(DocumentSnapshot d) { String n = getAnyString(d, "commonName", "comName", "birdName", "species", "scientificName", "sciName", "speciesCode", "birdId"); return (n == null || n.trim().isEmpty()) ? "Unknown bird" : n.trim().replace("_", " ").replace("-", " "); }
+    private HotspotSighting buildHotspotSighting(DocumentSnapshot d, double lat, double lng, boolean user) {
+        String birdId = getAnyString(d, "birdId", "speciesCode", "speciesCodeClean", "species_code");
+        String commonName = cleanBirdText(getAnyString(d, "commonName", "comName", "birdName"));
+        String scientificName = cleanBirdText(getAnyString(d, "scientificName", "sciName"));
+        String displayName = firstNonBlank(commonName, scientificName, cleanBirdText(getAnyString(d, "species", "birdId", "speciesCode")), "Unknown bird");
+        return new HotspotSighting(lat, lng, birdId, commonName, scientificName, displayName, user);
+    }
+
+    private String cleanBirdText(String value) {
+        return value == null ? null : value.trim().replace("_", " ").replace("-", " ");
+    }
+
+    private String firstNonBlank(String a, String b, String c, String fallback) {
+        if (a != null && !a.trim().isEmpty()) return a.trim();
+        if (b != null && !b.trim().isEmpty()) return b.trim();
+        if (c != null && !c.trim().isEmpty()) return c.trim();
+        return fallback;
+    }
 
     /**
      * Main logic block for this part of the feature.
@@ -953,6 +974,76 @@ public class NearbyHeatmapActivity extends AppCompatActivity
     private String getAnyString(DocumentSnapshot d, String... paths) { for (String p : paths) { Object v = d.get(p); if (v != null && !String.valueOf(v).trim().isEmpty()) return String.valueOf(v).trim(); } return null; }
     private Long getAnyTimeMillis(DocumentSnapshot d, String... paths) { for (String p : paths) { Object v = d.get(p); if (v instanceof Date) return ((Date) v).getTime(); if (v instanceof Number) return ((Number) v).longValue(); } return null; }
 
-    private static class HotspotSighting { final double lat, lng; final String birdName; final boolean isUserSighting; HotspotSighting(double lat, double lng, String n, boolean u) { this.lat = lat; this.lng = lng; this.birdName = n; this.isUserSighting = u; } }
-    private static class HotspotBucket { double latSum=0, lngSum=0; int pointCount=0, userCount=0, eBirdCount=0; final Map<String, Integer> birdCounts = new LinkedHashMap<>(); void add(double lat, double lng, String n, boolean u) { latSum+=lat; lngSum+=lng; pointCount++; if (u) userCount++; else eBirdCount++; String cn = (n==null || n.trim().isEmpty()) ? "Unknown bird" : n.trim(); Integer c = birdCounts.get(cn); birdCounts.put(cn, (c==null?0:c)+1); } double getCenterLat() { return pointCount==0?0:latSum/pointCount; } double getCenterLng() { return pointCount==0?0:lngSum/pointCount; } }
+    private static class HotspotSighting {
+        final double lat, lng;
+        final String birdId;
+        final String commonName;
+        final String scientificName;
+        final String displayName;
+        final boolean isUserSighting;
+
+        HotspotSighting(double lat, double lng, String birdId, String commonName, String scientificName, String displayName, boolean u) {
+            this.lat = lat;
+            this.lng = lng;
+            this.birdId = birdId;
+            this.commonName = commonName;
+            this.scientificName = scientificName;
+            this.displayName = displayName;
+            this.isUserSighting = u;
+        }
+    }
+
+    private static class BirdSheetRow {
+        final String displayName;
+        String birdId;
+        String commonName;
+        String scientificName;
+        int count;
+
+        BirdSheetRow(String displayName, String birdId, String commonName, String scientificName) {
+            this.displayName = displayName;
+            this.birdId = birdId;
+            this.commonName = commonName;
+            this.scientificName = scientificName;
+            this.count = 0;
+        }
+
+        void mergeIdentifiers(HotspotSighting sighting) {
+            if ((birdId == null || birdId.trim().isEmpty()) && sighting.birdId != null && !sighting.birdId.trim().isEmpty()) {
+                birdId = sighting.birdId;
+            }
+            if ((commonName == null || commonName.trim().isEmpty()) && sighting.commonName != null && !sighting.commonName.trim().isEmpty()) {
+                commonName = sighting.commonName;
+            }
+            if ((scientificName == null || scientificName.trim().isEmpty()) && sighting.scientificName != null && !sighting.scientificName.trim().isEmpty()) {
+                scientificName = sighting.scientificName;
+            }
+        }
+    }
+
+    private static class HotspotBucket {
+        double latSum = 0, lngSum = 0;
+        int pointCount = 0, userCount = 0, eBirdCount = 0;
+        final Map<String, BirdSheetRow> birdRows = new LinkedHashMap<>();
+
+        void add(HotspotSighting sighting, boolean user) {
+            latSum += sighting.lat;
+            lngSum += sighting.lng;
+            pointCount++;
+            if (user) userCount++; else eBirdCount++;
+
+            String key = (sighting.displayName == null || sighting.displayName.trim().isEmpty()) ? "Unknown bird" : sighting.displayName.trim();
+            BirdSheetRow row = birdRows.get(key);
+            if (row == null) {
+                row = new BirdSheetRow(key, sighting.birdId, sighting.commonName, sighting.scientificName);
+                birdRows.put(key, row);
+            } else {
+                row.mergeIdentifiers(sighting);
+            }
+            row.count++;
+        }
+
+        double getCenterLat() { return pointCount == 0 ? 0 : latSum / pointCount; }
+        double getCenterLng() { return pointCount == 0 ? 0 : lngSum / pointCount; }
+    }
 }

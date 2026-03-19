@@ -2,6 +2,8 @@ package com.birddex.app;
 
 import android.graphics.drawable.Drawable;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.text.method.LinkMovementMethod;
 import android.util.Log;
 import android.view.View;
@@ -19,9 +21,11 @@ import com.bumptech.glide.request.RequestListener;
 import com.bumptech.glide.request.target.Target;
 import com.google.firebase.firestore.DocumentSnapshot;
 import com.google.firebase.firestore.FirebaseFirestore;
+import com.google.firebase.firestore.QuerySnapshot;
 import com.google.firebase.firestore.Source;
 
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -34,6 +38,7 @@ public class BirdWikiActivity extends AppCompatActivity {
 
     private static final String TAG = "BirdWikiActivity";
     public static final String EXTRA_BIRD_ID = "birdId";
+    private static final long LOADING_TIMEOUT_MS = 10000L;
 
     private FirebaseFirestore db;
     private FirebaseManager firebaseManager;
@@ -50,7 +55,23 @@ public class BirdWikiActivity extends AppCompatActivity {
     private boolean imageLoaded = false;
     private boolean contentShown = false;
 
+    private String currentBirdId;
+    private String currentCommonName;
+    private String currentScientificName;
+
     private final Map<String, TextView> factViews = new HashMap<>();
+    private final Handler mainHandler = new Handler(Looper.getMainLooper());
+
+    private final Runnable loadingTimeoutRunnable = new Runnable() {
+        @Override
+        public void run() {
+            if (contentShown || isFinishing() || isDestroyed()) return;
+
+            Log.w(TAG, "BirdWiki timeout reached. Showing content without waiting any longer.");
+            contentShown = true;
+            showLoadingOverlay(false);
+        }
+    };
 
     /**
      * Android calls this when the Activity is first created. This is where the screen usually
@@ -73,16 +94,27 @@ public class BirdWikiActivity extends AppCompatActivity {
         bindViews();
         initializePlaceholders();
         showLoadingOverlay(true);
+        mainHandler.postDelayed(loadingTimeoutRunnable, LOADING_TIMEOUT_MS);
 
-        String birdId = getIntent().getStringExtra(EXTRA_BIRD_ID);
-        if (isBlank(birdId)) {
+        currentBirdId = getIntent().getStringExtra(EXTRA_BIRD_ID);
+        if (isBlank(currentBirdId)) {
             // Give the user immediate feedback about the result of this action.
             Toast.makeText(this, "Missing birdId for info page.", Toast.LENGTH_LONG).show();
             finish();
             return;
         }
 
-        loadAllData(birdId);
+        loadAllData(currentBirdId);
+    }
+
+    /**
+     * Android calls this when the Activity is being destroyed so cleanup can happen before the
+     * screen is removed.
+     */
+    @Override
+    protected void onDestroy() {
+        mainHandler.removeCallbacks(loadingTimeoutRunnable);
+        super.onDestroy();
     }
 
     /**
@@ -226,6 +258,10 @@ public class BirdWikiActivity extends AppCompatActivity {
         String family = doc.getString("family");
         String species = doc.getString("species");
 
+        currentBirdId = firstNonBlank(doc.getId(), currentBirdId);
+        currentCommonName = commonName;
+        currentScientificName = scientificName;
+
         tvPageTitle.setText(firstNonBlank(commonName, "Unknown Bird"));
         tvPageScientificScientificName(firstNonBlank(scientificName, "Scientific name not available"));
 
@@ -234,12 +270,7 @@ public class BirdWikiActivity extends AppCompatActivity {
 
         markBasicsLoaded();
 
-        if (!isBlank(commonName)) {
-            loadBirdImage(commonName);
-        } else {
-            ivBirdHeaderImage.setVisibility(View.GONE);
-            markImageLoaded();
-        }
+        loadBirdImage(currentBirdId, currentCommonName, currentScientificName);
     }
 
     /**
@@ -255,14 +286,23 @@ public class BirdWikiActivity extends AppCompatActivity {
      * It talks to Firebase/Firestore in this method, either to read live data or to persist app
      * changes.
      */
-    private void loadBirdImage(String commonName) {
-        // Set up or query the Firebase layer that supplies/stores this feature's data.
-        db.collection("bird_images").document(commonName).get(Source.CACHE)
-                .addOnSuccessListener(doc -> {
-                    if (doc.exists()) processImage(doc);
-                    else fetchImageFromServer(commonName);
+    private void loadBirdImage(String birdId, String commonName, String scientificName) {
+        if (isBlank(birdId) && isBlank(commonName) && isBlank(scientificName)) {
+            ivBirdHeaderImage.setImageDrawable(null);
+            ivBirdHeaderImage.setVisibility(View.GONE);
+            markImageLoaded();
+            return;
+        }
+
+        // Try Nuthatch first, then fall back to iNaturalist.
+        tryBirdImageFromCollection("nuthatch_images", birdId, commonName, scientificName, () ->
+                tryBirdImageFromCollection("inaturalist_images", birdId, commonName, scientificName, () -> {
+                    if (isFinishing() || isDestroyed()) return;
+                    ivBirdHeaderImage.setImageDrawable(null);
+                    ivBirdHeaderImage.setVisibility(View.GONE);
+                    markImageLoaded();
                 })
-                .addOnFailureListener(e -> fetchImageFromServer(commonName));
+        );
     }
 
     /**
@@ -271,21 +311,91 @@ public class BirdWikiActivity extends AppCompatActivity {
      * It talks to Firebase/Firestore in this method, either to read live data or to persist app
      * changes.
      */
-    private void fetchImageFromServer(String commonName) {
-        // Set up or query the Firebase layer that supplies/stores this feature's data.
-        db.collection("bird_images").document(commonName).get(Source.SERVER)
-                .addOnSuccessListener(doc -> {
-                    if (doc.exists()) processImage(doc);
-                    else {
-                        ivBirdHeaderImage.setVisibility(View.GONE);
-                        markImageLoaded();
-                    }
-                })
+    private void tryBirdImageFromCollection(String collectionName,
+                                            String birdId,
+                                            String commonName,
+                                            String scientificName,
+                                            Runnable onNotFound) {
+        if (isFinishing() || isDestroyed()) return;
+
+        if (!isBlank(birdId)) {
+            // First try the document ID directly because your image collections are keyed by species code.
+            db.collection(collectionName).document(birdId).get(Source.SERVER)
+                    .addOnSuccessListener(doc -> {
+                        if (doc.exists()) {
+                            processImage(doc);
+                        } else {
+                            queryBirdImageFallbacks(collectionName, birdId, commonName, scientificName, onNotFound);
+                        }
+                    })
+                    .addOnFailureListener(e -> {
+                        Log.e(TAG, "Failed direct image lookup in " + collectionName + " for birdId=" + birdId, e);
+                        queryBirdImageFallbacks(collectionName, birdId, commonName, scientificName, onNotFound);
+                    });
+        } else {
+            queryBirdImageFallbacks(collectionName, birdId, commonName, scientificName, onNotFound);
+        }
+    }
+
+    /**
+     * Pulls data from a local source, Firebase, or an external API and prepares it for the UI or
+     * caller.
+     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
+     * changes.
+     */
+    private void queryBirdImageFallbacks(String collectionName,
+                                         String birdId,
+                                         String commonName,
+                                         String scientificName,
+                                         Runnable onNotFound) {
+        if (isFinishing() || isDestroyed()) return;
+
+        queryBirdImageByField(collectionName, "speciesCode", birdId, () ->
+                queryBirdImageByField(collectionName, "commonName", commonName, () ->
+                        queryBirdImageByField(collectionName, "scientificName", scientificName, onNotFound)
+                )
+        );
+    }
+
+    /**
+     * Pulls data from a local source, Firebase, or an external API and prepares it for the UI or
+     * caller.
+     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
+     * changes.
+     */
+    private void queryBirdImageByField(String collectionName,
+                                       String fieldName,
+                                       String value,
+                                       Runnable onNotFound) {
+        if (isFinishing() || isDestroyed()) return;
+
+        if (isBlank(value)) {
+            onNotFound.run();
+            return;
+        }
+
+        db.collection(collectionName)
+                .whereEqualTo(fieldName, value)
+                .limit(1)
+                .get(Source.SERVER)
+                .addOnSuccessListener(querySnapshot -> processImageQueryResult(querySnapshot, onNotFound))
                 .addOnFailureListener(e -> {
-                    Log.e(TAG, "Failed to load bird image", e);
-                    ivBirdHeaderImage.setVisibility(View.GONE);
-                    markImageLoaded();
+                    Log.e(TAG, "Failed image query in " + collectionName + " where " + fieldName + "=" + value, e);
+                    onNotFound.run();
                 });
+    }
+
+    /**
+     * Main logic block for this part of the feature.
+     */
+    private void processImageQueryResult(QuerySnapshot querySnapshot, Runnable onNotFound) {
+        if (isFinishing() || isDestroyed()) return;
+
+        if (querySnapshot != null && !querySnapshot.isEmpty()) {
+            processImage(querySnapshot.getDocuments().get(0));
+        } else {
+            onNotFound.run();
+        }
     }
 
     /**
@@ -296,37 +406,68 @@ public class BirdWikiActivity extends AppCompatActivity {
     private void processImage(DocumentSnapshot imageDoc) {
         if (isFinishing() || isDestroyed()) return;
         if (!imageDoc.exists()) {
+            ivBirdHeaderImage.setImageDrawable(null);
             ivBirdHeaderImage.setVisibility(View.GONE);
             markImageLoaded();
             return;
         }
 
-        String imageUrl = imageDoc.getString("imageUrl");
+        String imageUrl = extractImageUrl(imageDoc);
 
         if (isBlank(imageUrl)) {
+            ivBirdHeaderImage.setImageDrawable(null);
             ivBirdHeaderImage.setVisibility(View.GONE);
             markImageLoaded();
             return;
         }
 
         ivBirdHeaderImage.setVisibility(View.VISIBLE);
+
         // Load the image asynchronously so the UI can show remote/local media without blocking the main thread.
         Glide.with(this)
                 .load(imageUrl)
                 .listener(new RequestListener<Drawable>() {
                     @Override
                     public boolean onLoadFailed(@Nullable GlideException e, Object model, Target<Drawable> target, boolean isFirstResource) {
+                        if (e != null) {
+                            Log.e(TAG, "Bird header image failed to load for url=" + model, e);
+                        }
+                        ivBirdHeaderImage.setImageDrawable(null);
+                        ivBirdHeaderImage.setVisibility(View.GONE);
                         markImageLoaded();
                         return false;
                     }
 
                     @Override
                     public boolean onResourceReady(Drawable resource, Object model, Target<Drawable> target, DataSource dataSource, boolean isFirstResource) {
+                        ivBirdHeaderImage.setVisibility(View.VISIBLE);
                         markImageLoaded();
                         return false;
                     }
                 })
                 .into(ivBirdHeaderImage);
+    }
+
+    /**
+     * Returns the current value/state this class needs somewhere else in the app.
+     */
+    private String extractImageUrl(DocumentSnapshot imageDoc) {
+        String singleUrl = imageDoc.getString("imageUrl");
+        if (!isBlank(singleUrl)) {
+            return singleUrl;
+        }
+
+        Object imageUrlsObj = imageDoc.get("imageUrls");
+        if (imageUrlsObj instanceof List) {
+            for (Object item : (List<?>) imageUrlsObj) {
+                String candidate = getString(item);
+                if (!isBlank(candidate)) {
+                    return candidate;
+                }
+            }
+        }
+
+        return null;
     }
 
     /**
@@ -488,6 +629,7 @@ public class BirdWikiActivity extends AppCompatActivity {
      */
     private void finishBasicsWithoutImage() {
         markBasicsLoaded();
+        ivBirdHeaderImage.setImageDrawable(null);
         ivBirdHeaderImage.setVisibility(View.GONE);
         markImageLoaded();
     }
@@ -521,8 +663,12 @@ public class BirdWikiActivity extends AppCompatActivity {
      */
     private void maybeShowContent() {
         if (contentShown || isFinishing() || isDestroyed()) return;
-        if (basicsLoaded && factsLoaded && imageLoaded) {
+
+        // Do not block the whole page on the image request. As soon as the bird basics and facts
+        // are ready, show the page and let the image continue loading in the background.
+        if (basicsLoaded && factsLoaded) {
             contentShown = true;
+            mainHandler.removeCallbacks(loadingTimeoutRunnable);
             showLoadingOverlay(false);
         }
     }

@@ -86,7 +86,7 @@ public class ForumCommentAdapter extends RecyclerView.Adapter<ForumCommentAdapte
         List<ForumComment> replies = allComments.stream()
                 .filter(c -> comment.getId().equals(c.getParentCommentId()))
                 .collect(Collectors.toList());
-        
+
         boolean isExpanded = expandedCommentIds.contains(comment.getId());
         holder.bind(comment, replies, isExpanded, listener, currentUserId, (id, expand) -> {
             if (expand) expandedCommentIds.add(id);
@@ -111,6 +111,7 @@ public class ForumCommentAdapter extends RecyclerView.Adapter<ForumCommentAdapte
         ImageView ivUserPfp;
         TextView tvUsername;
         TextView tvTimestamp;
+        TextView tvMeta;
         TextView tvText;
         LinearLayout btnLike;
         ImageView ivLikeIcon;
@@ -133,6 +134,7 @@ public class ForumCommentAdapter extends RecyclerView.Adapter<ForumCommentAdapte
             ivUserPfp = itemView.findViewById(R.id.ivCommentUserPfp);
             tvUsername = itemView.findViewById(R.id.tvCommentUsername);
             tvTimestamp = itemView.findViewById(R.id.tvCommentTimestamp);
+            tvMeta = itemView.findViewById(R.id.tvCommentMeta);
             tvText = itemView.findViewById(R.id.tvCommentText);
             btnLike = itemView.findViewById(R.id.btnLikeComment);
             ivLikeIcon = itemView.findViewById(R.id.ivCommentLikeIcon);
@@ -167,9 +169,18 @@ public class ForumCommentAdapter extends RecyclerView.Adapter<ForumCommentAdapte
                 tvReplyingTo.setVisibility(View.GONE);
             }
 
+            if (comment.isEdited()) {
+                tvMeta.setVisibility(View.VISIBLE);
+                tvMeta.setText("Edited");
+            } else {
+                tvMeta.setVisibility(View.GONE);
+            }
+
             if (comment.getTimestamp() != null) {
                 long time = comment.getTimestamp().toDate().getTime();
                 tvTimestamp.setText(DateUtils.getRelativeTimeSpanString(time, System.currentTimeMillis(), DateUtils.SECOND_IN_MILLIS, DateUtils.FORMAT_ABBREV_RELATIVE));
+            } else {
+                tvTimestamp.setText("");
             }
 
             // Load the image asynchronously so the UI can show remote/local media without blocking the main thread.
@@ -197,7 +208,7 @@ public class ForumCommentAdapter extends RecyclerView.Adapter<ForumCommentAdapte
                     tvShowReplies.setVisibility(View.VISIBLE);
                     tvShowReplies.setText("Hide replies");
                     tvShowReplies.setOnClickListener(v -> expandListener.onExpandToggle(comment.getId(), false));
-                    
+
                     rvReplies.setVisibility(View.VISIBLE);
                     rvReplies.setLayoutManager(new LinearLayoutManager(itemView.getContext()));
                     // Hook the data source to the list/grid adapter so model objects can render as UI rows/cards.
@@ -211,7 +222,7 @@ public class ForumCommentAdapter extends RecyclerView.Adapter<ForumCommentAdapte
                         tvShowReplies.setVisibility(View.GONE);
                     }
                     tvShowReplies.setOnClickListener(v -> expandListener.onExpandToggle(comment.getId(), true));
-                    
+
                     rvReplies.setVisibility(View.VISIBLE);
                     rvReplies.setLayoutManager(new LinearLayoutManager(itemView.getContext()));
                     List<ForumComment> firstReplyOnly = new ArrayList<>();
@@ -272,6 +283,7 @@ public class ForumCommentAdapter extends RecyclerView.Adapter<ForumCommentAdapte
             ImageView ivUserPfp;
             TextView tvUsername;
             TextView tvTimestamp;
+            TextView tvMeta;
             TextView tvText;
             LinearLayout btnLike;
             ImageView ivLikeIcon;
@@ -292,6 +304,7 @@ public class ForumCommentAdapter extends RecyclerView.Adapter<ForumCommentAdapte
                 ivUserPfp = itemView.findViewById(R.id.ivCommentUserPfp);
                 tvUsername = itemView.findViewById(R.id.tvCommentUsername);
                 tvTimestamp = itemView.findViewById(R.id.tvCommentTimestamp);
+                tvMeta = itemView.findViewById(R.id.tvCommentMeta);
                 tvText = itemView.findViewById(R.id.tvCommentText);
                 btnLike = itemView.findViewById(R.id.btnLikeComment);
                 ivLikeIcon = itemView.findViewById(R.id.ivCommentLikeIcon);
@@ -325,9 +338,18 @@ public class ForumCommentAdapter extends RecyclerView.Adapter<ForumCommentAdapte
                     tvReplyingTo.setVisibility(View.GONE);
                 }
 
+                if (reply.isEdited()) {
+                    tvMeta.setVisibility(View.VISIBLE);
+                    tvMeta.setText("Edited");
+                } else {
+                    tvMeta.setVisibility(View.GONE);
+                }
+
                 if (reply.getTimestamp() != null) {
                     long time = reply.getTimestamp().toDate().getTime();
                     tvTimestamp.setText(DateUtils.getRelativeTimeSpanString(time, System.currentTimeMillis(), DateUtils.SECOND_IN_MILLIS, DateUtils.FORMAT_ABBREV_RELATIVE));
+                } else {
+                    tvTimestamp.setText("");
                 }
 
                 // Load the image asynchronously so the UI can show remote/local media without blocking the main thread.

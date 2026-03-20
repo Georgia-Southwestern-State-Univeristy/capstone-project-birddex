@@ -13,7 +13,6 @@ import android.widget.Button;
 import android.widget.EditText;
 import android.widget.ImageButton;
 import android.widget.TextView;
-import android.widget.Toast;
 
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
@@ -33,7 +32,6 @@ import com.google.firebase.firestore.Source;
 
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.Comparator;
 import java.util.Date;
 import java.util.LinkedHashMap;
@@ -53,6 +51,15 @@ public class SearchCollectionFragment extends Fragment {
 
     private enum SortMode { DEFAULT, NAME_A_TO_Z, NAME_Z_TO_A, NEWEST, OLDEST }
     private enum ViewMode { SPECIES_CARDS, RECENT_PHOTOS }
+    private enum RarityFilter {
+        ALL,
+        COMMON,
+        UNCOMMON,
+        RARE,
+        EPIC,
+        LEGENDARY,
+        MYTHIC
+    }
 
     private RecyclerView rvCollection;
     private EditText etSearch;
@@ -69,9 +76,12 @@ public class SearchCollectionFragment extends Fragment {
     private final List<CollectionSlot> uniqueSpeciesSlots = new ArrayList<>();
     private final List<CollectionSlot> displayedSlots = new ArrayList<>();
     private final List<RecentPhotoEntry> recentPhotoEntries = new ArrayList<>();
+
     private int fetchGeneration = 0;
     private SortMode currentSortMode = SortMode.DEFAULT;
     private ViewMode currentViewMode = ViewMode.SPECIES_CARDS;
+    private boolean favoritesOnly = false;
+    private RarityFilter currentRarityFilter = RarityFilter.ALL;
 
     private boolean isNavigating = false;
 
@@ -141,7 +151,14 @@ public class SearchCollectionFragment extends Fragment {
         rvCollection.setLayoutManager(layoutManager);
         // Hook the data source to the list/grid adapter so model objects can render as UI rows/cards.
         rvCollection.setAdapter(cardAdapter);
-        etSearch.setHint("Search birds...");
+
+        if (favoritesOnly) {
+            etSearch.setHint("Search favorites...");
+        } else if (currentRarityFilter != RarityFilter.ALL) {
+            etSearch.setHint("Search " + getRarityLabel(currentRarityFilter).toLowerCase(Locale.US) + " cards...");
+        } else {
+            etSearch.setHint("Search birds...");
+        }
     }
 
     /**
@@ -152,7 +169,10 @@ public class SearchCollectionFragment extends Fragment {
     private void applyRecentPhotosMode() {
         GridLayoutManager layoutManager = new GridLayoutManager(getContext(), 3);
         layoutManager.setSpanSizeLookup(new GridLayoutManager.SpanSizeLookup() {
-            @Override public int getSpanSize(int position) { return recentPhotoAdapter.isHeader(position) ? 3 : 1; }
+            @Override
+            public int getSpanSize(int position) {
+                return recentPhotoAdapter.isHeader(position) ? 3 : 1;
+            }
         });
         rvCollection.setLayoutManager(layoutManager);
         // Hook the data source to the list/grid adapter so model objects can render as UI rows/cards.
@@ -160,8 +180,10 @@ public class SearchCollectionFragment extends Fragment {
         etSearch.setHint("Search birds...");
     }
 
-    private void openImagePicker() { if (imagePickerLauncher != null) imagePickerLauncher.launch("image/*"); }
-    
+    private void openImagePicker() {
+        if (imagePickerLauncher != null) imagePickerLauncher.launch("image/*");
+    }
+
     /**
      * Central handler that reacts to an event/input and decides what the next app action should
      * be.
@@ -182,20 +204,87 @@ public class SearchCollectionFragment extends Fragment {
      * Takes prepared data and presents it on screen or in a dialog/menu.
      */
     private void showFilterDialog() {
-        final String[] options = {"Default", "Name A-Z", "Name Z-A", "Newest first", "Oldest first", "Recent Photos"};
-        new AlertDialog.Builder(requireContext()).setTitle("Filter collection").setSingleChoiceItems(options, currentViewMode == ViewMode.RECENT_PHOTOS ? 5 : currentSortMode.ordinal(), (dialog, which) -> {
-            if (which == 5) {
-                currentViewMode = ViewMode.RECENT_PHOTOS;
-                applyRecentPhotosMode();
-                fetchRecentPhotos();
-            } else {
-                currentViewMode = ViewMode.SPECIES_CARDS;
-                currentSortMode = SortMode.values()[which];
-                applySpeciesCardMode();
-                applyCurrentFilter();
+        final String[] options = {
+                "Default",
+                "Name A-Z",
+                "Name Z-A",
+                "Newest first",
+                "Oldest first",
+                "Favorite Cards",
+                "Common only",
+                "Uncommon only",
+                "Rare only",
+                "Epic only",
+                "Legendary only",
+                "Mythic only",
+                "Recent Photos"
+        };
+
+        int checkedItem;
+        if (currentViewMode == ViewMode.RECENT_PHOTOS) {
+            checkedItem = 12;
+        } else if (favoritesOnly) {
+            checkedItem = 5;
+        } else {
+            switch (currentRarityFilter) {
+                case COMMON:
+                    checkedItem = 6;
+                    break;
+                case UNCOMMON:
+                    checkedItem = 7;
+                    break;
+                case RARE:
+                    checkedItem = 8;
+                    break;
+                case EPIC:
+                    checkedItem = 9;
+                    break;
+                case LEGENDARY:
+                    checkedItem = 10;
+                    break;
+                case MYTHIC:
+                    checkedItem = 11;
+                    break;
+                case ALL:
+                default:
+                    checkedItem = currentSortMode.ordinal();
+                    break;
             }
-            dialog.dismiss();
-        }).setNegativeButton("Cancel", null).show();
+        }
+
+        new AlertDialog.Builder(requireContext())
+                .setTitle("Filter collection")
+                .setSingleChoiceItems(options, checkedItem, (dialog, which) -> {
+                    if (which == 12) {
+                        currentViewMode = ViewMode.RECENT_PHOTOS;
+                        favoritesOnly = false;
+                        currentRarityFilter = RarityFilter.ALL;
+                        applyRecentPhotosMode();
+                        fetchRecentPhotos();
+                    } else if (which == 5) {
+                        currentViewMode = ViewMode.SPECIES_CARDS;
+                        favoritesOnly = true;
+                        currentRarityFilter = RarityFilter.ALL;
+                        applySpeciesCardMode();
+                        applyCurrentFilter();
+                    } else if (which >= 6 && which <= 11) {
+                        currentViewMode = ViewMode.SPECIES_CARDS;
+                        favoritesOnly = false;
+                        currentRarityFilter = mapDialogIndexToRarityFilter(which);
+                        applySpeciesCardMode();
+                        applyCurrentFilter();
+                    } else {
+                        currentViewMode = ViewMode.SPECIES_CARDS;
+                        favoritesOnly = false;
+                        currentRarityFilter = RarityFilter.ALL;
+                        currentSortMode = SortMode.values()[which];
+                        applySpeciesCardMode();
+                        applyCurrentFilter();
+                    }
+                    dialog.dismiss();
+                })
+                .setNegativeButton("Cancel", null)
+                .show();
     }
 
     /**
@@ -203,9 +292,16 @@ public class SearchCollectionFragment extends Fragment {
      */
     private void setupSearch() {
         etSearch.addTextChangedListener(new TextWatcher() {
-            @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
-            @Override public void onTextChanged(CharSequence s, int start, int before, int count) { applyCurrentFilter(); }
-            @Override public void afterTextChanged(Editable s) {}
+            @Override
+            public void beforeTextChanged(CharSequence s, int start, int count, int after) { }
+
+            @Override
+            public void onTextChanged(CharSequence s, int start, int before, int count) {
+                applyCurrentFilter();
+            }
+
+            @Override
+            public void afterTextChanged(Editable s) { }
         });
     }
 
@@ -214,7 +310,11 @@ public class SearchCollectionFragment extends Fragment {
      */
     private void applyCurrentFilter() {
         String q = (etSearch != null && etSearch.getText() != null) ? etSearch.getText().toString() : "";
-        if (currentViewMode == ViewMode.RECENT_PHOTOS) filterRecentPhotos(q); else filterCollection(q);
+        if (currentViewMode == ViewMode.RECENT_PHOTOS) {
+            filterRecentPhotos(q);
+        } else {
+            filterCollection(q);
+        }
     }
 
     /**
@@ -227,7 +327,12 @@ public class SearchCollectionFragment extends Fragment {
         FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
         if (user == null) return;
         // Set up or query the Firebase layer that supplies/stores this feature's data.
-        FirebaseFirestore.getInstance().collection("users").document(user.getUid()).collection("collectionSlot").orderBy("slotIndex", Query.Direction.ASCENDING).get(Source.CACHE)
+        FirebaseFirestore.getInstance()
+                .collection("users")
+                .document(user.getUid())
+                .collection("collectionSlot")
+                .orderBy("slotIndex", Query.Direction.ASCENDING)
+                .get(Source.CACHE)
                 .addOnSuccessListener(snap -> {
                     if (snap != null && !snap.isEmpty()) processCollectionSnapshots(user.getUid(), snap);
                     fetchCollectionFromServer(user.getUid());
@@ -243,8 +348,14 @@ public class SearchCollectionFragment extends Fragment {
      */
     private void fetchCollectionFromServer(String uid) {
         // Set up or query the Firebase layer that supplies/stores this feature's data.
-        FirebaseFirestore.getInstance().collection("users").document(uid).collection("collectionSlot").orderBy("slotIndex", Query.Direction.ASCENDING).get(Source.SERVER)
-                .addOnSuccessListener(snap -> processCollectionSnapshots(uid, snap)).addOnFailureListener(e -> Log.e(TAG, "Error", e));
+        FirebaseFirestore.getInstance()
+                .collection("users")
+                .document(uid)
+                .collection("collectionSlot")
+                .orderBy("slotIndex", Query.Direction.ASCENDING)
+                .get(Source.SERVER)
+                .addOnSuccessListener(snap -> processCollectionSnapshots(uid, snap))
+                .addOnFailureListener(e -> Log.e(TAG, "Error", e));
     }
 
     /**
@@ -255,6 +366,7 @@ public class SearchCollectionFragment extends Fragment {
     private void processCollectionSnapshots(String uid, com.google.firebase.firestore.QuerySnapshot queryDocumentSnapshots) {
         final int myGeneration = ++fetchGeneration;
         rawSlots.clear();
+
         for (QueryDocumentSnapshot document : queryDocumentSnapshots) {
             CollectionSlot slot = new CollectionSlot();
             slot.setId(document.getId());
@@ -268,6 +380,7 @@ public class SearchCollectionFragment extends Fragment {
             slot.setState(document.getString("state"));
             slot.setLocality(document.getString("locality"));
             slot.setRarity(document.getString("rarity"));
+            slot.setFavorite(Boolean.TRUE.equals(document.getBoolean("isFavorite")));
             rawSlots.add(slot);
 
             boolean missingBirdId = isBlank(slot.getBirdId());
@@ -279,6 +392,7 @@ public class SearchCollectionFragment extends Fragment {
                 backfillFromUserBird(uid, slot, myGeneration, missingBirdId, missingNames, missingLocation, missingTimestamp);
             }
         }
+
         if (fetchGeneration == myGeneration) rebuildSpeciesListAndFilter();
     }
 
@@ -292,7 +406,12 @@ public class SearchCollectionFragment extends Fragment {
         FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
         if (user == null) return;
         // Set up or query the Firebase layer that supplies/stores this feature's data.
-        FirebaseFirestore.getInstance().collection("users").document(user.getUid()).collection("userBirdImage").orderBy("timestamp", Query.Direction.DESCENDING).get(Source.CACHE)
+        FirebaseFirestore.getInstance()
+                .collection("users")
+                .document(user.getUid())
+                .collection("userBirdImage")
+                .orderBy("timestamp", Query.Direction.DESCENDING)
+                .get(Source.CACHE)
                 .addOnSuccessListener(snap -> {
                     if (snap != null && !snap.isEmpty()) processRecentPhotoSnapshots(snap);
                     fetchRecentPhotosFromServer(user.getUid());
@@ -308,8 +427,14 @@ public class SearchCollectionFragment extends Fragment {
      */
     private void fetchRecentPhotosFromServer(String uid) {
         // Set up or query the Firebase layer that supplies/stores this feature's data.
-        FirebaseFirestore.getInstance().collection("users").document(uid).collection("userBirdImage").orderBy("timestamp", Query.Direction.DESCENDING).get(Source.SERVER)
-                .addOnSuccessListener(this::processRecentPhotoSnapshots).addOnFailureListener(e -> Log.e(TAG, "Error", e));
+        FirebaseFirestore.getInstance()
+                .collection("users")
+                .document(uid)
+                .collection("userBirdImage")
+                .orderBy("timestamp", Query.Direction.DESCENDING)
+                .get(Source.SERVER)
+                .addOnSuccessListener(this::processRecentPhotoSnapshots)
+                .addOnFailureListener(e -> Log.e(TAG, "Error", e));
     }
 
     /**
@@ -319,6 +444,7 @@ public class SearchCollectionFragment extends Fragment {
         List<CollectionSlot> slotsCopy = new ArrayList<>(rawSlots);
         Map<String, String> commonMap = new LinkedHashMap<>();
         Map<String, String> sciMap = new LinkedHashMap<>();
+
         for (CollectionSlot s : slotsCopy) {
             if (s == null || isBlank(s.getBirdId())) continue;
             if (!isBlank(s.getCommonName())) commonMap.put(s.getBirdId(), s.getCommonName());
@@ -326,9 +452,11 @@ public class SearchCollectionFragment extends Fragment {
         }
 
         recentPhotoEntries.clear();
+
         for (QueryDocumentSnapshot document : snap) {
             String img = document.getString("imageUrl");
             if (isBlank(img) || Boolean.TRUE.equals(document.getBoolean("hiddenFromUser"))) continue;
+
             RecentPhotoEntry entry = new RecentPhotoEntry();
             entry.documentId = document.getId();
             entry.imageUrl = img;
@@ -338,6 +466,7 @@ public class SearchCollectionFragment extends Fragment {
             entry.scientificName = !isBlank(document.getString("scientificName")) ? document.getString("scientificName") : sciMap.get(entry.birdId);
             recentPhotoEntries.add(entry);
         }
+
         if (currentViewMode == ViewMode.RECENT_PHOTOS) applyCurrentFilter();
     }
 
@@ -352,44 +481,84 @@ public class SearchCollectionFragment extends Fragment {
      */
     private void backfillFromUserBird(String userId, CollectionSlot slot, int gen, boolean missingBirdId, boolean missingNames, boolean missingLocation, boolean missingTimestamp) {
         // Set up or query the Firebase layer that supplies/stores this feature's data.
-        FirebaseFirestore.getInstance().collection("userBirds").document(slot.getUserBirdId()).get().addOnSuccessListener(ubSnap -> {
-            if (fetchGeneration != gen || !ubSnap.exists()) return;
-            Map<String, Object> baseUpdates = new LinkedHashMap<>();
-            String birdId = ubSnap.getString("birdSpeciesId");
-            String locationId = ubSnap.getString("locationId");
-            Date timeSpotted = ubSnap.getDate("timeSpotted");
+        FirebaseFirestore.getInstance()
+                .collection("userBirds")
+                .document(slot.getUserBirdId())
+                .get()
+                .addOnSuccessListener(ubSnap -> {
+                    if (fetchGeneration != gen || !ubSnap.exists()) return;
 
-            if (missingBirdId && !isBlank(birdId)) { slot.setBirdId(birdId); baseUpdates.put("birdId", birdId); }
-            if (missingTimestamp && timeSpotted != null) { slot.setTimestamp(timeSpotted); baseUpdates.put("timestamp", timeSpotted); }
-            if (!baseUpdates.isEmpty()) updateCollectionSlot(userId, slot.getId(), baseUpdates);
+                    Map<String, Object> baseUpdates = new LinkedHashMap<>();
+                    String birdId = ubSnap.getString("birdSpeciesId");
+                    String locationId = ubSnap.getString("locationId");
+                    Date timeSpotted = ubSnap.getDate("timeSpotted");
 
-            if (missingNames && !isBlank(birdId)) {
-                FirebaseFirestore.getInstance().collection("birds").document(birdId).get().addOnSuccessListener(birdSnap -> {
-                    if (fetchGeneration != gen || !birdSnap.exists()) return;
-                    Map<String, Object> updates = new LinkedHashMap<>();
-                    String commonName = birdSnap.getString("commonName");
-                    String scientificName = birdSnap.getString("scientificName");
-                    if (!isBlank(commonName)) { slot.setCommonName(commonName); updates.put("commonName", commonName); }
-                    if (!isBlank(scientificName)) { slot.setScientificName(scientificName); updates.put("scientificName", scientificName); }
-                    if (!updates.isEmpty()) updateCollectionSlot(userId, slot.getId(), updates);
+                    if (missingBirdId && !isBlank(birdId)) {
+                        slot.setBirdId(birdId);
+                        baseUpdates.put("birdId", birdId);
+                    }
+
+                    if (missingTimestamp && timeSpotted != null) {
+                        slot.setTimestamp(timeSpotted);
+                        baseUpdates.put("timestamp", timeSpotted);
+                    }
+
+                    if (!baseUpdates.isEmpty()) updateCollectionSlot(userId, slot.getId(), baseUpdates);
+
+                    if (missingNames && !isBlank(birdId)) {
+                        FirebaseFirestore.getInstance()
+                                .collection("birds")
+                                .document(birdId)
+                                .get()
+                                .addOnSuccessListener(birdSnap -> {
+                                    if (fetchGeneration != gen || !birdSnap.exists()) return;
+                                    Map<String, Object> updates = new LinkedHashMap<>();
+                                    String commonName = birdSnap.getString("commonName");
+                                    String scientificName = birdSnap.getString("scientificName");
+
+                                    if (!isBlank(commonName)) {
+                                        slot.setCommonName(commonName);
+                                        updates.put("commonName", commonName);
+                                    }
+
+                                    if (!isBlank(scientificName)) {
+                                        slot.setScientificName(scientificName);
+                                        updates.put("scientificName", scientificName);
+                                    }
+
+                                    if (!updates.isEmpty()) updateCollectionSlot(userId, slot.getId(), updates);
+                                    rebuildSpeciesListAndFilter();
+                                });
+                    }
+
+                    if (missingLocation && !isBlank(locationId)) {
+                        FirebaseFirestore.getInstance()
+                                .collection("locations")
+                                .document(locationId)
+                                .get()
+                                .addOnSuccessListener(locationSnap -> {
+                                    if (fetchGeneration != gen || !locationSnap.exists()) return;
+                                    Map<String, Object> updates = new LinkedHashMap<>();
+                                    String state = locationSnap.getString("state");
+                                    String locality = locationSnap.getString("locality");
+
+                                    if (!isBlank(state)) {
+                                        slot.setState(state);
+                                        updates.put("state", state);
+                                    }
+
+                                    if (!isBlank(locality)) {
+                                        slot.setLocality(locality);
+                                        updates.put("locality", locality);
+                                    }
+
+                                    if (!updates.isEmpty()) updateCollectionSlot(userId, slot.getId(), updates);
+                                    rebuildSpeciesListAndFilter();
+                                });
+                    }
+
                     rebuildSpeciesListAndFilter();
                 });
-            }
-
-            if (missingLocation && !isBlank(locationId)) {
-                FirebaseFirestore.getInstance().collection("locations").document(locationId).get().addOnSuccessListener(locationSnap -> {
-                    if (fetchGeneration != gen || !locationSnap.exists()) return;
-                    Map<String, Object> updates = new LinkedHashMap<>();
-                    String state = locationSnap.getString("state");
-                    String locality = locationSnap.getString("locality");
-                    if (!isBlank(state)) { slot.setState(state); updates.put("state", state); }
-                    if (!isBlank(locality)) { slot.setLocality(locality); updates.put("locality", locality); }
-                    if (!updates.isEmpty()) updateCollectionSlot(userId, slot.getId(), updates);
-                    rebuildSpeciesListAndFilter();
-                });
-            }
-            rebuildSpeciesListAndFilter();
-        });
     }
 
     /**
@@ -399,9 +568,11 @@ public class SearchCollectionFragment extends Fragment {
         LinkedHashMap<String, CollectionSlot> grouped = new LinkedHashMap<>();
         for (CollectionSlot s : rawSlots) {
             if (s == null || isBlank(s.getImageUrl())) continue;
-            String k = getSpeciesKey(s); if (!isBlank(k) && !grouped.containsKey(k)) grouped.put(k, s);
+            String k = getSpeciesKey(s);
+            if (!isBlank(k) && !grouped.containsKey(k)) grouped.put(k, s);
         }
-        uniqueSpeciesSlots.clear(); uniqueSpeciesSlots.addAll(grouped.values());
+        uniqueSpeciesSlots.clear();
+        uniqueSpeciesSlots.addAll(grouped.values());
         if (currentViewMode == ViewMode.SPECIES_CARDS) applyCurrentFilter();
     }
 
@@ -413,9 +584,30 @@ public class SearchCollectionFragment extends Fragment {
     private void filterCollection(String query) {
         String text = query == null ? "" : query.trim().toLowerCase(Locale.US);
         displayedSlots.clear();
-        if (text.isEmpty()) displayedSlots.addAll(uniqueSpeciesSlots);
-        else for (CollectionSlot s : uniqueSpeciesSlots) if (safeLower(s.getCommonName()).contains(text) || safeLower(s.getScientificName()).contains(text)) displayedSlots.add(s);
-        sortDisplayedSlots(); cardAdapter.notifyDataSetChanged(); updateEmptyState(displayedSlots.isEmpty(), "No birds collected yet.");
+
+        for (CollectionSlot s : uniqueSpeciesSlots) {
+            if (favoritesOnly && !s.isFavorite()) continue;
+            if (!matchesRarityFilter(s)) continue;
+
+            boolean matchesSearch = text.isEmpty()
+                    || safeLower(s.getCommonName()).contains(text)
+                    || safeLower(s.getScientificName()).contains(text);
+
+            if (matchesSearch) {
+                displayedSlots.add(s);
+            }
+        }
+
+        sortDisplayedSlots();
+        cardAdapter.notifyDataSetChanged();
+
+        if (favoritesOnly) {
+            updateEmptyState(displayedSlots.isEmpty(), "No favorite birds yet.");
+        } else if (currentRarityFilter != RarityFilter.ALL) {
+            updateEmptyState(displayedSlots.isEmpty(), "No " + getRarityLabel(currentRarityFilter).toLowerCase(Locale.US) + " cards found.");
+        } else {
+            updateEmptyState(displayedSlots.isEmpty(), "No birds collected yet.");
+        }
     }
 
     /**
@@ -424,15 +616,26 @@ public class SearchCollectionFragment extends Fragment {
     private void filterRecentPhotos(String q) {
         String text = q == null ? "" : q.trim().toLowerCase(Locale.US);
         List<RecentPhotoMemoriesAdapter.MemoryItem> items = new ArrayList<>();
-        SimpleDateFormat hF = new SimpleDateFormat("MMMM yyyy", Locale.US), dF = new SimpleDateFormat("MMM d, yyyy", Locale.US);
+        SimpleDateFormat hF = new SimpleDateFormat("MMMM yyyy", Locale.US);
+        SimpleDateFormat dF = new SimpleDateFormat("MMM d, yyyy", Locale.US);
         String lastH = null;
+
         for (RecentPhotoEntry e : recentPhotoEntries) {
             if (!text.isEmpty() && !safeLower(e.commonName).contains(text) && !safeLower(e.scientificName).contains(text)) continue;
             String hT = e.timestamp != null ? hF.format(e.timestamp) : "Unknown Date";
-            if (!hT.equals(lastH)) { items.add(RecentPhotoMemoriesAdapter.MemoryItem.createHeader(hT)); lastH = hT; }
-            items.add(RecentPhotoMemoriesAdapter.MemoryItem.createPhoto(e.imageUrl, e.timestamp != null ? dF.format(e.timestamp) : "Unknown date", e.documentId));
+            if (!hT.equals(lastH)) {
+                items.add(RecentPhotoMemoriesAdapter.MemoryItem.createHeader(hT));
+                lastH = hT;
+            }
+            items.add(RecentPhotoMemoriesAdapter.MemoryItem.createPhoto(
+                    e.imageUrl,
+                    e.timestamp != null ? dF.format(e.timestamp) : "Unknown date",
+                    e.documentId
+            ));
         }
-        recentPhotoAdapter.submitList(items); updateEmptyState(items.isEmpty(), "No bird photos match this search.");
+
+        recentPhotoAdapter.submitList(items);
+        updateEmptyState(items.isEmpty(), "No bird photos match this search.");
     }
 
     /**
@@ -440,19 +643,128 @@ public class SearchCollectionFragment extends Fragment {
      */
     private void sortDisplayedSlots() {
         switch (currentSortMode) {
-            case NAME_A_TO_Z: displayedSlots.sort(Comparator.comparing(s -> safeLower(s.getCommonName()))); break;
-            case NAME_Z_TO_A: displayedSlots.sort((a, b) -> safeLower(b.getCommonName()).compareTo(safeLower(a.getCommonName()))); break;
-            case NEWEST: displayedSlots.sort((a, b) -> Long.compare(getTime(b.getTimestamp()), getTime(a.getTimestamp()))); break;
-            case OLDEST: displayedSlots.sort(Comparator.comparingLong(s -> getTime(s.getTimestamp()))); break;
-            default: displayedSlots.sort(Comparator.comparingInt(CollectionSlot::getSlotIndex)); break;
+            case NAME_A_TO_Z:
+                displayedSlots.sort(Comparator.comparing(s -> safeLower(s.getCommonName())));
+                break;
+            case NAME_Z_TO_A:
+                displayedSlots.sort((a, b) -> safeLower(b.getCommonName()).compareTo(safeLower(a.getCommonName())));
+                break;
+            case NEWEST:
+                displayedSlots.sort((a, b) -> Long.compare(getTime(b.getTimestamp()), getTime(a.getTimestamp())));
+                break;
+            case OLDEST:
+                displayedSlots.sort(Comparator.comparingLong(s -> getTime(s.getTimestamp())));
+                break;
+            case DEFAULT:
+            default:
+                displayedSlots.sort(Comparator.comparingInt(CollectionSlot::getSlotIndex));
+                break;
         }
     }
 
-    private void updateEmptyState(boolean empty, String msg) { if (tvCollectionEmpty != null && rvCollection != null) { tvCollectionEmpty.setText(msg); tvCollectionEmpty.setVisibility(empty ? View.VISIBLE : View.GONE); rvCollection.setVisibility(empty ? View.GONE : View.VISIBLE); } }
-    private String getSpeciesKey(CollectionSlot s) { if (!isBlank(s.getBirdId())) return "birdId:" + s.getBirdId().trim(); if (!isBlank(s.getCommonName())) return "common:" + s.getCommonName().trim().toLowerCase(Locale.US); return null; }
-    private void updateCollectionSlot(String userId, String id, Map<String, Object> updates) { FirebaseFirestore.getInstance().collection("users").document(userId).collection("collectionSlot").document(id).update(updates); }
-    private long getTime(Date d) { return d == null ? 0L : d.getTime(); }
-    private String safeLower(String v) { return v == null ? "" : v.trim().toLowerCase(Locale.US); }
-    private boolean isBlank(String v) { return v == null || v.trim().isEmpty(); }
-    private static class RecentPhotoEntry { String documentId, imageUrl, birdId, commonName, scientificName; Date timestamp; }
+    private boolean matchesRarityFilter(CollectionSlot slot) {
+        if (currentRarityFilter == RarityFilter.ALL) return true;
+
+        String rarity = CardRarityHelper.normalizeRarity(slot.getRarity());
+        switch (currentRarityFilter) {
+            case COMMON:
+                return CardRarityHelper.COMMON.equals(rarity);
+            case UNCOMMON:
+                return CardRarityHelper.UNCOMMON.equals(rarity);
+            case RARE:
+                return CardRarityHelper.RARE.equals(rarity);
+            case EPIC:
+                return CardRarityHelper.EPIC.equals(rarity);
+            case LEGENDARY:
+                return CardRarityHelper.LEGENDARY.equals(rarity);
+            case MYTHIC:
+                return CardRarityHelper.MYTHIC.equals(rarity);
+            case ALL:
+            default:
+                return true;
+        }
+    }
+
+    private RarityFilter mapDialogIndexToRarityFilter(int which) {
+        switch (which) {
+            case 6:
+                return RarityFilter.COMMON;
+            case 7:
+                return RarityFilter.UNCOMMON;
+            case 8:
+                return RarityFilter.RARE;
+            case 9:
+                return RarityFilter.EPIC;
+            case 10:
+                return RarityFilter.LEGENDARY;
+            case 11:
+                return RarityFilter.MYTHIC;
+            default:
+                return RarityFilter.ALL;
+        }
+    }
+
+    private String getRarityLabel(RarityFilter filter) {
+        switch (filter) {
+            case COMMON:
+                return "Common";
+            case UNCOMMON:
+                return "Uncommon";
+            case RARE:
+                return "Rare";
+            case EPIC:
+                return "Epic";
+            case LEGENDARY:
+                return "Legendary";
+            case MYTHIC:
+                return "Mythic";
+            case ALL:
+            default:
+                return "All";
+        }
+    }
+
+    private void updateEmptyState(boolean empty, String msg) {
+        if (tvCollectionEmpty != null && rvCollection != null) {
+            tvCollectionEmpty.setText(msg);
+            tvCollectionEmpty.setVisibility(empty ? View.VISIBLE : View.GONE);
+            rvCollection.setVisibility(empty ? View.GONE : View.VISIBLE);
+        }
+    }
+
+    private String getSpeciesKey(CollectionSlot s) {
+        if (!isBlank(s.getBirdId())) return "birdId:" + s.getBirdId().trim();
+        if (!isBlank(s.getCommonName())) return "common:" + s.getCommonName().trim().toLowerCase(Locale.US);
+        return null;
+    }
+
+    private void updateCollectionSlot(String userId, String id, Map<String, Object> updates) {
+        FirebaseFirestore.getInstance()
+                .collection("users")
+                .document(userId)
+                .collection("collectionSlot")
+                .document(id)
+                .update(updates);
+    }
+
+    private long getTime(Date d) {
+        return d == null ? 0L : d.getTime();
+    }
+
+    private String safeLower(String v) {
+        return v == null ? "" : v.trim().toLowerCase(Locale.US);
+    }
+
+    private boolean isBlank(String v) {
+        return v == null || v.trim().isEmpty();
+    }
+
+    private static class RecentPhotoEntry {
+        String documentId;
+        String imageUrl;
+        String birdId;
+        String commonName;
+        String scientificName;
+        Date timestamp;
+    }
 }

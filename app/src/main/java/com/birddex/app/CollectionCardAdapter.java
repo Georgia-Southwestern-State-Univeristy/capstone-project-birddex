@@ -42,6 +42,7 @@ public class CollectionCardAdapter extends RecyclerView.Adapter<CollectionCardAd
     public static final String EXTRA_BIRD_ID = "com.birddex.app.extra.BIRD_ID";
     public static final String EXTRA_SLOT_ID = "com.birddex.app.extra.SLOT_ID";
     public static final String EXTRA_RARITY = "com.birddex.app.extra.RARITY";
+    public static final String EXTRA_IS_FAVORITE = "com.birddex.app.extra.IS_FAVORITE";
 
     private final List<CollectionSlot> slots;
     private boolean isNavigating = false;
@@ -211,6 +212,7 @@ public class CollectionCardAdapter extends RecyclerView.Adapter<CollectionCardAd
             i.putExtra(EXTRA_BIRD_ID, slot.getBirdId());
             i.putExtra(EXTRA_SLOT_ID, slot.getId());
             i.putExtra(EXTRA_RARITY, slot.getRarity());
+            i.putExtra(EXTRA_IS_FAVORITE, slot.isFavorite());
             if (slot.getTimestamp() != null) i.putExtra(EXTRA_CAUGHT_TIME, slot.getTimestamp().getTime());
             // Move into the next screen and pass the identifiers/data that screen needs.
             v.getContext().startActivity(i);

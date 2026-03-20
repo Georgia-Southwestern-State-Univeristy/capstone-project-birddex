@@ -17,6 +17,7 @@ public class CollectionSlot {
     private String imageUrl;
     private String rarity = CardRarityHelper.COMMON;
     private int slotIndex;
+    private boolean isFavorite;
 
     private String commonName;
     private String scientificName;
@@ -43,6 +44,7 @@ public class CollectionSlot {
         this.imageUrl = imageUrl;
         this.rarity = CardRarityHelper.normalizeRarity(rarity);
         this.slotIndex = slotIndex;
+        this.isFavorite = false;
     }
 
     /**
@@ -142,6 +144,20 @@ public class CollectionSlot {
      */
     public void setSlotIndex(int slotIndex) {
         this.slotIndex = slotIndex;
+    }
+
+    /**
+     * Returns the current value/state this class needs somewhere else in the app.
+     */
+    public boolean isFavorite() {
+        return isFavorite;
+    }
+
+    /**
+     * Updates object/screen state by storing a new value or reconfiguring a dependency.
+     */
+    public void setFavorite(boolean favorite) {
+        isFavorite = favorite;
     }
 
     /**

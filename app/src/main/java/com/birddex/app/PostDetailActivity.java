@@ -2,7 +2,9 @@ package com.birddex.app;
 
 import android.content.Intent;
 import android.os.Bundle;
+import android.text.Editable;
 import android.text.InputFilter;
+import android.text.TextWatcher;
 import android.text.InputType;
 import android.text.format.DateUtils;
 import android.util.Log;
@@ -89,6 +91,7 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
             java.util.Collections.newSetFromMap(new java.util.concurrent.ConcurrentHashMap<>());
 
     private boolean isNavigating = false;
+    private boolean isCommentModerationExpanded = false;
 
     /**
      * Android calls this when the Activity is first created. This is where the screen usually
@@ -140,6 +143,24 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
      */
     private void setupUI() {
         binding.toolbar.setNavigationOnClickListener(v -> finish());
+
+        setCommentModerationExpanded(false);
+        binding.commentModerationToggle.setOnClickListener(v ->
+                setCommentModerationExpanded(!isCommentModerationExpanded));
+
+        binding.etComment.addTextChangedListener(new TextWatcher() {
+            @Override
+            public void beforeTextChanged(CharSequence s, int start, int count, int after) { }
+
+            @Override
+            public void onTextChanged(CharSequence s, int start, int before, int count) {
+                clearCommentWarning();
+            }
+
+            @Override
+            public void afterTextChanged(Editable s) { }
+        });
+
         // Attach the user interaction that should run when this control is tapped.
         binding.btnSendComment.setOnClickListener(v -> postComment());
     }
@@ -253,7 +274,18 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
         View v = binding.postContent.getRoot();
         // Bind or inflate the UI pieces this method needs before it can update the screen.
         ((TextView) v.findViewById(R.id.tvPostUsername)).setText(post.getUsername());
-        ((TextView) v.findViewById(R.id.tvPostMessage)).setText(post.isEdited() ? post.getMessage() + " (edited)" : post.getMessage());
+        ((TextView) v.findViewById(R.id.tvPostMessage)).setText(post.getMessage());
+
+        TextView tvPostMeta = v.findViewById(R.id.tvPostMeta);
+        if (tvPostMeta != null) {
+            if (post.isEdited()) {
+                tvPostMeta.setVisibility(View.VISIBLE);
+                tvPostMeta.setText("Edited");
+            } else {
+                tvPostMeta.setVisibility(View.GONE);
+            }
+        }
+
         ((TextView) v.findViewById(R.id.tvLikeCount)).setText(String.valueOf(post.getLikeCount()));
         ((TextView) v.findViewById(R.id.tvCommentCount)).setText(String.valueOf(post.getCommentCount()));
         ((TextView) v.findViewById(R.id.tvViewCount)).setText(post.getViewCount() + " views");
@@ -262,13 +294,24 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
         if (sp != null) sp.setVisibility(post.isSpotted() ? View.VISIBLE : View.GONE);
         if (hu != null) hu.setVisibility(post.isHunted() ? View.VISIBLE : View.GONE);
 
-        if (post.getTimestamp() != null) ((TextView) v.findViewById(R.id.tvPostTimestamp)).setText(DateUtils.getRelativeTimeSpanString(post.getTimestamp().toDate().getTime()));
+        if (post.getTimestamp() != null) {
+            ((TextView) v.findViewById(R.id.tvPostTimestamp))
+                    .setText(DateUtils.getRelativeTimeSpanString(post.getTimestamp().toDate().getTime()));
+        }
+
         // Load the image asynchronously so the UI can show remote/local media without blocking the main thread.
-        Glide.with(this).load(post.getUserProfilePictureUrl()).placeholder(R.drawable.ic_profile).into((ImageView) v.findViewById(R.id.ivPostUserProfilePicture));
+        Glide.with(this)
+                .load(post.getUserProfilePictureUrl())
+                .placeholder(R.drawable.ic_profile)
+                .into((ImageView) v.findViewById(R.id.ivPostUserProfilePicture));
 
         View cv = v.findViewById(R.id.cvPostImage);
-        if (post.getBirdImageUrl() != null && !post.getBirdImageUrl().isEmpty()) { cv.setVisibility(View.VISIBLE); Glide.with(this).load(post.getBirdImageUrl()).into((ImageView) v.findViewById(R.id.ivPostBirdImage)); }
-        else cv.setVisibility(View.GONE);
+        if (post.getBirdImageUrl() != null && !post.getBirdImageUrl().isEmpty()) {
+            cv.setVisibility(View.VISIBLE);
+            Glide.with(this).load(post.getBirdImageUrl()).into((ImageView) v.findViewById(R.id.ivPostBirdImage));
+        } else {
+            cv.setVisibility(View.GONE);
+        }
 
         View mapBtn = v.findViewById(R.id.btnViewOnMap);
         if (mapBtn != null) {
@@ -279,13 +322,23 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
                     if (isNavigating) return;
                     isNavigating = true;
                     // Move into the next screen and pass the identifiers/data that screen needs.
-                    startActivity(new Intent(this, NearbyHeatmapActivity.class).putExtra(NearbyHeatmapActivity.EXTRA_CENTER_LAT, post.getLatitude()).putExtra(NearbyHeatmapActivity.EXTRA_CENTER_LNG, post.getLongitude()).putExtra("extra_post_id", post.getId()));
+                    startActivity(new Intent(this, NearbyHeatmapActivity.class)
+                            .putExtra(NearbyHeatmapActivity.EXTRA_CENTER_LAT, post.getLatitude())
+                            .putExtra(NearbyHeatmapActivity.EXTRA_CENTER_LNG, post.getLongitude())
+                            .putExtra("extra_post_id", post.getId()));
                 });
-            } else mapBtn.setVisibility(View.GONE);
+            } else {
+                mapBtn.setVisibility(View.GONE);
+            }
         }
 
         FirebaseUser user = mAuth.getCurrentUser();
-        ((ImageView) v.findViewById(R.id.ivLikeIcon)).setImageResource((user != null && post.getLikedBy() != null && post.getLikedBy().containsKey(user.getUid())) ? R.drawable.ic_favorite : R.drawable.ic_favorite_border);
+        ((ImageView) v.findViewById(R.id.ivLikeIcon)).setImageResource(
+                (user != null && post.getLikedBy() != null && post.getLikedBy().containsKey(user.getUid()))
+                        ? R.drawable.ic_favorite
+                        : R.drawable.ic_favorite_border
+        );
+
         v.findViewById(R.id.btnLike).setOnClickListener(view -> toggleLike());
         v.findViewById(R.id.btnPostOptions).setOnClickListener(view -> showPostOptions(post, view));
 
@@ -301,7 +354,8 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
         if (isNavigating) return;
         isNavigating = true;
         // Move into the next screen and pass the identifiers/data that screen needs.
-        startActivity(new Intent(this, UserSocialProfileActivity.class).putExtra(UserSocialProfileActivity.EXTRA_USER_ID, uid));
+        startActivity(new Intent(this, UserSocialProfileActivity.class)
+                .putExtra(UserSocialProfileActivity.EXTRA_USER_ID, uid));
     }
 
     /**
@@ -325,7 +379,10 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
         PopupMenu popup = new PopupMenu(this, view);
         FirebaseUser user = mAuth.getCurrentUser();
         if (user != null && post.getUserId().equals(user.getUid())) {
-            if (post.getTimestamp() != null && (System.currentTimeMillis() - post.getTimestamp().toDate().getTime() <= EDIT_WINDOW_MS)) popup.getMenu().add("Edit");
+            if (post.getTimestamp() != null &&
+                    (System.currentTimeMillis() - post.getTimestamp().toDate().getTime() <= EDIT_WINDOW_MS)) {
+                popup.getMenu().add("Edit");
+            }
             popup.getMenu().add("Delete");
         }
         popup.getMenu().add(isSaved ? "Unsave Post" : "Save Post");
@@ -381,14 +438,35 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
     private void showEditPostDialog(ForumPost post) {
         AlertDialog.Builder b = new AlertDialog.Builder(this);
         b.setTitle("Edit Post");
-        LinearLayout l = new LinearLayout(this); l.setOrientation(LinearLayout.VERTICAL); l.setPadding(40, 20, 40, 20);
-        final EditText i = new EditText(this); i.setText(post.getMessage()); i.setFilters(new InputFilter[]{new InputFilter.LengthFilter(MAX_POST_LENGTH)}); l.addView(i);
-        final CheckBox s = new CheckBox(this); s.setText("Spotted"); s.setChecked(post.isSpotted()); l.addView(s);
-        final CheckBox h = new CheckBox(this); h.setText("Hunted"); h.setChecked(post.isHunted()); l.addView(h);
-        final SwitchMaterial loc = new SwitchMaterial(this); loc.setText("Show location"); loc.setChecked(post.isShowLocation()); l.addView(loc);
+        LinearLayout l = new LinearLayout(this);
+        l.setOrientation(LinearLayout.VERTICAL);
+        l.setPadding(40, 20, 40, 20);
+
+        final EditText i = new EditText(this);
+        i.setText(post.getMessage());
+        i.setFilters(new InputFilter[]{new InputFilter.LengthFilter(MAX_POST_LENGTH)});
+        l.addView(i);
+
+        final CheckBox s = new CheckBox(this);
+        s.setText("Spotted");
+        s.setChecked(post.isSpotted());
+        l.addView(s);
+
+        final CheckBox h = new CheckBox(this);
+        h.setText("Hunted");
+        h.setChecked(post.isHunted());
+        l.addView(h);
+
+        final SwitchMaterial loc = new SwitchMaterial(this);
+        loc.setText("Show location");
+        loc.setChecked(post.isShowLocation());
+        l.addView(loc);
+
         b.setView(l);
-        b.setPositiveButton("Save", (d, w) -> updatePost(post, i.getText().toString().trim(), s.isChecked(), h.isChecked(), loc.isChecked()));
-        b.setNegativeButton("Cancel", null); b.show();
+        b.setPositiveButton("Save", (d, w) ->
+                updatePost(post, i.getText().toString().trim(), s.isChecked(), h.isChecked(), loc.isChecked()));
+        b.setNegativeButton("Cancel", null);
+        b.show();
     }
 
     /**
@@ -425,7 +503,12 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
      * Takes prepared data and presents it on screen or in a dialog/menu.
      */
     private void showDeleteConfirmation(ForumPost post) {
-        new AlertDialog.Builder(this).setTitle("Delete Post").setMessage("Are you sure?").setPositiveButton("Delete", (d, w) -> archiveAndDeletePost(post)).setNegativeButton("Cancel", null).show();
+        new AlertDialog.Builder(this)
+                .setTitle("Delete Post")
+                .setMessage("Are you sure?")
+                .setPositiveButton("Delete", (d, w) -> archiveAndDeletePost(post))
+                .setNegativeButton("Cancel", null)
+                .show();
     }
 
     /**
@@ -461,14 +544,32 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
         db.collection("forumThreads").document(post.getId()).collection("comments").get().addOnSuccessListener(snap -> {
             WriteBatch b = db.batch();
             for (DocumentSnapshot d : snap) {
-                Map<String, Object> c = new HashMap<>(); c.put("type", "comment_archived_with_post"); c.put("originalId", d.getId()); c.put("postId", post.getId()); c.put("data", d.getData()); c.put("deletedBy", uid); c.put("deletedAt", FieldValue.serverTimestamp());
+                Map<String, Object> c = new HashMap<>();
+                c.put("type", "comment_archived_with_post");
+                c.put("originalId", d.getId());
+                c.put("postId", post.getId());
+                c.put("data", d.getData());
+                c.put("deletedBy", uid);
+                c.put("deletedAt", FieldValue.serverTimestamp());
                 // Persist the new state so the action is saved outside the current screen.
-                b.set(db.collection("deletedforum_backlog").document(), c); b.delete(d.getReference());
+                b.set(db.collection("deletedforum_backlog").document(), c);
+                b.delete(d.getReference());
             }
-            Map<String, Object> p = new HashMap<>(); p.put("type", "post"); p.put("originalId", post.getId()); p.put("data", post); p.put("deletedBy", uid); p.put("deletedAt", FieldValue.serverTimestamp());
-            b.set(db.collection("deletedforum_backlog").document(), p); b.delete(db.collection("forumThreads").document(post.getId()));
+            Map<String, Object> p = new HashMap<>();
+            p.put("type", "post");
+            p.put("originalId", post.getId());
+            p.put("data", post);
+            p.put("deletedBy", uid);
+            p.put("deletedAt", FieldValue.serverTimestamp());
+            b.set(db.collection("deletedforum_backlog").document(), p);
+            b.delete(db.collection("forumThreads").document(post.getId()));
             // Give the user immediate feedback about the result of this action.
-            b.commit().addOnSuccessListener(v -> { if (!isFinishing()) { Toast.makeText(this, "Deleted", Toast.LENGTH_SHORT).show(); finish(); } });
+            b.commit().addOnSuccessListener(v -> {
+                if (!isFinishing()) {
+                    Toast.makeText(this, "Deleted", Toast.LENGTH_SHORT).show();
+                    finish();
+                }
+            });
         }).addOnFailureListener(e -> savePostToBacklogAndFirestore(uid, post));
     }
 
@@ -485,8 +586,19 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
             StorageReference old = s.getReferenceFromUrl(url);
             StorageReference next = s.getReference().child("archive/forum_post_images/" + uid + "/" + pid + "_" + old.getName());
             // Persist the new state so the action is saved outside the current screen.
-            old.getBytes(10 * 1024 * 1024).addOnSuccessListener(bytes -> next.putBytes(bytes).addOnSuccessListener(ts -> next.getDownloadUrl().addOnSuccessListener(uri -> old.delete().addOnCompleteListener(t -> l.onSuccess(uri.toString()))).addOnFailureListener(l::onFailure)).addOnFailureListener(l::onFailure)).addOnFailureListener(l::onFailure);
-        } catch (Exception e) { l.onFailure(e); }
+            old.getBytes(10 * 1024 * 1024)
+                    .addOnSuccessListener(bytes ->
+                            next.putBytes(bytes)
+                                    .addOnSuccessListener(ts ->
+                                            next.getDownloadUrl()
+                                                    .addOnSuccessListener(uri ->
+                                                            old.delete().addOnCompleteListener(t -> l.onSuccess(uri.toString())))
+                                                    .addOnFailureListener(l::onFailure))
+                                    .addOnFailureListener(l::onFailure))
+                    .addOnFailureListener(l::onFailure);
+        } catch (Exception e) {
+            l.onFailure(e);
+        }
     }
 
     /**
@@ -499,7 +611,12 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
      */
     private void savePostToBacklogAndFirestore(String uid, ForumPost post) {
         WriteBatch b = db.batch();
-        Map<String, Object> m = new HashMap<>(); m.put("type", "post"); m.put("originalId", post.getId()); m.put("data", post); m.put("deletedBy", uid); m.put("deletedAt", FieldValue.serverTimestamp());
+        Map<String, Object> m = new HashMap<>();
+        m.put("type", "post");
+        m.put("originalId", post.getId());
+        m.put("data", post);
+        m.put("deletedBy", uid);
+        m.put("deletedAt", FieldValue.serverTimestamp());
         // Set up or query the Firebase layer that supplies/stores this feature's data.
         b.set(db.collection("deletedforum_backlog").document(), m);
         // Persist the new state so the action is saved outside the current screen.
@@ -524,9 +641,12 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
      * or needs attention.
      */
     private void submitReport(ForumPost post, String reason) {
-        FirebaseUser u = mAuth.getCurrentUser(); if (u == null) return;
+        FirebaseUser u = mAuth.getCurrentUser();
+        if (u == null) return;
         // Give the user immediate feedback about the result of this action.
-        firebaseManager.addReport(new Report("post", post.getId(), u.getUid(), reason), t -> { if (t.isSuccessful()) Toast.makeText(this, "Reported", Toast.LENGTH_SHORT).show(); });
+        firebaseManager.addReport(new Report("post", post.getId(), u.getUid(), reason), t -> {
+            if (t.isSuccessful()) Toast.makeText(this, "Reported", Toast.LENGTH_SHORT).show();
+        });
     }
 
     /**
@@ -538,15 +658,38 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
      */
     private void toggleLike() {
         if (postLikeInFlight || originalPost == null) return;
-        FirebaseUser user = mAuth.getCurrentUser(); if (user == null) return;
+        FirebaseUser user = mAuth.getCurrentUser();
+        if (user == null) return;
+
         postLikeInFlight = true;
-        String uid = user.getUid(); boolean liked = originalPost.getLikedBy() != null && originalPost.getLikedBy().containsKey(uid);
+        String uid = user.getUid();
+        boolean liked = originalPost.getLikedBy() != null && originalPost.getLikedBy().containsKey(uid);
         int count = originalPost.getLikeCount();
-        if (liked) { originalPost.setLikeCount(Math.max(0, count - 1)); originalPost.getLikedBy().remove(uid); }
-        else { originalPost.setLikeCount(count + 1); if (originalPost.getLikedBy() == null) originalPost.setLikedBy(new HashMap<>()); originalPost.getLikedBy().put(uid, true); }
+
+        if (liked) {
+            originalPost.setLikeCount(Math.max(0, count - 1));
+            originalPost.getLikedBy().remove(uid);
+        } else {
+            originalPost.setLikeCount(count + 1);
+            if (originalPost.getLikedBy() == null) originalPost.setLikedBy(new HashMap<>());
+            originalPost.getLikedBy().put(uid, true);
+        }
+
         bindPostToLayout(originalPost);
+
         // Set up or query the Firebase layer that supplies/stores this feature's data.
-        db.collection("forumThreads").document(postId).update("likedBy." + uid, liked ? FieldValue.delete() : true).addOnCompleteListener(t -> { postLikeInFlight = false; if (!t.isSuccessful()) { originalPost.setLikeCount(count); if (liked) originalPost.getLikedBy().put(uid, true); else originalPost.getLikedBy().remove(uid); bindPostToLayout(originalPost); } });
+        db.collection("forumThreads")
+                .document(postId)
+                .update("likedBy." + uid, liked ? FieldValue.delete() : true)
+                .addOnCompleteListener(t -> {
+                    postLikeInFlight = false;
+                    if (!t.isSuccessful()) {
+                        originalPost.setLikeCount(count);
+                        if (liked) originalPost.getLikedBy().put(uid, true);
+                        else originalPost.getLikedBy().remove(uid);
+                        bindPostToLayout(originalPost);
+                    }
+                });
     }
 
     /**
@@ -561,8 +704,13 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
         binding.rvComments.setLayoutManager(lm);
         binding.rvComments.setAdapter(adapter);
         binding.rvComments.addOnScrollListener(new RecyclerView.OnScrollListener() {
-            @Override public void onScrolled(@NonNull RecyclerView rv, int dx, int dy) {
-                if (dy > 0 && !isFetchingComments && !isLastCommentsPage) { if ((lm.getChildCount() + lm.findFirstVisibleItemPosition()) >= lm.getItemCount()) fetchComments(); }
+            @Override
+            public void onScrolled(@NonNull RecyclerView rv, int dx, int dy) {
+                if (dy > 0 && !isFetchingComments && !isLastCommentsPage) {
+                    if ((lm.getChildCount() + lm.findFirstVisibleItemPosition()) >= lm.getItemCount()) {
+                        fetchComments();
+                    }
+                }
             }
         });
     }
@@ -676,7 +824,11 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
     private void postComment() {
         String msg = binding.etComment.getText().toString().trim();
         if (msg.isEmpty() || msg.length() > MAX_COMMENT_LENGTH) return;
-        if (!ContentFilter.isSafe(this, msg, replyingToComment != null ? "Reply" : "Comment")) {
+
+        String commentFieldName = replyingToComment != null ? "Reply" : "Comment";
+        String moderationReason = ContentFilter.getInappropriateReason(msg);
+        if (moderationReason != null) {
+            showCommentWarning(buildModerationWarningFromReason(commentFieldName, moderationReason));
             firebaseManager.logFilteredContentAttempt(
                     replyingToComment != null ? "forum_reply_create_client_block" : "forum_comment_create_client_block",
                     replyingToComment != null ? "reply" : "comment",
@@ -686,11 +838,16 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
             );
             return;
         }
+        clearCommentWarning();
+
         if (ForumSubmissionCooldownHelper.isCoolingDown(this)) {
             Toast.makeText(this, ForumSubmissionCooldownHelper.buildCooldownMessage(this), Toast.LENGTH_SHORT).show();
             return;
         }
-        FirebaseUser user = mAuth.getCurrentUser(); if (user == null) return;
+
+        FirebaseUser user = mAuth.getCurrentUser();
+        if (user == null) return;
+
         binding.btnSendComment.setEnabled(false);
 
         String cid = db.collection("forumThreads").document(postId).collection("comments").document().getId();
@@ -705,6 +862,7 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
                 binding.etComment.setHint("Write a comment...");
                 replyingToComment = null;
                 binding.btnSendComment.setEnabled(true);
+                clearCommentWarning();
                 commentFetchGeneration++;
                 lastCommentVisible = null;
                 isLastCommentsPage = false;
@@ -716,6 +874,11 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
             public void onFailure(String errorMessage) {
                 if (isFinishing()) return;
                 binding.btnSendComment.setEnabled(true);
+                if (isModerationErrorMessage(errorMessage)) {
+                    showCommentWarning(errorMessage);
+                } else {
+                    clearCommentWarning();
+                }
                 Toast.makeText(PostDetailActivity.this, errorMessage != null ? errorMessage : "Failed", Toast.LENGTH_SHORT).show();
             }
         });
@@ -732,42 +895,72 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
      */
     @Override
     public void onCommentLikeClick(ForumComment comment) {
-        FirebaseUser user = mAuth.getCurrentUser(); if (user == null) return;
+        FirebaseUser user = mAuth.getCurrentUser();
+        if (user == null) return;
         String uid = user.getUid();
         if (commentLikeInFlight.contains(comment.getId())) return;
         commentLikeInFlight.add(comment.getId());
         if (comment.getLikedBy() == null) comment.setLikedBy(new HashMap<>());
         boolean liked = comment.getLikedBy().containsKey(uid);
         int count = comment.getLikeCount();
-        if (liked) { comment.setLikeCount(Math.max(0, count - 1)); comment.getLikedBy().remove(uid); }
-        else { comment.setLikeCount(count + 1); comment.getLikedBy().put(uid, true); }
+        if (liked) {
+            comment.setLikeCount(Math.max(0, count - 1));
+            comment.getLikedBy().remove(uid);
+        } else {
+            comment.setLikeCount(count + 1);
+            comment.getLikedBy().put(uid, true);
+        }
         adapter.notifyDataSetChanged();
 
         // Set up or query the Firebase layer that supplies/stores this feature's data.
-        db.collection("forumThreads").document(postId).collection("comments").document(comment.getId())
+        db.collection("forumThreads")
+                .document(postId)
+                .collection("comments")
+                .document(comment.getId())
                 // Persist the new state so the action is saved outside the current screen.
                 .update("likedBy." + uid, liked ? FieldValue.delete() : true)
                 .addOnCompleteListener(t -> {
                     commentLikeInFlight.remove(comment.getId());
-                    if (!t.isSuccessful()) { comment.setLikeCount(count); if (liked) comment.getLikedBy().put(uid, true); else comment.getLikedBy().remove(uid); adapter.notifyDataSetChanged(); }
+                    if (!t.isSuccessful()) {
+                        comment.setLikeCount(count);
+                        if (liked) comment.getLikedBy().put(uid, true);
+                        else comment.getLikedBy().remove(uid);
+                        adapter.notifyDataSetChanged();
+                    }
                 });
     }
 
-    @Override public void onCommentReplyClick(ForumComment c) { replyingToComment = c; binding.etComment.setHint("Replying to " + c.getUsername() + "..."); binding.etComment.requestFocus(); }
-    @Override public void onCommentOptionsClick(ForumComment c, View v) { showCommentOptions(c, v); }
-    @Override public void onUserClick(String uid) {
+    @Override
+    public void onCommentReplyClick(ForumComment c) {
+        replyingToComment = c;
+        binding.etComment.setHint("Replying to " + c.getUsername() + "...");
+        binding.etComment.requestFocus();
+    }
+
+    @Override
+    public void onCommentOptionsClick(ForumComment c, View v) {
+        showCommentOptions(c, v);
+    }
+
+    @Override
+    public void onUserClick(String uid) {
         if (isNavigating) return;
         isNavigating = true;
-        startActivity(new Intent(this, UserSocialProfileActivity.class).putExtra(UserSocialProfileActivity.EXTRA_USER_ID, uid));
+        startActivity(new Intent(this, UserSocialProfileActivity.class)
+                .putExtra(UserSocialProfileActivity.EXTRA_USER_ID, uid));
     }
 
     /**
      * Takes prepared data and presents it on screen or in a dialog/menu.
      */
     private void showCommentOptions(ForumComment c, View v) {
-        PopupMenu popup = new PopupMenu(this, v); FirebaseUser user = mAuth.getCurrentUser();
+        PopupMenu popup = new PopupMenu(this, v);
+        FirebaseUser user = mAuth.getCurrentUser();
         if (user != null && c.getUserId().equals(user.getUid())) {
-            if (c.getTimestamp() != null && (System.currentTimeMillis() - c.getTimestamp().toDate().getTime() <= EDIT_WINDOW_MS)) popup.getMenu().add("Edit");
+            if (c.getTimestamp() != null &&
+                    (System.currentTimeMillis() - c.getTimestamp().toDate().getTime() <= EDIT_WINDOW_MS)) {
+                popup.getMenu().add("Edit");
+            }
             popup.getMenu().add("Delete");
         }
         popup.getMenu().add("Report");
@@ -784,11 +977,26 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
      * Takes prepared data and presents it on screen or in a dialog/menu.
      */
     private void showEditCommentDialog(ForumComment c) {
-        AlertDialog.Builder b = new AlertDialog.Builder(this); b.setTitle("Edit Comment");
-        final EditText i = new EditText(this); i.setText(c.getText()); i.setFilters(new InputFilter[]{new InputFilter.LengthFilter(MAX_COMMENT_LENGTH)});
-        FrameLayout container = new FrameLayout(this); FrameLayout.LayoutParams p = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT); p.leftMargin = p.rightMargin = 40; i.setLayoutParams(p); container.addView(i); b.setView(container);
-        b.setPositiveButton("Save", (d, w) -> { String msg = i.getText().toString().trim(); if (!msg.isEmpty() && !msg.equals(c.getText())) updateComment(c, msg); });
-        b.setNegativeButton("Cancel", null); b.show();
+        AlertDialog.Builder b = new AlertDialog.Builder(this);
+        b.setTitle("Edit Comment");
+        final EditText i = new EditText(this);
+        i.setText(c.getText());
+        i.setFilters(new InputFilter[]{new InputFilter.LengthFilter(MAX_COMMENT_LENGTH)});
+        FrameLayout container = new FrameLayout(this);
+        FrameLayout.LayoutParams p = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+        );
+        p.leftMargin = p.rightMargin = 40;
+        i.setLayoutParams(p);
+        container.addView(i);
+        b.setView(container);
+        b.setPositiveButton("Save", (d, w) -> {
+            String msg = i.getText().toString().trim();
+            if (!msg.isEmpty() && !msg.equals(c.getText())) updateComment(c, msg);
+        });
+        b.setNegativeButton("Cancel", null);
+        b.show();
     }
 
     /**
@@ -823,7 +1031,12 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
      * Takes prepared data and presents it on screen or in a dialog/menu.
      */
     private void showCommentDeleteConfirmation(ForumComment c) {
-        new AlertDialog.Builder(this).setTitle("Delete Comment").setMessage("Are you sure?").setPositiveButton("Delete", (d, w) -> deleteCommentAndReplies(c)).setNegativeButton("Cancel", null).show();
+        new AlertDialog.Builder(this)
+                .setTitle("Delete Comment")
+                .setMessage("Are you sure?")
+                .setPositiveButton("Delete", (d, w) -> deleteCommentAndReplies(c))
+                .setNegativeButton("Cancel", null)
+                .show();
     }
 
     /**
@@ -861,7 +1074,12 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
      * become permanent.
      */
     private void backlogByUserId(WriteBatch b, String uid, String type, String oid, Object data) {
-        Map<String, Object> m = new HashMap<>(); m.put("type", type); m.put("originalId", oid); m.put("data", data); m.put("deletedBy", uid); m.put("deletedAt", FieldValue.serverTimestamp());
+        Map<String, Object> m = new HashMap<>();
+        m.put("type", type);
+        m.put("originalId", oid);
+        m.put("data", data);
+        m.put("deletedBy", uid);
+        m.put("deletedAt", FieldValue.serverTimestamp());
         // Set up or query the Firebase layer that supplies/stores this feature's data.
         b.set(db.collection("deletedforum_backlog").document(), m);
     }
@@ -883,20 +1101,113 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
      * or needs attention.
      */
     private void submitCommentReport(ForumComment c, String reason) {
-        FirebaseUser u = mAuth.getCurrentUser(); if (u == null) return;
+        FirebaseUser u = mAuth.getCurrentUser();
+        if (u == null) return;
         // Give the user immediate feedback about the result of this action.
-        firebaseManager.addReport(new Report("comment", c.getId(), u.getUid(), reason), t -> { if (t.isSuccessful()) Toast.makeText(this, "Reported", Toast.LENGTH_SHORT).show(); });
+        firebaseManager.addReport(new Report("comment", c.getId(), u.getUid(), reason), t -> {
+            if (t.isSuccessful()) Toast.makeText(this, "Reported", Toast.LENGTH_SHORT).show();
+        });
     }
 
     /**
      * Takes prepared data and presents it on screen or in a dialog/menu.
      */
     private void showOtherReportDialog(OnReasonEnteredListener l) {
-        AlertDialog.Builder b = new AlertDialog.Builder(this); b.setTitle("Report Reason");
-        final EditText i = new EditText(this); i.setHint("Specify reason..."); i.setFilters(new InputFilter[]{new InputFilter.LengthFilter(200)});
-        FrameLayout container = new FrameLayout(this); FrameLayout.LayoutParams p = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT); p.leftMargin = p.rightMargin = 40; i.setLayoutParams(p); container.addView(i); b.setView(container);
-        b.setPositiveButton("Submit", (d, w) -> { String r = i.getText().toString().trim(); if (!r.isEmpty()) l.onReasonEntered(r); });
-        b.setNegativeButton("Cancel", null); b.show();
+        AlertDialog.Builder b = new AlertDialog.Builder(this);
+        b.setTitle("Report Reason");
+        final EditText i = new EditText(this);
+        i.setHint("Specify reason...");
+        i.setFilters(new InputFilter[]{new InputFilter.LengthFilter(200)});
+        FrameLayout container = new FrameLayout(this);
+        FrameLayout.LayoutParams p = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+        );
+        p.leftMargin = p.rightMargin = 40;
+        i.setLayoutParams(p);
+        container.addView(i);
+        b.setView(container);
+        b.setPositiveButton("Submit", (d, w) -> {
+            String r = i.getText().toString().trim();
+            if (!r.isEmpty()) l.onReasonEntered(r);
+        });
+        b.setNegativeButton("Cancel", null);
+        b.show();
+    }
+
+    /**
+     * Shows or hides the full comment moderation message under the composer.
+     */
+    private void setCommentModerationExpanded(boolean expanded) {
+        isCommentModerationExpanded = expanded;
+
+        if (expanded) {
+            binding.tvCommentModerationDetails.setVisibility(View.VISIBLE);
+            binding.tvCommentModerationToggleText.setText("Hide comment rules");
+            binding.tvCommentModerationChevron.setText("▲");
+        } else {
+            binding.tvCommentModerationDetails.setVisibility(View.GONE);
+            binding.tvCommentModerationToggleText.setText("Be respectful");
+            binding.tvCommentModerationChevron.setText("▼");
+        }
+    }
+
+    /**
+     * Shows an inline moderation warning for the comment composer.
+     */
+    private void showCommentWarning(String message) {
+        binding.commentInputLayout.setError(message);
+        binding.commentInputLayout.setErrorEnabled(true);
+    }
+
+    /**
+     * Clears the inline moderation warning for the comment composer.
+     */
+    private void clearCommentWarning() {
+        binding.commentInputLayout.setError(null);
+        binding.commentInputLayout.setErrorEnabled(false);
+    }
+
+    /**
+     * Builds a concise moderation message for inline composer warnings.
+     */
+    private String buildModerationWarningFromReason(String fieldName, String reason) {
+        String safeFieldName = fieldName == null || fieldName.trim().isEmpty() ? "content" : fieldName.trim();
+        if (reason == null || reason.trim().isEmpty()) {
+            return "Your " + safeFieldName.toLowerCase() + " could not be submitted. Please review it and try again.";
+        }
+
+        switch (reason) {
+            case "inappropriate language":
+                return "Your " + safeFieldName.toLowerCase() + " includes language that is not allowed. Please remove it and try again.";
+            case "glitch text":
+                return "Your " + safeFieldName.toLowerCase() + " includes glitch-style text that can break the forum layout. Please remove the special characters and try again.";
+            case "an email address":
+            case "a phone number":
+            case "external links":
+            case "sensitive financial data":
+            case "excessive character repetition":
+                return "Your " + safeFieldName.toLowerCase() + " includes " + reason + ". Please remove it before posting.";
+            default:
+                return "Your " + safeFieldName.toLowerCase() + " includes " + reason + ". Please remove it before posting.";
+        }
+    }
+
+    /**
+     * Returns true when an error message likely came from moderation/filtering logic.
+     */
+    private boolean isModerationErrorMessage(String message) {
+        if (message == null) return false;
+        String lower = message.toLowerCase();
+        return lower.contains("could not be submitted")
+                || lower.contains("contains inappropriate")
+                || lower.contains("contains external links")
+                || lower.contains("contains an email address")
+                || lower.contains("contains a phone number")
+                || lower.contains("contains sensitive financial data")
+                || lower.contains("contains excessive character repetition")
+                || lower.contains("contains glitch text")
+                || lower.contains("language that is not allowed");
     }
 
     private interface OnReasonEnteredListener { void onReasonEntered(String r); }

@@ -1,5 +1,6 @@
 package com.birddex.app;
 
+import android.text.TextUtils;
 import android.text.format.DateUtils;
 import android.view.LayoutInflater;
 import android.view.View;
@@ -90,6 +91,7 @@ public class ForumPostAdapter extends RecyclerView.Adapter<ForumPostAdapter.Post
         ImageView ivUserProfile;
         TextView tvUsername;
         TextView tvTimestamp;
+        TextView tvPostMeta;
         TextView tvMessage;
         ImageView ivBirdImage;
         View cvPostImage;
@@ -101,7 +103,7 @@ public class ForumPostAdapter extends RecyclerView.Adapter<ForumPostAdapter.Post
         TextView tvViewCount;
         ImageButton btnOptions;
         LinearLayout btnViewOnMap;
-        
+
         TextView tvSpottedBadge;
         TextView tvHuntedBadge;
 
@@ -116,6 +118,7 @@ public class ForumPostAdapter extends RecyclerView.Adapter<ForumPostAdapter.Post
             ivUserProfile = itemView.findViewById(R.id.ivPostUserProfilePicture);
             tvUsername = itemView.findViewById(R.id.tvPostUsername);
             tvTimestamp = itemView.findViewById(R.id.tvPostTimestamp);
+            tvPostMeta = itemView.findViewById(R.id.tvPostMeta);
             tvMessage = itemView.findViewById(R.id.tvPostMessage);
             ivBirdImage = itemView.findViewById(R.id.ivPostBirdImage);
             cvPostImage = itemView.findViewById(R.id.cvPostImage);
@@ -127,7 +130,7 @@ public class ForumPostAdapter extends RecyclerView.Adapter<ForumPostAdapter.Post
             tvViewCount = itemView.findViewById(R.id.tvViewCount);
             btnOptions = itemView.findViewById(R.id.btnPostOptions);
             btnViewOnMap = itemView.findViewById(R.id.btnViewOnMap);
-            
+
             tvSpottedBadge = itemView.findViewById(R.id.tvSpottedBadge);
             tvHuntedBadge = itemView.findViewById(R.id.tvHuntedBadge);
         }
@@ -143,7 +146,24 @@ public class ForumPostAdapter extends RecyclerView.Adapter<ForumPostAdapter.Post
          */
         public void bind(ForumPost post, OnPostClickListener listener) {
             tvUsername.setText(post.getUsername());
-            tvMessage.setText(post.getMessage());
+
+            String message = post.getMessage() != null ? post.getMessage().trim() : "";
+            if (TextUtils.isEmpty(message)) {
+                tvMessage.setVisibility(View.GONE);
+            } else {
+                tvMessage.setVisibility(View.VISIBLE);
+                tvMessage.setText(message);
+            }
+
+            if (tvPostMeta != null) {
+                if (post.isEdited()) {
+                    tvPostMeta.setVisibility(View.VISIBLE);
+                    tvPostMeta.setText("Edited");
+                } else {
+                    tvPostMeta.setVisibility(View.GONE);
+                }
+            }
+
             tvLikeCount.setText(String.valueOf(post.getLikeCount()));
             tvCommentCount.setText(String.valueOf(post.getCommentCount()));
             tvViewCount.setText(post.getViewCount() + " views");
@@ -172,6 +192,8 @@ public class ForumPostAdapter extends RecyclerView.Adapter<ForumPostAdapter.Post
             if (post.getTimestamp() != null) {
                 long time = post.getTimestamp().toDate().getTime();
                 tvTimestamp.setText(DateUtils.getRelativeTimeSpanString(time, System.currentTimeMillis(), DateUtils.MINUTE_IN_MILLIS));
+            } else {
+                tvTimestamp.setText("");
             }
 
             // User Profile Picture
@@ -204,7 +226,7 @@ public class ForumPostAdapter extends RecyclerView.Adapter<ForumPostAdapter.Post
             btnComment.setOnClickListener(v -> listener.onCommentClick(post));
             itemView.setOnClickListener(v -> listener.onPostClick(post));
             btnOptions.setOnClickListener(v -> listener.onOptionsClick(post, v));
-            
+
             ivUserProfile.setOnClickListener(v -> listener.onUserClick(post.getUserId()));
             tvUsername.setOnClickListener(v -> listener.onUserClick(post.getUserId()));
         }

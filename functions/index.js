@@ -3983,59 +3983,12 @@ exports.upgradeCollectionSlotRarity = onCall(async (request) => {
         ? request.data.birdId.trim()
         : "";
     const rawTargetRarity = request.data && typeof request.data.targetRarity === "string"
-        ? request.data.targetRarity.trim()
-        : "";
-
+        ? request.data.targetRarity
+        : null;
     if (!rawTargetRarity) {
         throw new HttpsError("invalid-argument", "targetRarity is required.");
     }
-
-    /**
-     * Keep the backend rarity order and costs exactly in sync with the Android app:
-     * common -> uncommon = 10
-     * uncommon -> rare = 20
-     * rare -> epic = 30
-     * epic -> legendary = 50
-     * legendary -> mythic = 100
-     */
-    const CARD_RARITIES_LOCAL = ["common", "uncommon", "rare", "epic", "legendary", "mythic"];
-    const CARD_RARITY_STEP_COSTS_LOCAL = {
-        uncommon: 10,
-        rare: 20,
-        epic: 30,
-        legendary: 50,
-        mythic: 100,
-    };
-
-    function normalizeCardRarityLocal(rarity) {
-        if (!rarity || typeof rarity !== "string") return "common";
-        const normalized = rarity.trim().toLowerCase();
-        return CARD_RARITIES_LOCAL.includes(normalized) ? normalized : "common";
-    }
-
-    function getCardRarityIndexLocal(rarity) {
-        return CARD_RARITIES_LOCAL.indexOf(normalizeCardRarityLocal(rarity));
-    }
-
-    function getCardUpgradeCostLocal(currentRarity, targetRarity) {
-        const currentIndex = getCardRarityIndexLocal(currentRarity);
-        const targetIndex = getCardRarityIndexLocal(targetRarity);
-
-        if (currentIndex < 0 || targetIndex < 0 || targetIndex <= currentIndex) {
-            throw new HttpsError(
-                "invalid-argument",
-                "Target rarity must be higher than the current rarity."
-            );
-        }
-
-        let total = 0;
-        for (let i = currentIndex + 1; i <= targetIndex; i++) {
-            total += CARD_RARITY_STEP_COSTS_LOCAL[CARD_RARITIES_LOCAL[i]] || 0;
-        }
-        return total;
-    }
-
-    const targetRarity = normalizeCardRarityLocal(rawTargetRarity);
+    const targetRarity = normalizeCardRarity(rawTargetRarity);
     const slotId = rawSlotId || (rawBirdId ? `${userId}_${rawBirdId}` : "");
     if (!slotId) {
         throw new HttpsError("invalid-argument", "slotId or birdId is required.");
@@ -4044,9 +3997,10 @@ exports.upgradeCollectionSlotRarity = onCall(async (request) => {
     const slotRef = db.collection("users").doc(userId).collection("collectionSlot").doc(slotId);
     try {
         const result = await db.runTransaction(async (transaction) => {
-            const userSnap = await transaction.get(userRef);
-            const slotSnap = await transaction.get(slotRef);
-
+            const [userSnap, slotSnap] = await Promise.all([
+                transaction.get(userRef),
+                transaction.get(slotRef),
+            ]);
             if (!userSnap.exists) {
                 throw new HttpsError("not-found", "User profile not found.");
             }
@@ -4055,9 +4009,8 @@ exports.upgradeCollectionSlotRarity = onCall(async (request) => {
             }
             const userData = userSnap.data() || {};
             const slotData = slotSnap.data() || {};
-
-            const currentRarity = normalizeCardRarityLocal(slotData.rarity);
-            const upgradeCost = getCardUpgradeCostLocal(currentRarity, targetRarity);
+            const currentRarity = normalizeCardRarity(slotData.rarity);
+            const upgradeCost = getCardUpgradeCost(currentRarity, targetRarity);
             const currentPoints = Number(userData.totalPoints || 0);
             if (!Number.isFinite(currentPoints)) {
                 throw new HttpsError("internal", "User points are invalid.");

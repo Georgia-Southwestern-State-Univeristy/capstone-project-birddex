@@ -3,18 +3,14 @@ package com.birddex.app;
 import android.content.Intent;
 import android.os.Bundle;
 import android.util.Log;
-import android.view.Gravity;
 import android.view.View;
-import android.view.ViewGroup;
 import android.widget.Button;
-import android.widget.FrameLayout;
 import android.widget.ImageButton;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
-import androidx.cardview.widget.CardView;
-import androidx.core.content.ContextCompat;
+
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.annotation.Nullable;
@@ -42,9 +38,6 @@ public class ViewBirdCardActivity extends AppCompatActivity {
 
     private static final String TAG = "ViewBirdCard";
     public static final String EXTRA_ALLOW_IMAGE_CHANGE = "com.birddex.app.extra.ALLOW_IMAGE_CHANGE";
-
-    private FrameLayout cardPlaceholder;
-    private View currentCardView;
 
     private ImageView imgBird;
     private Button btnChangeCardImage, btnBirdInfo, btnUpgradeCard;
@@ -105,6 +98,14 @@ public class ViewBirdCardActivity extends AppCompatActivity {
      * It also packages extras into an Intent when this flow needs to open another Activity.
      */
     private void initUI() {
+        // Bind or inflate the UI pieces this method needs before it can update the screen.
+        imgBird = findViewById(R.id.imgBird);
+        btnChangeCardImage = findViewById(R.id.btnChangeCardImage);
+        btnBirdInfo = findViewById(R.id.btnBirdInfo);
+        btnUpgradeCard = findViewById(R.id.btnUpgradeCard);
+        txtLocation = findViewById(R.id.txtLocation);
+        txtDateCaught = findViewById(R.id.txtDateCaught);
+
         currentImageUrl = getIntent().getStringExtra(CollectionCardAdapter.EXTRA_IMAGE_URL);
         currentBirdId = getIntent().getStringExtra(CollectionCardAdapter.EXTRA_BIRD_ID);
         currentSlotId = getIntent().getStringExtra(CollectionCardAdapter.EXTRA_SLOT_ID);
@@ -114,24 +115,14 @@ public class ViewBirdCardActivity extends AppCompatActivity {
         long time = getIntent().getLongExtra(CollectionCardAdapter.EXTRA_CAUGHT_TIME, -1L);
         currentCaughtDate = time > 0 ? new Date(time) : null;
 
-        // Bind or inflate the UI pieces this method needs before it can update the screen.
-        cardPlaceholder = findViewById(R.id.cardPlaceholder);
-        inflateCardLayoutForRarity(currentRarity);
-
-        btnChangeCardImage = findViewById(R.id.btnChangeCardImage);
-        btnBirdInfo = findViewById(R.id.btnBirdInfo);
-        btnUpgradeCard = findViewById(R.id.btnUpgradeCard);
-
         String name = getIntent().getStringExtra(CollectionCardAdapter.EXTRA_COMMON_NAME);
         String sci = getIntent().getStringExtra(CollectionCardAdapter.EXTRA_SCI_NAME);
-        ((TextView) currentCardView.findViewById(R.id.txtBirdName)).setText(!isBlank(name) ? name : (!isBlank(sci) ? sci : "Unknown Bird"));
-        ((TextView) currentCardView.findViewById(R.id.txtScientific)).setText(!isBlank(sci) ? sci : "--");
+        ((TextView) findViewById(R.id.txtBirdName)).setText(!isBlank(name) ? name : (!isBlank(sci) ? sci : "Unknown Bird"));
+        ((TextView) findViewById(R.id.txtScientific)).setText(!isBlank(sci) ? sci : "--");
 
         txtLocation.setText(CardFormatUtils.formatLocation(currentState, currentLocality));
         txtDateCaught.setText(CardFormatUtils.formatCaughtDate(currentCaughtDate));
-        hideCardFooter();
         loadBirdImage(currentImageUrl);
-        scheduleCardFit();
 
         boolean allowChange = getIntent().getBooleanExtra(EXTRA_ALLOW_IMAGE_CHANGE, true);
         if (!allowChange) btnChangeCardImage.setVisibility(View.GONE);
@@ -145,7 +136,7 @@ public class ViewBirdCardActivity extends AppCompatActivity {
             if (allowChange) btnChangeCardImage.setOnClickListener(v -> openImagePicker());
             // Move into the next screen and pass the identifiers/data that screen needs.
             btnBirdInfo.setOnClickListener(v -> startActivity(new Intent(this, BirdWikiActivity.class).putExtra(BirdWikiActivity.EXTRA_BIRD_ID, currentBirdId)));
-
+            
             if (isBlank(currentSlotId)) {
                 btnUpgradeCard.setEnabled(false);
             } else {
@@ -182,146 +173,6 @@ public class ViewBirdCardActivity extends AppCompatActivity {
         if (isFinishing() || isDestroyed()) return;
         // Load the image asynchronously so the UI can show remote/local media without blocking the main thread.
         Glide.with(this).load(url).override(800, 800).fitCenter().transition(DrawableTransitionOptions.withCrossFade()).placeholder(R.drawable.bg_image_placeholder).into(imgBird);
-    }
-
-    /**
-     * Inflates one standalone viewer layout, then applies the current rarity styling in code.
-     * This keeps the view card separate from the rarity XML files while still changing color
-     * when the card is upgraded.
-     */
-    private void inflateCardLayoutForRarity(String rarity) {
-        if (cardPlaceholder == null) return;
-
-        cardPlaceholder.removeAllViews();
-        currentCardView = getLayoutInflater().inflate(R.layout.view_bird_card, cardPlaceholder, false);
-
-        FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-        );
-        params.gravity = Gravity.TOP | Gravity.CENTER_HORIZONTAL;
-        currentCardView.setLayoutParams(params);
-        cardPlaceholder.addView(currentCardView);
-
-        imgBird = currentCardView.findViewById(R.id.imgBird);
-        txtLocation = currentCardView.findViewById(R.id.txtLocation);
-        txtDateCaught = currentCardView.findViewById(R.id.txtDateCaught);
-
-        applyRarityStyling(rarity);
-    }
-
-    /**
-     * Applies the correct card shell colors/background based on the current rarity while keeping
-     * the viewer on a single shared XML layout.
-     */
-    private void applyRarityStyling(String rarity) {
-        if (currentCardView == null) return;
-
-        CardView cardContainer = currentCardView.findViewById(R.id.cardContainer);
-        FrameLayout cardSurface = currentCardView.findViewById(R.id.cardSurface);
-        TextView footer = currentCardView.findViewById(R.id.txtFooter);
-
-        if (cardContainer == null || cardSurface == null) return;
-
-        String normalized = CardRarityHelper.normalizeRarity(rarity);
-
-        switch (normalized) {
-            case CardRarityHelper.UNCOMMON:
-                cardContainer.setCardBackgroundColor(ContextCompat.getColor(this, android.R.color.transparent));
-                cardSurface.setBackgroundResource(R.drawable.bg_uncommon_card);
-                if (footer != null) {
-                    footer.setBackgroundColor(ContextCompat.getColor(this, R.color.uncommon_green_dark));
-                }
-                break;
-
-            case CardRarityHelper.RARE:
-                cardContainer.setCardBackgroundColor(ContextCompat.getColor(this, android.R.color.transparent));
-                cardSurface.setBackgroundResource(R.drawable.bg_rare_card);
-                if (footer != null) {
-                    footer.setBackgroundColor(ContextCompat.getColor(this, R.color.rare_blue_dark));
-                }
-                break;
-
-            case CardRarityHelper.EPIC:
-                cardContainer.setCardBackgroundColor(ContextCompat.getColor(this, android.R.color.transparent));
-                cardSurface.setBackgroundResource(R.drawable.bg_epic_card);
-                if (footer != null) {
-                    footer.setBackgroundColor(ContextCompat.getColor(this, R.color.epic_purple_dark));
-                }
-                break;
-
-            case CardRarityHelper.LEGENDARY:
-                cardContainer.setCardBackgroundColor(ContextCompat.getColor(this, android.R.color.transparent));
-                cardSurface.setBackgroundResource(R.drawable.bg_legendary_card);
-                if (footer != null) {
-                    footer.setBackgroundColor(ContextCompat.getColor(this, R.color.legendary_gold_dark));
-                }
-                break;
-
-            case CardRarityHelper.MYTHIC:
-                cardContainer.setCardBackgroundColor(ContextCompat.getColor(this, android.R.color.transparent));
-                cardSurface.setBackgroundResource(R.drawable.bg_mythic_card);
-                if (footer != null) {
-                    footer.setBackgroundColor(ContextCompat.getColor(this, R.color.legendary_red_dark));
-                }
-                break;
-
-            case CardRarityHelper.COMMON:
-            default:
-                cardContainer.setCardBackgroundColor(ContextCompat.getColor(this, android.R.color.white));
-                cardSurface.setBackgroundColor(ContextCompat.getColor(this, android.R.color.white));
-                if (footer != null) {
-                    footer.setBackgroundColor(ContextCompat.getColor(this, android.R.color.darker_gray));
-                }
-                break;
-        }
-    }
-
-    /**
-     * Hides the footer strip so the card keeps its rarity styling without wasting vertical space.
-     */
-    private void hideCardFooter() {
-        if (currentCardView == null) return;
-        TextView footer = currentCardView.findViewById(R.id.txtFooter);
-        if (footer != null) footer.setVisibility(View.GONE);
-    }
-
-    /**
-     * Scales the whole card uniformly so it stays on screen without changing its proportions.
-     */
-    private void scheduleCardFit() {
-        if (cardPlaceholder == null || currentCardView == null) return;
-        cardPlaceholder.post(this::fitCardToAvailableSpace);
-    }
-
-    /**
-     * Applies a uniform scale so the card fits the available area while keeping the original shape.
-     */
-    private void fitCardToAvailableSpace() {
-        if (cardPlaceholder == null || currentCardView == null) return;
-
-        int availableWidth = cardPlaceholder.getWidth();
-        int availableHeight = cardPlaceholder.getHeight();
-        int measuredWidth = currentCardView.getMeasuredWidth();
-        int measuredHeight = currentCardView.getMeasuredHeight();
-
-        if (availableWidth <= 0 || availableHeight <= 0 || measuredWidth <= 0 || measuredHeight <= 0) {
-            return;
-        }
-
-        float widthScale = (float) availableWidth / (float) measuredWidth;
-        float heightScale = (float) availableHeight / (float) measuredHeight;
-        float scale = Math.min(1f, Math.min(widthScale, heightScale));
-
-        currentCardView.setPivotX(measuredWidth / 2f);
-        currentCardView.setPivotY(0f);
-        currentCardView.setScaleX(scale);
-        currentCardView.setScaleY(scale);
-
-        float usedHeight = measuredHeight * scale;
-        float usedWidth = measuredWidth * scale;
-        currentCardView.setTranslationY(Math.max(0f, (availableHeight - usedHeight) / 2f));
-        currentCardView.setTranslationX((availableWidth - usedWidth) / 2f);
     }
 
     /**
@@ -440,7 +291,7 @@ public class ViewBirdCardActivity extends AppCompatActivity {
                     // Persist the new state so the action is saved outside the current screen.
                     b.update(snap.getDocuments().get(0).getReference(), u);
                     b.commit().addOnSuccessListener(v -> { if (gen == resolutionGeneration) finalizeResolution(true, resolved); })
-                            .addOnFailureListener(e -> finalizeResolution(false, null));
+                             .addOnFailureListener(e -> finalizeResolution(false, null));
                 }).addOnFailureListener(e -> finalizeResolution(false, null));
     }
 
@@ -460,7 +311,6 @@ public class ViewBirdCardActivity extends AppCompatActivity {
             loadBirdImage(currentImageUrl);
             txtLocation.setText(CardFormatUtils.formatLocation(currentState, currentLocality));
             txtDateCaught.setText(CardFormatUtils.formatCaughtDate(currentCaughtDate));
-            scheduleCardFit();
             // Give the user immediate feedback about the result of this action.
             Toast.makeText(this, "Updated.", Toast.LENGTH_SHORT).show();
         } else Toast.makeText(this, "Failed to update card.", Toast.LENGTH_SHORT).show();

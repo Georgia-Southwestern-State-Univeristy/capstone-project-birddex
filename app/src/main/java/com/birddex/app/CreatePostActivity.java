@@ -8,8 +8,6 @@ import android.content.pm.PackageManager;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
-import android.text.Editable;
-import android.text.TextWatcher;
 import android.util.Log;
 import android.view.View;
 import android.widget.Toast;
@@ -110,17 +108,20 @@ public class CreatePostActivity extends AppCompatActivity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         SystemBarHelper.applyStandardNavBar(this);
+        // Bind or inflate the UI pieces this method needs before it can update the screen.
         binding = ActivityCreatePostBinding.inflate(getLayoutInflater());
         setContentView(binding.getRoot());
 
-        mAuth = FirebaseAuth.getInstance();
-        storage = FirebaseStorage.getInstance();
+        mAuth           = FirebaseAuth.getInstance();
+        storage         = FirebaseStorage.getInstance();
+        // Set up or query the Firebase layer that supplies/stores this feature's data.
         firebaseManager = new FirebaseManager(this);
         fusedLocationClient = LocationServices.getFusedLocationProviderClient(this);
-        loadingOverlay = findViewById(R.id.loadingOverlay);
+        loadingOverlay  = findViewById(R.id.loadingOverlay);
 
         viewModel = new ViewModelProvider(this).get(CreatePostViewModel.class);
 
+        // Stable ID for this post attempt — survives rotation
         if (viewModel.getPendingPostId() == null) {
             viewModel.setPendingPostId(
                     FirebaseFirestore.getInstance().collection("forumThreads").document().getId());
@@ -129,17 +130,20 @@ public class CreatePostActivity extends AppCompatActivity {
         setupUI();
         loadUserInfo();
         setupImageLaunchers();
-        syncInitialImagePreviewState();
 
         if (hasLocationPermission()) fetchLocation();
 
+        // Rotation resume: if upload finished but Firestore write didn't, retry it
+        // Kick off an asynchronous one-time read; the callbacks below decide how the UI should react.
         if (viewModel.isPostInProgress.get()) {
             setPostingUi(true);
             if (viewModel.getUploadedImageUrl() != null) {
-                showImagePreview(viewModel.getUploadedImageUrl());
+                // Limit was already claimed before upload; skip straight to Firestore write
                 String msg = binding.etPostMessage.getText().toString().trim();
                 createFirestorePost(msg, viewModel.getUploadedImageUrl());
             }
+            // If uploadedImageUrl is null we were interrupted before/during upload;
+            // the user will need to tap Post again (limit was NOT claimed yet).
         }
     }
 
@@ -158,26 +162,15 @@ public class CreatePostActivity extends AppCompatActivity {
      */
     private void setupUI() {
         binding.toolbar.setNavigationOnClickListener(v -> finish());
+        // Attach the user interaction that should run when this control is tapped.
         binding.btnSelectImage.setOnClickListener(v -> checkPermissionsAndPickImage());
-
-        binding.messageInputLayout.setHelperText("Forum moderation blocks profanity, links, contact info, and sensitive data.");
-        binding.etPostMessage.addTextChangedListener(new TextWatcher() {
-            @Override
-            public void beforeTextChanged(CharSequence s, int start, int count, int after) { }
-
-            @Override
-            public void onTextChanged(CharSequence s, int start, int before, int count) {
-                clearPostWarning();
-            }
-
-            @Override
-            public void afterTextChanged(Editable s) { }
-        });
 
         binding.fabRemoveImage.setOnClickListener(v -> {
             selectedImageUri = null;
             viewModel.setUploadedImageUrl(null);
-            hideImagePreview();
+            binding.ivBirdImagePreview.setVisibility(View.GONE);
+            binding.fabRemoveImage.setVisibility(View.GONE);
+            binding.tvImagePlaceholder.setVisibility(View.VISIBLE);
         });
 
         binding.swShowLocation.setOnCheckedChangeListener((b, isChecked) -> {
@@ -224,7 +217,7 @@ public class CreatePostActivity extends AppCompatActivity {
         try {
             fusedLocationClient.getLastLocation().addOnSuccessListener(this, location -> {
                 if (location != null) {
-                    currentLatitude = location.getLatitude();
+                    currentLatitude  = location.getLatitude();
                     currentLongitude = location.getLongitude();
                 }
             });
@@ -244,10 +237,10 @@ public class CreatePostActivity extends AppCompatActivity {
     public void onRequestPermissionsResult(int rc, @NonNull String[] p, @NonNull int[] gr) {
         super.onRequestPermissionsResult(rc, p, gr);
         if (rc == REQUEST_LOCATION_PERMISSION) {
-            if (gr.length > 0 && gr[0] == PackageManager.PERMISSION_GRANTED) {
-                fetchLocation();
-            } else {
+            if (gr.length > 0 && gr[0] == PackageManager.PERMISSION_GRANTED) fetchLocation();
+            else {
                 binding.swShowLocation.setChecked(false);
+                // Give the user immediate feedback about the result of this action.
                 Toast.makeText(this, "Permission denied", Toast.LENGTH_SHORT).show();
             }
         }
@@ -262,17 +255,15 @@ public class CreatePostActivity extends AppCompatActivity {
     private void loadUserInfo() {
         FirebaseUser user = mAuth.getCurrentUser();
         if (user == null) return;
-
         firebaseManager.getUserProfile(user.getUid(), task -> {
             if (isFinishing() || isDestroyed()) return;
             if (task.isSuccessful() && task.getResult() != null) {
-                currentUsername = task.getResult().getString("username");
-                currentUserProfilePicUrl = task.getResult().getString("profilePictureUrl");
+                currentUsername           = task.getResult().getString("username");
+                currentUserProfilePicUrl  = task.getResult().getString("profilePictureUrl");
                 binding.tvCreatorUsername.setText(currentUsername);
-                Glide.with(this)
-                        .load(currentUserProfilePicUrl)
-                        .placeholder(R.drawable.ic_profile)
-                        .into(binding.ivCreatorProfilePicture);
+                // Load the image asynchronously so the UI can show remote/local media without blocking the main thread.
+                Glide.with(this).load(currentUserProfilePicUrl)
+                        .placeholder(R.drawable.ic_profile).into(binding.ivCreatorProfilePicture);
             }
         });
     }
@@ -299,7 +290,11 @@ public class CreatePostActivity extends AppCompatActivity {
             if (isFinishing() || isDestroyed()) return;
             if (r.isSuccessful() && r.getUriContent() != null) {
                 selectedImageUri = r.getUriContent();
-                showImagePreview(selectedImageUri);
+                binding.ivBirdImagePreview.setVisibility(View.VISIBLE);
+                binding.fabRemoveImage.setVisibility(View.VISIBLE);
+                binding.tvImagePlaceholder.setVisibility(View.GONE);
+                // Load the image asynchronously so the UI can show remote/local media without blocking the main thread.
+                Glide.with(this).load(selectedImageUri).into(binding.ivBirdImagePreview);
             }
         });
     }
@@ -310,20 +305,16 @@ public class CreatePostActivity extends AppCompatActivity {
     private void checkPermissionsAndPickImage() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_MEDIA_IMAGES)
-                    != PackageManager.PERMISSION_GRANTED) {
+                    != PackageManager.PERMISSION_GRANTED)
                 ActivityCompat.requestPermissions(this,
                         new String[]{Manifest.permission.READ_MEDIA_IMAGES}, REQUEST_READ_EXTERNAL_STORAGE);
-            } else {
-                pickImage();
-            }
+            else pickImage();
         } else {
             if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_EXTERNAL_STORAGE)
-                    != PackageManager.PERMISSION_GRANTED) {
+                    != PackageManager.PERMISSION_GRANTED)
                 ActivityCompat.requestPermissions(this,
                         new String[]{Manifest.permission.READ_EXTERNAL_STORAGE}, REQUEST_READ_EXTERNAL_STORAGE);
-            } else {
-                pickImage();
-            }
+            else pickImage();
         }
     }
 
@@ -341,47 +332,9 @@ public class CreatePostActivity extends AppCompatActivity {
     private void startImageCropper(Uri uri) {
         CropImageOptions opt = new CropImageOptions();
         opt.fixAspectRatio = true;
-        opt.aspectRatioX = 4;
-        opt.aspectRatioY = 3;
+        opt.aspectRatioX   = 4;
+        opt.aspectRatioY   = 3;
         cropImageLauncher.launch(new CropImageContractOptions(uri, opt));
-    }
-
-    /**
-     * Keeps the preview hidden until the user actually has an image selected or already uploaded.
-     */
-    private void syncInitialImagePreviewState() {
-        if (viewModel.getUploadedImageUrl() != null && !viewModel.getUploadedImageUrl().trim().isEmpty()) {
-            showImagePreview(viewModel.getUploadedImageUrl());
-        } else {
-            hideImagePreview();
-        }
-    }
-
-    /**
-     * Shows the preview area only when there is a real image to display.
-     */
-    private void showImagePreview(Object imageSource) {
-        binding.emptyPreviewSpacer.setVisibility(View.GONE);
-        binding.imagePreviewContainer.setVisibility(View.VISIBLE);
-        binding.ivBirdImagePreview.setVisibility(View.VISIBLE);
-        binding.fabRemoveImage.setVisibility(View.VISIBLE);
-        binding.tvImagePlaceholder.setVisibility(View.GONE);
-
-        Glide.with(this)
-                .load(imageSource)
-                .into(binding.ivBirdImagePreview);
-    }
-
-    /**
-     * Completely hides the preview area when no image has been added.
-     */
-    private void hideImagePreview() {
-        binding.emptyPreviewSpacer.setVisibility(View.VISIBLE);
-        binding.imagePreviewContainer.setVisibility(View.GONE);
-        binding.ivBirdImagePreview.setVisibility(View.GONE);
-        binding.fabRemoveImage.setVisibility(View.GONE);
-        binding.tvImagePlaceholder.setVisibility(View.GONE);
-        binding.ivBirdImagePreview.setImageDrawable(null);
     }
 
     // -------------------------------------------------------------------------
@@ -398,12 +351,14 @@ public class CreatePostActivity extends AppCompatActivity {
      * or needs attention.
      */
     private void attemptPost() {
+        // Kick off an asynchronous one-time read; the callbacks below decide how the UI should react.
         if (viewModel.isPostInProgress.get() || viewModel.isPostFinished.get()) return;
 
         CharSequence text = binding.etPostMessage.getText();
         String msg = (text != null) ? text.toString().trim() : "";
 
-        if (msg.isEmpty() && selectedImageUri == null && viewModel.getUploadedImageUrl() == null) {
+        if (msg.isEmpty() && selectedImageUri == null) {
+            // Give the user immediate feedback about the result of this action.
             Toast.makeText(this, "Please add a message or an image", Toast.LENGTH_SHORT).show();
             return;
         }
@@ -411,27 +366,41 @@ public class CreatePostActivity extends AppCompatActivity {
             Toast.makeText(this, "Post too long", Toast.LENGTH_SHORT).show();
             return;
         }
-
-        String moderationReason = ContentFilter.getInappropriateReason(msg);
-        if (moderationReason != null) {
-            showPostWarning(buildModerationWarningFromReason("Post", moderationReason));
+        if (!ContentFilter.isSafe(this, msg, "Post")) {
             firebaseManager.logFilteredContentAttempt("forum_post_create_client_block", "post", msg, null, null);
             return;
         }
-        clearPostWarning();
-
         if (ForumSubmissionCooldownHelper.isCoolingDown(this)) {
             Toast.makeText(this, ForumSubmissionCooldownHelper.buildCooldownMessage(this), Toast.LENGTH_SHORT).show();
             return;
         }
 
+        // Persist the new state so the action is saved outside the current screen.
         viewModel.isPostInProgress.set(true);
         setPostingUi(true);
 
+        // FIX POST LIMIT: Call the CF first, before any upload.
+        // This ensures:
+        //   (a) We don't waste Storage on a post that will be rejected.
+        //   (b) The limit is enforced atomically — two rapid taps cannot both slip through
+        //       because the CF uses a Firestore transaction to read+increment in one step.
         boolean wantsToShowLocation = binding.swShowLocation.isChecked();
         checkServerPostLimit(msg, wantsToShowLocation);
     }
 
+    /**
+     * Calls `recordForumPost` CF to atomically claim a daily post slot.
+     * Only proceeds to upload/write if the server returns allowed=true.
+     */
+    /**
+     * Main logic block for this part of the feature.
+     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
+     * changes.
+     * Part of this method writes changes back to Firestore/storage, so this is where app actions
+     * become permanent.
+     * User-facing feedback is shown here so the user knows whether the action succeeded, failed,
+     * or needs attention.
+     */
     /**
      * Calls recordForumPost CF.
      * The backend only applies the 3-per-day limit when showLocation == true.
@@ -443,6 +412,7 @@ public class CreatePostActivity extends AppCompatActivity {
             public void onAllowed(int remaining) {
                 if (isFinishing() || isDestroyed()) return;
 
+                // Proceed normally once the backend says this post is allowed.
                 if (viewModel.getUploadedImageUrl() != null) {
                     createFirestorePost(msg, viewModel.getUploadedImageUrl());
                 } else if (selectedImageUri != null) {
@@ -503,14 +473,16 @@ public class CreatePostActivity extends AppCompatActivity {
         ref.putFile(selectedImageUri)
                 .addOnSuccessListener(ts -> ref.getDownloadUrl().addOnSuccessListener(uri -> {
                     if (isFinishing() || isDestroyed()) return;
+                    // FIX #3: persist URL so rotation doesn't lose it
                     viewModel.setUploadedImageUrl(uri.toString());
-                    showImagePreview(uri.toString());
                     createFirestorePost(msg, uri.toString());
                 }))
                 .addOnFailureListener(e -> {
                     if (isFinishing() || isDestroyed()) return;
+                    // Persist the new state so the action is saved outside the current screen.
                     viewModel.isPostInProgress.set(false);
                     setPostingUi(false);
+                    // Give the user immediate feedback about the result of this action.
                     Toast.makeText(this, "Image upload failed", Toast.LENGTH_SHORT).show();
                 });
     }
@@ -530,7 +502,7 @@ public class CreatePostActivity extends AppCompatActivity {
         if (user == null) return;
 
         ForumPost post = new ForumPost(user.getUid(), currentUsername, currentUserProfilePicUrl, msg, url);
-        post.setId(viewModel.getPendingPostId());
+        post.setId(viewModel.getPendingPostId()); // Fix #25: stable ID survives rotation
         post.setSpotted(binding.cbSpotted.isChecked());
         post.setHunted(binding.cbHunted.isChecked());
         post.setShowLocation(binding.swShowLocation.isChecked());
@@ -544,8 +516,10 @@ public class CreatePostActivity extends AppCompatActivity {
             public void onSuccess() {
                 if (isFinishing() || isDestroyed()) return;
                 ForumSubmissionCooldownHelper.markSubmissionSuccess(CreatePostActivity.this);
+                // Persist the new state so the action is saved outside the current screen.
                 viewModel.isPostFinished.set(true);
                 viewModel.isPostInProgress.set(false);
+                // Give the user immediate feedback about the result of this action.
                 Toast.makeText(CreatePostActivity.this, "Post shared!", Toast.LENGTH_SHORT).show();
                 finish();
             }
@@ -555,13 +529,6 @@ public class CreatePostActivity extends AppCompatActivity {
                 if (isFinishing() || isDestroyed()) return;
                 viewModel.isPostInProgress.set(false);
                 setPostingUi(false);
-
-                if (isModerationErrorMessage(errorMessage)) {
-                    showPostWarning(errorMessage);
-                } else {
-                    clearPostWarning();
-                }
-
                 Toast.makeText(CreatePostActivity.this, errorMessage != null ? errorMessage : "Failed to share post", Toast.LENGTH_SHORT).show();
             }
         });
@@ -576,66 +543,6 @@ public class CreatePostActivity extends AppCompatActivity {
      */
     private void setPostingUi(boolean posting) {
         binding.btnPost.setEnabled(!posting);
-        if (loadingOverlay != null) {
-            loadingOverlay.setVisibility(posting ? View.VISIBLE : View.GONE);
-        }
-    }
-
-    /**
-     * Shows a concise inline moderation warning under the post composer.
-     */
-    private void showPostWarning(String message) {
-        binding.messageInputLayout.setError(message);
-        binding.messageInputLayout.setErrorEnabled(true);
-    }
-
-    /**
-     * Clears any inline moderation warning once the user changes the post text.
-     */
-    private void clearPostWarning() {
-        binding.messageInputLayout.setError(null);
-        binding.messageInputLayout.setErrorEnabled(false);
-    }
-
-    /**
-     * Builds a concise moderation message for inline composer warnings.
-     */
-    private String buildModerationWarningFromReason(String fieldName, String reason) {
-        String safeFieldName = fieldName == null || fieldName.trim().isEmpty() ? "content" : fieldName.trim();
-        if (reason == null || reason.trim().isEmpty()) {
-            return "Your " + safeFieldName.toLowerCase() + " could not be submitted. Please review it and try again.";
-        }
-
-        switch (reason) {
-            case "inappropriate language":
-                return "Your " + safeFieldName.toLowerCase() + " includes language that is not allowed. Please remove it and try again.";
-            case "glitch text":
-                return "Your " + safeFieldName.toLowerCase() + " includes glitch-style text that can break the forum layout. Please remove the special characters and try again.";
-            case "an email address":
-            case "a phone number":
-            case "external links":
-            case "sensitive financial data":
-            case "excessive character repetition":
-                return "Your " + safeFieldName.toLowerCase() + " includes " + reason + ". Please remove it before posting.";
-            default:
-                return "Your " + safeFieldName.toLowerCase() + " includes " + reason + ". Please remove it before posting.";
-        }
-    }
-
-    /**
-     * Returns true when an error message likely came from moderation/filtering logic.
-     */
-    private boolean isModerationErrorMessage(String message) {
-        if (message == null) return false;
-        String lower = message.toLowerCase();
-        return lower.contains("could not be submitted")
-                || lower.contains("contains inappropriate")
-                || lower.contains("contains external links")
-                || lower.contains("contains an email address")
-                || lower.contains("contains a phone number")
-                || lower.contains("contains sensitive financial data")
-                || lower.contains("contains excessive character repetition")
-                || lower.contains("contains glitch text")
-                || lower.contains("language that is not allowed");
+        if (loadingOverlay != null) loadingOverlay.setVisibility(posting ? View.VISIBLE : View.GONE);
     }
 }

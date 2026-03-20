@@ -333,6 +333,7 @@ public class CardMakerActivity extends AppCompatActivity {
                 slotData.put("slotIndex", (int) nextIndex);
                 slotData.put("commonName", currentCommonName);
                 slotData.put("scientificName", currentScientificName);
+                slotData.put("isFavorite", false);
                 transaction.set(slotRef, slotData);
             } else {
                 String existingRarity = slotSnap.getString("rarity");

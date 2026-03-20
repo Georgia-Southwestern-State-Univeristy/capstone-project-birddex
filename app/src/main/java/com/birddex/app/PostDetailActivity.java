@@ -16,7 +16,9 @@ import android.widget.LinearLayout;
 import android.widget.PopupMenu;
 import android.widget.TextView;
 import android.widget.Toast;
-
+import android.text.Editable;
+import android.text.TextWatcher;
+import android.view.View;
 import androidx.annotation.NonNull;
 import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
@@ -140,8 +142,44 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
      */
     private void setupUI() {
         binding.toolbar.setNavigationOnClickListener(v -> finish());
-        // Attach the user interaction that should run when this control is tapped.
         binding.btnSendComment.setOnClickListener(v -> postComment());
+
+        binding.etComment.addTextChangedListener(new TextWatcher() {
+            @Override
+            public void beforeTextChanged(CharSequence s, int start, int count, int after) {
+                // no-op
+            }
+
+            @Override
+            public void onTextChanged(CharSequence s, int start, int before, int count) {
+                updateCommentContentFilterUi(s != null ? s.toString() : "");
+            }
+
+            @Override
+            public void afterTextChanged(Editable s) {
+                // no-op
+            }
+        });
+
+        updateCommentContentFilterUi(
+                binding.etComment.getText() != null
+                        ? binding.etComment.getText().toString()
+                        : ""
+        );
+    }
+
+    private void updateCommentContentFilterUi(String text) {
+        boolean hasFilteredContent = ContentFilter.containsInappropriateContent(text);
+
+        binding.tvCommentContentWarning.setVisibility(hasFilteredContent ? View.VISIBLE : View.GONE);
+
+        if (hasFilteredContent) {
+            binding.commentInputLayout.setErrorEnabled(true);
+            binding.commentInputLayout.setError(" ");
+        } else {
+            binding.commentInputLayout.setError(null);
+            binding.commentInputLayout.setErrorEnabled(false);
+        }
     }
 
     /**

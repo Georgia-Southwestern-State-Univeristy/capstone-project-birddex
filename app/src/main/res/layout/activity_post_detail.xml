@@ -55,57 +55,78 @@
         </LinearLayout>
     </androidx.core.widget.NestedScrollView>
 
-    <!-- Comment Input Container -->
-    <LinearLayout
+    <androidx.constraintlayout.widget.ConstraintLayout
         android:id="@+id/commentInputContainer"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:orientation="horizontal"
-        android:padding="8dp"
-        android:gravity="bottom"
         android:background="?attr/colorSurface"
         android:elevation="8dp"
+        android:padding="8dp"
         app:layout_constraintBottom_toBottomOf="parent">
 
         <com.google.android.material.imageview.ShapeableImageView
             android:id="@+id/ivCurrentUserPfp"
             android:layout_width="32dp"
             android:layout_height="32dp"
-            android:layout_marginBottom="12dp"
             android:src="@drawable/ic_profile"
+            app:layout_constraintBottom_toBottomOf="@id/commentInputLayout"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toTopOf="@id/commentInputLayout"
+            app:layout_constraintVertical_bias="0.3"
             app:shapeAppearanceOverlay="@style/ShapeAppearanceOverlay.App.CornerSize50Percent" />
+
+        <TextView
+            android:id="@+id/tvCommentContentWarning"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="8dp"
+            android:layout_marginEnd="8dp"
+            android:text="Comment contains inappropriate content"
+            android:textColor="@color/md_theme_error"
+            android:textStyle="bold"
+            android:visibility="gone"
+            app:layout_constraintEnd_toStartOf="@id/btnSendComment"
+            app:layout_constraintStart_toEndOf="@id/ivCurrentUserPfp"
+            app:layout_constraintTop_toTopOf="parent" />
 
         <com.google.android.material.textfield.TextInputLayout
             android:id="@+id/commentInputLayout"
+            style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox.Dense"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
-            android:layout_weight="1"
             android:layout_marginStart="8dp"
-            app:hintEnabled="false"
+            android:layout_marginEnd="8dp"
             app:counterEnabled="true"
             app:counterMaxLength="300"
-            style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox.Dense">
+            app:hintEnabled="false"
+            app:layout_constraintBottom_toBottomOf="parent"
+            app:layout_constraintEnd_toStartOf="@id/btnSendComment"
+            app:layout_constraintStart_toEndOf="@id/ivCurrentUserPfp"
+            app:layout_constraintTop_toBottomOf="@id/tvCommentContentWarning">
 
             <com.google.android.material.textfield.TextInputEditText
                 android:id="@+id/etComment"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
+                android:background="@android:color/transparent"
                 android:hint="Write a comment..."
-                android:textSize="14sp"
-                android:padding="10dp"
                 android:maxLength="300"
-                android:background="@android:color/transparent" />
+                android:padding="10dp"
+                android:textSize="14sp" />
         </com.google.android.material.textfield.TextInputLayout>
 
         <ImageButton
             android:id="@+id/btnSendComment"
-            android:layout_width="40dp"
-            android:layout_height="40dp"
-            android:layout_marginBottom="8dp"
+            android:layout_width="32dp"
+            android:layout_height="32dp"
             android:background="?attr/selectableItemBackgroundBorderless"
             android:src="@drawable/ic_chat"
+            app:layout_constraintBottom_toBottomOf="@id/commentInputLayout"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintTop_toTopOf="@id/commentInputLayout"
+            app:layout_constraintVertical_bias="0.3"
             app:tint="?attr/colorPrimary" />
 
-    </LinearLayout>
+    </androidx.constraintlayout.widget.ConstraintLayout>
 
 </androidx.constraintlayout.widget.ConstraintLayout>

@@ -11,7 +11,8 @@ import android.os.Bundle;
 import android.util.Log;
 import android.view.View;
 import android.widget.Toast;
-
+import android.text.Editable;
+import android.text.TextWatcher;
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.annotation.NonNull;
@@ -168,6 +169,7 @@ public class CreatePostActivity extends AppCompatActivity {
         binding.fabRemoveImage.setOnClickListener(v -> {
             selectedImageUri = null;
             viewModel.setUploadedImageUrl(null);
+            binding.imagePreviewContainer.setVisibility(View.GONE);
             binding.ivBirdImagePreview.setVisibility(View.GONE);
             binding.fabRemoveImage.setVisibility(View.GONE);
             binding.tvImagePlaceholder.setVisibility(View.VISIBLE);
@@ -184,6 +186,43 @@ public class CreatePostActivity extends AppCompatActivity {
         if (!prefs.getBoolean(KEY_GRAPHIC_CONTENT, false)) {
             binding.cbHunted.setEnabled(false);
             binding.cbHunted.setAlpha(0.5f);
+        }
+
+        binding.etPostMessage.addTextChangedListener(new TextWatcher() {
+            @Override
+            public void beforeTextChanged(CharSequence s, int start, int count, int after) {
+                // no-op
+            }
+
+            @Override
+            public void onTextChanged(CharSequence s, int start, int before, int count) {
+                updatePostContentFilterUi(s != null ? s.toString() : "");
+            }
+
+            @Override
+            public void afterTextChanged(Editable s) {
+                // no-op
+            }
+        });
+
+        updatePostContentFilterUi(
+                binding.etPostMessage.getText() != null
+                        ? binding.etPostMessage.getText().toString()
+                        : ""
+        );
+    }
+
+    private void updatePostContentFilterUi(String text) {
+        boolean hasFilteredContent = ContentFilter.containsInappropriateContent(text);
+
+        binding.tvPostContentWarning.setVisibility(hasFilteredContent ? View.VISIBLE : View.GONE);
+
+        if (hasFilteredContent) {
+            binding.messageInputLayout.setErrorEnabled(true);
+            binding.messageInputLayout.setError(" ");
+        } else {
+            binding.messageInputLayout.setError(null);
+            binding.messageInputLayout.setErrorEnabled(false);
         }
     }
 
@@ -290,10 +329,10 @@ public class CreatePostActivity extends AppCompatActivity {
             if (isFinishing() || isDestroyed()) return;
             if (r.isSuccessful() && r.getUriContent() != null) {
                 selectedImageUri = r.getUriContent();
+                binding.imagePreviewContainer.setVisibility(View.VISIBLE);
                 binding.ivBirdImagePreview.setVisibility(View.VISIBLE);
                 binding.fabRemoveImage.setVisibility(View.VISIBLE);
                 binding.tvImagePlaceholder.setVisibility(View.GONE);
-                // Load the image asynchronously so the UI can show remote/local media without blocking the main thread.
                 Glide.with(this).load(selectedImageUri).into(binding.ivBirdImagePreview);
             }
         });

@@ -23,11 +23,11 @@ public class ContentFilter {
             "slut", "whore", "sex", "porn", "pornography", "xxx", "nsfw", "erotic",
             "hardcore", "softcore", "adult content", "motherfucker", "cocksucker",
             "cockfucker", "jackass", "dipshit", "dumbass", "dumbshit", "goddamn", "piss",
-            "ahole", "biotch", "cunt",
+            "ahole", "biotch", "cunt", "fucker", "fucking",
 
             // --- Anatomy & Sexual Terms ---
             "penis", "vagina", "clitoris", "testicles", "scrotum", "boobs", "tits",
-            "ass", "butt", "breasts", "genitals", "cock", "balls", "clit", "labia",
+            "ass", "breasts", "genitals", "cock", "balls", "clit", "labia",
             "erection", "masturbate", "masturbation", "orgasm", "cum", "cumming",
             "ejaculate", "penetrate", "penetration", "intercourse", "coitus",
             "blowjob", "handjob", "deepthroat", "rimjob", "rimming", "anal",

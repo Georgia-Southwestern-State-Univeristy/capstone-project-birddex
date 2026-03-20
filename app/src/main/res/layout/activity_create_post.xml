@@ -90,6 +90,20 @@
                 app:layout_constraintStart_toStartOf="parent"
                 app:layout_constraintTop_toBottomOf="@id/llStatusOptions" />
 
+            <!-- Filtered-content warning -->
+            <TextView
+                android:id="@+id/tvPostContentWarning"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="16dp"
+                android:layout_marginTop="8dp"
+                android:text="Post contains inappropriate content"
+                android:textColor="@color/md_theme_error"
+                android:textStyle="bold"
+                android:visibility="gone"
+                app:layout_constraintStart_toStartOf="parent"
+                app:layout_constraintTop_toBottomOf="@id/swShowLocation" />
+
             <!-- Post Content Input -->
             <com.google.android.material.textfield.TextInputLayout
                 android:id="@+id/messageInputLayout"
@@ -97,12 +111,13 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginStart="16dp"
-                android:layout_marginTop="8dp"
+                android:layout_marginTop="4dp"
                 android:layout_marginEnd="16dp"
                 android:hint="What's on your mind?"
                 app:counterEnabled="true"
                 app:counterMaxLength="500"
-                app:layout_constraintTop_toBottomOf="@id/swShowLocation">
+                app:layout_constraintTop_toBottomOf="@id/tvPostContentWarning"
+                app:layout_goneMarginTop="8dp">
 
                 <com.google.android.material.textfield.TextInputEditText
                     android:id="@+id/etPostMessage"
@@ -125,6 +140,7 @@
                 android:layout_marginTop="16dp"
                 android:layout_marginEnd="16dp"
                 android:background="@drawable/bg_image_placeholder"
+                android:visibility="gone"
                 app:layout_constraintTop_toBottomOf="@id/messageInputLayout">
 
                 <ImageView
@@ -177,8 +193,11 @@
                 app:icon="@drawable/ic_image"
                 app:layout_constraintBottom_toBottomOf="parent"
                 app:layout_constraintEnd_toEndOf="parent"
+                app:layout_constraintHorizontal_bias="0.0"
                 app:layout_constraintStart_toStartOf="parent"
-                app:layout_constraintTop_toBottomOf="@id/imagePreviewContainer" />
+                app:layout_constraintTop_toBottomOf="@id/imagePreviewContainer"
+                app:layout_constraintVertical_bias="1.0"
+                app:layout_goneMarginTop="64dp" />
 
         </androidx.constraintlayout.widget.ConstraintLayout>
     </androidx.core.widget.NestedScrollView>

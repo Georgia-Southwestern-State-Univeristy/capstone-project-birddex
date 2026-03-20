@@ -7,6 +7,7 @@
     android:background="?attr/colorSurface"
     tools:context=".CreatePostActivity">
 
+    <!-- Header/Toolbar -->
     <com.google.android.material.appbar.MaterialToolbar
         android:id="@+id/toolbar"
         android:layout_width="match_parent"
@@ -25,6 +26,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content">
 
+            <!-- User Info Section -->
             <LinearLayout
                 android:id="@+id/userInfoLayout"
                 android:layout_width="match_parent"
@@ -88,6 +90,7 @@
                 app:layout_constraintStart_toStartOf="parent"
                 app:layout_constraintTop_toBottomOf="@id/llStatusOptions" />
 
+            <!-- Post Content Input -->
             <com.google.android.material.textfield.TextInputLayout
                 android:id="@+id/messageInputLayout"
                 style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
@@ -113,16 +116,7 @@
 
             </com.google.android.material.textfield.TextInputLayout>
 
-            <!-- Spacer shown only when there is no selected image so the Add Bird Image button sits lower -->
-            <View
-                android:id="@+id/emptyPreviewSpacer"
-                android:layout_width="0dp"
-                android:layout_height="84dp"
-                android:visibility="visible"
-                app:layout_constraintEnd_toEndOf="@id/messageInputLayout"
-                app:layout_constraintStart_toStartOf="@id/messageInputLayout"
-                app:layout_constraintTop_toBottomOf="@id/messageInputLayout" />
-
+            <!-- Image Preview and Selection -->
             <androidx.constraintlayout.widget.ConstraintLayout
                 android:id="@+id/imagePreviewContainer"
                 android:layout_width="match_parent"
@@ -131,7 +125,6 @@
                 android:layout_marginTop="16dp"
                 android:layout_marginEnd="16dp"
                 android:background="@drawable/bg_image_placeholder"
-                android:visibility="gone"
                 app:layout_constraintTop_toBottomOf="@id/messageInputLayout">
 
                 <ImageView
@@ -151,7 +144,7 @@
                     android:layout_height="wrap_content"
                     android:text="No image selected"
                     android:textColor="?attr/colorOnSurfaceVariant"
-                    android:visibility="gone"
+                    android:visibility="visible"
                     app:layout_constraintBottom_toBottomOf="parent"
                     app:layout_constraintEnd_toEndOf="parent"
                     app:layout_constraintStart_toStartOf="parent"
@@ -172,27 +165,20 @@
 
             </androidx.constraintlayout.widget.ConstraintLayout>
 
-            <androidx.constraintlayout.widget.Barrier
-                android:id="@+id/imageButtonAnchor"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                app:barrierDirection="bottom"
-                app:constraint_referenced_ids="emptyPreviewSpacer,imagePreviewContainer" />
-
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/btnSelectImage"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_marginStart="16dp"
-                android:layout_marginTop="12dp"
+                android:layout_marginTop="16dp"
                 android:layout_marginEnd="16dp"
-                android:layout_marginBottom="20dp"
+                android:layout_marginBottom="16dp"
                 android:text="Add Bird Image"
                 app:icon="@drawable/ic_image"
                 app:layout_constraintBottom_toBottomOf="parent"
                 app:layout_constraintEnd_toEndOf="parent"
                 app:layout_constraintStart_toStartOf="parent"
-                app:layout_constraintTop_toBottomOf="@id/imageButtonAnchor" />
+                app:layout_constraintTop_toBottomOf="@id/imagePreviewContainer" />
 
         </androidx.constraintlayout.widget.ConstraintLayout>
     </androidx.core.widget.NestedScrollView>
@@ -214,19 +200,19 @@
         android:layout_width="0dp"
         android:layout_height="0dp"
         android:background="#99424242"
-        android:clickable="true"
-        android:elevation="10dp"
-        android:focusable="true"
         android:visibility="gone"
+        android:clickable="true"
+        android:focusable="true"
+        android:elevation="10dp"
+        app:layout_constraintTop_toTopOf="parent"
         app:layout_constraintBottom_toBottomOf="parent"
-        app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toTopOf="parent">
-
+        app:layout_constraintEnd_toEndOf="parent">
         <ProgressBar
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_gravity="center" />
+            android:layout_gravity="center"
+            android:indeterminateTint="@color/page_cream" />
     </FrameLayout>
 
 </androidx.constraintlayout.widget.ConstraintLayout>

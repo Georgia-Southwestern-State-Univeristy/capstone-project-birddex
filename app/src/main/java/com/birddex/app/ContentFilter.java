@@ -23,7 +23,7 @@ public class ContentFilter {
             "slut", "whore", "sex", "porn", "pornography", "xxx", "nsfw", "erotic",
             "hardcore", "softcore", "adult content", "motherfucker", "cocksucker",
             "cockfucker", "jackass", "dipshit", "dumbass", "dumbshit", "goddamn", "piss",
-            "ahole", "biotch", "cunt", "Fucker", "Fucking",
+            "ahole", "biotch", "cunt",
 
             // --- Anatomy & Sexual Terms ---
             "penis", "vagina", "clitoris", "testicles", "scrotum", "boobs", "tits",
@@ -96,12 +96,12 @@ public class ContentFilter {
     private static final Pattern PHONE_PATTERN = Pattern.compile("\\b(\\+?\\d{1,3}[-.\\s]?)?\\(?\\d{3}\\)?[-.\\s]?\\d{3}[-.\\s]?\\d{4}\\b");
     private static final Pattern URL_PATTERN = Pattern.compile("https?://\\S+\\s?");
     private static final Pattern SPAM_REPETITION_PATTERN = Pattern.compile("(.)\\1{4,}");
-
+    
     // Detects Credit Card patterns (13 to 16 digits)
     private static final Pattern CREDIT_CARD_PATTERN = Pattern.compile("\\b(?:\\d[ -]*?){13,16}\\b");
-
+    
     // Detects Zalgo / Glitch text (excessive combining marks that break UI)
-    private static final Pattern ZALGO_PATTERN = Pattern.compile("[\\u0300-\\u036F\\u1DC0-\\u1DFF\\u20D0-\\u20FF\\uFE20-\\uFE2F]{3,}");
+    private static final Pattern ZALGO_PATTERN = Pattern.compile("[\\u0300-\u036F\\u1DC0-\u1DFF\\u20D0-\u20FF\\uFE20-\uFE2F]{3,}");
 
     /**
      * Checks if the given text is safe to post.
@@ -115,8 +115,16 @@ public class ContentFilter {
     public static boolean isSafe(Context context, String text, String fieldName) {
         String result = getInappropriateReason(text);
         if (result != null) {
+            String toastMessage;
+            if (result.equals("inappropriate language")) {
+                toastMessage = "Inappropriate language detected. Your " + fieldName.toLowerCase() + " cannot be posted.";
+            } else if (result.equals("glitch text")) {
+                toastMessage = "Formatting error detected. Please remove special symbols.";
+            } else {
+                toastMessage = fieldName + " contains " + result + ".";
+            }
             // Give the user immediate feedback about the result of this action.
-            Toast.makeText(context, buildModerationWarningFromReason(fieldName, result), Toast.LENGTH_LONG).show();
+            Toast.makeText(context, toastMessage, Toast.LENGTH_LONG).show();
             return false;
         }
         return true;
@@ -137,7 +145,7 @@ public class ContentFilter {
         // 2. Normalize Unicode (converts accented chars like 'fûck' to 'fuck')
         String unicodeNormalized = Normalizer.normalize(text, Normalizer.Form.NFD)
                 .replaceAll("[^\\p{ASCII}]", "");
-
+        
         String lower = unicodeNormalized.toLowerCase();
 
         // 3. Check for Financial Data
@@ -157,54 +165,6 @@ public class ContentFilter {
         if (hasInappropriateLanguage(lower)) return "inappropriate language";
 
         return null;
-    }
-
-    /**
-     * Builds a user-friendly moderation warning message for a field.
-     */
-    public static String buildModerationWarning(String fieldName, String text) {
-        return buildModerationWarningFromReason(fieldName, getInappropriateReason(text));
-    }
-
-    /**
-     * Builds a user-friendly moderation warning message when the caller already knows the reason.
-     */
-    public static String buildModerationWarningFromReason(String fieldName, String reason) {
-        String safeFieldName = fieldName == null || fieldName.trim().isEmpty() ? "content" : fieldName.trim();
-        if (reason == null || reason.trim().isEmpty()) {
-            return "Your " + safeFieldName.toLowerCase() + " could not be submitted. Please review it and try again.";
-        }
-
-        switch (reason) {
-            case "inappropriate language":
-                return "Your " + safeFieldName.toLowerCase() + " includes language that is not allowed. Please remove it and try again.";
-            case "glitch text":
-                return "Your " + safeFieldName.toLowerCase() + " includes glitch-style text that can break the forum layout. Please remove the special characters and try again.";
-            case "an email address":
-            case "a phone number":
-            case "external links":
-            case "sensitive financial data":
-            case "excessive character repetition":
-                return "Your " + safeFieldName.toLowerCase() + " includes " + reason + ". Please remove it before posting.";
-            default:
-                return "Your " + safeFieldName.toLowerCase() + " includes " + reason + ". Please remove it before posting.";
-        }
-    }
-
-    /**
-     * Returns true when an error message likely came from moderation/filtering logic.
-     */
-    public static boolean isModerationErrorMessage(String message) {
-        if (message == null) return false;
-        String lower = message.toLowerCase();
-        return lower.contains("could not be submitted")
-                || lower.contains("contains inappropriate")
-                || lower.contains("contains external links")
-                || lower.contains("contains an email address")
-                || lower.contains("contains a phone number")
-                || lower.contains("contains sensitive financial data")
-                || lower.contains("contains excessive character repetition")
-                || lower.contains("contains glitch text");
     }
 
     /**

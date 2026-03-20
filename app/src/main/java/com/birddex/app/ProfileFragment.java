@@ -59,7 +59,8 @@ import java.util.Map;
  */
 public class ProfileFragment extends Fragment implements
         FavoritesAdapter.OnFavoriteInteractionListener,
-        ForumPostAdapter.OnPostClickListener {
+        ForumPostAdapter.OnPostClickListener,
+        TrackedBirdAdapter.OnTrackedBirdInteractionListener {
 
     private static final String TAG = "ProfileFragment";
     private static final String ARG_USER_ID = "arg_user_id";
@@ -73,7 +74,7 @@ public class ProfileFragment extends Fragment implements
     private View btnFollowers, btnFollowing;
 
     private TabLayout profileTabLayout;
-    private RecyclerView rvFavoriteCards, rvProfilePosts;
+    private RecyclerView rvFavoriteCards, rvTrackedBirds, rvProfilePosts;
     private SwipeRefreshLayout swipeRefreshLayout;
     private AppBarLayout profileAppBar;
     private View profileHeader;
@@ -83,6 +84,7 @@ public class ProfileFragment extends Fragment implements
     private FirebaseManager firebaseManager;
 
     private FavoritesAdapter favoritesAdapter;
+    private TrackedBirdAdapter trackedBirdsAdapter;
     private ForumPostAdapter postsAdapter;
 
     private List<ForumPost> postList = new ArrayList<>();
@@ -101,6 +103,7 @@ public class ProfileFragment extends Fragment implements
 
     private final List<String> favoriteCardKeys = new ArrayList<>();
     private final List<CollectionSlot> allCollectionSlots = new ArrayList<>();
+    private final List<TrackedBird> trackedBirdList = new ArrayList<>();
 
     private ActivityResultLauncher<Intent> editProfileLauncher;
     private ListenerRegistration profileListener;
@@ -109,6 +112,7 @@ public class ProfileFragment extends Fragment implements
     private int fetchGeneration = 0;
     private int savedFetchGeneration = 0;
     private int favoriteFetchGeneration = 0;
+    private int trackedFetchGeneration = 0;
 
     public ProfileFragment() {}
 
@@ -177,6 +181,7 @@ public class ProfileFragment extends Fragment implements
         profileTabLayout = v.findViewById(R.id.profileTabLayout);
         tvProfileTabEmpty = v.findViewById(R.id.tvProfileTabEmpty);
         rvFavoriteCards = v.findViewById(R.id.rvFavoriteCards);
+        rvTrackedBirds = v.findViewById(R.id.rvTrackedBirds);
         rvProfilePosts = v.findViewById(R.id.rvProfilePosts);
         swipeRefreshLayout = v.findViewById(R.id.swipeRefreshLayout);
 
@@ -198,7 +203,10 @@ public class ProfileFragment extends Fragment implements
         isNavigating = false;
         if (profileListener == null) fetchUserProfile();
         refreshPosts();
-        if (isCurrentUser) refreshSavedPosts();
+        if (isCurrentUser) {
+            refreshTrackedBirds();
+            refreshSavedPosts();
+        }
     }
 
     /**
@@ -216,6 +224,10 @@ public class ProfileFragment extends Fragment implements
             }
         });
         rvFavoriteCards.setAdapter(favoritesAdapter);
+
+        trackedBirdsAdapter = new TrackedBirdAdapter(isCurrentUser, this);
+        rvTrackedBirds.setLayoutManager(new LinearLayoutManager(requireContext()));
+        rvTrackedBirds.setAdapter(trackedBirdsAdapter);
 
         postsAdapter = new ForumPostAdapter(this);
         rvProfilePosts.setLayoutManager(new LinearLayoutManager(requireContext()));
@@ -241,9 +253,11 @@ public class ProfileFragment extends Fragment implements
      */
     private void setupTabs() {
         if (isCurrentUser && profileTabLayout.getTabCount() == 2) {
+            profileTabLayout.addTab(profileTabLayout.newTab().setIcon(R.drawable.tracking), 1, false);
             profileTabLayout.addTab(profileTabLayout.newTab().setIcon(R.drawable.outline_bookmark_24));
         } else if (isCurrentUser && profileTabLayout.getTabCount() == 0) {
             profileTabLayout.addTab(profileTabLayout.newTab().setIcon(R.drawable.ic_collection));
+            profileTabLayout.addTab(profileTabLayout.newTab().setIcon(R.drawable.tracking));
             profileTabLayout.addTab(profileTabLayout.newTab().setIcon(R.drawable.ic_forum));
             profileTabLayout.addTab(profileTabLayout.newTab().setIcon(R.drawable.outline_bookmark_24));
         }
@@ -260,7 +274,6 @@ public class ProfileFragment extends Fragment implements
             @Override
             public void onTabReselected(TabLayout.Tab tab) {}
         });
-        applyTabState(0);
     }
 
     /**
@@ -269,16 +282,24 @@ public class ProfileFragment extends Fragment implements
     private void applyTabState(int position) {
         if (!isAdded()) return;
 
-        updateAppBarScrollBehavior(position);
+        rvFavoriteCards.setVisibility(View.GONE);
+        rvTrackedBirds.setVisibility(View.GONE);
+        rvProfilePosts.setVisibility(View.GONE);
+        tvProfileTabEmpty.setVisibility(View.GONE);
 
         if (position == 0) {
             rvFavoriteCards.setVisibility(View.VISIBLE);
-            rvProfilePosts.setVisibility(View.GONE);
-            tvProfileTabEmpty.setVisibility(View.GONE);
+            updateAppBarScrollBehavior(position);
             return;
         }
 
-        rvFavoriteCards.setVisibility(View.GONE);
+        if (isCurrentUser && position == getTrackedTabPosition()) {
+            rvTrackedBirds.setVisibility(trackedBirdList.isEmpty() ? View.GONE : View.VISIBLE);
+            tvProfileTabEmpty.setVisibility(trackedBirdList.isEmpty() ? View.VISIBLE : View.GONE);
+            if (trackedBirdList.isEmpty()) tvProfileTabEmpty.setText("No tracked birds yet.");
+            updateAppBarScrollBehavior(position);
+            return;
+        }
 
         if (isCurrentUser && position == getSavedTabPosition()) {
             if (savedPostList.isEmpty() && !isFetchingSaved && !isSavedLastPage) fetchSavedPosts();
@@ -286,6 +307,7 @@ public class ProfileFragment extends Fragment implements
             rvProfilePosts.setVisibility(savedPostList.isEmpty() ? View.GONE : View.VISIBLE);
             tvProfileTabEmpty.setVisibility(savedPostList.isEmpty() ? View.VISIBLE : View.GONE);
             if (savedPostList.isEmpty()) tvProfileTabEmpty.setText("No saved posts yet.");
+            updateAppBarScrollBehavior(position);
             return;
         }
 
@@ -294,7 +316,9 @@ public class ProfileFragment extends Fragment implements
         rvProfilePosts.setVisibility(postList.isEmpty() ? View.GONE : View.VISIBLE);
         tvProfileTabEmpty.setVisibility(postList.isEmpty() ? View.VISIBLE : View.GONE);
         if (postList.isEmpty()) tvProfileTabEmpty.setText("No posts yet.");
+        updateAppBarScrollBehavior(position);
     }
+
 
     /**
      * Updates object/screen state by storing a new value or reconfiguring a dependency.
@@ -302,32 +326,80 @@ public class ProfileFragment extends Fragment implements
     private void updateAppBarScrollBehavior(int position) {
         if (profileAppBar == null || profileHeader == null || profileTabLayout == null || swipeRefreshLayout == null) return;
 
-        AppBarLayout.LayoutParams headerParams = (AppBarLayout.LayoutParams) profileHeader.getLayoutParams();
-        AppBarLayout.LayoutParams tabParams = (AppBarLayout.LayoutParams) profileTabLayout.getLayoutParams();
-
+        // Favorites tab stays non-scrollable on purpose.
         if (position == 0) {
-            headerParams.setScrollFlags(0);
-            tabParams.setScrollFlags(0);
-            profileHeader.setLayoutParams(headerParams);
-            profileTabLayout.setLayoutParams(tabParams);
-            profileAppBar.setLiftOnScroll(false);
-            profileAppBar.setExpanded(true, false);
+            setAppBarScrollEnabled(false);
             swipeRefreshLayout.setNestedScrollingEnabled(false);
             rvFavoriteCards.setNestedScrollingEnabled(false);
             rvFavoriteCards.stopScroll();
             return;
         }
 
-        headerParams.setScrollFlags(
-                AppBarLayout.LayoutParams.SCROLL_FLAG_SCROLL
-                        | AppBarLayout.LayoutParams.SCROLL_FLAG_EXIT_UNTIL_COLLAPSED
-        );
+        RecyclerView activeRecycler = getActiveScrollableRecycler(position);
+        if (activeRecycler == null || activeRecycler.getVisibility() != View.VISIBLE) {
+            setAppBarScrollEnabled(false);
+            swipeRefreshLayout.setNestedScrollingEnabled(false);
+            return;
+        }
+
+        // Wait until the RecyclerView has been measured/layouted, then decide if the content
+        // is actually tall enough to scroll. If not, keep the app bar fixed.
+        activeRecycler.post(() -> {
+            if (!isAdded() || profileTabLayout == null) return;
+            if (profileTabLayout.getSelectedTabPosition() != position) return;
+
+            boolean contentCanScroll =
+                    activeRecycler.canScrollVertically(1) ||
+                            activeRecycler.computeVerticalScrollRange() > activeRecycler.computeVerticalScrollExtent();
+
+            activeRecycler.setNestedScrollingEnabled(contentCanScroll);
+            swipeRefreshLayout.setNestedScrollingEnabled(contentCanScroll);
+            setAppBarScrollEnabled(contentCanScroll);
+
+            if (!contentCanScroll) {
+                activeRecycler.stopScroll();
+                profileAppBar.setExpanded(true, false);
+            }
+        });
+    }
+
+    /**
+     * Main logic block for this part of the feature.
+     */
+    @Nullable
+    private RecyclerView getActiveScrollableRecycler(int position) {
+        if (position == 0) return null;
+
+        if (isCurrentUser && position == getTrackedTabPosition()) {
+            return rvTrackedBirds;
+        }
+
+        return rvProfilePosts;
+    }
+
+    /**
+     * Updates object/screen state by storing a new value or reconfiguring a dependency.
+     */
+    private void setAppBarScrollEnabled(boolean enabled) {
+        if (profileAppBar == null || profileHeader == null || profileTabLayout == null) return;
+
+        AppBarLayout.LayoutParams headerParams = (AppBarLayout.LayoutParams) profileHeader.getLayoutParams();
+        AppBarLayout.LayoutParams tabParams = (AppBarLayout.LayoutParams) profileTabLayout.getLayoutParams();
+
+        headerParams.setScrollFlags(enabled
+                ? AppBarLayout.LayoutParams.SCROLL_FLAG_SCROLL
+                | AppBarLayout.LayoutParams.SCROLL_FLAG_EXIT_UNTIL_COLLAPSED
+                : 0);
+
         tabParams.setScrollFlags(0);
+
         profileHeader.setLayoutParams(headerParams);
         profileTabLayout.setLayoutParams(tabParams);
-        profileAppBar.setLiftOnScroll(true);
-        swipeRefreshLayout.setNestedScrollingEnabled(true);
-        rvFavoriteCards.setNestedScrollingEnabled(false);
+        profileAppBar.setLiftOnScroll(enabled);
+
+        if (!enabled) {
+            profileAppBar.setExpanded(true, false);
+        }
     }
 
     /**
@@ -435,6 +507,7 @@ public class ProfileFragment extends Fragment implements
         List<String> cloudKeys = (List<String>) doc.get("favoriteCardKeys");
         if (cloudKeys != null) favoriteCardKeys.addAll(cloudKeys);
         loadFavoriteCards();
+        if (isCurrentUser) loadTrackedBirds();
     }
 
     /**
@@ -467,6 +540,56 @@ public class ProfileFragment extends Fragment implements
                     if (!isAdded() || generation != favoriteFetchGeneration) return;
                     processFavoriteSlotSnapshot(querySnapshot, generation);
                 });
+    }
+
+    /**
+     * Pulls data from a local source, Firebase, or an external API and prepares it for the UI or
+     * caller.
+     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
+     * changes.
+     */
+    private void loadTrackedBirds() {
+        if (!isCurrentUser || profileUserId == null) return;
+        final int myGen = ++trackedFetchGeneration;
+        firebaseManager.getTrackedBirds(task -> {
+            if (!isAdded() || myGen != trackedFetchGeneration) return;
+
+            trackedBirdList.clear();
+            if (task.isSuccessful() && task.getResult() != null) {
+                for (DocumentSnapshot doc : task.getResult().getDocuments()) {
+                    TrackedBird trackedBird = doc.toObject(TrackedBird.class);
+                    if (trackedBird != null) {
+                        if (trackedBird.getBirdId() == null || trackedBird.getBirdId().trim().isEmpty()) {
+                            trackedBird.setBirdId(doc.getId());
+                        }
+                        if (trackedBird.getDocumentId() == null || trackedBird.getDocumentId().trim().isEmpty()) {
+                            trackedBird.setDocumentId(doc.getId());
+                        }
+                        trackedBirdList.add(trackedBird);
+                    }
+                }
+
+                trackedBirdList.sort((left, right) -> {
+                    if (left == null && right == null) return 0;
+                    if (left == null) return 1;
+                    if (right == null) return -1;
+                    if (left.getTrackedAt() == null && right.getTrackedAt() == null) return 0;
+                    if (left.getTrackedAt() == null) return 1;
+                    if (right.getTrackedAt() == null) return -1;
+                    return right.getTrackedAt().compareTo(left.getTrackedAt());
+                });
+            } else {
+                Log.e(TAG, "Failed to load tracked birds.", task.getException());
+            }
+
+            trackedBirdsAdapter.submitList(new ArrayList<>(trackedBirdList));
+            applyTabState(profileTabLayout.getSelectedTabPosition());
+        });
+    }
+
+    private void refreshTrackedBirds() {
+        if (!isCurrentUser) return;
+        loadTrackedBirds();
     }
 
     private void processFavoriteSlotSnapshot(com.google.firebase.firestore.QuerySnapshot querySnapshot, int generation) {
@@ -777,8 +900,12 @@ public class ProfileFragment extends Fragment implements
         return isCurrentUser && profileTabLayout != null && profileTabLayout.getSelectedTabPosition() == getSavedTabPosition();
     }
 
+    private int getTrackedTabPosition() {
+        return isCurrentUser ? 1 : -1;
+    }
+
     private int getSavedTabPosition() {
-        return isCurrentUser ? 2 : -1;
+        return isCurrentUser ? 3 : -1;
     }
 
     /**
@@ -788,7 +915,10 @@ public class ProfileFragment extends Fragment implements
         swipeRefreshLayout.setOnRefreshListener(() -> {
             fetchUserProfile();
             refreshPosts();
-            if (isCurrentUser) refreshSavedPosts();
+            if (isCurrentUser) {
+                refreshTrackedBirds();
+                refreshSavedPosts();
+            }
             swipeRefreshLayout.setRefreshing(false);
         });
     }
@@ -912,6 +1042,32 @@ public class ProfileFragment extends Fragment implements
                 .putExtra(NearbyHeatmapActivity.EXTRA_CENTER_LAT, post.getLatitude())
                 .putExtra(NearbyHeatmapActivity.EXTRA_CENTER_LNG, post.getLongitude())
                 .putExtra("extra_post_id", post.getId()));
+    }
+
+    @Override
+    public void onTrackedBirdClicked(@NonNull TrackedBird trackedBird) {
+        String birdId = trackedBird.getBirdId();
+        if (birdId == null || birdId.trim().isEmpty() || isNavigating) return;
+        isNavigating = true;
+        startActivity(new Intent(requireContext(), BirdWikiActivity.class)
+                .putExtra(BirdWikiActivity.EXTRA_BIRD_ID, birdId));
+    }
+
+    @Override
+    public void onTrackedBirdRemoveClicked(@NonNull TrackedBird trackedBird) {
+        if (!isCurrentUser) return;
+        String birdId = trackedBird.getBirdId();
+        if (birdId == null || birdId.trim().isEmpty()) return;
+
+        firebaseManager.untrackBird(birdId, task -> {
+            if (!isAdded()) return;
+            if (task.isSuccessful()) {
+                Toast.makeText(requireContext(), "Bird untracked", Toast.LENGTH_SHORT).show();
+                refreshTrackedBirds();
+            } else {
+                Toast.makeText(requireContext(), "Failed to untrack bird.", Toast.LENGTH_SHORT).show();
+            }
+        });
     }
 
     @Override

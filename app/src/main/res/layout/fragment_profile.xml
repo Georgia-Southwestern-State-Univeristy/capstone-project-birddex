@@ -242,6 +242,18 @@
                 tools:listitem="@layout/view_bird_card" />
 
             <androidx.recyclerview.widget.RecyclerView
+                android:id="@+id/rvTrackedBirds"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:clipToPadding="false"
+                android:paddingStart="12dp"
+                android:paddingTop="12dp"
+                android:paddingEnd="12dp"
+                android:paddingBottom="24dp"
+                android:visibility="gone"
+                tools:listitem="@layout/item_tracked_bird" />
+
+            <androidx.recyclerview.widget.RecyclerView
                 android:id="@+id/rvProfilePosts"
                 android:layout_width="match_parent"
                 android:layout_height="match_parent"

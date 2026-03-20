@@ -70,14 +70,20 @@ public class SignUpActivity extends AppCompatActivity {
                 String username = usernameEditText.getText().toString().trim();
                 String email = emailEditText.getText().toString().trim();
                 String password = passwordEditText.getText().toString();
-                
+
+                if (ContentFilter.containsInappropriateContent(username)) {
+                    firebaseManager.logFilteredContentAttempt("username_signup_client_block", "username", username, null, null);
+                    usernameEditText.setError("Inappropriate username.");
+                    return;
+                }
+
                 setLoadingState(true);
                 firebaseManager.createAccount(username, email, password, new FirebaseManager.AuthListener() {
                     @Override
                     public void onSuccess(FirebaseUser user) {
                         if (isNavigating) return;
                         isNavigating = true;
-                        
+
                         setLoadingState(false);
                         // Give the user immediate feedback about the result of this action.
                         Toast.makeText(SignUpActivity.this, "Sign up successful. Please verify your email.", Toast.LENGTH_LONG).show();
@@ -92,7 +98,7 @@ public class SignUpActivity extends AppCompatActivity {
                     }
 
                     @Override
-                    public void onUsernameTaken() { 
+                    public void onUsernameTaken() {
                         setLoadingState(false);
                         usernameEditText.setError("Username already taken.");
                     }

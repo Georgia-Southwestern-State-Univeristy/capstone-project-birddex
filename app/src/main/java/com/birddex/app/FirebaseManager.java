@@ -999,6 +999,28 @@ public class FirebaseManager {
     }
 
     /**
+     * Sends a lightweight client-side filtered-content log to the backend so blocked attempts can
+     * still be recorded even when the UI stops the submission before the normal write callable.
+     */
+    public void logFilteredContentAttempt(String submissionType, String fieldName, String text, String threadId, String commentId) {
+        Map<String, Object> data = new HashMap<>();
+        data.put("submissionType", submissionType != null ? submissionType : "unknown_client_block");
+        data.put("fieldName", fieldName != null ? fieldName : "text");
+        data.put("text", text != null ? text : "");
+        if (threadId != null && !threadId.trim().isEmpty()) data.put("threadId", threadId);
+        if (commentId != null && !commentId.trim().isEmpty()) data.put("commentId", commentId);
+
+        mFunctions.getHttpsCallable("logFilteredContentAttempt").call(data)
+                .addOnCompleteListener(task -> {
+                    if (task.isSuccessful()) {
+                        Log.d(TAG, "logFilteredContentAttempt succeeded for " + submissionType + " / " + fieldName);
+                    } else {
+                        Log.e(TAG, "logFilteredContentAttempt failed.", task.getException());
+                    }
+                });
+    }
+
+    /**
      * Reads whether the current user has already saved a forum post through the backend so the
      * Save/Unsave label does not depend on client Firestore read rules.
      */

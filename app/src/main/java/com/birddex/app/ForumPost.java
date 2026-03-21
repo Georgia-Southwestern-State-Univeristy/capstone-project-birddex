@@ -41,7 +41,15 @@ public class ForumPost {
     private boolean notificationSent;
     private boolean likeNotificationSent;
     private Timestamp lastViewedAt;
-    private Timestamp heatmapExpiresAt;
+
+    private String moderationStatus;
+    private String moderationReason;
+    private String moderationSource;
+    private Timestamp moderatedAt;
+    private Timestamp hiddenAt;
+    private int reportCount;
+    private int uniqueReporterCount;
+    private Map<String, Object> reportReasonCounts;
 
     /**
      * Constructor that stores incoming dependencies/values so this object starts in a usable
@@ -51,6 +59,8 @@ public class ForumPost {
         // Required for Firestore
         this.likedBy = new HashMap<>();
         this.viewedBy = new HashMap<>();
+        this.reportReasonCounts = new HashMap<>();
+        this.moderationStatus = "visible";
     }
 
     /**
@@ -70,6 +80,8 @@ public class ForumPost {
         this.viewCount = 0;
         this.likedBy = new HashMap<>();
         this.viewedBy = new HashMap<>();
+        this.reportReasonCounts = new HashMap<>();
+        this.moderationStatus = "visible";
         this.edited = false;
         this.showLocation = false;
         this.hunted = false;
@@ -130,6 +142,21 @@ public class ForumPost {
     public void setLikeNotificationSent(boolean likeNotificationSent) { this.likeNotificationSent = likeNotificationSent; }
     public Timestamp getLastViewedAt() { return lastViewedAt; }
     public void setLastViewedAt(Timestamp lastViewedAt) { this.lastViewedAt = lastViewedAt; }
-    public Timestamp getHeatmapExpiresAt() { return heatmapExpiresAt; }
-    public void setHeatmapExpiresAt(Timestamp heatmapExpiresAt) { this.heatmapExpiresAt = heatmapExpiresAt; }
+
+    public String getModerationStatus() { return moderationStatus; }
+    public void setModerationStatus(String moderationStatus) { this.moderationStatus = moderationStatus; }
+    public String getModerationReason() { return moderationReason; }
+    public void setModerationReason(String moderationReason) { this.moderationReason = moderationReason; }
+    public String getModerationSource() { return moderationSource; }
+    public void setModerationSource(String moderationSource) { this.moderationSource = moderationSource; }
+    public Timestamp getModeratedAt() { return moderatedAt; }
+    public void setModeratedAt(Timestamp moderatedAt) { this.moderatedAt = moderatedAt; }
+    public Timestamp getHiddenAt() { return hiddenAt; }
+    public void setHiddenAt(Timestamp hiddenAt) { this.hiddenAt = hiddenAt; }
+    public int getReportCount() { return reportCount; }
+    public void setReportCount(int reportCount) { this.reportCount = reportCount; }
+    public int getUniqueReporterCount() { return uniqueReporterCount; }
+    public void setUniqueReporterCount(int uniqueReporterCount) { this.uniqueReporterCount = uniqueReporterCount; }
+    public Map<String, Object> getReportReasonCounts() { return reportReasonCounts; }
+    public void setReportReasonCounts(Map<String, Object> reportReasonCounts) { this.reportReasonCounts = reportReasonCounts; }
 }

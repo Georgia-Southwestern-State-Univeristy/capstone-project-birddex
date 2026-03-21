@@ -51,7 +51,7 @@ public class BirdWikiActivity extends AppCompatActivity {
     // Local app cache for Cloud Function facts so the page does not repeatedly call
     // the function when Firestore cache is missing but recent facts were already fetched.
     private static final String FACTS_CACHE_PREFS = "birdwiki_facts_cache";
-    private static final long FACTS_CACHE_TTL_MS = 12L * 60L * 60L * 1000L;
+    private static final long FACTS_CACHE_TTL_MS = 3L * 24L * 60L * 60L * 1000L;
 
 
 

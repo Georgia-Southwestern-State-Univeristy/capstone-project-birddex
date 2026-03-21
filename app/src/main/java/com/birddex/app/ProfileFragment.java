@@ -701,6 +701,15 @@ public class ProfileFragment extends Fragment implements
                 .addOnFailureListener(e -> finishProfilePostsFetch(myGen));
     }
 
+    private boolean isForumPostVisible(ForumPost post) {
+        if (post == null) return false;
+        String status = post.getModerationStatus();
+        return status == null
+                || status.isEmpty()
+                || "visible".equalsIgnoreCase(status)
+                || "under_review".equalsIgnoreCase(status);
+    }
+
     private Query buildProfilePostsBaseQuery() {
         return db.collection("forumThreads")
                 .whereEqualTo("userId", profileUserId)
@@ -730,7 +739,7 @@ public class ProfileFragment extends Fragment implements
                 ForumPost post = doc.toObject(ForumPost.class);
                 if (post != null) {
                     post.setId(doc.getId());
-                    postList.add(post);
+                    if (isForumPostVisible(post)) postList.add(post);
                 }
             }
             if (value.size() < PAGE_SIZE) isLastPage = true;
@@ -750,7 +759,7 @@ public class ProfileFragment extends Fragment implements
                 ForumPost post = doc.toObject(ForumPost.class);
                 if (post != null) {
                     post.setId(doc.getId());
-                    postList.add(post);
+                    if (isForumPostVisible(post)) postList.add(post);
                 }
             }
             if (value.size() < PAGE_SIZE) isLastPage = true;
@@ -854,7 +863,7 @@ public class ProfileFragment extends Fragment implements
                 ForumPost post = doc.toObject(ForumPost.class);
                 if (post != null) {
                     post.setId(doc.getId());
-                    resolvedPosts.add(post);
+                    if (isForumPostVisible(post)) resolvedPosts.add(post);
                 }
             }
 

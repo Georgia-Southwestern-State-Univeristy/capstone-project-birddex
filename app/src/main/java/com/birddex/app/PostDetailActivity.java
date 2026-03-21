@@ -182,6 +182,24 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
         }
     }
 
+    private boolean isForumPostVisible(ForumPost post) {
+        if (post == null) return false;
+        String status = post.getModerationStatus();
+        return status == null
+                || status.isEmpty()
+                || "visible".equalsIgnoreCase(status)
+                || "under_review".equalsIgnoreCase(status);
+    }
+
+    private boolean isForumCommentVisible(ForumComment comment) {
+        if (comment == null) return false;
+        String status = comment.getModerationStatus();
+        return status == null
+                || status.isEmpty()
+                || "visible".equalsIgnoreCase(status)
+                || "under_review".equalsIgnoreCase(status);
+    }
+
     /**
      * Pulls data from a local source, Firebase, or an external API and prepares it for the UI or
      * caller.
@@ -235,6 +253,11 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
                     originalPost = doc.toObject(ForumPost.class);
                     if (originalPost != null) {
                         originalPost.setId(doc.getId());
+                        if (!isForumPostVisible(originalPost)) {
+                            Toast.makeText(this, "This post is not currently visible.", Toast.LENGTH_SHORT).show();
+                            finish();
+                            return;
+                        }
                         FirebaseUser user = mAuth.getCurrentUser();
                         if (user != null && !hasMarkedAsViewed && !doc.getMetadata().hasPendingWrites()) handleViewTracking(user.getUid(), originalPost);
                         bindPostToLayout(originalPost);
@@ -669,7 +692,7 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
                 ForumComment c = d.toObject(ForumComment.class);
                 if (c != null) {
                     c.setId(d.getId());
-                    commentList.add(c);
+                    if (isForumCommentVisible(c)) commentList.add(c);
                 }
             }
             if (value.size() < COMMENTS_PAGE_SIZE) isLastCommentsPage = true;
@@ -688,7 +711,7 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
                 ForumComment c = d.toObject(ForumComment.class);
                 if (c != null) {
                     c.setId(d.getId());
-                    commentList.add(c);
+                    if (isForumCommentVisible(c)) commentList.add(c);
                 }
             }
             if (value.size() < COMMENTS_PAGE_SIZE) isLastCommentsPage = true;

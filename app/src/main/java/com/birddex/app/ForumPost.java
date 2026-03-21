@@ -41,6 +41,7 @@ public class ForumPost {
     private boolean notificationSent;
     private boolean likeNotificationSent;
     private Timestamp lastViewedAt;
+    private Timestamp heatmapExpiresAt;
 
     /**
      * Constructor that stores incoming dependencies/values so this object starts in a usable
@@ -81,7 +82,7 @@ public class ForumPost {
     @Exclude // Prevents Firestore from writing an 'id' field while allowing code to use getId()
     public String getId() { return postId; }
     public void setId(String id) { this.postId = id; }
-    
+
     public String getPostId() { return postId; }
     public void setPostId(String postId) { this.postId = postId; }
 
@@ -129,4 +130,6 @@ public class ForumPost {
     public void setLikeNotificationSent(boolean likeNotificationSent) { this.likeNotificationSent = likeNotificationSent; }
     public Timestamp getLastViewedAt() { return lastViewedAt; }
     public void setLastViewedAt(Timestamp lastViewedAt) { this.lastViewedAt = lastViewedAt; }
+    public Timestamp getHeatmapExpiresAt() { return heatmapExpiresAt; }
+    public void setHeatmapExpiresAt(Timestamp heatmapExpiresAt) { this.heatmapExpiresAt = heatmapExpiresAt; }
 }

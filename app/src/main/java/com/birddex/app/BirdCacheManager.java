@@ -39,8 +39,8 @@ public class BirdCacheManager {
     private static final String KEY_BIRD_DETAILS_TIMESTAMP_PREFIX = "bird_details_timestamp_";
 
     public static final long NEARBY_CACHE_TTL_MS = 10L * 60L * 1000L;
-    public static final long CORE_BIRD_LIST_CACHE_TTL_MS = 12L * 60L * 60L * 1000L;
-    public static final long BIRD_DETAILS_CACHE_TTL_MS = 12L * 60L * 60L * 1000L;
+    public static final long CORE_BIRD_LIST_CACHE_TTL_MS = 24L * 60L * 60L * 1000L;
+    public static final long BIRD_DETAILS_CACHE_TTL_MS = 3L * 24L * 60L * 60L * 1000L;
 
     private static List<Bird> inMemoryNearbyBirds = new ArrayList<>();
     private static long inMemoryNearbyTimestamp = 0L;

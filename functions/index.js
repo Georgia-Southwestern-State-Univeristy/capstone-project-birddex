@@ -32,6 +32,7 @@ const messaging = admin.messaging();
 const OPENAI_API_KEY = defineSecret("OPENAI_API_KEY");
 const EBIRD_API_KEY = defineSecret("EBIRD_API_KEY");
 const NUTHATCH_API_KEY = defineSecret("NUTHATCH_API_KEY");
+const BIRDDEX_MODEL_API_KEY = defineSecret("BIRDDEX_MODEL_API_KEY");
 
 // ======================================================
 // CENTRALIZED CONFIG (replaces scattered hard-coded values)
@@ -47,6 +48,18 @@ const CONFIG = {
     UNVERIFIED_USER_TTL_MS: 72 * 60 * 60 * 1000,      // 72 hours
     FIRESTORE_BATCH_SIZE: 400,  // Firestore max is 500; using 400 for safety
     LOCATION_PRECISION: 4,      // decimal places (~11 meters)
+};
+
+// ======================================================
+// HYBRID IDENTIFICATION CONFIG
+// ======================================================
+const HYBRID_ID_CONFIG = {
+    BIRDDEX_MODEL_URL: "https://birddex-api-650774648072.us-central1.run.app/predict-json",
+    MODEL_DIRECT_CONFIDENCE_THRESHOLD: 0.70,
+    MODEL_DIRECT_MARGIN_THRESHOLD: 0.15,
+    MODEL_TIEBREAK_MARGIN_THRESHOLD: 0.10,
+    MODEL_FULL_FALLBACK_CONFIDENCE_THRESHOLD: 0.55,
+    MODEL_TOP_K: 3,
 };
 // ======================================================
 // HELPER: Input Sanitization
@@ -855,7 +868,342 @@ exports.archiveAndDeleteUser = onCall(async (request) => {
 });
 
 // ======================================================
-// identifyBird (OpenAI) - FIXED: Idempotent version
+// HELPER: Hybrid bird identification pipeline helpers
+// ======================================================
+function parseBirdIdentificationText(identificationText) {
+    const safeText = identificationText || "";
+    return {
+        birdId: safeText.split("ID:")[1]?.split("\n")[0]?.trim() || null,
+        commonName: safeText.split("Common Name:")[1]?.split("\n")[0]?.trim() || null,
+        scientificName: safeText.split("Scientific Name:")[1]?.split("\n")[0]?.trim() || null,
+        species: safeText.split("Species:")[1]?.split("\n")[0]?.trim() || null,
+        family: safeText.split("Family:")[1]?.split("\n")[0]?.trim() || null,
+    };
+}
+
+function buildBirdIdentificationText(birdId, birdData) {
+    return `ID: ${birdId}
+Common Name: ${birdData.commonName || "Unknown"}
+Scientific Name: ${birdData.scientificName || "Unknown"}
+Species: ${birdData.species || "Unknown"}
+Family: ${birdData.family || "Unknown"}`;
+}
+
+async function findBirdByCommonName(commonName) {
+    if (!commonName || typeof commonName !== "string") return null;
+    const snapshot = await db.collection("birds")
+        .where("commonName", "==", commonName.trim())
+        .limit(1)
+        .get();
+
+    if (snapshot.empty) return null;
+    return snapshot.docs[0].data();
+}
+
+async function callBirdModelApi(base64Image) {
+    const headers = { "Content-Type": "application/json" };
+    const internalKey = BIRDDEX_MODEL_API_KEY.value();
+    if (internalKey) {
+        headers["X-Internal-Api-Key"] = internalKey;
+    }
+
+    const response = await axios.post(
+        HYBRID_ID_CONFIG.BIRDDEX_MODEL_URL,
+        {
+            imageBase64: base64Image,
+            topK: HYBRID_ID_CONFIG.MODEL_TOP_K,
+        },
+        {
+            headers,
+            timeout: 15000,
+        }
+    );
+
+    const rawPredictions = Array.isArray(response.data?.top_predictions)
+        ? response.data.top_predictions
+        : [];
+
+    if (!rawPredictions.length) {
+        throw new HttpsError("internal", "Bird model returned no predictions.");
+    }
+
+    return rawPredictions.map((prediction) => ({
+        commonName: prediction.commonName || prediction.species || prediction.label || null,
+        confidence: Number(prediction.confidence || 0),
+    }));
+}
+
+async function callOpenAiBirdTieBreak(base64Image, candidateA, candidateB) {
+    const aiResponse = await axios.post(
+        "https://api.openai.com/v1/chat/completions",
+        {
+            model: "gpt-4o",
+            messages: [{
+                role: "user",
+                content: [
+                    {
+                        type: "text",
+                        text: `You are identifying a bird from an image.
+If the image contains a dead bird, gore, or graphic violence, respond ONLY with 'GORE'.
+Choose ONLY between these two BirdDex candidates and return exactly one winner in this exact format:
+ID: [bird_id]
+Common Name: [name]
+Scientific Name: [name]
+Species: [name]
+Family: [name]
+
+Candidate 1:
+ID: ${candidateA.id}
+Common Name: ${candidateA.commonName}
+Scientific Name: ${candidateA.scientificName}
+Species: ${candidateA.species}
+Family: ${candidateA.family}
+
+Candidate 2:
+ID: ${candidateB.id}
+Common Name: ${candidateB.commonName}
+Scientific Name: ${candidateB.scientificName}
+Species: ${candidateB.species}
+Family: ${candidateB.family}`
+                    },
+                    {
+                        type: "image_url",
+                        image_url: {
+                            url: `data:image/jpeg;base64,${base64Image}`,
+                            detail: "high"
+                        }
+                    }
+                ]
+            }],
+            max_tokens: 250
+        },
+        {
+            headers: { "Authorization": `Bearer ${OPENAI_API_KEY.value()}` },
+            timeout: 25000
+        }
+    );
+
+    if (!aiResponse.data?.choices?.[0]) {
+        throw new HttpsError("internal", "OpenAI tie-break returned invalid response format.");
+    }
+
+    const identification = aiResponse.data.choices[0].message?.content;
+    if (!identification) {
+        throw new HttpsError("internal", "OpenAI tie-break returned empty response.");
+    }
+
+    return identification;
+}
+
+async function callOpenAiBirdFullFallback(base64Image) {
+    const aiResponse = await axios.post(
+        "https://api.openai.com/v1/chat/completions",
+        {
+            model: "gpt-4o",
+            messages: [{
+                role: "user",
+                content: [
+                    {
+                        type: "text",
+                        text: `Identify the bird in this image. If the image contains a dead bird, gore, or graphic violence, respond ONLY with 'GORE'. Otherwise, respond exactly as:
+ID: [ebird_species_code]
+Common Name: [name]
+Scientific Name: [name]
+Species: [name]
+Family: [name]`
+                    },
+                    {
+                        type: "image_url",
+                        image_url: {
+                            url: `data:image/jpeg;base64,${base64Image}`,
+                            detail: "high"
+                        }
+                    }
+                ]
+            }],
+            max_tokens: 300
+        },
+        {
+            headers: { "Authorization": `Bearer ${OPENAI_API_KEY.value()}` },
+            timeout: 25000
+        }
+    );
+
+    if (!aiResponse.data?.choices?.[0]) {
+        throw new HttpsError("internal", "OpenAI returned invalid response format.");
+    }
+
+    const identification = aiResponse.data.choices[0].message?.content;
+    if (!identification) {
+        throw new HttpsError("internal", "OpenAI returned empty response.");
+    }
+
+    return identification;
+}
+
+async function reserveOpenAiQuota(userRef, eventLogRef, userId) {
+    await db.runTransaction(async (transaction) => {
+        const eventDoc = await transaction.get(eventLogRef);
+        if (eventDoc.exists) {
+            throw new HttpsError("aborted", "Identification in progress. Please retry in a moment.");
+        }
+
+        const userDoc = await transaction.get(userRef);
+        if (!userDoc.exists) throw new HttpsError("not-found", "User document not found.");
+
+        const userData = userDoc.data();
+        let currentRequestsRemaining = userData.openAiRequestsRemaining || 0;
+        const openAiCooldownResetTimestamp = userData.openAiCooldownResetTimestamp?.toDate() || null;
+        const currentTime = new Date();
+
+        if (openAiCooldownResetTimestamp && (currentTime.getTime() - openAiCooldownResetTimestamp.getTime()) >= CONFIG.COOLDOWN_PERIOD_MS) {
+            currentRequestsRemaining = CONFIG.MAX_OPENAI_REQUESTS;
+        }
+
+        if (currentRequestsRemaining <= 0) {
+            throw new HttpsError("resource-exhausted", "AI request limit reached.");
+        }
+
+        const updatedOpenAiRequestsRemaining = currentRequestsRemaining - 1;
+        let newCooldownTimestamp = openAiCooldownResetTimestamp;
+        if (currentRequestsRemaining === CONFIG.MAX_OPENAI_REQUESTS) {
+            newCooldownTimestamp = admin.firestore.FieldValue.serverTimestamp();
+        }
+
+        transaction.update(userRef, {
+            openAiRequestsRemaining: updatedOpenAiRequestsRemaining,
+            openAiCooldownResetTimestamp: newCooldownTimestamp,
+        });
+
+        transaction.set(eventLogRef, {
+            userId,
+            processedAt: admin.firestore.FieldValue.serverTimestamp(),
+            pending: true,
+        });
+    });
+}
+
+async function persistHybridIdentification({
+    userId,
+    imageUrl,
+    locationId,
+    modelPredictions,
+    topBirdMatches,
+    decisionReason,
+    modelVersion,
+    usedOpenAi,
+    openAiMode,
+    openAiCandidates,
+    openAiRawResponse,
+    finalBirdData,
+    finalBirdId,
+    finalSource,
+    isVerified,
+}) {
+    const identificationLogRef = db.collection("identificationLogs").doc();
+
+    const safeTop1 = modelPredictions[0] || null;
+    const safeTop2 = modelPredictions[1] || null;
+    const safeTop3 = modelPredictions[2] || null;
+    const birdMatch1 = topBirdMatches[0] || null;
+    const birdMatch2 = topBirdMatches[1] || null;
+    const birdMatch3 = topBirdMatches[2] || null;
+
+    const identificationLogData = {
+        userId,
+        timestamp: admin.firestore.FieldValue.serverTimestamp(),
+        imageUrl: imageUrl || "",
+        locationId: locationId || null,
+        pipelineVersion: "hybrid_v1",
+        modelVersion,
+        localModel: {
+            top1Common: safeTop1?.commonName || null,
+            top1BirdId: birdMatch1?.id || null,
+            top1Scientific: birdMatch1?.scientificName || null,
+            top1Confidence: safeTop1?.confidence ?? null,
+            top2Common: safeTop2?.commonName || null,
+            top2BirdId: birdMatch2?.id || null,
+            top2Scientific: birdMatch2?.scientificName || null,
+            top2Confidence: safeTop2?.confidence ?? null,
+            top3Common: safeTop3?.commonName || null,
+            top3BirdId: birdMatch3?.id || null,
+            top3Scientific: birdMatch3?.scientificName || null,
+            top3Confidence: safeTop3?.confidence ?? null,
+        },
+        decision: {
+            usedOpenAi,
+            decisionReason,
+            confidenceThreshold: HYBRID_ID_CONFIG.MODEL_DIRECT_CONFIDENCE_THRESHOLD,
+            marginThreshold: HYBRID_ID_CONFIG.MODEL_DIRECT_MARGIN_THRESHOLD,
+            tieBreakMarginThreshold: HYBRID_ID_CONFIG.MODEL_TIEBREAK_MARGIN_THRESHOLD,
+            lowConfidenceThreshold: HYBRID_ID_CONFIG.MODEL_FULL_FALLBACK_CONFIDENCE_THRESHOLD,
+        },
+        openAi: {
+            used: usedOpenAi,
+            mode: openAiMode || null,
+            candidate1BirdId: openAiCandidates?.[0]?.id || null,
+            candidate1Common: openAiCandidates?.[0]?.commonName || null,
+            candidate1Scientific: openAiCandidates?.[0]?.scientificName || null,
+            candidate2BirdId: openAiCandidates?.[1]?.id || null,
+            candidate2Common: openAiCandidates?.[1]?.commonName || null,
+            candidate2Scientific: openAiCandidates?.[1]?.scientificName || null,
+            responseText: openAiRawResponse || null,
+        },
+        finalResult: {
+            birdId: finalBirdId || null,
+            commonName: finalBirdData?.commonName || null,
+            scientificName: finalBirdData?.scientificName || null,
+            family: finalBirdData?.family || null,
+            species: finalBirdData?.species || null,
+            source: finalSource,
+            verified: isVerified,
+        },
+        userFeedback: {
+            status: "unknown",
+            confirmedCorrect: null,
+            correctedBirdId: null,
+            correctedCommonName: null,
+            correctedScientificName: null,
+            feedbackTimestamp: null,
+        },
+        training: {
+            eligibleForTraining: false,
+            labelQuality: usedOpenAi ? (openAiMode === "tiebreak" ? "openai_tiebreak" : "openai_full_unconfirmed") : "model_only_unconfirmed",
+        },
+    };
+
+    await identificationLogRef.set(identificationLogData);
+
+    let identificationId = null;
+    if (isVerified && finalBirdData && finalBirdId) {
+        const identificationRef = db.collection("identifications").doc();
+        const identificationData = {
+            birdId: finalBirdId,
+            commonName: finalBirdData.commonName || null,
+            scientificName: finalBirdData.scientificName || null,
+            family: finalBirdData.family || null,
+            species: finalBirdData.species || null,
+            locationId: locationId || null,
+            verified: true,
+            imageUrl: imageUrl || "",
+            timestamp: admin.firestore.FieldValue.serverTimestamp(),
+            source: finalSource,
+            identificationLogId: identificationLogRef.id,
+            modelVersion,
+            usedOpenAi,
+            pipelineVersion: "hybrid_v1",
+        };
+
+        await identificationRef.set(identificationData);
+        identificationId = identificationRef.id;
+        await identificationLogRef.set({ identificationId }, { merge: true });
+    }
+
+    return { identificationLogId: identificationLogRef.id, identificationId };
+}
+
+// ======================================================
+// identifyBird (Hybrid local model + OpenAI fallback)
 // ======================================================
 /**
  * Main backend logic block for this Firebase Functions file.
@@ -866,24 +1214,24 @@ exports.archiveAndDeleteUser = onCall(async (request) => {
  * Input/permission checks happen here first so invalid requests fail before any expensive
  * backend work starts.
  */
-exports.identifyBird = onCall({ secrets: [OPENAI_API_KEY], timeoutSeconds: 30 }, async (request) => {
+exports.identifyBird = onCall({ secrets: [OPENAI_API_KEY, BIRDDEX_MODEL_API_KEY], timeoutSeconds: 60 }, async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
 
     const userId = request.auth.uid;
-    // This is where the function touches Firestore documents/collections for the requested action.
     const userRef = db.collection("users").doc(userId);
     const { image, imageUrl, latitude, longitude, localityName, requestId } = request.data;
 
-    // Use requestId if provided for idempotency, otherwise default to a hash of the image URL or Base64 (fallback)
     const idempotencyKey = requestId || `IDEN_${admin.firestore.Timestamp.now().toMillis()}`;
     const eventLogRef = db.collection("processedAIEvents").doc(idempotencyKey);
 
+    if (!image || typeof image !== "string") {
+        throw new HttpsError("invalid-argument", "Image Base64 data is required.");
+    }
     if (typeof latitude !== "number" || typeof longitude !== "number") {
         throw new HttpsError("invalid-argument", "Latitude and longitude are required numbers.");
     }
 
     try {
-        // Idempotency check FIRST
         const existingEvent = await eventLogRef.get();
         if (existingEvent.exists) {
             const cached = existingEvent.data().result;
@@ -891,155 +1239,166 @@ exports.identifyBird = onCall({ secrets: [OPENAI_API_KEY], timeoutSeconds: 30 },
                 logger.info(`identifyBird: Request ${idempotencyKey} already processed. Returning cached result.`);
                 return cached;
             }
-            // A concurrent request has claimed this key but hasn't finished verification.
-            // Throw a retryable error — client should retry in ~2 seconds.
-            throw new HttpsError(
-                "aborted",
-                "Identification in progress. Please retry in a moment."
-            );
-        }
-
-        // Make OpenAI call FIRST (before deducting quota)
-        const aiResponse = await axios.post(
-            "https://api.openai.com/v1/chat/completions",
-            {
-                model: "gpt-4o",
-                messages: [{
-                    role: "user",
-                    content: [
-                        { type: "text", text: "Identify the bird in this image. If the image contains a dead bird, gore, or graphic violence, respond ONLY with 'GORE'. Otherwise, respond exactly as:\nID: [ebird_species_code]\nCommon Name: [name]\nScientific Name: [name]\nSpecies: [name]\nFamily: [name]" },
-                        {
-                          type: "image_url",
-                          image_url: {
-                            url: `data:image/jpeg;base64,${image}`,
-                            detail: "high"
-                          }
-                        }
-                    ]
-                }],
-                max_tokens: 300
-            },
-            {
-                headers: { "Authorization": `Bearer ${OPENAI_API_KEY.value()}` },
-                timeout: 25000
-            }
-        );
-
-        if (!aiResponse.data?.choices?.[0]) {
-            throw new HttpsError("internal", "OpenAI returned invalid response format.");
-        }
-
-        let identification = aiResponse.data.choices[0].message?.content;
-        if (!identification) throw new HttpsError("internal", "OpenAI returned empty response.");
-
-        if (identification.includes("GORE")) {
-            logger.warn(`Gore detected in image from user ${userId}. Identification aborted.`);
-            return { result: "GORE", isVerified: false, isGore: true };
-        }
-
-        // Deduct quota after successful OpenAI call in an idempotent transaction
-        let isVerified = false;
-        let finalIdentification = identification;
-
-        await db.runTransaction(async (transaction) => {
-            // Check again inside transaction
-            const eventDoc = await transaction.get(eventLogRef);
-            if (eventDoc.exists) return;
-
-            const userDoc = await transaction.get(userRef);
-            if (!userDoc.exists) throw new HttpsError("not-found", "User document not found.");
-
-            const userData = userDoc.data();
-            let currentRequestsRemaining = userData.openAiRequestsRemaining || 0;
-            const openAiCooldownResetTimestamp = userData.openAiCooldownResetTimestamp?.toDate() || null;
-            const currentTime = new Date();
-
-            if (openAiCooldownResetTimestamp && (currentTime.getTime() - openAiCooldownResetTimestamp.getTime()) >= CONFIG.COOLDOWN_PERIOD_MS) {
-                currentRequestsRemaining = CONFIG.MAX_OPENAI_REQUESTS;
-            }
-
-            if (currentRequestsRemaining <= 0) {
-                throw new HttpsError("resource-exhausted", "AI request limit reached.");
-            }
-
-            // Deduct request
-            const updatedOpenAiRequestsRemaining = currentRequestsRemaining - 1;
-            let newCooldownTimestamp = openAiCooldownResetTimestamp;
-            if (currentRequestsRemaining === CONFIG.MAX_OPENAI_REQUESTS) {
-                newCooldownTimestamp = admin.firestore.FieldValue.serverTimestamp();
-            }
-
-            transaction.update(userRef, {
-                openAiRequestsRemaining: updatedOpenAiRequestsRemaining,
-                openAiCooldownResetTimestamp: newCooldownTimestamp,
-            });
-
-            // We can't do the external verification lookups easily inside transaction,
-            // so we handle the quota and event log here.
-            transaction.set(eventLogRef, {
-                userId,
-                processedAt: admin.firestore.FieldValue.serverTimestamp(),
-                pending: true,
-                // result is written after verification completes (see eventLogRef.update below)
-            });
-        });
-
-        // --- Post-Quota Logic (Verification & Logging) ---
-        const aiBirdId = identification.split("ID:")[1]?.split("\n")[0]?.trim() || null;
-        const aiCommonName = identification.split("Common Name:")[1]?.split("\n")[0]?.trim() || null;
-        const aiScientificName = identification.split("Scientific Name:")[1]?.split("\n")[0]?.trim() || null;
-        const aiSpecies = identification.split("Species:")[1]?.split("\n")[0]?.trim() || null;
-        const aiFamily = identification.split("Family:")[1]?.split("\n")[0]?.trim() || null;
-
-        let verifiedBirdData = null;
-        let finalBirdId = aiBirdId;
-
-        const [byIdDoc, byNameSnapshot] = await Promise.all([
-            db.collection("birds").doc(aiBirdId).get(),
-            (aiCommonName && aiScientificName)
-                ? db.collection("birds").where("commonName", "==", aiCommonName).where("scientificName", "==", aiScientificName).limit(1).get()
-                : Promise.resolve({ empty: true, docs: [] })
-        ]);
-
-        if (byIdDoc.exists) {
-            isVerified = true;
-            verifiedBirdData = byIdDoc.data();
-            finalBirdId = verifiedBirdData.id;
-        } else if (!byNameSnapshot.empty) {
-            isVerified = true;
-            verifiedBirdData = byNameSnapshot.docs[0].data();
-            finalBirdId = verifiedBirdData.id;
+            throw new HttpsError("aborted", "Identification in progress. Please retry in a moment.");
         }
 
         const locationId = await getOrCreateLocation(latitude, longitude, localityName, db);
+        const modelPredictions = await callBirdModelApi(image);
+        const topBirdMatches = await Promise.all(
+            modelPredictions.slice(0, 3).map((prediction) => findBirdByCommonName(prediction.commonName))
+        );
 
-        if (isVerified && verifiedBirdData) {
-            const identificationData = {
-                birdId: finalBirdId,
-                commonName: verifiedBirdData.commonName || aiCommonName,
-                scientificName: verifiedBirdData.scientificName || aiScientificName,
-                family: verifiedBirdData.family || aiFamily,
-                species: verifiedBirdData.species || aiSpecies,
-                locationId,
-                verified: true,
-                imageUrl: imageUrl || "",
-                timestamp: admin.firestore.FieldValue.serverTimestamp()
-            };
-            await db.collection("identifications").add(identificationData);
-            finalIdentification = `ID: ${finalBirdId}\nCommon Name: ${identificationData.commonName}\nScientific Name: ${identificationData.scientificName}\nSpecies: ${identificationData.species}\nFamily: ${identificationData.family}`;
+        const top1 = modelPredictions[0] || null;
+        const top2 = modelPredictions[1] || null;
+        const top1Bird = topBirdMatches[0] || null;
+        const top2Bird = topBirdMatches[1] || null;
+        const top1Confidence = top1?.confidence ?? 0;
+        const top2Confidence = top2?.confidence ?? 0;
+        const topMargin = top1Confidence - top2Confidence;
+        const modelVersion = "20260319_071617_best";
+
+        let finalBirdData = null;
+        let finalBirdId = null;
+        let finalIdentification = null;
+        let finalSource = null;
+        let isVerified = false;
+        let usedOpenAi = false;
+        let openAiMode = null;
+        let openAiRawResponse = null;
+        let openAiCandidates = [];
+        let decisionReason = "model_confident";
+
+        const needsFullFallback = !top1Bird || top1Confidence < HYBRID_ID_CONFIG.MODEL_FULL_FALLBACK_CONFIDENCE_THRESHOLD;
+        const shouldTieBreak = !!top2Bird && topMargin <= HYBRID_ID_CONFIG.MODEL_TIEBREAK_MARGIN_THRESHOLD;
+        const shouldPreferModelDirect = !!top1Bird
+            && top1Confidence >= HYBRID_ID_CONFIG.MODEL_DIRECT_CONFIDENCE_THRESHOLD
+            && topMargin >= HYBRID_ID_CONFIG.MODEL_DIRECT_MARGIN_THRESHOLD;
+
+        if (shouldPreferModelDirect) {
+            finalBirdData = top1Bird;
+            finalBirdId = top1Bird.id;
+            finalSource = "local_model";
+            isVerified = true;
+            finalIdentification = buildBirdIdentificationText(finalBirdId, finalBirdData);
         } else {
-            finalIdentification = `ID: Unknown\n` + identification;
+            usedOpenAi = true;
+
+            if (shouldTieBreak) {
+                decisionReason = "top2_close";
+                openAiMode = "tiebreak";
+                openAiCandidates = [top1Bird, top2Bird].filter(Boolean);
+            } else if (needsFullFallback) {
+                decisionReason = !top1Bird ? "top1_not_in_supported_birds" : "low_confidence";
+                openAiMode = "full_fallback";
+            } else {
+                decisionReason = "margin_below_direct_threshold";
+                openAiMode = top2Bird ? "tiebreak" : "full_fallback";
+                openAiCandidates = top2Bird ? [top1Bird, top2Bird].filter(Boolean) : [];
+            }
+
+            await reserveOpenAiQuota(userRef, eventLogRef, userId);
+
+            openAiRawResponse = openAiMode === "tiebreak"
+                ? await callOpenAiBirdTieBreak(image, openAiCandidates[0], openAiCandidates[1])
+                : await callOpenAiBirdFullFallback(image);
+
+            if (openAiRawResponse.includes("GORE")) {
+                const goreLogRef = db.collection("identificationLogs").doc();
+                await goreLogRef.set({
+                    userId,
+                    timestamp: admin.firestore.FieldValue.serverTimestamp(),
+                    imageUrl: imageUrl || "",
+                    locationId: locationId || null,
+                    pipelineVersion: "hybrid_v1",
+                    modelVersion,
+                    decision: {
+                        usedOpenAi: true,
+                        decisionReason,
+                    },
+                    openAi: {
+                        used: true,
+                        mode: openAiMode,
+                        responseText: openAiRawResponse,
+                    },
+                    finalResult: {
+                        birdId: null,
+                        commonName: null,
+                        scientificName: null,
+                        family: null,
+                        species: null,
+                        source: "gore_blocked",
+                        verified: false,
+                    },
+                    training: {
+                        eligibleForTraining: false,
+                        labelQuality: "blocked_gore",
+                    },
+                });
+
+                const goreResult = { result: "GORE", isVerified: false, isGore: true };
+                await eventLogRef.set({
+                    userId,
+                    processedAt: admin.firestore.FieldValue.serverTimestamp(),
+                    pending: false,
+                    result: goreResult,
+                }, { merge: true });
+                return goreResult;
+            }
+
+            const parsedOpenAi = parseBirdIdentificationText(openAiRawResponse);
+            const byIdDoc = parsedOpenAi.birdId
+                ? await db.collection("birds").doc(parsedOpenAi.birdId).get()
+                : null;
+            const matchedBird = byIdDoc?.exists
+                ? byIdDoc.data()
+                : await findBirdByCommonName(parsedOpenAi.commonName);
+
+            if (matchedBird) {
+                finalBirdData = matchedBird;
+                finalBirdId = matchedBird.id;
+                finalSource = openAiMode === "tiebreak" ? "openai_tiebreak" : "openai_full";
+                isVerified = true;
+                finalIdentification = buildBirdIdentificationText(finalBirdId, finalBirdData);
+            } else {
+                finalBirdId = parsedOpenAi.birdId || "Unknown";
+                finalSource = openAiMode === "tiebreak" ? "openai_tiebreak_unverified" : "openai_full_unverified";
+                isVerified = false;
+                finalIdentification = `ID: Unknown
+${openAiRawResponse}`;
+            }
         }
 
-        const finalResult = { result: finalIdentification, isVerified };
-        // Update the log with the final result for future retries
-        await eventLogRef.update({ result: finalResult });
+        await persistHybridIdentification({
+            userId,
+            imageUrl,
+            locationId,
+            modelPredictions,
+            topBirdMatches,
+            decisionReason,
+            modelVersion,
+            usedOpenAi,
+            openAiMode,
+            openAiCandidates,
+            openAiRawResponse,
+            finalBirdData,
+            finalBirdId,
+            finalSource,
+            isVerified,
+        });
+
+        const finalResult = { result: finalIdentification, isVerified, isGore: false };
+        await eventLogRef.set({
+            userId,
+            processedAt: admin.firestore.FieldValue.serverTimestamp(),
+            pending: false,
+            result: finalResult,
+        }, { merge: true });
 
         return finalResult;
     } catch (error) {
-        logger.error("OpenAI identification failed:", error);
+        logger.error("Hybrid identification failed:", error);
         if (error instanceof HttpsError) throw error;
-        throw new HttpsError("internal", `OpenAI identification failed: ${error.message}`);
+        throw new HttpsError("internal", `Hybrid identification failed: ${error.message}`);
     }
 });
 

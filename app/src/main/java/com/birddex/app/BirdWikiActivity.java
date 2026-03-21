@@ -19,6 +19,7 @@ import androidx.appcompat.app.AppCompatActivity;
 
 import com.bumptech.glide.Glide;
 import com.bumptech.glide.load.DataSource;
+import com.bumptech.glide.load.engine.DiskCacheStrategy;
 import com.bumptech.glide.load.engine.GlideException;
 import com.bumptech.glide.request.RequestListener;
 import com.bumptech.glide.request.target.Target;
@@ -540,23 +541,32 @@ public class BirdWikiActivity extends AppCompatActivity {
 
         ivBirdHeaderImage.setVisibility(View.VISIBLE);
 
-        // Load the image asynchronously so the UI can show remote/local media without blocking the main thread.
+        // Optimized Glide call
         Glide.with(this)
                 .load(imageUrl)
+                // Caches both the original image and the resized version for this view
+                .diskCacheStrategy(DiskCacheStrategy.ALL)
+                // Ensures that if the user returns to this bird, it loads from memory instantly
+                .skipMemoryCache(false)
                 .listener(new RequestListener<Drawable>() {
                     @Override
-                    public boolean onLoadFailed(@Nullable GlideException e, Object model, Target<Drawable> target, boolean isFirstResource) {
+                    public boolean onLoadFailed(@Nullable GlideException e, Object model,
+                                                Target<Drawable> target, boolean isFirstResource) {
                         if (e != null) {
                             Log.e(TAG, "Bird header image failed to load for url=" + model, e);
                         }
-                        ivBirdHeaderImage.setImageDrawable(null);
+                        // Hide if failed so the UI doesn't show a blank gap
                         ivBirdHeaderImage.setVisibility(View.GONE);
                         markImageLoaded();
                         return false;
                     }
 
                     @Override
-                    public boolean onResourceReady(Drawable resource, Object model, Target<Drawable> target, DataSource dataSource, boolean isFirstResource) {
+                    public boolean onResourceReady(Drawable resource, Object model,
+                                                   Target<Drawable> target, DataSource dataSource,
+                                                   boolean isFirstResource) {
+                        // dataSource will tell you if it came from REMOTE, DATA_DISK_CACHE, or MEMORY_CACHE
+                        Log.d(TAG, "Image loaded from: " + dataSource.name());
                         ivBirdHeaderImage.setVisibility(View.VISIBLE);
                         markImageLoaded();
                         return false;

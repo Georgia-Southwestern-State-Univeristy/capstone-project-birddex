@@ -44,6 +44,7 @@ const CONFIG = {
     COOLDOWN_PERIOD_MS: 24 * 60 * 60 * 1000,       // 24 hours
     FACT_CACHE_LIFETIME_MS: 30 * 24 * 60 * 60 * 1000, // 30 days
     EBIRD_CACHE_TTL_MS: 72 * 60 * 60 * 1000,          // 72 hours
+    FORUM_HEATMAP_TTL_MS: 48 * 60 * 60 * 1000,        // 48 hours
     FORUM_ARCHIVE_DAYS_MS: 7 * 24 * 60 * 60 * 1000,   // 7 days
     UNVERIFIED_USER_TTL_MS: 72 * 60 * 60 * 1000,      // 72 hours
     FIRESTORE_BATCH_SIZE: 400,  // Firestore max is 500; using 400 for safety
@@ -2411,29 +2412,42 @@ Respond STRICTLY in JSON format with two keys:
 });
 
 // ======================================================
-// archiveOldForumPosts (scheduled, every 24h)
+// archiveOldForumPosts (disabled)
 // ======================================================
 /**
- * Main backend logic block for this Firebase Functions file.
- * This code reads/writes Firestore documents, so it is part of the persistent backend state
- * for the app.
+ * Forum posts now stay visible indefinitely in the social feed.
+ * This scheduled function is intentionally a no-op so older posts are not removed from forumThreads.
  */
 exports.archiveOldForumPosts = onSchedule({
     schedule: "every 24 hours",
     timeZone: "America/New_York",
     timeoutSeconds: 540
 }, async (event) => {
-    // This is where the function touches Firestore documents/collections for the requested action.
-    const lockRef = db.collection("schedulerLocks").doc("archiveOldForumPosts");
-    const STALE_LOCK_MS = 10 * 60 * 1000; // 10 minutes — release if previous run crashed
+    logger.info("archiveOldForumPosts is disabled. Forum posts remain visible in forumThreads.");
+    return null;
+});
 
-    // Acquire lock
+// ======================================================
+// expireForumHeatmapPins (scheduled, every 1 hour)
+// ======================================================
+/**
+ * Clears forum post map visibility after 48 hours so older location pins stop cluttering the heat map
+ * while the post itself stays visible in the forum feed.
+ */
+exports.expireForumHeatmapPins = onSchedule({
+    schedule: "every 1 hours",
+    timeZone: "America/New_York",
+    timeoutSeconds: 540
+}, async (event) => {
+    const lockRef = db.collection("schedulerLocks").doc("expireForumHeatmapPins");
+    const STALE_LOCK_MS = 10 * 60 * 1000;
+
     const lockAcquired = await db.runTransaction(async (t) => {
         const lockDoc = await t.get(lockRef);
         if (lockDoc.exists) {
             const startedAt = lockDoc.data().startedAt?.toDate();
             if (startedAt && (Date.now() - startedAt.getTime()) < STALE_LOCK_MS) {
-                return false; // another instance is running
+                return false;
             }
         }
         t.set(lockRef, { startedAt: admin.firestore.FieldValue.serverTimestamp() });
@@ -2441,58 +2455,45 @@ exports.archiveOldForumPosts = onSchedule({
     });
 
     if (!lockAcquired) {
-        logger.info("archiveOldForumPosts: Another instance is already running. Skipping.");
+        logger.info("expireForumHeatmapPins: Another instance is already running. Skipping.");
         return null;
     }
 
-    logger.info("Starting scheduled forum post archiving...");
-    const archiveThreshold = new Date(Date.now() - CONFIG.FORUM_ARCHIVE_DAYS_MS);
-    const storageBucket = admin.storage().bucket();
+    logger.info("Starting forum heatmap pin expiration cycle...");
+    const now = admin.firestore.Timestamp.now();
 
     try {
-        const postsToArchive = await db.collection("forumThreads")
-            .where("timestamp", "<", archiveThreshold)
+        const expiredSnap = await db.collection("forumThreads")
+            .where("heatmapExpiresAt", "<=", now)
             .limit(500)
             .get();
 
-        if (postsToArchive.empty) {
-            logger.info("No old posts found to archive.");
+        if (expiredSnap.empty) {
+            logger.info("No expired forum heatmap pins found.");
             return null;
         }
 
-        logger.info(`Archiving ${postsToArchive.size} posts...`);
+        logger.info(`Expiring ${expiredSnap.size} forum heatmap pins...`);
 
-        await Promise.all(postsToArchive.docs.map(async (postDoc) => {
-            const postData = postDoc.data();
-            const postId = postDoc.id;
-            const commentsSnap = await postDoc.ref.collection("comments").get();
-            const comments = commentsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-
-            // FIX #20: Storage write and batch.commit() are non-atomic — a crash between
-            // them causes the next retry to re-archive (overwriting the Storage file) before
-            // deleting.  Guard: skip the Storage write if the file already exists so retries
-            // are safe (the archive was already written; just proceed to delete Firestore docs).
-            const archiveFile = storageBucket.file(`archived_posts/${postId}.json`);
-            const [archiveExists] = await archiveFile.exists();
-            if (!archiveExists) {
-                await archiveFile.save(
-                    JSON.stringify({ ...postData, id: postId, archivedAt: new Date().toISOString(), comments }),
-                    { contentType: "application/json" }
-                );
+        const batch = db.batch();
+        expiredSnap.docs.forEach((doc) => {
+            const data = doc.data() || {};
+            if (data.showLocation === true) {
+                batch.update(doc.ref, {
+                    showLocation: false,
+                    latitude: null,
+                    longitude: null,
+                });
             }
+        });
+        await batch.commit();
 
-            const batch = db.batch();
-            commentsSnap.forEach(doc => batch.delete(doc.ref));
-            batch.delete(postDoc.ref);
-            await batch.commit();
-        }));
-
-        logger.info("Forum post archiving cycle complete.");
+        logger.info("Forum heatmap pin expiration cycle complete.");
     } catch (error) {
-        logger.error("Error during forum post archiving:", error);
+        logger.error("Error during forum heatmap pin expiration:", error);
     } finally {
         await lockRef.delete().catch(e =>
-            logger.warn("Failed to release archive lock:", e)
+            logger.warn("Failed to release forum heatmap expiration lock:", e)
         );
     }
     return null;
@@ -3820,6 +3821,9 @@ exports.createForumPost = onCall(async (request) => {
                 notificationSent: false,
                 likeNotificationSent: false,
                 lastViewedAt: null,
+                heatmapExpiresAt: showLocation
+                    ? admin.firestore.Timestamp.fromMillis(Date.now() + CONFIG.FORUM_HEATMAP_TTL_MS)
+                    : null,
             };
 
             t.create(postRef, postData);

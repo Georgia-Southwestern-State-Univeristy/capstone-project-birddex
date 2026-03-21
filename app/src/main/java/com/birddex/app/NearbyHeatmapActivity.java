@@ -119,6 +119,7 @@ public class NearbyHeatmapActivity extends AppCompatActivity
 
     private static final double SEARCH_RADIUS_METERS = 50000d;
     private static final long SIGHTING_RECENCY_MS = 72L * 60 * 60 * 1000;
+    private static final long FORUM_HEATMAP_POST_TTL_MS = 48L * 60 * 60 * 1000;
 
     private static final double HOTSPOT_BUCKET_SIZE = 0.02d;
     private static final double HOTSPOT_CIRCLE_RADIUS_METERS = 900d;
@@ -395,10 +396,38 @@ public class NearbyHeatmapActivity extends AppCompatActivity
             ForumPost p = doc.toObject(ForumPost.class);
             if (p != null && p.getLatitude() != null) {
                 p.setId(doc.getId());
+                if (isForumPostExpiredFromHeatmap(p)) {
+                    continue;
+                }
                 boolean inBounds = currentVisibleBounds == null || currentVisibleBounds.contains(new LatLng(p.getLatitude(), p.getLongitude()));
                 if (inBounds && (showGraphic || !p.isHunted())) addPinToMap(p);
             }
         }
+    }
+
+    /**
+     * Decides whether a location-sharing forum post has aged out of the heat map.
+     *
+     * Newer posts use the backend-written `heatmapExpiresAt` field. Older existing posts that do
+     * not have that field fall back to `timestamp + 48h` so the cutoff still works without a full
+     * migration.
+     */
+    private boolean isForumPostExpiredFromHeatmap(ForumPost post) {
+        if (post == null) return true;
+
+        Date now = new Date();
+
+        if (post.getHeatmapExpiresAt() != null) {
+            Date expiresAt = post.getHeatmapExpiresAt().toDate();
+            return expiresAt != null && !expiresAt.after(now);
+        }
+
+        if (post.getTimestamp() != null) {
+            Date createdAt = post.getTimestamp().toDate();
+            return createdAt != null && (createdAt.getTime() + FORUM_HEATMAP_POST_TTL_MS) <= now.getTime();
+        }
+
+        return false;
     }
 
     /**

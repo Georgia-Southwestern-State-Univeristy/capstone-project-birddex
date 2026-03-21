@@ -20,6 +20,11 @@ public class Identification {
     private String locationId;
     private boolean verified;
     private String imageUrl;
+    private String source;
+    private String identificationLogId;
+    private String modelVersion;
+    private boolean usedOpenAi;
+    private String pipelineVersion;
     private Date timestamp;
 
     /**
@@ -161,6 +166,76 @@ public class Identification {
      */
     public void setImageUrl(String imageUrl) {
         this.imageUrl = imageUrl;
+    }
+
+    /**
+     * Returns the current value/state this class needs somewhere else in the app.
+     */
+    public String getSource() {
+        return source;
+    }
+
+    /**
+     * Updates object/screen state by storing a new value or reconfiguring a dependency.
+     */
+    public void setSource(String source) {
+        this.source = source;
+    }
+
+    /**
+     * Returns the current value/state this class needs somewhere else in the app.
+     */
+    public String getIdentificationLogId() {
+        return identificationLogId;
+    }
+
+    /**
+     * Updates object/screen state by storing a new value or reconfiguring a dependency.
+     */
+    public void setIdentificationLogId(String identificationLogId) {
+        this.identificationLogId = identificationLogId;
+    }
+
+    /**
+     * Returns the current value/state this class needs somewhere else in the app.
+     */
+    public String getModelVersion() {
+        return modelVersion;
+    }
+
+    /**
+     * Updates object/screen state by storing a new value or reconfiguring a dependency.
+     */
+    public void setModelVersion(String modelVersion) {
+        this.modelVersion = modelVersion;
+    }
+
+    /**
+     * Returns the current value/state this class needs somewhere else in the app.
+     */
+    public boolean isUsedOpenAi() {
+        return usedOpenAi;
+    }
+
+    /**
+     * Updates object/screen state by storing a new value or reconfiguring a dependency.
+     */
+    public void setUsedOpenAi(boolean usedOpenAi) {
+        this.usedOpenAi = usedOpenAi;
+    }
+
+    /**
+     * Returns the current value/state this class needs somewhere else in the app.
+     */
+    public String getPipelineVersion() {
+        return pipelineVersion;
+    }
+
+    /**
+     * Updates object/screen state by storing a new value or reconfiguring a dependency.
+     */
+    public void setPipelineVersion(String pipelineVersion) {
+        this.pipelineVersion = pipelineVersion;
     }
 
     /**

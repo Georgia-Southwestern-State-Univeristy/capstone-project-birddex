@@ -36,7 +36,7 @@ import com.google.firebase.auth.FirebaseUser;
 public class SettingsActivity extends AppCompatActivity {
 
     private TextView tvUserEmail, tvUserName;
-    private Button btnLogout, btnUpdateEmail, btnChangePassword, btnNotifications, btnDeleteAccount;
+    private Button btnLogout, btnUpdateEmail, btnChangePassword, btnNotifications, btnDeleteAccount, btnReportBug;
     private MaterialSwitch switchGraphicContent;
 
     private FirebaseManager firebaseManager;
@@ -72,6 +72,7 @@ public class SettingsActivity extends AppCompatActivity {
         tvUserEmail = findViewById(R.id.tvUserEmail);
         tvUserName = findViewById(R.id.tvUserName);
         btnNotifications = findViewById(R.id.btnNotifications);
+        btnReportBug = findViewById(R.id.btnReportBug);
         btnLogout = findViewById(R.id.btnLogout);
         btnUpdateEmail = findViewById(R.id.btnUpdateEmail);
         btnChangePassword = findViewById(R.id.btnChangePassword);
@@ -100,6 +101,12 @@ public class SettingsActivity extends AppCompatActivity {
             isNavigating = true;
             // Move into the next screen and pass the identifiers/data that screen needs.
             startActivity(new Intent(this, NotificationsSettingsActivity.class));
+        });
+
+        btnReportBug.setOnClickListener(v -> {
+            if (isNavigating) return;
+            isNavigating = true;
+            startActivity(new Intent(this, ReportBugActivity.class));
         });
 
         btnLogout.setOnClickListener(v -> {

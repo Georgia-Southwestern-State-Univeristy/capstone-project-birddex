@@ -988,9 +988,10 @@ public class ProfileFragment extends Fragment implements
 
     private void showResolvedPostOptions(ForumPost post, View view, boolean isSaved) {
         PopupMenu popup = new PopupMenu(requireContext(), view);
-        if (mAuth.getUid() != null && mAuth.getUid().equals(post.getUserId())) popup.getMenu().add("Delete");
+        FirebaseUser user = mAuth.getCurrentUser();
+        if (user != null && post.getUserId().equals(user.getUid())) popup.getMenu().add("Delete");
         popup.getMenu().add(isSaved ? "Unsave Post" : "Save Post");
-        popup.getMenu().add("Report");
+        if (user != null && !post.getUserId().equals(user.getUid())) popup.getMenu().add("Report");
         popup.setOnMenuItemClickListener(item -> {
             if (item.getTitle().equals("Delete")) showDeleteConfirmation(post);
             else if (item.getTitle().equals("Save Post")) savePostForLater(post);

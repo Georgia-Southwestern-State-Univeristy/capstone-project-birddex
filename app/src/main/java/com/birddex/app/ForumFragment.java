@@ -478,7 +478,7 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
         FirebaseUser u = mAuth.getCurrentUser();
         if (u != null && p.getUserId().equals(u.getUid())) popup.getMenu().add("Delete");
         popup.getMenu().add(isSaved ? "Unsave Post" : "Save Post");
-        popup.getMenu().add("Report");
+        if (u != null && !p.getUserId().equals(u.getUid())) popup.getMenu().add("Report");
         popup.setOnMenuItemClickListener(item -> {
             if (item.getTitle().equals("Delete")) showDeleteConfirmation(p);
             else if (item.getTitle().equals("Save Post")) savePostForLater(p);

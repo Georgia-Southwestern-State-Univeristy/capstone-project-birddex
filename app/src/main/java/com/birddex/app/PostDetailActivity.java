@@ -390,7 +390,7 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
             popup.getMenu().add("Delete");
         }
         popup.getMenu().add(isSaved ? "Unsave Post" : "Save Post");
-        popup.getMenu().add("Report");
+        if (user != null && !post.getUserId().equals(user.getUid())) popup.getMenu().add("Report");
         popup.setOnMenuItemClickListener(item -> {
             if (item.getTitle().equals("Edit")) showEditPostDialog(post);
             else if (item.getTitle().equals("Delete")) showDeleteConfirmation(post);
@@ -831,7 +831,7 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
             if (c.getTimestamp() != null && (System.currentTimeMillis() - c.getTimestamp().toDate().getTime() <= EDIT_WINDOW_MS)) popup.getMenu().add("Edit");
             popup.getMenu().add("Delete");
         }
-        popup.getMenu().add("Report");
+        if (user != null && !c.getUserId().equals(user.getUid())) popup.getMenu().add("Report");
         popup.setOnMenuItemClickListener(item -> {
             if (item.getTitle().equals("Edit")) showEditCommentDialog(c);
             else if (item.getTitle().equals("Delete")) showCommentDeleteConfirmation(c);

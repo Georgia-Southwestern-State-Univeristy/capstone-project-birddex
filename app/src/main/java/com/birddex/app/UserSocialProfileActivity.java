@@ -609,7 +609,7 @@ public class UserSocialProfileActivity extends AppCompatActivity implements
             popup.getMenu().add("Delete");
         }
         popup.getMenu().add(isSaved ? "Unsave Post" : "Save Post");
-        popup.getMenu().add("Report");
+        if (currentUser != null && !post.getUserId().equals(currentUser.getUid())) popup.getMenu().add("Report");
         popup.setOnMenuItemClickListener(item -> {
             if (item.getTitle().equals("Delete")) {
                 new AlertDialog.Builder(this)

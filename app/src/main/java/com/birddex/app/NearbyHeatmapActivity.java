@@ -59,6 +59,7 @@ import com.google.firebase.firestore.DocumentReference;
 import com.google.firebase.firestore.DocumentSnapshot;
 import com.google.firebase.firestore.FieldValue;
 import com.google.firebase.firestore.FirebaseFirestore;
+import com.google.firebase.firestore.MetadataChanges;
 import com.google.firebase.firestore.Query;
 import com.google.firebase.firestore.Source;
 import com.google.firebase.firestore.WriteBatch;
@@ -729,7 +730,7 @@ public class NearbyHeatmapActivity extends AppCompatActivity
         FirebaseUser user = mAuth.getCurrentUser();
         if (user != null && p.getUserId().equals(user.getUid())) popup.getMenu().add("Delete");
         popup.getMenu().add(isSaved ? "Unsave Post" : "Save Post");
-        popup.getMenu().add("Report");
+        if (user != null && !p.getUserId().equals(user.getUid())) popup.getMenu().add("Report");
         popup.setOnMenuItemClickListener(item -> {
             if (item.getTitle().equals("Delete")) showDeleteConfirmation(p, dialog);
             else if (item.getTitle().equals("Save Post")) savePostForLater(p);
@@ -996,7 +997,7 @@ public class NearbyHeatmapActivity extends AppCompatActivity
         PopupMenu p = new PopupMenu(this, v);
         FirebaseUser user = mAuth.getCurrentUser();
         if (user != null && c.getUserId().equals(user.getUid())) p.getMenu().add("Delete");
-        p.getMenu().add("Report");
+        if (user != null && !c.getUserId().equals(user.getUid())) p.getMenu().add("Report");
         p.setOnMenuItemClickListener(item -> {
             if (item.getTitle().equals("Delete")) showCommentDeleteConfirmation(c);
             else if (item.getTitle().equals("Report")) showReportDialog("comment", c.getId());

@@ -83,6 +83,9 @@
             android:name=".NotificationsSettingsActivity"
             android:exported="false" />
         <activity
+            android:name=".ReportBugActivity"
+            android:exported="false" />
+        <activity
             android:name=".ForgotPasswordActivity"
             android:exported="false" />
         <activity

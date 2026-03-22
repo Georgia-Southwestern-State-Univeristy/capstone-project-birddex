@@ -5507,10 +5507,51 @@ function normalizeCardRarity(rarity) {
             return "Epic";
         case "legendary":
             return "Legendary";
+        case "mythic":
+            return "Mythic";
         default:
             throw new HttpsError("invalid-argument", `Invalid rarity: ${rarity}`);
     }
 }
+
+function getCardUpgradeCost(currentRarity, targetRarity) {
+    const rarityOrder = ["Common", "Uncommon", "Rare", "Epic", "Legendary", "Mythic"];
+    const upgradeCosts = {
+        "Common->Uncommon": 10,
+        "Uncommon->Rare": 20,
+        "Rare->Epic": 30,
+        "Epic->Legendary": 50,
+        "Legendary->Mythic": 100,
+    };
+    const currentIndex = rarityOrder.indexOf(currentRarity);
+    const targetIndex = rarityOrder.indexOf(targetRarity);
+    if (currentIndex === -1 || targetIndex === -1) {
+        throw new HttpsError(
+            "invalid-argument",
+            `Invalid rarity transition: ${currentRarity} -> ${targetRarity}`
+        );
+    }
+    if (targetIndex <= currentIndex) {
+        throw new HttpsError(
+            "failed-precondition",
+            `Target rarity must be higher than current rarity. Current: ${currentRarity}, Target: ${targetRarity}`
+        );
+    }
+    let totalCost = 0;
+    for (let i = currentIndex; i < targetIndex; i++) {
+        const stepKey = `${rarityOrder[i]}->${rarityOrder[i + 1]}`;
+        const stepCost = upgradeCosts[stepKey];
+        if (typeof stepCost !== "number") {
+            throw new HttpsError(
+                "internal",
+                `Missing upgrade cost for ${stepKey}`
+            );
+        }
+        totalCost += stepCost;
+    }
+    return totalCost;
+}
+
 exports.upgradeCollectionSlotRarity = onCall(async (request) => {
     if (!request.auth) {
         throw new HttpsError("unauthenticated", "Login required.");

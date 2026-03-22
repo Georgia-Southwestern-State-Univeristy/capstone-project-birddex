@@ -1903,4 +1903,35 @@ public class FirebaseManager {
             listener.onComplete(Tasks.forResult(isFol));
         });
     }
+    /**
+     * Sends a bug report directly to Firestore.
+     * This allows users to report issues without leaving the app or opening an email client.
+     */
+    public void submitBugReport(String subject, String description, String contactEmail, OnCompleteListener<Void> listener) {
+        Map<String, Object> report = new HashMap<>();
+        report.put("subject", subject);
+        report.put("description", description);
+        report.put("contactEmail", contactEmail);
+        report.put("deviceModel", android.os.Build.MODEL);
+        report.put("androidVersion", android.os.Build.VERSION.RELEASE);
+        report.put("timestamp", com.google.firebase.Timestamp.now());
+
+        // Optional: add the current User ID if they are logged in
+        FirebaseUser user = mAuth.getCurrentUser();
+        if (user != null) {
+            report.put("userId", user.getUid());
+        }
+
+        db.collection("bug_reports")
+                .add(report)
+                .addOnCompleteListener(task -> {
+                    if (task.isSuccessful()) {
+                        Log.d(TAG, "Bug report submitted successfully.");
+                        listener.onComplete(Tasks.forResult(null));
+                    } else {
+                        Log.e(TAG, "Failed to submit bug report.", task.getException());
+                        listener.onComplete(Tasks.forException(task.getException()));
+                    }
+                });
+    }
 }

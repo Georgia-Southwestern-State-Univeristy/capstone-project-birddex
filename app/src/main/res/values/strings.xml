@@ -36,6 +36,7 @@
     <string name="btn_change_password">Change Password</string>
     <string name="label_preferences">Preferences</string>
     <string name="btn_notifications">Notifications</string>
+    <string name="btn_report_bug">Report a Bug</string>
     <string name="btn_logout">Log Out</string>
     <string name="btn_delete_account">Delete Account</string>
     <string name="dialog_delete_account_title">Delete Account</string>
@@ -45,4 +46,15 @@
     <string name="dialog_confirm_deletion_message">Please enter your password to confirm account deletion.</string>
     <string name="label_graphic_content">Graphic Content</string>
     <string name="desc_graphic_content">Show hunter posts and hunted map pins</string>
+
+    <!-- Report Bug Strings -->
+    <string name="report_bug_title">Report a Bug</string>
+    <string name="label_bug_subject">Subject</string>
+    <string name="hint_bug_subject">Briefly describe the issue</string>
+    <string name="label_bug_description">Description</string>
+    <string name="hint_bug_description">Please be descriptive i.e. when i made a post and wanted it to show on the map it did not appear on the map.</string>
+    <string name="btn_submit_bug">Submit Bug Report</string>
+    <string name="label_opt_in_email">I would like to receive follow-up emails</string>
+    <string name="label_user_email">Your Email Address</string>
+    <string name="hint_user_email">email@example.com</string>
 </resources>

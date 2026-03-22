@@ -71,23 +71,6 @@ public final class CardRarityHelper {
         }
     }
 
-    public static int getPointsRequiredToReach(@Nullable String rarity) {
-        switch (normalizeRarity(rarity)) {
-            case UNCOMMON:
-                return 10;
-            case RARE:
-                return 30;
-            case EPIC:
-                return 60;
-            case LEGENDARY:
-                return 110;
-            case MYTHIC:
-                return 210;
-            case COMMON:
-            default:
-                return 0;
-        }
-    }
 
     public static int getUpgradeCost(@Nullable String fromRarity, @Nullable String toRarity) {
         int fromIndex = getRarityIndex(fromRarity);

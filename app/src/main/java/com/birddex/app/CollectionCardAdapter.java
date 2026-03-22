@@ -21,11 +21,6 @@ import java.util.List;
 import java.util.Locale;
 
 /**
- * CollectionCardAdapter displays bird cards in a grid.
- * Fixed Race Condition:
- * 1. Navigation Flooding: Added isNavigating guard to prevent opening multiple Detail screens.
- */
-/**
  * CollectionCardAdapter: Adapter that converts model data into rows/cards for a RecyclerView or similar list UI.
  *
  * These comments focus on what the actual code blocks are doing so the file is easier to trace
@@ -103,11 +98,14 @@ public class CollectionCardAdapter extends RecyclerView.Adapter<CollectionCardAd
         // Bind or inflate the UI pieces this method needs before it can update the screen.
         View v = LayoutInflater.from(parent.getContext()).inflate(viewType, parent, false);
         float density = parent.getResources().getDisplayMetrics().density;
-        int spacing = (int) (2 * density);
+        int spacing = (int) (2 * density); // Tiny spacing back between cards
         int parentWidth = parent.getMeasuredWidth() > 0 ? parent.getMeasuredWidth() : parent.getResources().getDisplayMetrics().widthPixels;
         int availableWidth = parentWidth - parent.getPaddingLeft() - parent.getPaddingRight() - (spacing * 4);
         int itemWidth = Math.max(1, availableWidth / 3);
+        
+        // Use WRAP_CONTENT for height to remove white space at the bottom
         v.setLayoutParams(new RecyclerView.LayoutParams(itemWidth, ViewGroup.LayoutParams.WRAP_CONTENT));
+        
         VH holder = new VH(v);
         applyCompactCollectionStyle(holder);
         return holder;
@@ -128,31 +126,58 @@ public class CollectionCardAdapter extends RecyclerView.Adapter<CollectionCardAd
         float d = holder.itemView.getResources().getDisplayMetrics().density;
 
         if (holder.cardContainer != null) {
+            // Disable compat padding to prevent extra "white space" borders on some OS versions
+            holder.cardContainer.setUseCompatPadding(false);
+            
             ViewGroup.LayoutParams baseParams = holder.cardContainer.getLayoutParams();
             if (baseParams instanceof ViewGroup.MarginLayoutParams) {
                 ViewGroup.MarginLayoutParams lp = (ViewGroup.MarginLayoutParams) baseParams;
-                lp.setMargins((int) d, (int) d, (int) d, (int) d);
+                // Tiny margins for a sleeker grid look
+                int m = (int) (3 * d); // Restored a small margin (3dp)
+                lp.setMargins(m, m, m, m);
                 holder.cardContainer.setLayoutParams(lp);
             }
-            holder.cardContainer.setRadius(16 * d);
+            holder.cardContainer.setRadius(12 * d);
+            
+            // Allow card to wrap its content
             ViewGroup.LayoutParams conLp = holder.cardContainer.getLayoutParams();
             if (conLp != null) {
-                conLp.height = (int) (245 * d);
+                conLp.height = ViewGroup.LayoutParams.WRAP_CONTENT;
                 holder.cardContainer.setLayoutParams(conLp);
             }
         }
 
         if (holder.cardInner != null) {
-            int p = (int) (6 * d);
+            // Tiny inner padding back to give image and text a small buffer
+            int p = (int) (4 * d); // Restored a small inner padding (4dp)
             holder.cardInner.setPadding(p, p, p, p);
         }
 
         if (holder.txtBirdName != null) {
             holder.txtBirdName.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
-            holder.txtBirdName.setMinLines(2);
+            holder.txtBirdName.setMinLines(1);
             holder.txtBirdName.setMaxLines(2);
             holder.txtBirdName.setEllipsize(TextUtils.TruncateAt.END);
             holder.txtBirdName.setGravity(Gravity.CENTER);
+
+            // Adjust margins/padding if needed
+            if (holder.txtBirdName.getLayoutParams() instanceof ViewGroup.MarginLayoutParams) {
+                ViewGroup.MarginLayoutParams lp = (ViewGroup.MarginLayoutParams) holder.txtBirdName.getLayoutParams();
+                lp.topMargin = (int) (2 * d);
+                lp.bottomMargin = (int) (2 * d);
+                holder.txtBirdName.setLayoutParams(lp);
+            }
+        }
+
+        if (holder.imgBird != null) {
+            ViewGroup.LayoutParams imgLp = holder.imgBird.getLayoutParams();
+            if (imgLp != null) {
+                // Image height slightly adjusted
+                imgLp.height = (int) (140 * d);
+                holder.imgBird.setLayoutParams(imgLp);
+                // Use fitCenter to ensure the image is not cut off
+                holder.imgBird.setScaleType(ImageView.ScaleType.FIT_CENTER);
+            }
         }
 
         if (holder.txtScientific != null) {
@@ -162,8 +187,8 @@ public class CollectionCardAdapter extends RecyclerView.Adapter<CollectionCardAd
         }
 
         if (holder.txtLocation != null) {
-            holder.txtLocation.setTextSize(TypedValue.COMPLEX_UNIT_SP, 6);
-            holder.txtLocation.setMaxLines(2);
+            holder.txtLocation.setTextSize(TypedValue.COMPLEX_UNIT_SP, 7);
+            holder.txtLocation.setMaxLines(1);
             holder.txtLocation.setEllipsize(TextUtils.TruncateAt.END);
         }
 
@@ -171,17 +196,10 @@ public class CollectionCardAdapter extends RecyclerView.Adapter<CollectionCardAd
             holder.txtDateCaught.setTextSize(TypedValue.COMPLEX_UNIT_SP, 8);
             holder.txtDateCaught.setGravity(Gravity.CENTER_HORIZONTAL);
             holder.txtDateCaught.setMaxLines(1);
-            holder.txtDateCaught.setEllipsize(TextUtils.TruncateAt.END);
         }
 
         if (holder.txtFooter != null) {
             holder.txtFooter.setVisibility(View.GONE);
-        }
-
-        if (holder.imgBird != null && holder.imgBird.getLayoutParams() != null) {
-            ViewGroup.LayoutParams imgLp = holder.imgBird.getLayoutParams();
-            imgLp.height = (int) (92 * d);
-            holder.imgBird.setLayoutParams(imgLp);
         }
     }
 
@@ -226,7 +244,11 @@ public class CollectionCardAdapter extends RecyclerView.Adapter<CollectionCardAd
             if (holder.txtDateCaught != null) holder.txtDateCaught.setText(slot.getTimestamp() != null ? new SimpleDateFormat("M/d/yy", Locale.US).format(slot.getTimestamp()) : "--");
             if (holder.imgBird != null) {
                 // Load the image asynchronously so the UI can show remote/local media without blocking the main thread.
-                Glide.with(holder.itemView.getContext()).load(url).fitCenter().into(holder.imgBird);
+                Glide.with(holder.itemView.getContext())
+                        .load(url)
+                        .fitCenter()
+                        .placeholder(R.drawable.bg_image_placeholder)
+                        .into(holder.imgBird);
             }
             holder.itemView.setAlpha(1f);
         } else {
@@ -234,7 +256,10 @@ public class CollectionCardAdapter extends RecyclerView.Adapter<CollectionCardAd
             if (holder.txtScientific != null) holder.txtScientific.setText("--");
             if (holder.txtLocation != null) holder.txtLocation.setText("Location: --");
             if (holder.txtDateCaught != null) holder.txtDateCaught.setText("Date: --");
-            if (holder.imgBird != null) holder.imgBird.setImageResource(R.drawable.birddexlogo);
+            if (holder.imgBird != null) {
+                holder.imgBird.setImageResource(R.drawable.birddexlogo);
+                holder.imgBird.setScaleType(ImageView.ScaleType.FIT_CENTER);
+            }
             holder.itemView.setAlpha(0.88f);
         }
     }

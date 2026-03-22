@@ -1,5 +1,7 @@
 package com.birddex.app;
 
+import android.app.Activity;
+import android.content.Intent;
 import android.os.Bundle;
 import android.util.Log;
 import android.view.LayoutInflater;
@@ -34,6 +36,7 @@ import java.util.Map;
 public class UpgradeActivity extends AppCompatActivity {
 
     private static final String TAG = "UpgradeActivity";
+    public static final String EXTRA_NEW_RARITY = "new_rarity";
 
     private String slotId, birdId, currentRarity, imageUrl;
     private String commonName, scientificName, state, locality;
@@ -203,6 +206,18 @@ public class UpgradeActivity extends AppCompatActivity {
                     loadingOverlay.setVisibility(View.GONE);
                     currentRarity = targetRarity;
                     Toast.makeText(this, "Card upgraded to " + targetRarity, Toast.LENGTH_SHORT).show();
+                    
+                    // Set result to let ViewBirdCardActivity know it needs to refresh its UI
+                    Intent resultIntent = new Intent();
+                    resultIntent.putExtra(EXTRA_NEW_RARITY, targetRarity);
+                    setResult(Activity.RESULT_OK, resultIntent);
+                    
+                    // Update the preview shown in the viewpager to the new rarity
+                    int newIndex = CardRarityHelper.getRarityIndex(targetRarity);
+                    if (newIndex >= 0) {
+                        cardViewPager.setCurrentItem(newIndex, true);
+                    }
+                    
                     setupUpgradeOptions();
                 })
                 .addOnFailureListener(e -> {
@@ -223,7 +238,7 @@ public class UpgradeActivity extends AppCompatActivity {
         @Override
         public ViewHolder onCreateViewHolder(@NonNull ViewGroup parent, int viewType) {
             View v = LayoutInflater.from(parent.getContext()).inflate(viewType, parent, false);
-            // Fix: ViewPager2 children must have match_parent layout params to avoid IllegalStateException
+            // ViewPager2 children must have match_parent layout params
             v.setLayoutParams(new ViewGroup.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, 
                     ViewGroup.LayoutParams.MATCH_PARENT));

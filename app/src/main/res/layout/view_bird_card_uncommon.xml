@@ -11,9 +11,10 @@
         android:layout_width="0dp"
         android:layout_height="wrap_content"
         android:layout_margin="12dp"
+        app:cardBackgroundColor="@android:color/transparent"
         app:cardCornerRadius="18dp"
         app:cardElevation="6dp"
-        app:cardUseCompatPadding="true"
+        app:cardUseCompatPadding="false"
         app:layout_constraintTop_toTopOf="parent"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintStart_toStartOf="parent"
@@ -23,7 +24,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:background="@drawable/bg_uncommon_card"
-            android:padding="2dp">
+            android:padding="3dp">
 
             <androidx.constraintlayout.widget.ConstraintLayout
                 android:id="@+id/cardInner"
@@ -111,6 +112,7 @@
                     android:text="BirdDex • Captured by you"
                     android:textColor="#FFFFFF"
                     android:textSize="16sp"
+                    android:visibility="gone"
                     app:layout_constraintTop_toBottomOf="@id/statsRow"
                     app:layout_constraintStart_toStartOf="parent"
                     app:layout_constraintEnd_toEndOf="parent"

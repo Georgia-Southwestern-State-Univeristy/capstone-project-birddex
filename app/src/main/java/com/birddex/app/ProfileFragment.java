@@ -701,6 +701,15 @@ public class ProfileFragment extends Fragment implements
                 .addOnFailureListener(e -> finishProfilePostsFetch(myGen));
     }
 
+    private boolean isForumPostVisible(ForumPost post) {
+        if (post == null) return false;
+        String status = post.getModerationStatus();
+        return status == null
+                || status.isEmpty()
+                || "visible".equalsIgnoreCase(status)
+                || "under_review".equalsIgnoreCase(status);
+    }
+
     private Query buildProfilePostsBaseQuery() {
         return db.collection("forumThreads")
                 .whereEqualTo("userId", profileUserId)
@@ -730,7 +739,7 @@ public class ProfileFragment extends Fragment implements
                 ForumPost post = doc.toObject(ForumPost.class);
                 if (post != null) {
                     post.setId(doc.getId());
-                    postList.add(post);
+                    if (isForumPostVisible(post)) postList.add(post);
                 }
             }
             if (value.size() < PAGE_SIZE) isLastPage = true;
@@ -750,7 +759,7 @@ public class ProfileFragment extends Fragment implements
                 ForumPost post = doc.toObject(ForumPost.class);
                 if (post != null) {
                     post.setId(doc.getId());
-                    postList.add(post);
+                    if (isForumPostVisible(post)) postList.add(post);
                 }
             }
             if (value.size() < PAGE_SIZE) isLastPage = true;
@@ -854,7 +863,7 @@ public class ProfileFragment extends Fragment implements
                 ForumPost post = doc.toObject(ForumPost.class);
                 if (post != null) {
                     post.setId(doc.getId());
-                    resolvedPosts.add(post);
+                    if (isForumPostVisible(post)) resolvedPosts.add(post);
                 }
             }
 
@@ -979,9 +988,10 @@ public class ProfileFragment extends Fragment implements
 
     private void showResolvedPostOptions(ForumPost post, View view, boolean isSaved) {
         PopupMenu popup = new PopupMenu(requireContext(), view);
-        if (mAuth.getUid() != null && mAuth.getUid().equals(post.getUserId())) popup.getMenu().add("Delete");
+        FirebaseUser user = mAuth.getCurrentUser();
+        if (user != null && post.getUserId().equals(user.getUid())) popup.getMenu().add("Delete");
         popup.getMenu().add(isSaved ? "Unsave Post" : "Save Post");
-        popup.getMenu().add("Report");
+        if (user != null && !post.getUserId().equals(user.getUid())) popup.getMenu().add("Report");
         popup.setOnMenuItemClickListener(item -> {
             if (item.getTitle().equals("Delete")) showDeleteConfirmation(post);
             else if (item.getTitle().equals("Save Post")) savePostForLater(post);

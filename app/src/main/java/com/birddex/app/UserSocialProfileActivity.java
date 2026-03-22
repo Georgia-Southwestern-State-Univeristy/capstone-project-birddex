@@ -474,6 +474,15 @@ public class UserSocialProfileActivity extends AppCompatActivity implements
      * There is also one-time async data loading here, so success/failure callbacks are important
      * for the final UI state.
      */
+    private boolean isForumPostVisible(ForumPost post) {
+        if (post == null) return false;
+        String status = post.getModerationStatus();
+        return status == null
+                || status.isEmpty()
+                || "visible".equalsIgnoreCase(status)
+                || "under_review".equalsIgnoreCase(status);
+    }
+
     private void fetchUserPosts() {
         if (isFetching || isLastPage) return;
         isFetching = true;
@@ -494,7 +503,7 @@ public class UserSocialProfileActivity extends AppCompatActivity implements
                     ForumPost post = doc.toObject(ForumPost.class);
                     if (post != null) {
                         post.setId(doc.getId());
-                        postList.add(post);
+                        if (isForumPostVisible(post)) postList.add(post);
                     }
                 }
                 Log.d(TAG, "fetchUserPosts: " + value.size() + " posts loaded. Total: " + postList.size());
@@ -600,7 +609,7 @@ public class UserSocialProfileActivity extends AppCompatActivity implements
             popup.getMenu().add("Delete");
         }
         popup.getMenu().add(isSaved ? "Unsave Post" : "Save Post");
-        popup.getMenu().add("Report");
+        if (currentUser != null && !post.getUserId().equals(currentUser.getUid())) popup.getMenu().add("Report");
         popup.setOnMenuItemClickListener(item -> {
             if (item.getTitle().equals("Delete")) {
                 new AlertDialog.Builder(this)

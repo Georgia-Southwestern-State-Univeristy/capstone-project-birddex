@@ -161,6 +161,16 @@
                 app:backgroundTint="@color/nav_brown"
                 app:cornerRadius="12dp" />
 
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnReportBug"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:text="@string/btn_report_bug"
+                android:textColor="@color/page_cream"
+                app:backgroundTint="@color/nav_brown"
+                app:cornerRadius="12dp" />
+
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"

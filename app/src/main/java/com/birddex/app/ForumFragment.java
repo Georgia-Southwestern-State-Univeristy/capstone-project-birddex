@@ -347,6 +347,15 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
         return q.limit(PAGE_SIZE);
     }
 
+    private boolean isForumPostVisible(ForumPost post) {
+        if (post == null) return false;
+        String status = post.getModerationStatus();
+        return status == null
+                || status.isEmpty()
+                || "visible".equalsIgnoreCase(status)
+                || "under_review".equalsIgnoreCase(status);
+    }
+
     private void fetchForumFirstPageFromServer(Query firstPageQuery, boolean showGraphic, int generation) {
         firstPageQuery.get(Source.SERVER).addOnSuccessListener(val -> {
             if (!isAdded() || binding == null || fetchGeneration != generation) return;
@@ -369,7 +378,7 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
                 ForumPost p = doc.toObject(ForumPost.class);
                 if (p != null) {
                     p.setId(doc.getId());
-                    if (showGraphic || !p.isHunted()) postList.add(p);
+                    if (isForumPostVisible(p) && (showGraphic || !p.isHunted())) postList.add(p);
                 }
             }
             if (value.size() < PAGE_SIZE) isLastPage = true;
@@ -388,7 +397,7 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
                 ForumPost p = doc.toObject(ForumPost.class);
                 if (p != null) {
                     p.setId(doc.getId());
-                    if (showGraphic || !p.isHunted()) postList.add(p);
+                    if (isForumPostVisible(p) && (showGraphic || !p.isHunted())) postList.add(p);
                 }
             }
             adapter.setPosts(new ArrayList<>(postList));
@@ -469,7 +478,7 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
         FirebaseUser u = mAuth.getCurrentUser();
         if (u != null && p.getUserId().equals(u.getUid())) popup.getMenu().add("Delete");
         popup.getMenu().add(isSaved ? "Unsave Post" : "Save Post");
-        popup.getMenu().add("Report");
+        if (u != null && !p.getUserId().equals(u.getUid())) popup.getMenu().add("Report");
         popup.setOnMenuItemClickListener(item -> {
             if (item.getTitle().equals("Delete")) showDeleteConfirmation(p);
             else if (item.getTitle().equals("Save Post")) savePostForLater(p);

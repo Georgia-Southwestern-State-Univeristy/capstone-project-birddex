@@ -42,7 +42,7 @@ const CONFIG = {
     MAX_OPENAI_REQUESTS: 100,
     MAX_PFP_CHANGES: 5,
     COOLDOWN_PERIOD_MS: 24 * 60 * 60 * 1000,       // 24 hours
-    FACT_CACHE_LIFETIME_MS: 30 * 24 * 60 * 60 * 1000, // 30 days
+    FACT_CACHE_LIFETIME_MS: 90 * 24 * 60 * 60 * 1000, // 90 days
     EBIRD_CACHE_TTL_MS: 72 * 60 * 60 * 1000,          // 72 hours
     FORUM_HEATMAP_TTL_MS: 48 * 60 * 60 * 1000,        // 48 hours
     FORUM_ARCHIVE_DAYS_MS: 7 * 24 * 60 * 60 * 1000,   // 7 days
@@ -752,6 +752,15 @@ exports.initializeUser = onCall(async (request) => {
             if (profilePictureUrl !== undefined && profilePictureUrl !== null) {
                 profileUpdate.profilePictureUrl = profilePictureUrl;
             }
+
+            const existingUserData = userDoc.exists ? (userDoc.data() || {}) : {};
+            const initialUserModerationFields = buildInitialUserModerationFields();
+            Object.entries(initialUserModerationFields).forEach(([key, value]) => {
+                if (!(key in existingUserData)) {
+                    profileUpdate[key] = value;
+                }
+            });
+
             t.set(userRef, profileUpdate, { merge: true });
         });
 
@@ -796,7 +805,8 @@ exports.createUserDocument = auth.user().onCreate(async (user) => {
             notificationCooldownHours: 2,
             trackedBirdsNotificationsEnabled: false,
             trackedBirdsCooldownHours: 0,
-            trackedBirdsMaxDistanceMiles: -1
+            trackedBirdsMaxDistanceMiles: -1,
+            ...buildInitialUserModerationFields()
         }, { merge: true });
         logger.info(`Created user document for ${uid}`);
     } catch (error) {
@@ -2500,6 +2510,38 @@ exports.expireForumHeatmapPins = onSchedule({
 });
 
 // ======================================================
+// clearRemovedForumPostCoordinates — when moderationStatus becomes removed
+// ======================================================
+/**
+ * Hidden posts keep their stored coordinates so the heat map pin can come back if the post is
+ * restored to visible later. Truly removed posts clear their saved location data.
+ */
+exports.clearRemovedForumPostCoordinates = onDocumentUpdated("forumThreads/{postId}", async (event) => {
+    const beforeData = event.data.before.data() || {};
+    const afterData = event.data.after.data() || {};
+
+    const beforeStatus = normalizeModerationStatus(beforeData.moderationStatus);
+    const afterStatus = normalizeModerationStatus(afterData.moderationStatus);
+
+    if (afterStatus !== MODERATION_STATUS_REMOVED || beforeStatus === MODERATION_STATUS_REMOVED) {
+        return null;
+    }
+
+    const hasCoordinates = typeof afterData.latitude === "number" && typeof afterData.longitude === "number";
+    if (afterData.showLocation !== true && !hasCoordinates) {
+        return null;
+    }
+
+    await event.data.after.ref.set({
+        showLocation: false,
+        latitude: null,
+        longitude: null,
+    }, { merge: true });
+
+    return null;
+});
+
+// ======================================================
 // IDEMPOTENT Forum Aggregates (Recalculation triggers)
 // ======================================================
 
@@ -3014,7 +3056,7 @@ exports.toggleFollow = onCall(async (request) => {
 });
 
 // ======================================================
-// NEW: submitReport — server-side duplicate check
+// submitReport — server-side moderation intake + aggregation
 // ======================================================
 /**
  * Main backend logic block for this Firebase Functions file.
@@ -3026,40 +3068,497 @@ exports.toggleFollow = onCall(async (request) => {
 exports.submitReport = onCall(async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Auth required.");
 
-    const { targetId, targetType, reason } = request.data;
     const reporterId = request.auth.uid;
+    const data = request.data || {};
+    const targetId = sanitizeText(data.targetId || "", 200).trim();
+    const targetType = sanitizeText(data.targetType || "", 50).trim();
+    const rawReason = typeof data.reason === "string" ? data.reason : "";
 
-    if (!targetId || !targetType || !reason) {
+    if (!targetId || !targetType || !rawReason.trim()) {
         throw new HttpsError("invalid-argument", "targetId, targetType, and reason are required.");
     }
 
-    // Deterministic ID: one document per (reporter, target) pair
-    const reportId = `${reporterId}_${targetId}`;
-    // This is where the function touches Firestore documents/collections for the requested action.
+    const reasonCode = normalizeReportReason(rawReason);
+    const reasonText = sanitizeText(rawReason, 500);
+    const target = await resolveModerationTargetOrThrow(targetType, targetId);
+
+    if (!target.ownerUserId) {
+        throw new HttpsError("failed-precondition", "The target owner could not be determined.");
+    }
+    if (target.ownerUserId === reporterId) {
+        throw new HttpsError("permission-denied", "You cannot report your own content.");
+    }
+
+    if (!isPublicForumStatus(target.data.moderationStatus)) {
+        throw new HttpsError("failed-precondition", "That content is no longer available for reporting.");
+    }
+
+    const reportId = `${reporterId}_${target.canonicalType}_${target.targetId}`;
     const reportRef = db.collection("reports").doc(reportId);
+    const ownerRef = db.collection("users").doc(target.ownerUserId);
 
     try {
-        await db.runTransaction(async (t) => {
-            const existing = await t.get(reportRef);
-            if (existing.exists) {
+        const result = await db.runTransaction(async (t) => {
+            const [existingReportSnap, freshTargetSnap, ownerSnap] = await Promise.all([
+                t.get(reportRef),
+                t.get(target.ref),
+                t.get(ownerRef),
+            ]);
+
+            if (existingReportSnap.exists) {
                 throw new HttpsError("already-exists", "You already reported this.");
             }
+
+            if (!freshTargetSnap.exists) {
+                throw new HttpsError("not-found", "That content no longer exists.");
+            }
+
+            await assertHourlyRateLimitOrThrow(t, reporterId, REPORT_RATE_LIMIT_KEY, MAX_REPORTS_PER_HOUR, "reports");
+
+            const freshTargetData = freshTargetSnap.data() || {};
+            if (!isPublicForumStatus(freshTargetData.moderationStatus)) {
+                throw new HttpsError("failed-precondition", "That content is no longer available for reporting.");
+            }
+
+            if (!ownerSnap.exists) {
+                throw new HttpsError("failed-precondition", "The target owner profile could not be found.");
+            }
+
+            const currentReportCount = typeof freshTargetData.reportCount === "number" ? freshTargetData.reportCount : 0;
+            const currentUniqueReporterCount = typeof freshTargetData.uniqueReporterCount === "number"
+                ? freshTargetData.uniqueReporterCount
+                : 0;
+            const nextUniqueReporterCount = currentUniqueReporterCount + 1;
+            const currentStatus = normalizeModerationStatus(freshTargetData.moderationStatus);
+            const nowTimestamp = admin.firestore.FieldValue.serverTimestamp();
+
+            const targetUpdates = {
+                reportCount: currentReportCount + 1,
+                uniqueReporterCount: nextUniqueReporterCount,
+                lastReportedAt: nowTimestamp,
+                [`reportReasonCounts.${reasonCode}`]: admin.firestore.FieldValue.increment(1),
+            };
+
+            let contentDecision = null;
+            if (nextUniqueReporterCount >= REPORT_HIDE_THRESHOLD && currentStatus !== MODERATION_STATUS_HIDDEN && currentStatus !== MODERATION_STATUS_REMOVED) {
+                contentDecision = MODERATION_STATUS_HIDDEN;
+            } else if (nextUniqueReporterCount >= REPORT_UNDER_REVIEW_THRESHOLD && currentStatus === MODERATION_STATUS_VISIBLE) {
+                contentDecision = MODERATION_STATUS_UNDER_REVIEW;
+            }
+
+            if (contentDecision) {
+                Object.assign(
+                    targetUpdates,
+                    buildContentModerationUpdate(
+                        contentDecision,
+                        "report_threshold",
+                        contentDecision === MODERATION_STATUS_HIDDEN
+                            ? "Automatically hidden after repeated unique reports."
+                            : "Placed under review after repeated unique reports.",
+                        nowTimestamp
+                    )
+                );
+
+                if (contentDecision === MODERATION_STATUS_HIDDEN && target.canonicalType === "post") {
+                    // Keep the stored coordinates so the pin can reappear if moderationStatus returns to visible.
+                    // NearbyHeatmapActivity should skip hidden/removed content based on moderationStatus.
+                }
+            }
+
             t.set(reportRef, {
+                reportId,
                 reporterId,
-                targetId,
-                targetType,
-                reason: sanitizeText(reason, 500),
-                timestamp: admin.firestore.FieldValue.serverTimestamp(),
-                status: "pending"
+                targetId: target.targetId,
+                targetType: target.canonicalType,
+                threadId: target.threadId || null,
+                targetOwnerId: target.ownerUserId,
+                reasonCode,
+                reasonText,
+                timestamp: nowTimestamp,
+                status: "pending",
             });
+
+            t.set(target.ref, targetUpdates, { merge: true });
+
+            let penaltySummary = null;
+
+            if (contentDecision === MODERATION_STATUS_HIDDEN) {
+                const contentEventRef = createModerationEventRef();
+                t.set(contentEventRef, buildModerationEventPayload({
+                    eventId: contentEventRef.id,
+                    userId: target.ownerUserId,
+                    targetType: target.canonicalType,
+                    targetId: target.targetId,
+                    actionType: "hide_content",
+                    reasonCode: "reported_content",
+                    reasonText: "Content was automatically hidden after repeated unique reports.",
+                    source: "report_threshold",
+                    appealable: true,
+                    metadata: {
+                        uniqueReporterCount: nextUniqueReporterCount,
+                    },
+                }));
+
+                penaltySummary = await applyAutomaticPenaltyForUser({
+                    transaction: t,
+                    userRef: ownerRef,
+                    userData: ownerSnap.data() || {},
+                    userId: target.ownerUserId,
+                    source: "report_threshold",
+                    reasonCode: "reported_content",
+                    reasonText: "Repeated unique reports caused content to be hidden automatically.",
+                    targetType: target.canonicalType,
+                    targetId: target.targetId,
+                });
+            }
+
+            return {
+                contentDecision,
+                uniqueReporterCount: nextUniqueReporterCount,
+                penaltySummary,
+            };
         });
+
+        return {
+            success: true,
+            moderationStatus: result.contentDecision || null,
+            uniqueReporterCount: result.uniqueReporterCount || null,
+            penaltyType: result.penaltySummary?.penaltyType || null,
+        };
     } catch (error) {
         if (error instanceof HttpsError) throw error;
         logger.error("submitReport transaction failed:", error);
         throw new HttpsError("internal", "Failed to submit report.");
     }
+});
 
-    return { success: true };
+// ======================================================
+// getMyModerationState — user-facing moderation overview for appeals/restrictions
+// ======================================================
+exports.getMyModerationState = onCall(async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Auth required.");
+
+    const userId = request.auth.uid;
+    const userSnap = await db.collection("users").doc(userId).get();
+    const userData = userSnap.exists ? (userSnap.data() || {}) : {};
+
+    const [eventsSnap, appealsSnap] = await Promise.all([
+        db.collection("moderationEvents").where("userId", "==", userId).limit(25).get(),
+        db.collection("moderationAppeals").where("userId", "==", userId).limit(25).get(),
+    ]);
+
+    const events = eventsSnap.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+    events.sort((a, b) => (timestampToMillis(b.createdAt) || 0) - (timestampToMillis(a.createdAt) || 0));
+
+    const appeals = appealsSnap.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+    appeals.sort((a, b) => (timestampToMillis(b.createdAt) || 0) - (timestampToMillis(a.createdAt) || 0));
+
+    return {
+        success: true,
+        warningCount: typeof userData.warningCount === "number" ? userData.warningCount : 0,
+        strikeCount: typeof userData.strikeCount === "number" ? userData.strikeCount : 0,
+        permanentForumBan: userData.permanentForumBan === true,
+        forumSuspendedUntil: userData.forumSuspendedUntil || null,
+        events,
+        appeals,
+    };
+});
+
+// ======================================================
+// submitModerationAppeal — one appeal per moderation event
+// ======================================================
+exports.submitModerationAppeal = onCall(async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Auth required.");
+
+    const userId = request.auth.uid;
+    const data = request.data || {};
+    const moderationEventId = sanitizeText(data.moderationEventId || "", 200).trim();
+    const appealText = sanitizeText(data.appealText || "", 1000).trim();
+
+    if (!moderationEventId) {
+        throw new HttpsError("invalid-argument", "moderationEventId is required.");
+    }
+    if (!appealText) {
+        throw new HttpsError("invalid-argument", "Please explain why you are appealing this decision.");
+    }
+
+    const eventRef = db.collection("moderationEvents").doc(moderationEventId);
+    const appealRef = createModerationAppealRef(userId, moderationEventId);
+
+    try {
+        await db.runTransaction(async (t) => {
+            const [eventSnap, existingAppealSnap] = await Promise.all([
+                t.get(eventRef),
+                t.get(appealRef),
+            ]);
+
+            if (!eventSnap.exists) {
+                throw new HttpsError("not-found", "Moderation event not found.");
+            }
+            if (existingAppealSnap.exists) {
+                throw new HttpsError("already-exists", "You already submitted an appeal for this decision.");
+            }
+
+            const eventData = eventSnap.data() || {};
+            if (eventData.userId !== userId) {
+                throw new HttpsError("permission-denied", "You can only appeal decisions made on your own account or content.");
+            }
+            if (eventData.appealable !== true) {
+                throw new HttpsError("failed-precondition", "That moderation decision cannot be appealed.");
+            }
+            if (eventData.status !== "active") {
+                throw new HttpsError("failed-precondition", "That moderation decision is no longer active.");
+            }
+
+            const createdAtMs = timestampToMillis(eventData.createdAt);
+            if (createdAtMs != null && (Date.now() - createdAtMs) > MODERATION_APPEAL_WINDOW_MS) {
+                throw new HttpsError("deadline-exceeded", "The appeal window for that decision has expired.");
+            }
+
+            t.set(appealRef, {
+                appealId: appealRef.id,
+                userId,
+                moderationEventId,
+                targetType: eventData.targetType || "user",
+                targetId: eventData.targetId || null,
+                appealText,
+                status: "pending",
+                createdAt: admin.firestore.FieldValue.serverTimestamp(),
+                reviewedAt: null,
+                reviewedBy: null,
+                decisionNote: null,
+                snapshotActionType: eventData.actionType || null,
+                snapshotReasonCode: eventData.reasonCode || null,
+            });
+        });
+
+        return {
+            success: true,
+            moderationEventId,
+        };
+    } catch (error) {
+        if (error instanceof HttpsError) throw error;
+        logger.error("submitModerationAppeal failed:", error);
+        throw new HttpsError("internal", "Failed to submit appeal.");
+    }
+});
+
+// ======================================================
+// getPendingModerationAppeals — moderator queue for pending appeals
+// ======================================================
+exports.getPendingModerationAppeals = onCall(async (request) => {
+    getModerationReviewerIdentityOrThrow(request);
+
+    const appealsSnap = await db.collection("moderationAppeals")
+        .where("status", "==", "pending")
+        .limit(100)
+        .get();
+
+    const appeals = appealsSnap.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+    appeals.sort((a, b) => (timestampToMillis(b.createdAt) || 0) - (timestampToMillis(a.createdAt) || 0));
+
+    return {
+        success: true,
+        appeals,
+    };
+});
+
+// ======================================================
+// reviewModerationAppeal — moderator approval/denial with reversal handling
+// ======================================================
+exports.reviewModerationAppeal = onCall(async (request) => {
+    const { reviewedBy } = getModerationReviewerIdentityOrThrow(request);
+
+    const data = request.data || {};
+    const appealId = sanitizeText(data.appealId || "", 300).trim();
+    const decision = sanitizeText(data.decision || "", 50).trim().toLowerCase();
+    const decisionNote = sanitizeText(data.decisionNote || "", 1000).trim();
+
+    if (!appealId) {
+        throw new HttpsError("invalid-argument", "appealId is required.");
+    }
+    if (!["approved", "denied"].includes(decision)) {
+        throw new HttpsError("invalid-argument", "decision must be approved or denied.");
+    }
+
+    const appealRef = db.collection("moderationAppeals").doc(appealId);
+
+    try {
+        await db.runTransaction(async (t) => {
+            const appealSnap = await t.get(appealRef);
+            if (!appealSnap.exists) {
+                throw new HttpsError("not-found", "Appeal not found.");
+            }
+
+            const appealData = appealSnap.data() || {};
+            if (appealData.status !== "pending") {
+                throw new HttpsError("failed-precondition", "That appeal has already been reviewed.");
+            }
+
+            const moderationEventId = sanitizeText(appealData.moderationEventId || "", 200).trim();
+            if (!moderationEventId) {
+                throw new HttpsError("failed-precondition", "Appeal is missing a moderation event reference.");
+            }
+
+            const eventRef = db.collection("moderationEvents").doc(moderationEventId);
+            const eventSnap = await t.get(eventRef);
+            if (!eventSnap.exists) {
+                throw new HttpsError("not-found", "Moderation event not found.");
+            }
+
+            const eventData = eventSnap.data() || {};
+            const userId = sanitizeText(eventData.userId || appealData.userId || "", 200).trim();
+            if (!userId) {
+                throw new HttpsError("failed-precondition", "Moderation event is missing a user reference.");
+            }
+
+            const userRef = db.collection("users").doc(userId);
+            const [userSnap, userEventsSnap, target] = await Promise.all([
+                t.get(userRef),
+                t.get(db.collection("moderationEvents").where("userId", "==", userId).limit(200)),
+                resolveModerationTargetForTransaction(
+                    t,
+                    appealData.targetType || eventData.targetType || "user",
+                    appealData.targetId || eventData.targetId || null
+                ),
+            ]);
+
+            t.set(appealRef, {
+                status: decision,
+                reviewedAt: admin.firestore.FieldValue.serverTimestamp(),
+                reviewedBy,
+                decisionNote: decisionNote || null,
+            }, { merge: true });
+
+            if (decision !== "approved") {
+                return;
+            }
+
+            t.set(eventRef, {
+                status: "reversed",
+                reviewedAt: admin.firestore.FieldValue.serverTimestamp(),
+                reviewedBy,
+                reversalReason: decisionNote || "Appeal approved.",
+            }, { merge: true });
+
+            const nowMs = Date.now();
+            const remainingActiveEvents = userEventsSnap.docs
+                .filter((doc) => doc.id !== moderationEventId)
+                .map((doc) => ({ id: doc.id, ...doc.data() }))
+                .filter((doc) => isModerationEventCurrentlyActive(doc, nowMs));
+
+            const nextWarningCount = remainingActiveEvents.filter((doc) => doc.actionType === "warning").length;
+            const nextStrikeCount = remainingActiveEvents.filter((doc) => doc.actionType === "strike").length;
+            const hasActiveForumBan = remainingActiveEvents.some((doc) => doc.actionType === "forum_ban");
+
+            let nextForumSuspendedUntil = null;
+            for (const event of remainingActiveEvents) {
+                if (event.actionType !== "forum_suspension") continue;
+                const expiresAtMs = timestampToMillis(event.expiresAt);
+                if (expiresAtMs == null || expiresAtMs <= nowMs) continue;
+                if (!nextForumSuspendedUntil || expiresAtMs > nextForumSuspendedUntil.toMillis()) {
+                    nextForumSuspendedUntil = admin.firestore.Timestamp.fromMillis(expiresAtMs);
+                }
+            }
+
+            const userUpdate = {
+                warningCount: nextWarningCount,
+                strikeCount: nextStrikeCount,
+                permanentForumBan: hasActiveForumBan,
+                forumSuspendedUntil: hasActiveForumBan ? null : nextForumSuspendedUntil,
+            };
+
+            if (userSnap.exists) {
+                t.set(userRef, userUpdate, { merge: true });
+            }
+
+            if (["hide_content", "remove_content", "reject_content"].includes(eventData.actionType) && target) {
+                t.set(target.ref, {
+                    ...buildContentModerationUpdate(
+                        MODERATION_STATUS_VISIBLE,
+                        "appeal_approved",
+                        decisionNote || "Appeal approved.",
+                        admin.firestore.FieldValue.serverTimestamp()
+                    ),
+                    hiddenAt: null,
+                }, { merge: true });
+            }
+        });
+
+        return {
+            success: true,
+            appealId,
+            decision,
+        };
+    } catch (error) {
+        if (error instanceof HttpsError) throw error;
+        logger.error("reviewModerationAppeal failed:", error);
+        throw new HttpsError("internal", "Failed to review appeal.");
+    }
+});
+
+// ======================================================
+// decayModerationState — expire warnings/strikes and lift ended suspensions
+// ======================================================
+exports.decayModerationState = onSchedule("every 60 minutes", async () => {
+    const now = admin.firestore.Timestamp.now();
+
+    try {
+        const expiredSnap = await db.collection("moderationEvents")
+            .where("expiresAt", "<=", now)
+            .limit(200)
+            .get();
+
+        if (!expiredSnap.empty) {
+            const batch = db.batch();
+
+            for (const doc of expiredSnap.docs) {
+                const data = doc.data() || {};
+                if (data.status !== "active") continue;
+
+                const userId = sanitizeText(data.userId || "", 200).trim();
+                if (!userId) continue;
+
+                batch.set(doc.ref, {
+                    status: "expired",
+                    reviewedAt: admin.firestore.FieldValue.serverTimestamp(),
+                    reversalReason: "Automatic expiration",
+                }, { merge: true });
+
+                const userRef = db.collection("users").doc(userId);
+
+                if (data.actionType === "warning") {
+                    batch.set(userRef, { warningCount: admin.firestore.FieldValue.increment(-1) }, { merge: true });
+                } else if (data.actionType === "strike") {
+                    batch.set(userRef, { strikeCount: admin.firestore.FieldValue.increment(-1) }, { merge: true });
+                }
+            }
+
+            await batch.commit();
+        }
+
+        const suspendedUsersSnap = await db.collection("users")
+            .where("forumSuspendedUntil", "<=", now)
+            .limit(200)
+            .get();
+
+        if (!suspendedUsersSnap.empty) {
+            const batch = db.batch();
+            for (const doc of suspendedUsersSnap.docs) {
+                const data = doc.data() || {};
+                if (data.permanentForumBan === true) continue;
+
+                batch.set(doc.ref, {
+                    forumSuspendedUntil: null,
+                }, { merge: true });
+            }
+            await batch.commit();
+        }
+    } catch (error) {
+        logger.error("decayModerationState failed:", error);
+    }
+
+    return null;
 });
 
 // ======================================================
@@ -3545,6 +4044,613 @@ const FORUM_COMMENT_MAX_LENGTH = 300;
 const FORUM_EDIT_WINDOW_MS = 5 * 60 * 1000;
 const FORUM_SUBMISSION_COOLDOWN_MS = 15 * 1000;
 
+
+const MODERATION_STATUS_VISIBLE = "visible";
+const MODERATION_STATUS_UNDER_REVIEW = "under_review";
+const MODERATION_STATUS_HIDDEN = "hidden";
+const MODERATION_STATUS_REMOVED = "removed";
+
+const REPORT_UNDER_REVIEW_THRESHOLD = 3;
+const REPORT_HIDE_THRESHOLD = 5;
+const MAX_REPORTS_PER_HOUR = 10;
+const MODERATION_APPEAL_WINDOW_MS = 14 * 24 * 60 * 60 * 1000;
+const MODERATION_WARNING_EXPIRY_MS = 90 * 24 * 60 * 60 * 1000;
+const MODERATION_STRIKE_EXPIRY_MS = 180 * 24 * 60 * 60 * 1000;
+const MODERATION_SUSPEND_STAGE_ONE_MS = 24 * 60 * 60 * 1000;
+const MODERATION_SUSPEND_STAGE_TWO_MS = 7 * 24 * 60 * 60 * 1000;
+const REPORT_RATE_LIMIT_KEY = "forumReportRateLimit";
+
+function buildInitialReportReasonCounts() {
+    return {
+        language: 0,
+        image: 0,
+        spam: 0,
+        harassment: 0,
+        other: 0,
+    };
+}
+
+function buildInitialModerationFields() {
+    return {
+        moderationStatus: MODERATION_STATUS_VISIBLE,
+        moderationReason: null,
+        moderationSource: null,
+        moderatedAt: null,
+        hiddenAt: null,
+        reportCount: 0,
+        uniqueReporterCount: 0,
+        reportReasonCounts: buildInitialReportReasonCounts(),
+        lastReportedAt: null,
+    };
+}
+
+function buildInitialUserModerationFields() {
+    return {
+        warningCount: 0,
+        strikeCount: 0,
+        permanentForumBan: false,
+        forumSuspendedUntil: null,
+        lastViolationAt: null,
+    };
+}
+
+function normalizeModerationStatus(status) {
+    const normalized = typeof status === "string" ? status.trim().toLowerCase() : "";
+    if (!normalized) return MODERATION_STATUS_VISIBLE;
+    if ([
+        MODERATION_STATUS_VISIBLE,
+        MODERATION_STATUS_UNDER_REVIEW,
+        MODERATION_STATUS_HIDDEN,
+        MODERATION_STATUS_REMOVED,
+    ].includes(normalized)) {
+        return normalized;
+    }
+    return MODERATION_STATUS_VISIBLE;
+}
+
+function isPublicForumStatus(status) {
+    const normalized = normalizeModerationStatus(status);
+    return normalized === MODERATION_STATUS_VISIBLE || normalized === MODERATION_STATUS_UNDER_REVIEW;
+}
+
+function timestampToMillis(value) {
+    if (!value) return null;
+    try {
+        if (typeof value.toMillis === "function") return value.toMillis();
+        if (value instanceof Date) return value.getTime();
+        if (typeof value === "number") return value;
+        if (typeof value === "string") {
+            const parsed = Date.parse(value);
+            return Number.isNaN(parsed) ? null : parsed;
+        }
+    } catch (error) {
+        logger.warn("timestampToMillis failed:", error);
+    }
+    return null;
+}
+
+function timestampToDate(value) {
+    const millis = timestampToMillis(value);
+    return millis == null ? null : new Date(millis);
+}
+
+function buildModerationRateLimitRef(userId, key = REPORT_RATE_LIMIT_KEY) {
+    return db.collection("users").doc(userId).collection("settings").doc(key);
+}
+
+async function assertHourlyRateLimitOrThrow(transaction, userId, key, limit, actionLabel) {
+    const rateRef = buildModerationRateLimitRef(userId, key);
+    const bucket = new Date().toISOString().slice(0, 13); // YYYY-MM-DDTHH (UTC hour)
+    const snap = await transaction.get(rateRef);
+
+    let currentCount = 0;
+    if (snap.exists) {
+        const data = snap.data() || {};
+        if (data.bucket === bucket && typeof data.count === "number") {
+            currentCount = data.count;
+        }
+    }
+
+    if (currentCount >= limit) {
+        throw new HttpsError(
+            "resource-exhausted",
+            `You have reached the hourly limit for ${actionLabel}. Please try again later.`
+        );
+    }
+
+    transaction.set(rateRef, {
+        bucket,
+        count: currentCount + 1,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    }, { merge: true });
+}
+
+async function assertUserCanUseForumOrThrow(userId, actionLabel = "perform this forum action") {
+    const userRef = db.collection("users").doc(userId);
+    const userSnap = await userRef.get();
+
+    if (!userSnap.exists) {
+        throw new HttpsError("failed-precondition", "User profile not found.");
+    }
+
+    const userData = userSnap.data() || {};
+    if (userData.permanentForumBan === true) {
+        throw new HttpsError(
+            "permission-denied",
+            `Your forum access is permanently restricted. You can still sign in and submit an appeal, but you cannot ${actionLabel}.`
+        );
+    }
+
+    const suspendedUntilMs = timestampToMillis(userData.forumSuspendedUntil);
+    if (suspendedUntilMs != null && suspendedUntilMs > Date.now()) {
+        const suspendedUntilDate = new Date(suspendedUntilMs);
+        throw new HttpsError(
+            "permission-denied",
+            `Your forum access is temporarily restricted until ${suspendedUntilDate.toLocaleString("en-US")}. You cannot ${actionLabel} until then.`
+        );
+    }
+
+    return {
+        userRef,
+        userData,
+    };
+}
+
+function normalizeReportReason(reason) {
+    const raw = sanitizeText(reason || "", 200).trim().toLowerCase();
+
+    if (!raw) {
+        throw new HttpsError("invalid-argument", "A report reason is required.");
+    }
+
+    if (raw.includes("image")) return "image";
+    if (raw.includes("language")) return "language";
+    if (raw.includes("spam")) return "spam";
+    if (raw.includes("harass")) return "harassment";
+    return "other";
+}
+
+async function resolveModerationTargetOrThrow(targetType, targetId) {
+    const normalizedType = sanitizeText(targetType || "", 50).trim().toLowerCase();
+    const normalizedTargetId = sanitizeText(targetId || "", 200).trim();
+
+    if (!normalizedTargetId) {
+        throw new HttpsError("invalid-argument", "targetId is required.");
+    }
+
+    if (normalizedType === "post" || normalizedType === "thread") {
+        const ref = db.collection("forumThreads").doc(normalizedTargetId);
+        const snap = await ref.get();
+        if (!snap.exists) {
+            throw new HttpsError("not-found", "Post not found.");
+        }
+        return {
+            canonicalType: "post",
+            ref,
+            snap,
+            data: snap.data() || {},
+            targetId: snap.id,
+            threadId: snap.id,
+            ownerUserId: sanitizeText((snap.data() || {}).userId || "", 200).trim() || null,
+        };
+    }
+
+    if (normalizedType === "comment" || normalizedType === "reply") {
+        const querySnap = await db.collectionGroup("comments")
+            .where(admin.firestore.FieldPath.documentId(), "==", normalizedTargetId)
+            .limit(1)
+            .get();
+
+        if (querySnap.empty) {
+            throw new HttpsError("not-found", "Comment not found.");
+        }
+
+        const snap = querySnap.docs[0];
+        const ref = snap.ref;
+        const threadId = ref.parent && ref.parent.parent ? ref.parent.parent.id : null;
+        const data = snap.data() || {};
+
+        return {
+            canonicalType: "comment",
+            ref,
+            snap,
+            data,
+            targetId: snap.id,
+            threadId,
+            ownerUserId: sanitizeText(data.userId || "", 200).trim() || null,
+        };
+    }
+
+    throw new HttpsError("invalid-argument", "Unsupported report target type.");
+}
+
+function createModerationEventRef() {
+    return db.collection("moderationEvents").doc();
+}
+
+function createModerationAppealRef(userId, moderationEventId) {
+    return db.collection("moderationAppeals").doc(`${userId}_${moderationEventId}`);
+}
+
+function buildModerationEventPayload({
+    eventId,
+    userId,
+    targetType,
+    targetId,
+    actionType,
+    reasonCode,
+    reasonText,
+    source,
+    createdBy = "system",
+    appealable = false,
+    expiresAt = null,
+    metadata = {},
+}) {
+    return {
+        eventId,
+        userId,
+        targetType: targetType || "user",
+        targetId: targetId || null,
+        actionType,
+        reasonCode: reasonCode || "other",
+        reasonText: sanitizeText(reasonText || "", 500),
+        source: source || "system",
+        createdBy,
+        status: "active",
+        appealable,
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        expiresAt,
+        reviewedAt: null,
+        reviewedBy: null,
+        reversalReason: null,
+        metadata: metadata || {},
+    };
+}
+
+function buildUserModerationDefaults(userData = {}) {
+    return {
+        warningCount: typeof userData.warningCount === "number" ? userData.warningCount : 0,
+        strikeCount: typeof userData.strikeCount === "number" ? userData.strikeCount : 0,
+        permanentForumBan: userData.permanentForumBan === true,
+    };
+}
+
+function buildContentModerationUpdate(status, source, reasonText, nowTimestamp) {
+    const update = {
+        moderationStatus: status,
+        moderationSource: source || null,
+        moderationReason: sanitizeText(reasonText || "", 500) || null,
+        moderatedAt: nowTimestamp,
+    };
+
+    if (status === MODERATION_STATUS_HIDDEN || status === MODERATION_STATUS_REMOVED) {
+        update.hiddenAt = nowTimestamp;
+    }
+
+    return update;
+}
+
+function buildForumRestrictionCopy(actionLabel) {
+    return `You cannot ${actionLabel} because your forum access is currently restricted.`;
+}
+
+function getModerationReviewerIdentityOrThrow(request) {
+    if (!request.auth) {
+        throw new HttpsError("unauthenticated", "Auth required.");
+    }
+
+    const token = request.auth.token || {};
+    const isReviewer = token.admin === true || token.moderator === true || token.staff === true;
+    if (!isReviewer) {
+        throw new HttpsError("permission-denied", "Moderator access required.");
+    }
+
+    return {
+        reviewerId: request.auth.uid,
+        reviewedBy: sanitizeText(token.email || request.auth.uid || "moderator", 200),
+    };
+}
+
+function isModerationEventCurrentlyActive(eventData, nowMs = Date.now()) {
+    if (!eventData || eventData.status !== "active") return false;
+
+    const expiresAtMs = timestampToMillis(eventData.expiresAt);
+    if (expiresAtMs != null && expiresAtMs <= nowMs) {
+        return false;
+    }
+
+    return true;
+}
+
+async function resolveModerationTargetForTransaction(transaction, targetType, targetId) {
+    const normalizedType = sanitizeText(targetType || "", 50).trim().toLowerCase();
+    const normalizedTargetId = sanitizeText(targetId || "", 200).trim();
+    if (!normalizedTargetId) return null;
+
+    if (normalizedType === "post") {
+        const ref = db.collection("forumThreads").doc(normalizedTargetId);
+        const snap = await transaction.get(ref);
+        return snap.exists ? { ref, snap, canonicalType: "post" } : null;
+    }
+
+    if (normalizedType === "comment" || normalizedType === "reply") {
+        const querySnap = await transaction.get(
+            db.collectionGroup("comments")
+                .where(admin.firestore.FieldPath.documentId(), "==", normalizedTargetId)
+                .limit(1)
+        );
+
+        if (querySnap.empty) return null;
+
+        const snap = querySnap.docs[0];
+        return { ref: snap.ref, snap, canonicalType: "comment" };
+    }
+
+    return null;
+}
+
+function buildVisionAccessTokenProjectId() {
+    return process.env.GCLOUD_PROJECT || process.env.GCP_PROJECT || null;
+}
+
+async function fetchMetadataServerAccessToken() {
+    const response = await axios.get(
+        "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token",
+        {
+            headers: { "Metadata-Flavor": "Google" },
+            timeout: 5000,
+        }
+    );
+
+    const token = response?.data?.access_token;
+    if (!token) {
+        throw new Error("Metadata server did not return an access token.");
+    }
+    return token;
+}
+
+async function runVisionSafeSearchOnStorageUrl(imageUrl) {
+    const storagePath = getStoragePathFromDownloadUrl(imageUrl);
+    if (!storagePath) {
+        return { skipped: true, reason: "storage_path_unavailable" };
+    }
+
+    const accessToken = await fetchMetadataServerAccessToken();
+    const bucket = storage.bucket().name;
+    const gsUri = `gs://${bucket}/${storagePath}`;
+    const projectId = buildVisionAccessTokenProjectId();
+
+    const response = await axios.post(
+        "https://vision.googleapis.com/v1/images:annotate",
+        {
+            requests: [
+                {
+                    image: {
+                        source: {
+                            imageUri: gsUri,
+                        },
+                    },
+                    features: [
+                        {
+                            type: "SAFE_SEARCH_DETECTION",
+                        },
+                    ],
+                },
+            ],
+        },
+        {
+            headers: {
+                Authorization: `Bearer ${accessToken}`,
+                ...(projectId ? { "x-goog-user-project": projectId } : {}),
+                "Content-Type": "application/json; charset=utf-8",
+            },
+            timeout: 15000,
+        }
+    );
+
+    const annotation = response?.data?.responses?.[0]?.safeSearchAnnotation || null;
+    return {
+        skipped: false,
+        annotation,
+        storagePath,
+        gsUri,
+    };
+}
+
+function shouldRejectForumImageFromSafeSearch(annotation) {
+    if (!annotation || typeof annotation !== "object") return false;
+
+    const adult = String(annotation.adult || "UNKNOWN").toUpperCase();
+    const racy = String(annotation.racy || "UNKNOWN").toUpperCase();
+
+    return adult === "VERY_LIKELY" || adult === "LIKELY" || racy === "VERY_LIKELY";
+}
+
+function describeSafeSearchAnnotation(annotation) {
+    if (!annotation || typeof annotation !== "object") {
+        return "SafeSearch returned no annotation.";
+    }
+
+    return [
+        `adult=${annotation.adult || "UNKNOWN"}`,
+        `racy=${annotation.racy || "UNKNOWN"}`,
+        `violence=${annotation.violence || "UNKNOWN"}`,
+        `medical=${annotation.medical || "UNKNOWN"}`,
+        `spoof=${annotation.spoof || "UNKNOWN"}`,
+    ].join(", ");
+}
+
+async function evaluateForumPostImageModeration({ userId, postId, imageUrl }) {
+    if (typeof imageUrl !== "string" || !imageUrl.trim()) {
+        return {
+            blocked: false,
+            skipped: true,
+            annotation: null,
+            reasonText: "",
+        };
+    }
+
+    try {
+        const result = await runVisionSafeSearchOnStorageUrl(imageUrl.trim());
+        if (result.skipped) {
+            return {
+                blocked: false,
+                skipped: true,
+                annotation: null,
+                reasonText: result.reason || "",
+            };
+        }
+
+        const blocked = shouldRejectForumImageFromSafeSearch(result.annotation);
+        const reasonText = describeSafeSearchAnnotation(result.annotation);
+
+        if (blocked) {
+            const archivedUrl = await archiveForumPostImageIfNeeded(userId, postId, imageUrl.trim());
+            return {
+                blocked: true,
+                skipped: false,
+                annotation: result.annotation,
+                archivedUrl,
+                reasonText,
+                gsUri: result.gsUri,
+            };
+        }
+
+        return {
+            blocked: false,
+            skipped: false,
+            annotation: result.annotation,
+            reasonText,
+            gsUri: result.gsUri,
+        };
+    } catch (error) {
+        logger.warn("evaluateForumPostImageModeration: Vision SafeSearch failed, allowing post.", error);
+        return {
+            blocked: false,
+            skipped: true,
+            annotation: null,
+            reasonText: sanitizeText(error?.message || "vision_scan_failed", 200),
+        };
+    }
+}
+
+async function applyAutomaticPenaltyForUser({
+    transaction,
+    userRef,
+    userData,
+    userId,
+    source,
+    reasonCode,
+    reasonText,
+    targetType,
+    targetId,
+}) {
+    const defaults = buildUserModerationDefaults(userData);
+    const currentWarnings = defaults.warningCount;
+    const currentStrikes = defaults.strikeCount;
+    const now = Date.now();
+
+    if (currentWarnings <= 0 && currentStrikes <= 0) {
+        const warningEventRef = createModerationEventRef();
+        transaction.set(warningEventRef, buildModerationEventPayload({
+            eventId: warningEventRef.id,
+            userId,
+            targetType: targetType || "user",
+            targetId: targetId || null,
+            actionType: "warning",
+            reasonCode,
+            reasonText,
+            source,
+            appealable: false,
+            expiresAt: admin.firestore.Timestamp.fromMillis(now + MODERATION_WARNING_EXPIRY_MS),
+        }));
+        transaction.set(userRef, {
+            warningCount: currentWarnings + 1,
+            lastViolationAt: admin.firestore.FieldValue.serverTimestamp(),
+        }, { merge: true });
+
+        return {
+            penaltyType: "warning",
+            strikeCountAfter: currentStrikes,
+            warningCountAfter: currentWarnings + 1,
+            appliedRestriction: null,
+        };
+    }
+
+    const newStrikeCount = currentStrikes + 1;
+    const strikeEventRef = createModerationEventRef();
+    transaction.set(strikeEventRef, buildModerationEventPayload({
+        eventId: strikeEventRef.id,
+        userId,
+        targetType: targetType || "user",
+        targetId: targetId || null,
+        actionType: "strike",
+        reasonCode,
+        reasonText,
+        source,
+        appealable: true,
+        expiresAt: admin.firestore.Timestamp.fromMillis(now + MODERATION_STRIKE_EXPIRY_MS),
+    }));
+
+    const userUpdates = {
+        strikeCount: newStrikeCount,
+        lastViolationAt: admin.firestore.FieldValue.serverTimestamp(),
+    };
+
+    let appliedRestriction = null;
+
+    if (newStrikeCount === 1) {
+        const until = admin.firestore.Timestamp.fromMillis(now + MODERATION_SUSPEND_STAGE_ONE_MS);
+        userUpdates.forumSuspendedUntil = until;
+        appliedRestriction = {
+            actionType: "forum_suspension",
+            expiresAt: until,
+            message: "Automatic 24-hour forum suspension after repeated moderation issues.",
+        };
+    } else if (newStrikeCount === 2) {
+        const until = admin.firestore.Timestamp.fromMillis(now + MODERATION_SUSPEND_STAGE_TWO_MS);
+        userUpdates.forumSuspendedUntil = until;
+        appliedRestriction = {
+            actionType: "forum_suspension",
+            expiresAt: until,
+            message: "Automatic 7-day forum suspension after repeated moderation issues.",
+        };
+    } else if (newStrikeCount >= 3) {
+        userUpdates.permanentForumBan = true;
+        userUpdates.forumSuspendedUntil = null;
+        appliedRestriction = {
+            actionType: "forum_ban",
+            expiresAt: null,
+            message: "Automatic permanent forum ban after repeated moderation issues.",
+        };
+    }
+
+    transaction.set(userRef, userUpdates, { merge: true });
+
+    if (appliedRestriction) {
+        const restrictionEventRef = createModerationEventRef();
+        transaction.set(restrictionEventRef, buildModerationEventPayload({
+            eventId: restrictionEventRef.id,
+            userId,
+            targetType: "user",
+            targetId: userId,
+            actionType: appliedRestriction.actionType,
+            reasonCode,
+            reasonText: appliedRestriction.message,
+            source,
+            appealable: true,
+            expiresAt: appliedRestriction.expiresAt,
+        }));
+    }
+
+    return {
+        penaltyType: "strike",
+        strikeCountAfter: newStrikeCount,
+        warningCountAfter: currentWarnings,
+        appliedRestriction,
+    };
+}
+
 /**
  * Reads the caller's canonical forum identity from users/{uid} so the client cannot spoof it.
  */
@@ -3772,6 +4878,8 @@ exports.createForumPost = onCall(async (request) => {
         throw new HttpsError("invalid-argument", `Post exceeds ${FORUM_POST_MAX_LENGTH} characters.`);
     }
 
+    await assertUserCanUseForumOrThrow(userId, "create a forum post");
+
     await assertNoBlockedContentOrThrow({
         userId,
         submissionType: "forum_post_create",
@@ -3779,6 +4887,51 @@ exports.createForumPost = onCall(async (request) => {
         text: message,
         threadId: postId,
     });
+
+    const imageModeration = await evaluateForumPostImageModeration({
+        userId,
+        postId,
+        imageUrl: birdImageUrl,
+    });
+
+    if (imageModeration.blocked) {
+        const moderationState = await assertUserCanUseForumOrThrow(userId, "create a forum post");
+        await db.runTransaction(async (t) => {
+            const ownerSnap = await t.get(moderationState.userRef);
+            const penaltySummary = await applyAutomaticPenaltyForUser({
+                transaction: t,
+                userRef: moderationState.userRef,
+                userData: ownerSnap.exists ? (ownerSnap.data() || {}) : {},
+                userId,
+                source: "vision_safesearch",
+                reasonCode: "nsfw_image",
+                reasonText: `Forum image upload was blocked by SafeSearch. ${imageModeration.reasonText}`,
+                targetType: "post",
+                targetId: postId,
+            });
+
+            const contentEventRef = createModerationEventRef();
+            t.set(contentEventRef, buildModerationEventPayload({
+                eventId: contentEventRef.id,
+                userId,
+                targetType: "post",
+                targetId: postId,
+                actionType: "reject_content",
+                reasonCode: "nsfw_image",
+                reasonText: `Forum image upload was blocked by SafeSearch. ${imageModeration.reasonText}`,
+                source: "vision_safesearch",
+                appealable: true,
+                metadata: {
+                    penaltyType: penaltySummary.penaltyType,
+                },
+            }));
+        });
+
+        throw new HttpsError(
+            "failed-precondition",
+            "This image could not be posted because it was flagged as explicit. You can appeal that moderation decision in-app once the moderation screen is wired up."
+        );
+    }
 
     let latitude = null;
     let longitude = null;
@@ -3824,6 +4977,7 @@ exports.createForumPost = onCall(async (request) => {
                 heatmapExpiresAt: showLocation
                     ? admin.firestore.Timestamp.fromMillis(Date.now() + CONFIG.FORUM_HEATMAP_TTL_MS)
                     : null,
+                ...buildInitialModerationFields(),
             };
 
             t.create(postRef, postData);
@@ -3860,6 +5014,8 @@ exports.createForumComment = onCall(async (request) => {
         throw new HttpsError("invalid-argument", "commentId is required.");
     }
 
+    await assertUserCanUseForumOrThrow(userId, parentCommentId ? "reply to comments" : "comment on posts");
+
     await assertNoBlockedContentOrThrow({
         userId,
         submissionType: parentCommentId ? "forum_reply_create" : "forum_comment_create",
@@ -3883,6 +5039,9 @@ exports.createForumComment = onCall(async (request) => {
             if (!threadSnap.exists) {
                 throw new HttpsError("not-found", "Post not found.");
             }
+            if (!isPublicForumStatus((threadSnap.data() || {}).moderationStatus)) {
+                throw new HttpsError("failed-precondition", "That post is no longer available for comments.");
+            }
             if (existingCommentSnap.exists) {
                 throw new HttpsError("already-exists", "That comment already exists.");
             }
@@ -3897,6 +5056,9 @@ exports.createForumComment = onCall(async (request) => {
                 const parentSnap = await t.get(parentRef);
                 if (!parentSnap.exists) {
                     throw new HttpsError("not-found", "Parent comment not found.");
+                }
+                if (!isPublicForumStatus((parentSnap.data() || {}).moderationStatus)) {
+                    throw new HttpsError("failed-precondition", "That comment is no longer available for replies.");
                 }
                 normalizedParentCommentId = parentCommentId;
                 parentUsername = sanitizeText(parentSnap.data().username || "", 80).trim() || null;
@@ -3916,6 +5078,7 @@ exports.createForumComment = onCall(async (request) => {
                 edited: false,
                 lastEditedAt: null,
                 likeNotificationSent: false,
+                ...buildInitialModerationFields(),
             });
         });
 
@@ -3946,6 +5109,8 @@ exports.updateForumPostContent = onCall(async (request) => {
         throw new HttpsError("invalid-argument", "postId is required.");
     }
 
+    await assertUserCanUseForumOrThrow(userId, "edit forum posts");
+
     await assertNoBlockedContentOrThrow({
         userId,
         submissionType: "forum_post_update",
@@ -3966,6 +5131,9 @@ exports.updateForumPostContent = onCall(async (request) => {
             const postData = postSnap.data() || {};
             if (postData.userId !== userId) {
                 throw new HttpsError("permission-denied", "You can only edit your own posts.");
+            }
+            if (!isPublicForumStatus(postData.moderationStatus)) {
+                throw new HttpsError("failed-precondition", "That post can no longer be edited.");
             }
 
             assertWithinForumEditWindow(postData.timestamp, "Post");
@@ -4008,6 +5176,8 @@ exports.updateForumCommentContent = onCall(async (request) => {
         throw new HttpsError("invalid-argument", "commentId is required.");
     }
 
+    await assertUserCanUseForumOrThrow(userId, "edit comments");
+
     await assertNoBlockedContentOrThrow({
         userId,
         submissionType: "forum_comment_update",
@@ -4029,6 +5199,9 @@ exports.updateForumCommentContent = onCall(async (request) => {
             const commentData = commentSnap.data() || {};
             if (commentData.userId !== userId) {
                 throw new HttpsError("permission-denied", "You can only edit your own comments.");
+            }
+            if (!isPublicForumStatus(commentData.moderationStatus)) {
+                throw new HttpsError("failed-precondition", "That comment can no longer be edited.");
             }
 
             assertWithinForumEditWindow(commentData.timestamp, "Comment");
@@ -4232,6 +5405,10 @@ exports.saveForumPost = onCall(async (request) => {
                 throw new HttpsError("not-found", "Post not found.");
             }
 
+            if (!isPublicForumStatus((threadSnap.data() || {}).moderationStatus)) {
+                throw new HttpsError("failed-precondition", "That post is no longer available to save.");
+            }
+
             if (!savedSnap.exists) {
                 transaction.set(savedRef, {
                     threadId,
@@ -4330,10 +5507,51 @@ function normalizeCardRarity(rarity) {
             return "Epic";
         case "legendary":
             return "Legendary";
+        case "mythic":
+            return "Mythic";
         default:
             throw new HttpsError("invalid-argument", `Invalid rarity: ${rarity}`);
     }
 }
+
+function getCardUpgradeCost(currentRarity, targetRarity) {
+    const rarityOrder = ["Common", "Uncommon", "Rare", "Epic", "Legendary", "Mythic"];
+    const upgradeCosts = {
+        "Common->Uncommon": 10,
+        "Uncommon->Rare": 20,
+        "Rare->Epic": 30,
+        "Epic->Legendary": 50,
+        "Legendary->Mythic": 100,
+    };
+    const currentIndex = rarityOrder.indexOf(currentRarity);
+    const targetIndex = rarityOrder.indexOf(targetRarity);
+    if (currentIndex === -1 || targetIndex === -1) {
+        throw new HttpsError(
+            "invalid-argument",
+            `Invalid rarity transition: ${currentRarity} -> ${targetRarity}`
+        );
+    }
+    if (targetIndex <= currentIndex) {
+        throw new HttpsError(
+            "failed-precondition",
+            `Target rarity must be higher than current rarity. Current: ${currentRarity}, Target: ${targetRarity}`
+        );
+    }
+    let totalCost = 0;
+    for (let i = currentIndex; i < targetIndex; i++) {
+        const stepKey = `${rarityOrder[i]}->${rarityOrder[i + 1]}`;
+        const stepCost = upgradeCosts[stepKey];
+        if (typeof stepCost !== "number") {
+            throw new HttpsError(
+                "internal",
+                `Missing upgrade cost for ${stepKey}`
+            );
+        }
+        totalCost += stepCost;
+    }
+    return totalCost;
+}
+
 exports.upgradeCollectionSlotRarity = onCall(async (request) => {
     if (!request.auth) {
         throw new HttpsError("unauthenticated", "Login required.");

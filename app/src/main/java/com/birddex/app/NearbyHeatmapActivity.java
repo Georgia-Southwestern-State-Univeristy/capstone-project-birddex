@@ -59,6 +59,7 @@ import com.google.firebase.firestore.DocumentReference;
 import com.google.firebase.firestore.DocumentSnapshot;
 import com.google.firebase.firestore.FieldValue;
 import com.google.firebase.firestore.FirebaseFirestore;
+import com.google.firebase.firestore.MetadataChanges;
 import com.google.firebase.firestore.Query;
 import com.google.firebase.firestore.Source;
 import com.google.firebase.firestore.WriteBatch;
@@ -119,7 +120,6 @@ public class NearbyHeatmapActivity extends AppCompatActivity
 
     private static final double SEARCH_RADIUS_METERS = 50000d;
     private static final long SIGHTING_RECENCY_MS = 72L * 60 * 60 * 1000;
-    private static final long FORUM_HEATMAP_POST_TTL_MS = 48L * 60 * 60 * 1000;
 
     private static final double HOTSPOT_BUCKET_SIZE = 0.02d;
     private static final double HOTSPOT_CIRCLE_RADIUS_METERS = 900d;
@@ -353,6 +353,24 @@ public class NearbyHeatmapActivity extends AppCompatActivity
         loadEbirdApiSightings(gen);
     }
 
+    private boolean isHeatmapPinVisible(ForumPost post) {
+        if (post == null) return false;
+        String status = post.getModerationStatus();
+        return (status == null || status.isEmpty() || "visible".equalsIgnoreCase(status))
+                && post.isShowLocation()
+                && post.getLatitude() != null
+                && post.getLongitude() != null;
+    }
+
+    private boolean isForumCommentVisible(ForumComment comment) {
+        if (comment == null) return false;
+        String status = comment.getModerationStatus();
+        return status == null
+                || status.isEmpty()
+                || "visible".equalsIgnoreCase(status)
+                || "under_review".equalsIgnoreCase(status);
+    }
+
     /**
      * Pulls data from a local source, Firebase, or an external API and prepares it for the UI or
      * caller.
@@ -394,40 +412,13 @@ public class NearbyHeatmapActivity extends AppCompatActivity
         boolean showGraphic = getSharedPreferences(PREFS_NAME, MODE_PRIVATE).getBoolean(KEY_GRAPHIC_CONTENT, false);
         for (DocumentSnapshot doc : snap.getDocuments()) {
             ForumPost p = doc.toObject(ForumPost.class);
-            if (p != null && p.getLatitude() != null) {
+            if (p != null) {
                 p.setId(doc.getId());
-                if (isForumPostExpiredFromHeatmap(p)) {
-                    continue;
-                }
+                if (!isHeatmapPinVisible(p)) continue;
                 boolean inBounds = currentVisibleBounds == null || currentVisibleBounds.contains(new LatLng(p.getLatitude(), p.getLongitude()));
                 if (inBounds && (showGraphic || !p.isHunted())) addPinToMap(p);
             }
         }
-    }
-
-    /**
-     * Decides whether a location-sharing forum post has aged out of the heat map.
-     *
-     * Newer posts use the backend-written `heatmapExpiresAt` field. Older existing posts that do
-     * not have that field fall back to `timestamp + 48h` so the cutoff still works without a full
-     * migration.
-     */
-    private boolean isForumPostExpiredFromHeatmap(ForumPost post) {
-        if (post == null) return true;
-
-        Date now = new Date();
-
-        if (post.getHeatmapExpiresAt() != null) {
-            Date expiresAt = post.getHeatmapExpiresAt().toDate();
-            return expiresAt != null && !expiresAt.after(now);
-        }
-
-        if (post.getTimestamp() != null) {
-            Date createdAt = post.getTimestamp().toDate();
-            return createdAt != null && (createdAt.getTime() + FORUM_HEATMAP_POST_TTL_MS) <= now.getTime();
-        }
-
-        return false;
     }
 
     /**
@@ -707,7 +698,7 @@ public class NearbyHeatmapActivity extends AppCompatActivity
                     ForumComment c = d.toObject(ForumComment.class);
                     if (c != null) {
                         c.setId(d.getId());
-                        popupCommentList.add(c);
+                        if (isForumCommentVisible(c)) popupCommentList.add(c);
                     }
                 }
                 adapter.setComments(new ArrayList<>(popupCommentList));
@@ -739,7 +730,7 @@ public class NearbyHeatmapActivity extends AppCompatActivity
         FirebaseUser user = mAuth.getCurrentUser();
         if (user != null && p.getUserId().equals(user.getUid())) popup.getMenu().add("Delete");
         popup.getMenu().add(isSaved ? "Unsave Post" : "Save Post");
-        popup.getMenu().add("Report");
+        if (user != null && !p.getUserId().equals(user.getUid())) popup.getMenu().add("Report");
         popup.setOnMenuItemClickListener(item -> {
             if (item.getTitle().equals("Delete")) showDeleteConfirmation(p, dialog);
             else if (item.getTitle().equals("Save Post")) savePostForLater(p);
@@ -1006,7 +997,7 @@ public class NearbyHeatmapActivity extends AppCompatActivity
         PopupMenu p = new PopupMenu(this, v);
         FirebaseUser user = mAuth.getCurrentUser();
         if (user != null && c.getUserId().equals(user.getUid())) p.getMenu().add("Delete");
-        p.getMenu().add("Report");
+        if (user != null && !c.getUserId().equals(user.getUid())) p.getMenu().add("Report");
         p.setOnMenuItemClickListener(item -> {
             if (item.getTitle().equals("Delete")) showCommentDeleteConfirmation(c);
             else if (item.getTitle().equals("Report")) showReportDialog("comment", c.getId());

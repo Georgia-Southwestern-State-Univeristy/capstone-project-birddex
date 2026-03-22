@@ -16,7 +16,11 @@ import com.google.firebase.auth.FirebaseAuth;
 import com.google.firebase.auth.FirebaseUser;
 
 /**
- * NotificationsSettingsActivity: Activity class for managing user notification preferences.
+ * NotificationsSettingsActivity: Manages user notification preferences.
+ * 
+ * This activity allows users to toggle general notifications, reply alerts,
+ * and tracked bird alerts. It also allows configuring cooldowns and distance
+ * filters for these notifications.
  */
 public class NotificationsSettingsActivity extends AppCompatActivity {
 
@@ -26,12 +30,17 @@ public class NotificationsSettingsActivity extends AppCompatActivity {
     private ImageView btnBack;
     private final SettingsApi settingsApi = new SettingsApi();
 
+    /**
+     * Android calls this when the Activity is first created. This is where the screen
+     * inflates its layout, grabs views, creates helpers, and wires listeners.
+     */
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         SystemBarHelper.applyStandardNavBar(this);
         setContentView(R.layout.activity_notifications_settings);
 
+        // Bind UI components
         switchNotifications = findViewById(R.id.switchNotifications);
         switchReplies = findViewById(R.id.switchReplies);
         switchTrackedBirds = findViewById(R.id.switchTrackedBirds);
@@ -50,12 +59,16 @@ public class NotificationsSettingsActivity extends AppCompatActivity {
             return;
         }
 
+        // Initialize UI components with default values and load user preferences from backend.
         setupSpinners();
         loadSettings(user.getUid());
     }
 
+    /**
+     * Initializes the dropdown spinners with human-readable options for cooldowns and distances.
+     */
     private void setupSpinners() {
-        // General Cooldown
+        // General Notification Cooldown
         String[] options = {"Off", "2 Hours", "6 Hours"};
         ArrayAdapter<String> adapter = new ArrayAdapter<>(this, android.R.layout.simple_spinner_item, options);
         adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
@@ -63,7 +76,7 @@ public class NotificationsSettingsActivity extends AppCompatActivity {
             spinnerCooldown.setAdapter(adapter);
         }
 
-        // Tracked Birds Cooldown
+        // Tracked Birds Notification Cooldown
         String[] trackedOptions = {"Every spotting", "Every 2 hours"};
         ArrayAdapter<String> trackedAdapter = new ArrayAdapter<>(this, android.R.layout.simple_spinner_item, trackedOptions);
         trackedAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
@@ -71,7 +84,7 @@ public class NotificationsSettingsActivity extends AppCompatActivity {
             spinnerTrackedCooldown.setAdapter(trackedAdapter);
         }
 
-        // Tracked Birds Distance
+        // Tracked Birds Proximity Distance
         String[] distanceOptions = {"Any distance", "Within 150 miles"};
         ArrayAdapter<String> distanceAdapter = new ArrayAdapter<>(this, android.R.layout.simple_spinner_item, distanceOptions);
         distanceAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
@@ -80,12 +93,17 @@ public class NotificationsSettingsActivity extends AppCompatActivity {
         }
     }
 
+    /**
+     * Pulls settings data from the backend and prepares it for the UI.
+     * It temporarily disables listeners while updating view state to prevent recursive triggers.
+     */
     private void loadSettings(String uid) {
         settingsApi.getSettings(uid, new SettingsApi.SettingsCallback() {
             @Override
             public void onSuccess(UserSettings settings) {
                 if (isFinishing() || isDestroyed()) return;
 
+                // Sync toggle states with user preferences.
                 if (switchNotifications != null) {
                     switchNotifications.setOnCheckedChangeListener(null);
                     switchNotifications.setChecked(settings.notificationsEnabled);
@@ -101,6 +119,7 @@ public class NotificationsSettingsActivity extends AppCompatActivity {
                     switchTrackedBirds.setChecked(settings.trackedBirdsNotificationsEnabled);
                 }
 
+                // Sync spinner selections with user preferences.
                 if (spinnerCooldown != null) {
                     spinnerCooldown.setOnItemSelectedListener(null);
                     int selection = 0;
@@ -121,6 +140,7 @@ public class NotificationsSettingsActivity extends AppCompatActivity {
                     spinnerTrackedDistance.setSelection(selection);
                 }
 
+                // Re-attach listeners once UI is synchronized.
                 setupListeners(uid);
             }
 
@@ -135,6 +155,10 @@ public class NotificationsSettingsActivity extends AppCompatActivity {
         });
     }
 
+    /**
+     * Wires user interaction for all toggles and spinners.
+     * Each change triggers an update back to the persistence layer.
+     */
     private void setupListeners(String uid) {
         if (switchNotifications != null) {
             switchNotifications.setOnCheckedChangeListener((buttonView, isChecked) -> {

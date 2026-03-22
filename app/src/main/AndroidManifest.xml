@@ -80,6 +80,12 @@
             android:name=".SettingsActivity"
             android:exported="false" />
         <activity
+            android:name=".ModeratorActivity"
+            android:exported="false" />
+        <activity
+            android:name=".ModerationHistoryActivity"
+            android:exported="false" />
+        <activity
             android:name=".NotificationsSettingsActivity"
             android:exported="false" />
         <activity

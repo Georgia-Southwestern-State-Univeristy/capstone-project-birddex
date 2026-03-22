@@ -3363,6 +3363,82 @@ exports.getPendingModerationAppeals = onCall(async (request) => {
     };
 });
 
+
+// ======================================================
+// getPendingModerationReports — moderator queue for pending user reports
+// ======================================================
+exports.getPendingModerationReports = onCall(async (request) => {
+    getModerationReviewerIdentityOrThrow(request);
+
+    const reportsSnap = await db.collection("reports")
+        .where("status", "==", "pending")
+        .limit(100)
+        .get();
+
+    const reports = await Promise.all(reportsSnap.docs.map(async (doc) => {
+        const data = doc.data() || {};
+
+        let targetExists = false;
+        let targetPreview = null;
+        let targetModerationStatus = null;
+        let currentUniqueReporterCount = null;
+        let currentReportCount = null;
+        let resolvedThreadId = sanitizeText(data.threadId || "", 200).trim() || null;
+        let resolvedTargetOwnerId = sanitizeText(data.targetOwnerId || "", 200).trim() || null;
+
+        try {
+            const target = await resolveModerationTargetOrThrow(data.targetType || "", data.targetId || "");
+            const targetData = target.data || {};
+
+            targetExists = true;
+            resolvedThreadId = resolvedThreadId || target.threadId || null;
+            resolvedTargetOwnerId = resolvedTargetOwnerId || target.ownerUserId || null;
+            targetPreview = sanitizeText(targetData.message || targetData.text || "", 240) || null;
+            targetModerationStatus = normalizeModerationStatus(targetData.moderationStatus);
+            currentUniqueReporterCount = typeof targetData.uniqueReporterCount === "number"
+                ? targetData.uniqueReporterCount
+                : null;
+            currentReportCount = typeof targetData.reportCount === "number"
+                ? targetData.reportCount
+                : null;
+        } catch (error) {
+            if (!(error instanceof HttpsError && error.code === "not-found")) {
+                logger.warn("getPendingModerationReports resolve target failed:", error);
+            }
+        }
+
+        let targetOwnerUsername = null;
+        if (resolvedTargetOwnerId) {
+            try {
+                const ownerSnap = await db.collection("users").doc(resolvedTargetOwnerId).get();
+                targetOwnerUsername = sanitizeText((ownerSnap.data() || {}).username || "", 80) || null;
+            } catch (error) {
+                logger.warn("getPendingModerationReports resolve owner failed:", error);
+            }
+        }
+
+        return {
+            id: doc.id,
+            ...data,
+            threadId: resolvedThreadId,
+            targetOwnerId: resolvedTargetOwnerId,
+            targetOwnerUsername,
+            targetExists,
+            targetPreview,
+            targetModerationStatus,
+            currentUniqueReporterCount,
+            currentReportCount,
+        };
+    }));
+
+    reports.sort((a, b) => (timestampToMillis(b.timestamp) || 0) - (timestampToMillis(a.timestamp) || 0));
+
+    return {
+        success: true,
+        reports,
+    };
+});
+
 // ======================================================
 // reviewModerationAppeal — moderator approval/denial with reversal handling
 // ======================================================
@@ -3441,9 +3517,33 @@ exports.reviewModerationAppeal = onCall(async (request) => {
                 reversalReason: decisionNote || "Appeal approved.",
             }, { merge: true });
 
+            const linkedModerationEventIds = eventData.actionType === "reject_content"
+                ? Array.from(new Set(
+                    (Array.isArray(eventData.metadata?.linkedModerationEventIds)
+                        ? eventData.metadata.linkedModerationEventIds
+                        : [])
+                        .map((value) => sanitizeText(value || "", 200).trim())
+                        .filter((value) => value && value !== moderationEventId)
+                ))
+                : [];
+
+            for (const linkedEventSnap of userEventsSnap.docs) {
+                if (!linkedModerationEventIds.includes(linkedEventSnap.id)) continue;
+                const linkedEventData = linkedEventSnap.data() || {};
+                if (!isModerationEventCurrentlyActive(linkedEventData)) continue;
+
+                t.set(linkedEventSnap.ref, {
+                    status: "reversed",
+                    reviewedAt: admin.firestore.FieldValue.serverTimestamp(),
+                    reviewedBy,
+                    reversalReason: decisionNote || "Appeal approved for linked rejected-content penalty.",
+                }, { merge: true });
+            }
+
+            const reversedEventIds = new Set([moderationEventId, ...linkedModerationEventIds]);
             const nowMs = Date.now();
             const remainingActiveEvents = userEventsSnap.docs
-                .filter((doc) => doc.id !== moderationEventId)
+                .filter((doc) => !reversedEventIds.has(doc.id))
                 .map((doc) => ({ id: doc.id, ...doc.data() }))
                 .filter((doc) => isModerationEventCurrentlyActive(doc, nowMs));
 
@@ -3494,6 +3594,205 @@ exports.reviewModerationAppeal = onCall(async (request) => {
         if (error instanceof HttpsError) throw error;
         logger.error("reviewModerationAppeal failed:", error);
         throw new HttpsError("internal", "Failed to review appeal.");
+    }
+});
+
+// ======================================================
+// reviewPendingReport — moderator review path for pending user reports
+// ======================================================
+exports.reviewPendingReport = onCall(async (request) => {
+    const { reviewedBy } = getModerationReviewerIdentityOrThrow(request);
+
+    const data = request.data || {};
+    const reportId = sanitizeText(data.reportId || "", 300).trim();
+    const userAction = sanitizeText(data.userAction || "none", 50).trim().toLowerCase();
+    const contentAction = sanitizeText(data.contentAction || "keep", 50).trim().toLowerCase();
+    const decisionNote = sanitizeText(data.decisionNote || "", 1000).trim();
+
+    const allowedUserActions = ["none", "warning", "strike", "suspend_24h", "suspend_7d", "forum_ban"];
+    const allowedContentActions = ["keep", "hide_content", "remove_content"];
+
+    if (!reportId) {
+        throw new HttpsError("invalid-argument", "reportId is required.");
+    }
+    if (!allowedUserActions.includes(userAction)) {
+        throw new HttpsError("invalid-argument", "Unsupported userAction.");
+    }
+    if (!allowedContentActions.includes(contentAction)) {
+        throw new HttpsError("invalid-argument", "Unsupported contentAction.");
+    }
+
+    const reportRef = db.collection("reports").doc(reportId);
+
+    try {
+        await db.runTransaction(async (t) => {
+            const reportSnap = await t.get(reportRef);
+            if (!reportSnap.exists) {
+                throw new HttpsError("not-found", "Report not found.");
+            }
+
+            const reportData = reportSnap.data() || {};
+            if (sanitizeText(reportData.status || "pending", 50).trim().toLowerCase() !== "pending") {
+                throw new HttpsError("failed-precondition", "That report has already been reviewed.");
+            }
+
+            const targetType = sanitizeText(reportData.targetType || "", 50).trim().toLowerCase();
+            const targetId = sanitizeText(reportData.targetId || "", 200).trim();
+            let target = null;
+
+            if (contentAction !== "keep" || !sanitizeText(reportData.targetOwnerId || "", 200).trim()) {
+                target = await resolveModerationTargetForTransaction(t, targetType, targetId);
+            }
+
+            if (contentAction !== "keep" && !target) {
+                throw new HttpsError("failed-precondition", "The reported content no longer exists, so a content action cannot be applied.");
+            }
+
+            const affectedUserId = sanitizeText(
+                reportData.targetOwnerId || (target && target.snap && (target.snap.data() || {}).userId) || "",
+                200
+            ).trim();
+
+            if (userAction !== "none" && !affectedUserId) {
+                throw new HttpsError("failed-precondition", "The reported content is missing an owner reference.");
+            }
+
+            let userRef = null;
+            let userSnap = null;
+            let userData = {};
+            if (userAction !== "none") {
+                userRef = db.collection("users").doc(affectedUserId);
+                userSnap = await t.get(userRef);
+                if (!userSnap.exists) {
+                    throw new HttpsError("failed-precondition", "The reported user profile could not be found.");
+                }
+                userData = userSnap.data() || {};
+            }
+
+            const createdModerationEventIds = [];
+            const nowMs = Date.now();
+            const nowTimestamp = admin.firestore.FieldValue.serverTimestamp();
+            const reportReasonCode = sanitizeText(reportData.reasonCode || "reported_content", 100).trim() || "reported_content";
+            const reportReasonText = sanitizeText(reportData.reasonText || "Content was reported.", 250).trim() || "Content was reported.";
+            const moderatorReasonText = decisionNote || `Moderator reviewed a pending report: ${reportReasonText}`;
+            const normalizedTargetType = target && target.canonicalType
+                ? target.canonicalType
+                : (targetType || "user");
+
+            if (userAction !== "none") {
+                const moderationDefaults = buildUserModerationDefaults(userData);
+                const userEventRef = createModerationEventRef();
+                let actionType = userAction;
+                let expiresAt = null;
+                const userUpdate = {
+                    lastViolationAt: nowTimestamp,
+                };
+
+                if (userAction === "warning") {
+                    expiresAt = admin.firestore.Timestamp.fromMillis(nowMs + MODERATION_WARNING_EXPIRY_MS);
+                    userUpdate.warningCount = moderationDefaults.warningCount + 1;
+                } else if (userAction === "strike") {
+                    expiresAt = admin.firestore.Timestamp.fromMillis(nowMs + MODERATION_STRIKE_EXPIRY_MS);
+                    userUpdate.strikeCount = moderationDefaults.strikeCount + 1;
+                } else if (userAction === "suspend_24h" || userAction === "suspend_7d") {
+                    actionType = "forum_suspension";
+                    const durationMs = userAction === "suspend_24h"
+                        ? MODERATION_SUSPEND_STAGE_ONE_MS
+                        : MODERATION_SUSPEND_STAGE_TWO_MS;
+                    expiresAt = admin.firestore.Timestamp.fromMillis(nowMs + durationMs);
+
+                    const existingSuspendedUntilMs = timestampToMillis(userData.forumSuspendedUntil);
+                    const nextSuspendedUntilMs = existingSuspendedUntilMs != null && existingSuspendedUntilMs > nowMs
+                        ? Math.max(existingSuspendedUntilMs, expiresAt.toMillis())
+                        : expiresAt.toMillis();
+                    userUpdate.forumSuspendedUntil = admin.firestore.Timestamp.fromMillis(nextSuspendedUntilMs);
+                } else if (userAction === "forum_ban") {
+                    actionType = "forum_ban";
+                    userUpdate.permanentForumBan = true;
+                    userUpdate.forumSuspendedUntil = null;
+                }
+
+                t.set(userEventRef, buildModerationEventPayload({
+                    eventId: userEventRef.id,
+                    userId: affectedUserId,
+                    targetType: normalizedTargetType,
+                    targetId: targetId || null,
+                    actionType,
+                    reasonCode: reportReasonCode,
+                    reasonText: moderatorReasonText,
+                    source: "moderator_report_review",
+                    createdBy: reviewedBy,
+                    appealable: true,
+                    expiresAt,
+                    metadata: {
+                        reportId,
+                        reviewUserAction: userAction,
+                        reviewContentAction: contentAction,
+                    },
+                }));
+                t.set(userRef, userUpdate, { merge: true });
+                createdModerationEventIds.push(userEventRef.id);
+            }
+
+            if (contentAction !== "keep") {
+                const moderationStatus = contentAction === "remove_content"
+                    ? MODERATION_STATUS_REMOVED
+                    : MODERATION_STATUS_HIDDEN;
+                const contentEventRef = createModerationEventRef();
+
+                t.set(contentEventRef, buildModerationEventPayload({
+                    eventId: contentEventRef.id,
+                    userId: affectedUserId || sanitizeText((target.snap.data() || {}).userId || "", 200).trim() || null,
+                    targetType: target.canonicalType,
+                    targetId: targetId || null,
+                    actionType: contentAction,
+                    reasonCode: reportReasonCode,
+                    reasonText: moderatorReasonText,
+                    source: "moderator_report_review",
+                    createdBy: reviewedBy,
+                    appealable: true,
+                    metadata: {
+                        reportId,
+                        reviewUserAction: userAction,
+                        reviewContentAction: contentAction,
+                    },
+                }));
+
+                t.set(target.ref, {
+                    ...buildContentModerationUpdate(
+                        moderationStatus,
+                        "moderator_report_review",
+                        moderatorReasonText,
+                        nowTimestamp
+                    ),
+                }, { merge: true });
+                createdModerationEventIds.push(contentEventRef.id);
+            }
+
+            const finalStatus = userAction === "none" && contentAction === "keep"
+                ? "dismissed"
+                : "resolved";
+
+            t.set(reportRef, {
+                status: finalStatus,
+                reviewedAt: admin.firestore.FieldValue.serverTimestamp(),
+                reviewedBy,
+                decisionNote: decisionNote || null,
+                userAction,
+                contentAction,
+                createdModerationEventIds,
+            }, { merge: true });
+        });
+
+        return {
+            success: true,
+            reportId,
+            reviewed: true,
+        };
+    } catch (error) {
+        if (error instanceof HttpsError) throw error;
+        logger.error("reviewPendingReport failed:", error);
+        throw new HttpsError("internal", "Failed to review report.");
     }
 });
 
@@ -4571,6 +4870,7 @@ async function applyAutomaticPenaltyForUser({
 
         return {
             penaltyType: "warning",
+            linkedModerationEventIds: [warningEventRef.id],
             strikeCountAfter: currentStrikes,
             warningCountAfter: currentWarnings + 1,
             appliedRestriction: null,
@@ -4627,6 +4927,8 @@ async function applyAutomaticPenaltyForUser({
 
     transaction.set(userRef, userUpdates, { merge: true });
 
+    const linkedModerationEventIds = [strikeEventRef.id];
+
     if (appliedRestriction) {
         const restrictionEventRef = createModerationEventRef();
         transaction.set(restrictionEventRef, buildModerationEventPayload({
@@ -4641,10 +4943,12 @@ async function applyAutomaticPenaltyForUser({
             appealable: true,
             expiresAt: appliedRestriction.expiresAt,
         }));
+        linkedModerationEventIds.push(restrictionEventRef.id);
     }
 
     return {
         penaltyType: "strike",
+        linkedModerationEventIds,
         strikeCountAfter: newStrikeCount,
         warningCountAfter: currentWarnings,
         appliedRestriction,
@@ -4923,6 +5227,9 @@ exports.createForumPost = onCall(async (request) => {
                 appealable: true,
                 metadata: {
                     penaltyType: penaltySummary.penaltyType,
+                    linkedModerationEventIds: Array.isArray(penaltySummary.linkedModerationEventIds)
+                        ? penaltySummary.linkedModerationEventIds
+                        : [],
                 },
             }));
         });

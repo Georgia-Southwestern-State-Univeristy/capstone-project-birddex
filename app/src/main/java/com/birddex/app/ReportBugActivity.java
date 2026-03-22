@@ -13,6 +13,12 @@ import androidx.appcompat.app.AppCompatActivity;
 
 import com.google.android.material.checkbox.MaterialCheckBox;
 
+/**
+ * ReportBugActivity: Provides a form for users to submit bug reports or feedback.
+ * 
+ * Collected reports include device information and optional user contact details
+ * to assist in debugging and follow-up.
+ */
 public class ReportBugActivity extends AppCompatActivity {
 
     private EditText etBugSubject, etBugDescription, etUserEmail;
@@ -22,15 +28,20 @@ public class ReportBugActivity extends AppCompatActivity {
     private LinearLayout layoutUserEmail;
     private FirebaseManager firebaseManager;
 
+    /**
+     * Android calls this when the Activity is first created. This is where the screen
+     * inflates its layout, grabs views, and wires listeners.
+     */
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         SystemBarHelper.applyStandardNavBar(this);
         setContentView(R.layout.activity_report_bug);
 
-        // Initialize FirebaseManager
+        // Initialize FirebaseManager to handle data persistence.
         firebaseManager = new FirebaseManager(this);
 
+        // Bind UI components.
         etBugSubject = findViewById(R.id.etBugSubject);
         etBugDescription = findViewById(R.id.etBugDescription);
         etUserEmail = findViewById(R.id.etUserEmail);
@@ -41,15 +52,18 @@ public class ReportBugActivity extends AppCompatActivity {
 
         btnBack.setOnClickListener(v -> finish());
 
+        // Toggle visibility of the email input field based on user opt-in for follow-up.
         cbEmailOptIn.setOnCheckedChangeListener((buttonView, isChecked) -> {
             layoutUserEmail.setVisibility(isChecked ? View.VISIBLE : View.GONE);
         });
 
+        // Wires the submission logic.
         btnSubmitBug.setOnClickListener(v -> {
             String subject = etBugSubject.getText().toString().trim();
             String description = etBugDescription.getText().toString().trim();
             String userEmail = etUserEmail.getText().toString().trim();
 
+            // Validate mandatory fields.
             if (subject.isEmpty()) {
                 etBugSubject.setError("Subject is required");
                 return;
@@ -60,6 +74,7 @@ public class ReportBugActivity extends AppCompatActivity {
                 return;
             }
 
+            // Validate email if the user opted in for contact.
             if (cbEmailOptIn.isChecked()) {
                 if (userEmail.isEmpty()) {
                     etUserEmail.setError("Email address is required");
@@ -70,21 +85,26 @@ public class ReportBugActivity extends AppCompatActivity {
                 }
             }
 
+            // Proceed to submit the report to the backend.
             submitReport(subject, description, cbEmailOptIn.isChecked() ? userEmail : null);
         });
     }
 
+    /**
+     * Submits the bug report data via FirebaseManager.
+     * Provides UI feedback (button state/text) during the asynchronous operation.
+     */
     private void submitReport(String subject, String description, String userEmail) {
-        // UI Feedback: Disable button to prevent multiple clicks
+        // UI Feedback: Disable button to prevent multiple clicks while the request is in flight.
         btnSubmitBug.setEnabled(false);
         btnSubmitBug.setText("Sending...");
 
         firebaseManager.submitBugReport(subject, description, userEmail, task -> {
             if (task.isSuccessful()) {
                 Toast.makeText(this, "Thank you for voicing your concerns!", Toast.LENGTH_LONG).show();
-                finish(); // Close activity and return to settings
+                finish(); // Close activity and return to settings on success.
             } else {
-                // Re-enable on failure
+                // Re-enable input on failure so the user can try again.
                 btnSubmitBug.setEnabled(true);
                 btnSubmitBug.setText("Submit Report");
                 Toast.makeText(this, "Failed to send report. Please try again.", Toast.LENGTH_SHORT).show();

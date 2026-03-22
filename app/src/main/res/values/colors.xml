@@ -18,8 +18,10 @@
     <color name="auth_link">#111111</color>
     <color name="auth_body">#333333</color>
 
-    <!-- Material Design Error Color -->
+    <!-- Material Design Error Colors -->
     <color name="md_theme_error">#B00020</color>
+    <color name="md_theme_errorContainer">#F9DEDC</color>
+    <color name="md_theme_onErrorContainer">#410E0B</color>
 
     <!-- Uncommon (Green Theme) -->
     <color name="uncommon_green">#4CAF50</color> <!-- main -->

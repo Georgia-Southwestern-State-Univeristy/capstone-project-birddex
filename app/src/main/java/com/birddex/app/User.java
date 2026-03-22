@@ -32,6 +32,7 @@ public class User {
     private int followingCount; // New field for following
     private boolean hasLoggedInBefore; // New field for welcome message logic
     private Date lastActiveAt; // New field for welcome message logic
+    private boolean isStaff; // New field for moderator access
 
     /**
      * Constructor that stores incoming dependencies/values so this object starts in a usable
@@ -67,6 +68,7 @@ public class User {
         this.followingCount = 0;
         this.hasLoggedInBefore = false;
         this.lastActiveAt = null;
+        this.isStaff = false;
     }
 
     // Full constructor including all fields for completeness
@@ -95,6 +97,7 @@ public class User {
         this.followingCount = followingCount;
         this.hasLoggedInBefore = false;
         this.lastActiveAt = null;
+        this.isStaff = false;
     }
 
     /**
@@ -340,5 +343,13 @@ public class User {
 
     public void setLastActiveAt(Date lastActiveAt) {
         this.lastActiveAt = lastActiveAt;
+    }
+
+    public boolean isStaff() {
+        return isStaff;
+    }
+
+    public void setStaff(boolean staff) {
+        isStaff = staff;
     }
 }

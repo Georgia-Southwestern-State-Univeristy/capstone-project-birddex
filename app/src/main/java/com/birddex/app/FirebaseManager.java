@@ -19,6 +19,7 @@ import com.google.firebase.functions.FirebaseFunctions;
 import com.google.firebase.functions.FirebaseFunctionsException;
 import com.google.firebase.functions.HttpsCallableResult;
 
+import java.util.ArrayList;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
@@ -130,6 +131,11 @@ public class FirebaseManager {
 
     public interface ForumWriteListener {
         void onSuccess();
+        void onFailure(String errorMessage);
+    }
+
+    public interface ModerationStateListener {
+        void onSuccess(Map<String, Object> state);
         void onFailure(String errorMessage);
     }
 
@@ -561,6 +567,181 @@ public class FirebaseManager {
                 listener.onComplete(task);
             });
         }
+    }
+
+    // -------------------------------------------------------------------------
+    // MODERATION & APPEALS
+    // -------------------------------------------------------------------------
+
+    /*** Fetches the moderation status of the currently logged-in user.
+     */
+    public void getMyModerationState(ModerationStateListener listener) {
+        Log.d(TAG, "Calling getMyModerationState Cloud Function.");
+        mFunctions.getHttpsCallable("getMyModerationState").call()
+                .addOnCompleteListener(task -> {
+                    if (task.isSuccessful() && task.getResult() != null) {
+                        Log.d(TAG, "getMyModerationState success.");
+                        listener.onSuccess((Map<String, Object>) task.getResult().getData());
+                    } else {
+                        String error = extractFunctionsErrorMessage(task.getException(), "Failed to fetch moderation state.");
+                        Log.e(TAG, "getMyModerationState failure: " + error);
+                        listener.onFailure(error);
+                    }
+                });
+    }
+
+    /**
+     * Submits an appeal for a specific moderation event.
+     */
+    public void submitModerationAppeal(String eventId, String reason, ForumWriteListener listener) {
+        Log.d(TAG, "Calling submitModerationAppeal Cloud Function for event: " + eventId);
+        Map<String, Object> data = new HashMap<>();
+        data.put("moderationEventId", eventId);
+        data.put("appealText", reason);
+        mFunctions.getHttpsCallable("submitModerationAppeal").call(data)
+                .addOnCompleteListener(task -> {
+                    if (task.isSuccessful()) {
+                        Log.d(TAG, "submitModerationAppeal success.");
+                        listener.onSuccess();
+                    } else {
+                        String error = extractFunctionsErrorMessage(task.getException(), "Failed to submit appeal.");
+                        Log.e(TAG, "submitModerationAppeal failure: " + error);
+                        listener.onFailure(error);
+                    }
+                });
+    }
+
+    // -------------------------------------------------------------------------
+    // MODERATION & APPEALS
+    // -------------------------------------------------------------------------
+
+    /**
+     * Interface for receiving a list of pending moderation appeals.
+     */
+    public interface AppealsListListener {
+        void onSuccess(List<Map<String, Object>> appeals);
+        void onFailure(String errorMessage);
+    }
+
+    /**
+     * Interface for receiving a list of pending moderation reports.
+     */
+    public interface ReportsListListener {
+        void onSuccess(List<Map<String, Object>> reports);
+        void onFailure(String errorMessage);
+    }
+
+    /**
+     * Fetches all pending moderation appeals from the server via Cloud Function.
+     */
+    public void getPendingModerationAppeals(AppealsListListener listener) {
+        Log.d(TAG, "Calling getPendingModerationAppeals Cloud Function.");
+        mFunctions.getHttpsCallable("getPendingModerationAppeals").call()
+                .addOnCompleteListener(task -> {
+                    if (task.isSuccessful() && task.getResult() != null) {
+                        Log.d(TAG, "getPendingModerationAppeals success.");
+
+                        Object resultData = task.getResult().getData();
+                        List<Map<String, Object>> appeals = new ArrayList<>();
+
+                        if (resultData instanceof Map) {
+                            Object appealsData = ((Map<?, ?>) resultData).get("appeals");
+                            if (appealsData instanceof List) {
+                                appeals = (List<Map<String, Object>>) appealsData;
+                            }
+                        } else if (resultData instanceof List) {
+                            // Backward-compatible fallback in case the callable ever returns a raw list.
+                            appeals = (List<Map<String, Object>>) resultData;
+                        }
+
+                        listener.onSuccess(appeals);
+                    } else {
+                        String error = extractFunctionsErrorMessage(task.getException(), "Failed to fetch pending appeals.");
+                        Log.e(TAG, "getPendingModerationAppeals failure: " + error);
+                        listener.onFailure(error);
+                    }
+                });
+    }
+
+    /**
+     * Fetches all pending moderation reports from the server via Cloud Function.
+     */
+    public void getPendingModerationReports(ReportsListListener listener) {
+        Log.d(TAG, "Calling getPendingModerationReports Cloud Function.");
+        mFunctions.getHttpsCallable("getPendingModerationReports").call()
+                .addOnCompleteListener(task -> {
+                    if (task.isSuccessful() && task.getResult() != null) {
+                        Log.d(TAG, "getPendingModerationReports success.");
+
+                        Object resultData = task.getResult().getData();
+                        List<Map<String, Object>> reports = new ArrayList<>();
+
+                        if (resultData instanceof Map) {
+                            Object reportsData = ((Map<?, ?>) resultData).get("reports");
+                            if (reportsData instanceof List) {
+                                reports = (List<Map<String, Object>>) reportsData;
+                            }
+                        } else if (resultData instanceof List) {
+                            reports = (List<Map<String, Object>>) resultData;
+                        }
+
+                        listener.onSuccess(reports);
+                    } else {
+                        String error = extractFunctionsErrorMessage(task.getException(), "Failed to fetch pending reports.");
+                        Log.e(TAG, "getPendingModerationReports failure: " + error);
+                        listener.onFailure(error);
+                    }
+                });
+    }
+
+    /**
+     * Submits a moderator's decision on a specific appeal.
+     * Matches the ForumWriteListener used in ModeratorActivity.
+     */
+    public void reviewModerationAppeal(String appealId, String decision, String note, ForumWriteListener listener) {
+        Log.d(TAG, "Calling reviewModerationAppeal. ID: " + appealId + " Decision: " + decision);
+
+        Map<String, Object> data = new HashMap<>();
+        data.put("appealId", appealId);
+        data.put("decision", decision);
+        data.put("decisionNote", note);
+
+        mFunctions.getHttpsCallable("reviewModerationAppeal").call(data)
+                .addOnCompleteListener(task -> {
+                    if (task.isSuccessful()) {
+                        Log.d(TAG, "reviewModerationAppeal success.");
+                        if (listener != null) listener.onSuccess();
+                    } else {
+                        String error = extractFunctionsErrorMessage(task.getException(), "Failed to submit review.");
+                        Log.e(TAG, "reviewModerationAppeal failure: " + error);
+                        if (listener != null) listener.onFailure(error);
+                    }
+                });
+    }
+
+    /**
+     * Reviews a pending content report and optionally creates moderator-issued moderation events.
+     */
+    public void reviewPendingReport(String reportId, String userAction, String contentAction, String note, ForumWriteListener listener) {
+        Log.d(TAG, "Calling reviewPendingReport. ID: " + reportId + " UserAction: " + userAction + " ContentAction: " + contentAction);
+
+        Map<String, Object> data = new HashMap<>();
+        data.put("reportId", reportId);
+        data.put("userAction", userAction);
+        data.put("contentAction", contentAction);
+        data.put("decisionNote", note);
+
+        mFunctions.getHttpsCallable("reviewPendingReport").call(data)
+                .addOnCompleteListener(task -> {
+                    if (task.isSuccessful()) {
+                        Log.d(TAG, "reviewPendingReport success.");
+                        if (listener != null) listener.onSuccess();
+                    } else {
+                        String error = extractFunctionsErrorMessage(task.getException(), "Failed to review report.");
+                        Log.e(TAG, "reviewPendingReport failure: " + error);
+                        if (listener != null) listener.onFailure(error);
+                    }
+                });
     }
 
     // -------------------------------------------------------------------------

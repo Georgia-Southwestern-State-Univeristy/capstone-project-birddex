@@ -18,10 +18,14 @@ import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
-import androidx.appcompat.app.AlertDialog;
 import androidx.fragment.app.Fragment;
 import androidx.recyclerview.widget.GridLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
+
+import com.google.android.material.bottomsheet.BottomSheetBehavior;
+import com.google.android.material.bottomsheet.BottomSheetDialog;
+import com.google.android.material.chip.Chip;
+import com.google.android.material.chip.ChipGroup;
 
 import com.google.firebase.auth.FirebaseAuth;
 import com.google.firebase.auth.FirebaseUser;
@@ -66,7 +70,8 @@ public class SearchCollectionFragment extends Fragment {
     private ImageButton btnFilter;
     private Button btnAddBird;
     private TextView tvCollectionEmpty;
-
+    private BottomSheetDialog filterDialog;
+    private boolean isFilterDialogOpening = false;
     private CollectionCardAdapter cardAdapter;
     private RecentPhotoMemoriesAdapter recentPhotoAdapter;
 
@@ -204,87 +209,212 @@ public class SearchCollectionFragment extends Fragment {
      * Takes prepared data and presents it on screen or in a dialog/menu.
      */
     private void showFilterDialog() {
-        final String[] options = {
-                "Default",
-                "Name A-Z",
-                "Name Z-A",
-                "Newest first",
-                "Oldest first",
-                "Favorite Cards",
-                "Common only",
-                "Uncommon only",
-                "Rare only",
-                "Epic only",
-                "Legendary only",
-                "Mythic only",
-                "Recent Photos"
-        };
+        if (!isAdded() || getContext() == null) return;
+        if (isFilterDialogOpening) return;
+        if (filterDialog != null && filterDialog.isShowing()) return;
 
-        int checkedItem;
-        if (currentViewMode == ViewMode.RECENT_PHOTOS) {
-            checkedItem = 12;
-        } else if (favoritesOnly) {
-            checkedItem = 5;
-        } else {
+        isFilterDialogOpening = true;
+
+        try {
+            View sheetView = LayoutInflater.from(requireContext())
+                    .inflate(R.layout.bottom_sheet_collection_filter, null, false);
+
+            filterDialog = new BottomSheetDialog(requireContext());
+            BottomSheetDialog dialog = filterDialog;
+
+            dialog.setContentView(sheetView);
+            dialog.setOnShowListener(d -> {
+                View bottomSheet = dialog.findViewById(com.google.android.material.R.id.design_bottom_sheet);
+                if (bottomSheet != null) {
+                    bottomSheet.setBackgroundResource(android.R.color.transparent);
+                    BottomSheetBehavior.from(bottomSheet).setState(BottomSheetBehavior.STATE_EXPANDED);
+                }
+            });
+
+            dialog.setOnDismissListener(d -> {
+                isFilterDialogOpening = false;
+                filterDialog = null;
+            });
+
+            ChipGroup sortGroup = sheetView.findViewById(R.id.chipGroupSort);
+            Chip chipSortDefault = sheetView.findViewById(R.id.chipSortDefault);
+            Chip chipSortAz = sheetView.findViewById(R.id.chipSortAz);
+            Chip chipSortZa = sheetView.findViewById(R.id.chipSortZa);
+            Chip chipSortNewest = sheetView.findViewById(R.id.chipSortNewest);
+            Chip chipSortOldest = sheetView.findViewById(R.id.chipSortOldest);
+
+            ChipGroup showGroup = sheetView.findViewById(R.id.chipGroupShow);
+            Chip chipShowAll = sheetView.findViewById(R.id.chipShowAll);
+            Chip chipShowFavorites = sheetView.findViewById(R.id.chipShowFavorites);
+            Chip chipShowRecent = sheetView.findViewById(R.id.chipShowRecent);
+
+            TextView tvRarityTitle = sheetView.findViewById(R.id.tvRarityTitle);
+            ChipGroup rarityGroup = sheetView.findViewById(R.id.chipGroupRarity);
+            Chip chipRarityAll = sheetView.findViewById(R.id.chipRarityAll);
+            Chip chipRarityCommon = sheetView.findViewById(R.id.chipRarityCommon);
+            Chip chipRarityUncommon = sheetView.findViewById(R.id.chipRarityUncommon);
+            Chip chipRarityRare = sheetView.findViewById(R.id.chipRarityRare);
+            Chip chipRarityEpic = sheetView.findViewById(R.id.chipRarityEpic);
+            Chip chipRarityLegendary = sheetView.findViewById(R.id.chipRarityLegendary);
+            Chip chipRarityMythic = sheetView.findViewById(R.id.chipRarityMythic);
+
+            Button btnReset = sheetView.findViewById(R.id.btnResetFilters);
+            Button btnApply = sheetView.findViewById(R.id.btnApplyFilters);
+
+            switch (currentSortMode) {
+                case NAME_A_TO_Z:
+                    chipSortAz.setChecked(true);
+                    break;
+                case NAME_Z_TO_A:
+                    chipSortZa.setChecked(true);
+                    break;
+                case NEWEST:
+                    chipSortNewest.setChecked(true);
+                    break;
+                case OLDEST:
+                    chipSortOldest.setChecked(true);
+                    break;
+                case DEFAULT:
+                default:
+                    chipSortDefault.setChecked(true);
+                    break;
+            }
+
+            if (currentViewMode == ViewMode.RECENT_PHOTOS) {
+                chipShowRecent.setChecked(true);
+            } else if (favoritesOnly) {
+                chipShowFavorites.setChecked(true);
+            } else {
+                chipShowAll.setChecked(true);
+            }
+
             switch (currentRarityFilter) {
                 case COMMON:
-                    checkedItem = 6;
+                    chipRarityCommon.setChecked(true);
                     break;
                 case UNCOMMON:
-                    checkedItem = 7;
+                    chipRarityUncommon.setChecked(true);
                     break;
                 case RARE:
-                    checkedItem = 8;
+                    chipRarityRare.setChecked(true);
                     break;
                 case EPIC:
-                    checkedItem = 9;
+                    chipRarityEpic.setChecked(true);
                     break;
                 case LEGENDARY:
-                    checkedItem = 10;
+                    chipRarityLegendary.setChecked(true);
                     break;
                 case MYTHIC:
-                    checkedItem = 11;
+                    chipRarityMythic.setChecked(true);
                     break;
                 case ALL:
                 default:
-                    checkedItem = currentSortMode.ordinal();
+                    chipRarityAll.setChecked(true);
                     break;
             }
+
+            updateRaritySectionEnabled(tvRarityTitle, rarityGroup, chipShowAll.isChecked());
+
+            showGroup.setOnCheckedStateChangeListener((group, checkedIds) -> {
+                boolean enableRarity = chipShowAll.isChecked();
+                if (!enableRarity) {
+                    chipRarityAll.setChecked(true);
+                }
+                updateRaritySectionEnabled(tvRarityTitle, rarityGroup, enableRarity);
+            });
+
+            btnReset.setOnClickListener(v -> {
+                chipSortDefault.setChecked(true);
+                chipShowAll.setChecked(true);
+                chipRarityAll.setChecked(true);
+                updateRaritySectionEnabled(tvRarityTitle, rarityGroup, true);
+            });
+
+            btnApply.setOnClickListener(v -> {
+                int checkedSortId = sortGroup.getCheckedChipId();
+                if (checkedSortId == R.id.chipSortAz) {
+                    currentSortMode = SortMode.NAME_A_TO_Z;
+                } else if (checkedSortId == R.id.chipSortZa) {
+                    currentSortMode = SortMode.NAME_Z_TO_A;
+                } else if (checkedSortId == R.id.chipSortNewest) {
+                    currentSortMode = SortMode.NEWEST;
+                } else if (checkedSortId == R.id.chipSortOldest) {
+                    currentSortMode = SortMode.OLDEST;
+                } else {
+                    currentSortMode = SortMode.DEFAULT;
+                }
+
+                int checkedShowId = showGroup.getCheckedChipId();
+                if (checkedShowId == R.id.chipShowRecent) {
+                    currentViewMode = ViewMode.RECENT_PHOTOS;
+                    favoritesOnly = false;
+                    currentRarityFilter = RarityFilter.ALL;
+                    applyRecentPhotosMode();
+                    fetchRecentPhotos();
+                } else {
+                    currentViewMode = ViewMode.SPECIES_CARDS;
+                    favoritesOnly = checkedShowId == R.id.chipShowFavorites;
+
+                    if (favoritesOnly) {
+                        currentRarityFilter = RarityFilter.ALL;
+                    } else {
+                        int checkedRarityId = rarityGroup.getCheckedChipId();
+                        if (checkedRarityId == R.id.chipRarityCommon) {
+                            currentRarityFilter = RarityFilter.COMMON;
+                        } else if (checkedRarityId == R.id.chipRarityUncommon) {
+                            currentRarityFilter = RarityFilter.UNCOMMON;
+                        } else if (checkedRarityId == R.id.chipRarityRare) {
+                            currentRarityFilter = RarityFilter.RARE;
+                        } else if (checkedRarityId == R.id.chipRarityEpic) {
+                            currentRarityFilter = RarityFilter.EPIC;
+                        } else if (checkedRarityId == R.id.chipRarityLegendary) {
+                            currentRarityFilter = RarityFilter.LEGENDARY;
+                        } else if (checkedRarityId == R.id.chipRarityMythic) {
+                            currentRarityFilter = RarityFilter.MYTHIC;
+                        } else {
+                            currentRarityFilter = RarityFilter.ALL;
+                        }
+                    }
+
+                    applySpeciesCardMode();
+                    applyCurrentFilter();
+                }
+
+                dialog.dismiss();
+            });
+
+            dialog.show();
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to show filter dialog.", e);
+            isFilterDialogOpening = false;
+            filterDialog = null;
+        }
+    }
+
+    private void updateRaritySectionEnabled(TextView titleView, ChipGroup rarityGroup, boolean enabled) {
+        if (titleView != null) {
+            titleView.setAlpha(enabled ? 1f : 0.45f);
         }
 
-        new AlertDialog.Builder(requireContext())
-                .setTitle("Filter collection")
-                .setSingleChoiceItems(options, checkedItem, (dialog, which) -> {
-                    if (which == 12) {
-                        currentViewMode = ViewMode.RECENT_PHOTOS;
-                        favoritesOnly = false;
-                        currentRarityFilter = RarityFilter.ALL;
-                        applyRecentPhotosMode();
-                        fetchRecentPhotos();
-                    } else if (which == 5) {
-                        currentViewMode = ViewMode.SPECIES_CARDS;
-                        favoritesOnly = true;
-                        currentRarityFilter = RarityFilter.ALL;
-                        applySpeciesCardMode();
-                        applyCurrentFilter();
-                    } else if (which >= 6 && which <= 11) {
-                        currentViewMode = ViewMode.SPECIES_CARDS;
-                        favoritesOnly = false;
-                        currentRarityFilter = mapDialogIndexToRarityFilter(which);
-                        applySpeciesCardMode();
-                        applyCurrentFilter();
-                    } else {
-                        currentViewMode = ViewMode.SPECIES_CARDS;
-                        favoritesOnly = false;
-                        currentRarityFilter = RarityFilter.ALL;
-                        currentSortMode = SortMode.values()[which];
-                        applySpeciesCardMode();
-                        applyCurrentFilter();
-                    }
-                    dialog.dismiss();
-                })
-                .setNegativeButton("Cancel", null)
-                .show();
+        if (rarityGroup == null) return;
+
+        rarityGroup.setAlpha(enabled ? 1f : 0.45f);
+        for (int i = 0; i < rarityGroup.getChildCount(); i++) {
+            View child = rarityGroup.getChildAt(i);
+            child.setEnabled(enabled);
+            child.setClickable(enabled);
+        }
+    }
+
+    @Override
+    public void onDestroyView() {
+        if (filterDialog != null) {
+            filterDialog.setOnDismissListener(null);
+            filterDialog.dismiss();
+            filterDialog = null;
+        }
+        isFilterDialogOpening = false;
+        super.onDestroyView();
     }
 
     /**
@@ -682,25 +812,6 @@ public class SearchCollectionFragment extends Fragment {
             case ALL:
             default:
                 return true;
-        }
-    }
-
-    private RarityFilter mapDialogIndexToRarityFilter(int which) {
-        switch (which) {
-            case 6:
-                return RarityFilter.COMMON;
-            case 7:
-                return RarityFilter.UNCOMMON;
-            case 8:
-                return RarityFilter.RARE;
-            case 9:
-                return RarityFilter.EPIC;
-            case 10:
-                return RarityFilter.LEGENDARY;
-            case 11:
-                return RarityFilter.MYTHIC;
-            default:
-                return RarityFilter.ALL;
         }
     }
 

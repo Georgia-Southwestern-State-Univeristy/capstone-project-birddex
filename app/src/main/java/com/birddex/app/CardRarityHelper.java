@@ -117,7 +117,7 @@ public final class CardRarityHelper {
     }
 
     private static int getStepCostForIndex(int rarityIndex) {
-        // Updated to use increments of 5 as requested
+
         switch (rarityIndex) {
             case 1:
                 return 10; // common -> uncommon

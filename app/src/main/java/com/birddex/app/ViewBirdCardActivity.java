@@ -1,13 +1,19 @@
 package com.birddex.app;
 
+import android.animation.Animator;
+import android.animation.AnimatorListenerAdapter;
 import android.content.Intent;
 import android.os.Bundle;
 import android.util.Log;
+import android.view.GestureDetector;
+import android.view.MotionEvent;
 import android.view.View;
+import android.view.animation.AccelerateDecelerateInterpolator;
 import android.widget.Button;
 import android.widget.FrameLayout;
 import android.widget.ImageButton;
 import android.widget.ImageView;
+import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -25,8 +31,10 @@ import com.google.firebase.firestore.FirebaseFirestore;
 import com.google.firebase.firestore.Source;
 import com.google.firebase.firestore.WriteBatch;
 
+import java.util.ArrayList;
 import java.util.Date;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -37,6 +45,20 @@ public class ViewBirdCardActivity extends AppCompatActivity {
     private static final String TAG = "ViewBirdCard";
     public static final String EXTRA_ALLOW_IMAGE_CHANGE = "com.birddex.app.extra.ALLOW_IMAGE_CHANGE";
 
+    private static final String EXTRA_CARD_INDEX = "com.birddex.app.extra.CARD_INDEX";
+    private static final String EXTRA_CARD_IMAGE_URLS = "com.birddex.app.extra.CARD_IMAGE_URLS";
+    private static final String EXTRA_CARD_COMMON_NAMES = "com.birddex.app.extra.CARD_COMMON_NAMES";
+    private static final String EXTRA_CARD_SCI_NAMES = "com.birddex.app.extra.CARD_SCI_NAMES";
+    private static final String EXTRA_CARD_STATES = "com.birddex.app.extra.CARD_STATES";
+    private static final String EXTRA_CARD_LOCALITIES = "com.birddex.app.extra.CARD_LOCALITIES";
+    private static final String EXTRA_CARD_BIRD_IDS = "com.birddex.app.extra.CARD_BIRD_IDS";
+    private static final String EXTRA_CARD_SLOT_IDS = "com.birddex.app.extra.CARD_SLOT_IDS";
+    private static final String EXTRA_CARD_RARITIES = "com.birddex.app.extra.CARD_RARITIES";
+    private static final String EXTRA_CARD_FAVORITES = "com.birddex.app.extra.CARD_FAVORITES";
+    private static final String EXTRA_CARD_CAUGHT_TIMES = "com.birddex.app.extra.CARD_CAUGHT_TIMES";
+
+    private static final long CONTROL_LOCK_MS = 1000L;
+
     private ImageView imgBird;
     private ImageButton btnFavoriteToggle;
     private Button btnChangeCardImage, btnBirdInfo, btnUpgradeCard;
@@ -44,22 +66,103 @@ public class ViewBirdCardActivity extends AppCompatActivity {
 
     private String currentImageUrl, currentBirdId, currentState, currentLocality;
     private String currentSlotId, currentRarity;
+    private String currentCommonName, currentScientificName;
     private Date currentCaughtDate;
     private boolean currentIsFavorite = false;
     private boolean isSavingFavorite = false;
+    private boolean allowImageChange = true;
+
+    private String[] swipeImageUrls;
+    private String[] swipeCommonNames;
+    private String[] swipeScientificNames;
+    private String[] swipeStates;
+    private String[] swipeLocalities;
+    private String[] swipeBirdIds;
+    private String[] swipeSlotIds;
+    private String[] swipeRarities;
+    private boolean[] swipeFavorites;
+    private long[] swipeCaughtTimes;
+    private int currentCardIndex = -1;
 
     private ActivityResultLauncher<Intent> changeCardImageLauncher;
     private ActivityResultLauncher<Intent> upgradeCardLauncher;
+    private GestureDetector swipeGestureDetector;
+    private int swipeDistanceThresholdPx;
+    private int swipeVelocityThresholdPx;
 
     // FIX: Generation counter to ignore stale resolution callbacks
     private int resolutionGeneration = 0;
     private boolean isResolving = false;
+    private boolean isSwipeAnimating = false;
+    private boolean areControlsTemporarilyBlocked = false;
+
+    public static void attachSwipeExtras(@Nullable Intent intent, @Nullable List<CollectionSlot> sourceSlots, int clickedIndex) {
+        attachSwipeExtras(intent, sourceSlots, clickedIndex, true);
+    }
+
+    public static void attachSwipeExtras(@Nullable Intent intent, @Nullable List<CollectionSlot> sourceSlots, int clickedIndex, boolean includeOwnerControls) {
+        if (intent == null || sourceSlots == null || sourceSlots.isEmpty() || clickedIndex < 0) return;
+
+        ArrayList<CollectionSlot> swipeableSlots = new ArrayList<>();
+        int swipeIndex = -1;
+
+        for (int i = 0; i < sourceSlots.size(); i++) {
+            CollectionSlot slot = sourceSlots.get(i);
+            if (slot == null || isBlankStatic(slot.getImageUrl())) continue;
+
+            if (i == clickedIndex) {
+                swipeIndex = swipeableSlots.size();
+            }
+            swipeableSlots.add(slot);
+        }
+
+        if (swipeableSlots.size() < 2 || swipeIndex < 0) return;
+
+        String[] imageUrls = new String[swipeableSlots.size()];
+        String[] commonNames = new String[swipeableSlots.size()];
+        String[] sciNames = new String[swipeableSlots.size()];
+        String[] states = new String[swipeableSlots.size()];
+        String[] localities = new String[swipeableSlots.size()];
+        String[] birdIds = new String[swipeableSlots.size()];
+        String[] slotIds = new String[swipeableSlots.size()];
+        String[] rarities = new String[swipeableSlots.size()];
+        boolean[] favorites = new boolean[swipeableSlots.size()];
+        long[] caughtTimes = new long[swipeableSlots.size()];
+
+        for (int i = 0; i < swipeableSlots.size(); i++) {
+            CollectionSlot slot = swipeableSlots.get(i);
+            imageUrls[i] = slot.getImageUrl();
+            commonNames[i] = slot.getCommonName();
+            sciNames[i] = slot.getScientificName();
+            states[i] = slot.getState();
+            localities[i] = slot.getLocality();
+            birdIds[i] = slot.getBirdId();
+            slotIds[i] = includeOwnerControls ? slot.getId() : null;
+            rarities[i] = CardRarityHelper.normalizeRarity(slot.getRarity());
+            favorites[i] = includeOwnerControls && slot.isFavorite();
+            caughtTimes[i] = slot.getTimestamp() != null ? slot.getTimestamp().getTime() : -1L;
+        }
+
+        intent.putExtra(EXTRA_CARD_INDEX, swipeIndex);
+        intent.putExtra(EXTRA_CARD_IMAGE_URLS, imageUrls);
+        intent.putExtra(EXTRA_CARD_COMMON_NAMES, commonNames);
+        intent.putExtra(EXTRA_CARD_SCI_NAMES, sciNames);
+        intent.putExtra(EXTRA_CARD_STATES, states);
+        intent.putExtra(EXTRA_CARD_LOCALITIES, localities);
+        intent.putExtra(EXTRA_CARD_BIRD_IDS, birdIds);
+        intent.putExtra(EXTRA_CARD_SLOT_IDS, slotIds);
+        intent.putExtra(EXTRA_CARD_RARITIES, rarities);
+        intent.putExtra(EXTRA_CARD_FAVORITES, favorites);
+        intent.putExtra(EXTRA_CARD_CAUGHT_TIMES, caughtTimes);
+    }
 
     @Override
     protected void onCreate(@Nullable Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         SystemBarHelper.applyStandardNavBar(this);
         setContentView(R.layout.activity_view_bird_card);
+
+        initSwipeGestureDetector();
 
         changeCardImageLauncher = registerForActivityResult(new ActivityResultContracts.StartActivityForResult(), result -> {
             if (result.getResultCode() != RESULT_OK || result.getData() == null) return;
@@ -97,7 +200,9 @@ public class ViewBirdCardActivity extends AppCompatActivity {
                 String newRarity = result.getData().getStringExtra(UpgradeActivity.EXTRA_NEW_RARITY);
                 if (newRarity != null && !newRarity.equals(currentRarity)) {
                     currentRarity = newRarity;
+                    updateSwipeCardCacheFromCurrentState();
                     refreshCardUI(); // Re-inflate layout and re-bind views
+                    applyCurrentCardStateToControls();
                 }
             }
         });
@@ -105,16 +210,18 @@ public class ViewBirdCardActivity extends AppCompatActivity {
         initUI();
     }
 
+    @Override
+    public boolean dispatchTouchEvent(MotionEvent ev) {
+        if (swipeGestureDetector != null) {
+            swipeGestureDetector.onTouchEvent(ev);
+        }
+        return super.dispatchTouchEvent(ev);
+    }
+
     private void initUI() {
-        currentImageUrl = getIntent().getStringExtra(CollectionCardAdapter.EXTRA_IMAGE_URL);
-        currentBirdId = getIntent().getStringExtra(CollectionCardAdapter.EXTRA_BIRD_ID);
-        currentSlotId = getIntent().getStringExtra(CollectionCardAdapter.EXTRA_SLOT_ID);
-        currentRarity = CardRarityHelper.normalizeRarity(getIntent().getStringExtra(CollectionCardAdapter.EXTRA_RARITY));
-        currentState = normalizeBlankToNull(getIntent().getStringExtra(CollectionCardAdapter.EXTRA_STATE));
-        currentLocality = normalizeBlankToNull(getIntent().getStringExtra(CollectionCardAdapter.EXTRA_LOCALITY));
-        currentIsFavorite = getIntent().getBooleanExtra(CollectionCardAdapter.EXTRA_IS_FAVORITE, false);
-        long time = getIntent().getLongExtra(CollectionCardAdapter.EXTRA_CAUGHT_TIME, -1L);
-        currentCaughtDate = time > 0 ? new Date(time) : null;
+        allowImageChange = getIntent().getBooleanExtra(EXTRA_ALLOW_IMAGE_CHANGE, true);
+        initializeSwipeDeckFromIntent();
+        loadInitialCardState();
 
         refreshCardUI();
 
@@ -123,37 +230,226 @@ public class ViewBirdCardActivity extends AppCompatActivity {
         btnUpgradeCard = findViewById(R.id.btnUpgradeCard);
         btnFavoriteToggle = findViewById(R.id.btnFavoriteToggle);
 
-        boolean allowChange = getIntent().getBooleanExtra(EXTRA_ALLOW_IMAGE_CHANGE, true);
-        if (!allowChange) btnChangeCardImage.setVisibility(View.GONE);
+        btnChangeCardImage.setOnClickListener(v -> {
+            if (areControlsTemporarilyBlocked) return;
+            openImagePicker();
+        });
 
-        if (isBlank(currentSlotId)) {
-            btnFavoriteToggle.setVisibility(View.GONE);
-        } else {
-            btnFavoriteToggle.setOnClickListener(v -> toggleFavorite());
-            refreshFavoriteState();
-        }
+        btnBirdInfo.setOnClickListener(v -> {
+            if (areControlsTemporarilyBlocked) return;
+            if (isBlank(currentBirdId)) return;
+            startActivity(new Intent(this, BirdWikiActivity.class)
+                    .putExtra(BirdWikiActivity.EXTRA_BIRD_ID, currentBirdId));
+        });
 
-        if (isBlank(currentBirdId)) {
-            if (allowChange) {
-                btnChangeCardImage.setEnabled(false);
-                btnChangeCardImage.setText("No ID");
-            }
-            btnBirdInfo.setEnabled(false);
-            btnUpgradeCard.setEnabled(false);
-        } else {
-            if (allowChange) btnChangeCardImage.setOnClickListener(v -> openImagePicker());
-            btnBirdInfo.setOnClickListener(v ->
-                    startActivity(new Intent(this, BirdWikiActivity.class)
-                            .putExtra(BirdWikiActivity.EXTRA_BIRD_ID, currentBirdId)));
+        btnUpgradeCard.setOnClickListener(v -> {
+            if (areControlsTemporarilyBlocked) return;
+            if (isBlank(currentBirdId) || isBlank(currentSlotId)) return;
+            openUpgradeScreen();
+        });
 
-            if (isBlank(currentSlotId)) {
-                btnUpgradeCard.setEnabled(false);
-            } else {
-                btnUpgradeCard.setOnClickListener(v -> openUpgradeScreen());
-            }
-        }
+        btnFavoriteToggle.setOnClickListener(v -> {
+            if (areControlsTemporarilyBlocked) return;
+            toggleFavorite();
+        });
 
+        applyCurrentCardStateToControls();
         findViewById(R.id.btnBack).setOnClickListener(v -> finish());
+    }
+
+    private void initSwipeGestureDetector() {
+        float density = getResources().getDisplayMetrics().density;
+        swipeDistanceThresholdPx = Math.round(96f * density);
+        swipeVelocityThresholdPx = Math.round(96f * density);
+
+        swipeGestureDetector = new GestureDetector(this, new GestureDetector.SimpleOnGestureListener() {
+            @Override
+            public boolean onDown(MotionEvent e) {
+                return true;
+            }
+
+            @Override
+            public boolean onFling(MotionEvent e1, MotionEvent e2, float velocityX, float velocityY) {
+                if (e1 == null || e2 == null) return false;
+                if (!canSwipeBetweenCards() || isResolving || isSwipeAnimating) return false;
+
+                float diffX = e2.getX() - e1.getX();
+                float diffY = e2.getY() - e1.getY();
+
+                if (Math.abs(diffX) <= Math.abs(diffY)) return false;
+                if (Math.abs(diffX) < swipeDistanceThresholdPx || Math.abs(velocityX) < swipeVelocityThresholdPx) {
+                    return false;
+                }
+
+                return diffX < 0 ? showAdjacentCard(1) : showAdjacentCard(-1);
+            }
+        });
+    }
+
+    private void initializeSwipeDeckFromIntent() {
+        swipeImageUrls = getIntent().getStringArrayExtra(EXTRA_CARD_IMAGE_URLS);
+        swipeCommonNames = getIntent().getStringArrayExtra(EXTRA_CARD_COMMON_NAMES);
+        swipeScientificNames = getIntent().getStringArrayExtra(EXTRA_CARD_SCI_NAMES);
+        swipeStates = getIntent().getStringArrayExtra(EXTRA_CARD_STATES);
+        swipeLocalities = getIntent().getStringArrayExtra(EXTRA_CARD_LOCALITIES);
+        swipeBirdIds = getIntent().getStringArrayExtra(EXTRA_CARD_BIRD_IDS);
+        swipeSlotIds = getIntent().getStringArrayExtra(EXTRA_CARD_SLOT_IDS);
+        swipeRarities = getIntent().getStringArrayExtra(EXTRA_CARD_RARITIES);
+        swipeFavorites = getIntent().getBooleanArrayExtra(EXTRA_CARD_FAVORITES);
+        swipeCaughtTimes = getIntent().getLongArrayExtra(EXTRA_CARD_CAUGHT_TIMES);
+        currentCardIndex = getIntent().getIntExtra(EXTRA_CARD_INDEX, -1);
+
+        if (!hasValidSwipeDeck()) {
+            currentCardIndex = -1;
+        } else if (currentCardIndex < 0 || currentCardIndex >= swipeImageUrls.length) {
+            currentCardIndex = 0;
+        }
+    }
+
+    private void loadInitialCardState() {
+        if (hasValidSwipeDeck()) {
+            loadCardFromSwipeDeck(currentCardIndex);
+            return;
+        }
+
+        currentImageUrl = getIntent().getStringExtra(CollectionCardAdapter.EXTRA_IMAGE_URL);
+        currentCommonName = getIntent().getStringExtra(CollectionCardAdapter.EXTRA_COMMON_NAME);
+        currentScientificName = getIntent().getStringExtra(CollectionCardAdapter.EXTRA_SCI_NAME);
+        currentBirdId = getIntent().getStringExtra(CollectionCardAdapter.EXTRA_BIRD_ID);
+        currentSlotId = getIntent().getStringExtra(CollectionCardAdapter.EXTRA_SLOT_ID);
+        currentRarity = CardRarityHelper.normalizeRarity(getIntent().getStringExtra(CollectionCardAdapter.EXTRA_RARITY));
+        currentState = normalizeBlankToNull(getIntent().getStringExtra(CollectionCardAdapter.EXTRA_STATE));
+        currentLocality = normalizeBlankToNull(getIntent().getStringExtra(CollectionCardAdapter.EXTRA_LOCALITY));
+        currentIsFavorite = getIntent().getBooleanExtra(CollectionCardAdapter.EXTRA_IS_FAVORITE, false);
+        long time = getIntent().getLongExtra(CollectionCardAdapter.EXTRA_CAUGHT_TIME, -1L);
+        currentCaughtDate = time > 0 ? new Date(time) : null;
+    }
+
+    private boolean showAdjacentCard(int direction) {
+        if (!canSwipeBetweenCards() || isSwipeAnimating) return false;
+
+        int targetIndex = currentCardIndex + direction;
+        if (targetIndex < 0 || targetIndex >= swipeImageUrls.length) return false;
+
+        animateSwipeToCard(targetIndex, direction);
+        return true;
+    }
+
+    private void animateSwipeToCard(int targetIndex, int direction) {
+        final View currentCardView = findViewById(R.id.cardPlaceholder);
+
+        if (currentCardView == null) {
+            currentCardIndex = targetIndex;
+            loadCardFromSwipeDeck(currentCardIndex);
+            refreshCardUI();
+            applyCurrentCardStateToControls();
+            scrollToTop();
+            blockControlsTemporarily();
+            return;
+        }
+
+        isSwipeAnimating = true;
+        blockControlsTemporarily();
+
+        float currentWidth = currentCardView.getWidth();
+        if (currentWidth <= 0f) currentWidth = dpToPx(220f);
+
+        final float exitDistance = Math.max(currentWidth * 0.16f, dpToPx(36f));
+        final float enterDistance = Math.max(currentWidth * 0.10f, dpToPx(24f));
+
+        final float exitTranslation = direction > 0 ? -exitDistance : exitDistance;
+        final float enterTranslation = direction > 0 ? enterDistance : -enterDistance;
+
+        currentCardView.animate().cancel();
+        currentCardView.animate()
+                .translationX(exitTranslation)
+                .alpha(0.84f)
+                .setDuration(110)
+                .setInterpolator(new AccelerateDecelerateInterpolator())
+                .setListener(new AnimatorListenerAdapter() {
+                    @Override
+                    public void onAnimationEnd(Animator animation) {
+                        currentCardView.animate().setListener(null);
+
+                        currentCardIndex = targetIndex;
+                        loadCardFromSwipeDeck(currentCardIndex);
+                        refreshCardUI();
+                        applyCurrentCardStateToControls();
+                        scrollToTop();
+
+                        final View newCardView = findViewById(R.id.cardPlaceholder);
+                        if (newCardView == null) {
+                            isSwipeAnimating = false;
+                            applyCurrentCardStateToControls();
+                            return;
+                        }
+
+                        newCardView.animate().cancel();
+                        newCardView.setTranslationX(enterTranslation);
+                        newCardView.setAlpha(0.84f);
+                        newCardView.animate()
+                                .translationX(0f)
+                                .alpha(1f)
+                                .setDuration(160)
+                                .setInterpolator(new AccelerateDecelerateInterpolator())
+                                .setListener(new AnimatorListenerAdapter() {
+                                    @Override
+                                    public void onAnimationEnd(Animator animation) {
+                                        newCardView.animate().setListener(null);
+                                        newCardView.setTranslationX(0f);
+                                        newCardView.setAlpha(1f);
+                                        isSwipeAnimating = false;
+                                        applyCurrentCardStateToControls();
+                                    }
+
+                                    @Override
+                                    public void onAnimationCancel(Animator animation) {
+                                        newCardView.animate().setListener(null);
+                                        newCardView.setTranslationX(0f);
+                                        newCardView.setAlpha(1f);
+                                        isSwipeAnimating = false;
+                                        applyCurrentCardStateToControls();
+                                    }
+                                });
+                    }
+
+                    @Override
+                    public void onAnimationCancel(Animator animation) {
+                        currentCardView.animate().setListener(null);
+                        currentCardView.setTranslationX(0f);
+                        currentCardView.setAlpha(1f);
+                        isSwipeAnimating = false;
+                        applyCurrentCardStateToControls();
+                    }
+                });
+    }
+
+    private void blockControlsTemporarily() {
+        areControlsTemporarilyBlocked = true;
+        View root = findViewById(android.R.id.content);
+        if (root != null) {
+            root.removeCallbacks(unblockControlsRunnable);
+            root.postDelayed(unblockControlsRunnable, CONTROL_LOCK_MS);
+        }
+    }
+
+    private final Runnable unblockControlsRunnable = () -> {
+        areControlsTemporarilyBlocked = false;
+        setButtonsClickableVisualState(true);
+    };
+
+    private void loadCardFromSwipeDeck(int index) {
+        currentImageUrl = valueAt(swipeImageUrls, index);
+        currentCommonName = valueAt(swipeCommonNames, index);
+        currentScientificName = valueAt(swipeScientificNames, index);
+        currentBirdId = valueAt(swipeBirdIds, index);
+        currentSlotId = valueAt(swipeSlotIds, index);
+        currentRarity = CardRarityHelper.normalizeRarity(valueAt(swipeRarities, index));
+        currentState = normalizeBlankToNull(valueAt(swipeStates, index));
+        currentLocality = normalizeBlankToNull(valueAt(swipeLocalities, index));
+        currentIsFavorite = valueAt(swipeFavorites, index, false);
+        long time = valueAt(swipeCaughtTimes, index, -1L);
+        currentCaughtDate = time > 0 ? new Date(time) : null;
     }
 
     /**
@@ -170,19 +466,74 @@ public class ViewBirdCardActivity extends AppCompatActivity {
         txtLocation = findViewById(R.id.txtLocation);
         txtDateCaught = findViewById(R.id.txtDateCaught);
 
-        String name = getIntent().getStringExtra(CollectionCardAdapter.EXTRA_COMMON_NAME);
-        String sci = getIntent().getStringExtra(CollectionCardAdapter.EXTRA_SCI_NAME);
         TextView txtBirdName = findViewById(R.id.txtBirdName);
         TextView txtScientific = findViewById(R.id.txtScientific);
-        
-        if (txtBirdName != null) txtBirdName.setText(!isBlank(name) ? name : (!isBlank(sci) ? sci : "Unknown Bird"));
-        if (txtScientific != null) txtScientific.setText(!isBlank(sci) ? sci : "--");
+
+        if (txtBirdName != null) {
+            txtBirdName.setText(!isBlank(currentCommonName) ? currentCommonName : (!isBlank(currentScientificName) ? currentScientificName : "Unknown Bird"));
+        }
+        if (txtScientific != null) {
+            txtScientific.setText(!isBlank(currentScientificName) ? currentScientificName : "--");
+        }
 
         if (txtLocation != null) txtLocation.setText(CardFormatUtils.formatLocation(currentState, currentLocality));
         if (txtDateCaught != null) txtDateCaught.setText(CardFormatUtils.formatCaughtDate(currentCaughtDate));
-        
+
         loadBirdImage(currentImageUrl);
         updateFavoriteUi(currentIsFavorite);
+    }
+
+    private void applyCurrentCardStateToControls() {
+        if (btnChangeCardImage == null || btnBirdInfo == null || btnUpgradeCard == null || btnFavoriteToggle == null) return;
+
+        btnChangeCardImage.setVisibility(allowImageChange ? View.VISIBLE : View.GONE);
+
+        if (isBlank(currentSlotId)) {
+            btnFavoriteToggle.setVisibility(View.GONE);
+        } else {
+            btnFavoriteToggle.setVisibility(View.VISIBLE);
+            refreshFavoriteState();
+        }
+
+        if (isBlank(currentBirdId)) {
+            if (allowImageChange) {
+                btnChangeCardImage.setEnabled(false);
+                btnChangeCardImage.setText("No ID");
+            }
+            btnBirdInfo.setEnabled(false);
+            btnUpgradeCard.setEnabled(false);
+        } else {
+            if (allowImageChange) {
+                btnChangeCardImage.setText("Change Image");
+                btnChangeCardImage.setEnabled(!isResolving);
+            }
+            btnBirdInfo.setEnabled(!isResolving);
+            btnUpgradeCard.setEnabled(!isResolving && !isBlank(currentSlotId));
+        }
+
+        updateFavoriteUi(currentIsFavorite);
+        updateButtonsEnabled(!isResolving);
+
+        setButtonsClickableVisualState(!areControlsTemporarilyBlocked);
+    }
+
+    private void setButtonsClickableVisualState(boolean clickable) {
+        if (btnChangeCardImage != null) {
+            btnChangeCardImage.setClickable(clickable);
+            btnChangeCardImage.setAlpha(1f);
+        }
+        if (btnBirdInfo != null) {
+            btnBirdInfo.setClickable(clickable);
+            btnBirdInfo.setAlpha(1f);
+        }
+        if (btnUpgradeCard != null) {
+            btnUpgradeCard.setClickable(clickable);
+            btnUpgradeCard.setAlpha(1f);
+        }
+        if (btnFavoriteToggle != null) {
+            btnFavoriteToggle.setClickable(clickable);
+            btnFavoriteToggle.setAlpha(1f);
+        }
     }
 
     private void openUpgradeScreen() {
@@ -191,14 +542,12 @@ public class ViewBirdCardActivity extends AppCompatActivity {
         i.putExtra(CollectionCardAdapter.EXTRA_BIRD_ID, currentBirdId);
         i.putExtra(CollectionCardAdapter.EXTRA_RARITY, currentRarity);
         i.putExtra(CollectionCardAdapter.EXTRA_IMAGE_URL, currentImageUrl);
-        TextView txtBirdName = findViewById(R.id.txtBirdName);
-        TextView txtScientific = findViewById(R.id.txtScientific);
-        i.putExtra(CollectionCardAdapter.EXTRA_COMMON_NAME, txtBirdName != null ? txtBirdName.getText().toString() : "");
-        i.putExtra(CollectionCardAdapter.EXTRA_SCI_NAME, txtScientific != null ? txtScientific.getText().toString() : "");
+        i.putExtra(CollectionCardAdapter.EXTRA_COMMON_NAME, currentCommonName != null ? currentCommonName : "");
+        i.putExtra(CollectionCardAdapter.EXTRA_SCI_NAME, currentScientificName != null ? currentScientificName : "");
         i.putExtra(CollectionCardAdapter.EXTRA_STATE, currentState);
         i.putExtra(CollectionCardAdapter.EXTRA_LOCALITY, currentLocality);
         if (currentCaughtDate != null) i.putExtra(CollectionCardAdapter.EXTRA_CAUGHT_TIME, currentCaughtDate.getTime());
-        
+
         upgradeCardLauncher.launch(i);
     }
 
@@ -238,6 +587,7 @@ public class ViewBirdCardActivity extends AppCompatActivity {
     private void applyFavoriteSnapshot(@Nullable DocumentSnapshot snapshot) {
         if (snapshot == null || !snapshot.exists()) return;
         currentIsFavorite = Boolean.TRUE.equals(snapshot.getBoolean("isFavorite"));
+        updateSwipeCardCacheFromCurrentState();
         updateFavoriteUi(currentIsFavorite);
     }
 
@@ -258,6 +608,7 @@ public class ViewBirdCardActivity extends AppCompatActivity {
                 .update("isFavorite", targetValue)
                 .addOnSuccessListener(unused -> {
                     currentIsFavorite = targetValue;
+                    updateSwipeCardCacheFromCurrentState();
                     updateFavoriteUi(currentIsFavorite);
                     isSavingFavorite = false;
                     if (btnFavoriteToggle != null) btnFavoriteToggle.setEnabled(true);
@@ -278,12 +629,11 @@ public class ViewBirdCardActivity extends AppCompatActivity {
     }
 
     private void openImagePicker() {
-        if (isResolving) return;
-        TextView txtBirdName = findViewById(R.id.txtBirdName);
+        if (isResolving || !allowImageChange || isBlank(currentBirdId)) return;
         changeCardImageLauncher.launch(new Intent(this, ChangeCardImageActivity.class)
                 .putExtra(ChangeCardImageActivity.EXTRA_BIRD_ID, currentBirdId)
                 .putExtra(ChangeCardImageActivity.EXTRA_CURRENT_IMAGE_URL, currentImageUrl)
-                .putExtra(ChangeCardImageActivity.EXTRA_COMMON_NAME, txtBirdName != null ? txtBirdName.getText().toString() : ""));
+                .putExtra(ChangeCardImageActivity.EXTRA_COMMON_NAME, currentCommonName != null ? currentCommonName : ""));
     }
 
     private void resolveSelectionAndApply(String uid, ImageChoice choice, int gen) {
@@ -416,7 +766,9 @@ public class ViewBirdCardActivity extends AppCompatActivity {
             currentState = normalizeBlankToNull(resolved.state);
             currentLocality = normalizeBlankToNull(resolved.locality);
 
+            updateSwipeCardCacheFromCurrentState();
             refreshCardUI();
+            applyCurrentCardStateToControls();
 
             Toast.makeText(this, "Updated.", Toast.LENGTH_SHORT).show();
         } else {
@@ -425,10 +777,54 @@ public class ViewBirdCardActivity extends AppCompatActivity {
     }
 
     private void updateButtonsEnabled(boolean enabled) {
-        if (btnChangeCardImage != null) btnChangeCardImage.setEnabled(enabled);
-        if (btnBirdInfo != null) btnBirdInfo.setEnabled(enabled);
-        if (btnUpgradeCard != null) btnUpgradeCard.setEnabled(enabled);
-        if (btnFavoriteToggle != null && !isBlank(currentSlotId) && !isSavingFavorite) btnFavoriteToggle.setEnabled(enabled);
+        if (btnChangeCardImage != null && allowImageChange) {
+            btnChangeCardImage.setEnabled(enabled && !isBlank(currentBirdId));
+        }
+        if (btnBirdInfo != null) {
+            btnBirdInfo.setEnabled(enabled && !isBlank(currentBirdId));
+        }
+        if (btnUpgradeCard != null) {
+            btnUpgradeCard.setEnabled(enabled && !isBlank(currentBirdId) && !isBlank(currentSlotId));
+        }
+        if (btnFavoriteToggle != null && !isBlank(currentSlotId) && !isSavingFavorite) {
+            btnFavoriteToggle.setEnabled(enabled);
+        }
+    }
+
+    private void updateSwipeCardCacheFromCurrentState() {
+        if (!hasValidSwipeDeck() || currentCardIndex < 0 || currentCardIndex >= swipeImageUrls.length) return;
+
+        swipeImageUrls[currentCardIndex] = currentImageUrl;
+        if (swipeCommonNames != null && currentCardIndex < swipeCommonNames.length) swipeCommonNames[currentCardIndex] = currentCommonName;
+        if (swipeScientificNames != null && currentCardIndex < swipeScientificNames.length) swipeScientificNames[currentCardIndex] = currentScientificName;
+        if (swipeBirdIds != null && currentCardIndex < swipeBirdIds.length) swipeBirdIds[currentCardIndex] = currentBirdId;
+        if (swipeSlotIds != null && currentCardIndex < swipeSlotIds.length) swipeSlotIds[currentCardIndex] = currentSlotId;
+        if (swipeRarities != null && currentCardIndex < swipeRarities.length) swipeRarities[currentCardIndex] = currentRarity;
+        if (swipeStates != null && currentCardIndex < swipeStates.length) swipeStates[currentCardIndex] = currentState;
+        if (swipeLocalities != null && currentCardIndex < swipeLocalities.length) swipeLocalities[currentCardIndex] = currentLocality;
+        if (swipeFavorites != null && currentCardIndex < swipeFavorites.length) swipeFavorites[currentCardIndex] = currentIsFavorite;
+        if (swipeCaughtTimes != null && currentCardIndex < swipeCaughtTimes.length) {
+            swipeCaughtTimes[currentCardIndex] = currentCaughtDate != null ? currentCaughtDate.getTime() : -1L;
+        }
+    }
+
+    private boolean canSwipeBetweenCards() {
+        return hasValidSwipeDeck() && swipeImageUrls.length > 1;
+    }
+
+    private boolean hasValidSwipeDeck() {
+        return swipeImageUrls != null && swipeImageUrls.length > 0;
+    }
+
+    private void scrollToTop() {
+        ScrollView scrollView = findViewById(R.id.scroll);
+        if (scrollView != null) {
+            scrollView.post(() -> scrollView.scrollTo(0, 0));
+        }
+    }
+
+    private float dpToPx(float dp) {
+        return dp * getResources().getDisplayMetrics().density;
     }
 
     private boolean isBlank(String v) {
@@ -437,6 +833,25 @@ public class ViewBirdCardActivity extends AppCompatActivity {
 
     private String normalizeBlankToNull(String v) {
         return isBlank(v) ? null : v.trim();
+    }
+
+    private static boolean isBlankStatic(String v) {
+        return v == null || v.trim().isEmpty();
+    }
+
+    private String valueAt(@Nullable String[] values, int index) {
+        if (values == null || index < 0 || index >= values.length) return null;
+        return values[index];
+    }
+
+    private boolean valueAt(@Nullable boolean[] values, int index, boolean fallback) {
+        if (values == null || index < 0 || index >= values.length) return fallback;
+        return values[index];
+    }
+
+    private long valueAt(@Nullable long[] values, int index, long fallback) {
+        if (values == null || index < 0 || index >= values.length) return fallback;
+        return values[index];
     }
 
     private static class ImageChoice {

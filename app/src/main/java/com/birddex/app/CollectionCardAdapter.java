@@ -102,10 +102,10 @@ public class CollectionCardAdapter extends RecyclerView.Adapter<CollectionCardAd
         int parentWidth = parent.getMeasuredWidth() > 0 ? parent.getMeasuredWidth() : parent.getResources().getDisplayMetrics().widthPixels;
         int availableWidth = parentWidth - parent.getPaddingLeft() - parent.getPaddingRight() - (spacing * 4);
         int itemWidth = Math.max(1, availableWidth / 3);
-        
+
         // Use WRAP_CONTENT for height to remove white space at the bottom
         v.setLayoutParams(new RecyclerView.LayoutParams(itemWidth, ViewGroup.LayoutParams.WRAP_CONTENT));
-        
+
         VH holder = new VH(v);
         applyCompactCollectionStyle(holder);
         return holder;
@@ -128,7 +128,7 @@ public class CollectionCardAdapter extends RecyclerView.Adapter<CollectionCardAd
         if (holder.cardContainer != null) {
             // Disable compat padding to prevent extra "white space" borders on some OS versions
             holder.cardContainer.setUseCompatPadding(false);
-            
+
             ViewGroup.LayoutParams baseParams = holder.cardContainer.getLayoutParams();
             if (baseParams instanceof ViewGroup.MarginLayoutParams) {
                 ViewGroup.MarginLayoutParams lp = (ViewGroup.MarginLayoutParams) baseParams;
@@ -138,7 +138,7 @@ public class CollectionCardAdapter extends RecyclerView.Adapter<CollectionCardAd
                 holder.cardContainer.setLayoutParams(lp);
             }
             holder.cardContainer.setRadius(12 * d);
-            
+
             // Allow card to wrap its content
             ViewGroup.LayoutParams conLp = holder.cardContainer.getLayoutParams();
             if (conLp != null) {
@@ -232,6 +232,7 @@ public class CollectionCardAdapter extends RecyclerView.Adapter<CollectionCardAd
             i.putExtra(EXTRA_RARITY, slot.getRarity());
             i.putExtra(EXTRA_IS_FAVORITE, slot.isFavorite());
             if (slot.getTimestamp() != null) i.putExtra(EXTRA_CAUGHT_TIME, slot.getTimestamp().getTime());
+            ViewBirdCardActivity.attachSwipeExtras(i, slots, holder.getBindingAdapterPosition());
             // Move into the next screen and pass the identifiers/data that screen needs.
             v.getContext().startActivity(i);
         });

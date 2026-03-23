@@ -5941,6 +5941,99 @@ exports.upgradeCollectionSlotRarity = onCall(async (request) => {
 });
 
 // ======================================================
+// HELPER: Calculate Downgrade Refund (Matches Java CardRarityHelper)
+// ======================================================
+function getCardDowngradeRefund(currentRarity, targetRarity) {
+    const rarityOrder = ["Common", "Uncommon", "Rare", "Epic", "Legendary", "Mythic"];
+    const upgradeCosts = {
+        "Common->Uncommon": 10,
+        "Uncommon->Rare": 20,
+        "Rare->Epic": 30,
+        "Epic->Legendary": 50,
+        "Legendary->Mythic": 100,
+    };
+
+    const currentIndex = rarityOrder.indexOf(currentRarity);
+    const targetIndex = rarityOrder.indexOf(targetRarity);
+
+    if (currentIndex === -1 || targetIndex === -1 || targetIndex >= currentIndex) {
+        throw new HttpsError("invalid-argument", "Invalid downgrade path.");
+    }
+
+    let totalSpent = 0;
+    // Calculate total cost spent between target and current
+    for (let i = targetIndex; i < currentIndex; i++) {
+        const stepKey = `${rarityOrder[i]}->${rarityOrder[i + 1]}`;
+        totalSpent += upgradeCosts[stepKey];
+    }
+
+    // Return 75% refund (rounded down)
+    return Math.floor(totalSpent * 0.75);
+}
+
+// ======================================================
+// revertCollectionSlotRarity — server-side rarity downgrade with refund
+// ======================================================
+exports.revertCollectionSlotRarity = onCall(async (request) => {
+    if (!request.auth) {
+        throw new HttpsError("unauthenticated", "Login required.");
+    }
+
+    const userId = request.auth.uid;
+    const slotId = request.data?.slotId;
+    const rawTargetRarity = request.data?.targetRarity;
+
+    if (!slotId || !rawTargetRarity) {
+        throw new HttpsError("invalid-argument", "slotId and targetRarity are required.");
+    }
+
+    const targetRarity = normalizeCardRarity(rawTargetRarity);
+    const userRef = db.collection("users").doc(userId);
+    const slotRef = db.collection("users").doc(userId).collection("collectionSlot").doc(slotId);
+
+    try {
+        const result = await db.runTransaction(async (transaction) => {
+            const [userSnap, slotSnap] = await Promise.all([
+                transaction.get(userRef),
+                transaction.get(slotRef),
+            ]);
+
+            if (!userSnap.exists || !slotSnap.exists) {
+                throw new HttpsError("not-found", "User or Card Slot not found.");
+            }
+
+            const slotData = slotSnap.data();
+            const currentRarity = normalizeCardRarity(slotData.rarity);
+
+            // Calculate refund amount
+            const refundAmount = getCardDowngradeRefund(currentRarity, targetRarity);
+            const currentPoints = Number(userSnap.data().totalPoints || 0);
+
+            // Update Database
+            transaction.update(userRef, {
+                totalPoints: currentPoints + refundAmount,
+                updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            });
+
+            transaction.update(slotRef, {
+                rarity: targetRarity,
+                updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            });
+
+            return { refundAmount, newTotal: currentPoints + refundAmount };
+        });
+
+        logger.info(`User ${userId} reverted card ${slotId} to ${targetRarity}. Refunded: ${result.refundAmount}`);
+        return { success: true, ...result };
+
+    } catch (error) {
+        logger.error("revertCollectionSlotRarity failed:", error);
+        if (error instanceof HttpsError) throw error;
+        throw new HttpsError("internal", error.message);
+    }
+});
+
+// ======================================================
 // HELPER: (for the function below) tracked bird notification fan-out
 // ======================================================
 function haversineMiles(lat1, lon1, lat2, lon2) {

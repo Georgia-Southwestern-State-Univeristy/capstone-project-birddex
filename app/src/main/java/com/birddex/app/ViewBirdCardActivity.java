@@ -170,9 +170,6 @@ public class ViewBirdCardActivity extends AppCompatActivity {
         txtLocation = findViewById(R.id.txtLocation);
         txtDateCaught = findViewById(R.id.txtDateCaught);
 
-        View txtFooter = findViewById(R.id.txtFooter);
-        if (txtFooter != null) txtFooter.setVisibility(View.VISIBLE);
-
         String name = getIntent().getStringExtra(CollectionCardAdapter.EXTRA_COMMON_NAME);
         String sci = getIntent().getStringExtra(CollectionCardAdapter.EXTRA_SCI_NAME);
         TextView txtBirdName = findViewById(R.id.txtBirdName);

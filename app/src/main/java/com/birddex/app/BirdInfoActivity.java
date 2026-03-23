@@ -8,8 +8,10 @@ import android.widget.ImageView;
 import android.widget.RadioButton;
 import android.widget.RadioGroup;
 import android.widget.TextView;
-
+import androidx.activity.result.ActivityResultLauncher;
+import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.annotation.Nullable;
+import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
 
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -37,10 +39,33 @@ public class BirdInfoActivity extends AppCompatActivity {
 
     private RadioGroup rgQuantity;
     private Button btnStore;
+    private TextView commonNameTextView, scientificNameTextView, speciesTextView, familyTextView;
     private boolean awardPoints = true;
     
     // FIX: Guard against double-tap launching multiple activities
     private final AtomicBoolean storeClicked = new AtomicBoolean(false);
+
+    private final ActivityResultLauncher<Intent> birdSelectionLauncher = registerForActivityResult(
+            new ActivityResultContracts.StartActivityForResult(),
+            result -> {
+                if (result.getResultCode() == RESULT_OK && result.getData() != null) {
+                    String selectedCommon = result.getData().getStringExtra("selectedCommonName");
+                    String selectedSci = result.getData().getStringExtra("selectedScientificName");
+                    String selectedSpec = result.getData().getStringExtra("selectedSpecies");
+                    String selectedFam = result.getData().getStringExtra("selectedFamily");
+
+                    if (selectedCommon != null) {
+                        currentCommonName = selectedCommon;
+                        currentScientificName = selectedSci;
+                        currentSpecies = selectedSpec;
+                        currentFamily = selectedFam;
+
+                        updateBirdUi();
+                        showUpdatePopup(selectedCommon);
+                    }
+                }
+            }
+    );
 
     /**
      * Android calls this when the Activity is first created. This is where the screen usually
@@ -59,11 +84,12 @@ public class BirdInfoActivity extends AppCompatActivity {
 
         // Bind or inflate the UI pieces this method needs before it can update the screen.
         ImageView birdImageView = findViewById(R.id.birdImageView);
-        TextView commonNameTextView = findViewById(R.id.commonNameTextView);
-        TextView scientificNameTextView = findViewById(R.id.scientificNameTextView);
-        TextView speciesTextView = findViewById(R.id.speciesTextView);
-        TextView familyTextView = findViewById(R.id.familyTextView);
+        commonNameTextView = findViewById(R.id.commonNameTextView);
+        scientificNameTextView = findViewById(R.id.scientificNameTextView);
+        speciesTextView = findViewById(R.id.speciesTextView);
+        familyTextView = findViewById(R.id.familyTextView);
         btnStore = findViewById(R.id.btnStore);
+        Button btnNotMyBird = findViewById(R.id.btnNotMyBird);
         Button btnDiscard = findViewById(R.id.btnDiscard);
         rgQuantity = findViewById(R.id.rgQuantity);
 
@@ -85,10 +111,7 @@ public class BirdInfoActivity extends AppCompatActivity {
             birdImageView.setImageURI(Uri.parse(currentImageUriStr));
         }
 
-        commonNameTextView.setText("Common Name: " + (currentCommonName != null ? currentCommonName : "N/A"));
-        scientificNameTextView.setText("Scientific Name: " + (currentScientificName != null ? currentScientificName : "N/A"));
-        speciesTextView.setText("Species: " + (currentSpecies != null ? currentSpecies : "N/A"));
-        familyTextView.setText("Family: " + (currentFamily != null ? currentFamily : "N/A"));
+        updateBirdUi();
 
         rgQuantity.setOnCheckedChangeListener((group, checkedId) ->
                 btnStore.setEnabled(checkedId != -1)
@@ -120,10 +143,14 @@ public class BirdInfoActivity extends AppCompatActivity {
             if (currentLongitude != null) i.putExtra(CardMakerActivity.EXTRA_LONGITUDE, currentLongitude);
             i.putExtra(CardMakerActivity.EXTRA_COUNTRY, currentCountry);
 
-
-
             // Move into the next screen and pass the identifiers/data that screen needs.
             startActivity(i);
+        });
+
+        btnNotMyBird.setOnClickListener(v -> {
+            Intent intent = new Intent(BirdInfoActivity.this, AiLoadingActivity.class);
+            intent.putExtra("imageUri", currentImageUriStr);
+            birdSelectionLauncher.launch(intent);
         });
 
         btnDiscard.setOnClickListener(v -> {
@@ -132,6 +159,21 @@ public class BirdInfoActivity extends AppCompatActivity {
             startActivity(home);
             finish();
         });
+    }
+
+    private void updateBirdUi() {
+        if (commonNameTextView != null) commonNameTextView.setText("Common Name: " + (currentCommonName != null ? currentCommonName : "N/A"));
+        if (scientificNameTextView != null) scientificNameTextView.setText("Scientific Name: " + (currentScientificName != null ? currentScientificName : "N/A"));
+        if (speciesTextView != null) speciesTextView.setText("Species: " + (currentSpecies != null ? currentSpecies : "N/A"));
+        if (familyTextView != null) familyTextView.setText("Family: " + (currentFamily != null ? currentFamily : "N/A"));
+    }
+
+    private void showUpdatePopup(String birdName) {
+        new AlertDialog.Builder(this)
+                .setTitle("Bird Selection Updated")
+                .setMessage("You have successfully updated the identification to: " + birdName)
+                .setPositiveButton("OK", null)
+                .show();
     }
 
     /**

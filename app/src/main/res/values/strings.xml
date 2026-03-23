@@ -70,4 +70,14 @@
     <string name="btn_appeal_submitted">Appeal Submitted</string>
     <string name="hint_appeal_reason">Explain why you are appealing this decision...</string>
     <string name="dialog_appeal_title">Submit Appeal</string>
+
+    <string name="not_my_bird">Not My Bird</string>
+    <string name="please_select_image">Please Select An Image</string>
+    <string name="still_not_my_bird">Still Not My Bird</string>
+    <string name="placeholder_name">Name</string>
+    <string name="placeholder_confidence">Confidence</string>
+    <string name="our_ai">Our AI</string>
+    <string name="open_ai">Open AI</string>
+    <string name="retake_image">Retake Image</string>
+    <string name="user_image">User Image</string>
 </resources>

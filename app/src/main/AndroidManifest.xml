@@ -74,6 +74,18 @@
             android:name=".BirdInfoActivity"
             android:exported="false" />
         <activity
+            android:name=".NotMyBirdActivity"
+            android:exported="false" />
+        <activity
+            android:name=".AiLoadingActivity"
+            android:exported="false" />
+        <activity
+            android:name=".AiCompLoadingActivity"
+            android:exported="false" />
+        <activity
+            android:name=".AiCompActivity"
+            android:exported="false" />
+        <activity
             android:name=".CropActivity"
             android:exported="false" />
         <activity

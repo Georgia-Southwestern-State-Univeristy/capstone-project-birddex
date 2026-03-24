@@ -9,6 +9,7 @@ import android.text.InputType;
 import android.view.View;
 import android.widget.Button;
 import android.widget.EditText;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -21,7 +22,6 @@ import com.google.firebase.auth.EmailAuthProvider;
 import com.google.firebase.auth.FirebaseAuth;
 import com.google.firebase.auth.FirebaseAuthRecentLoginRequiredException;
 import com.google.firebase.auth.FirebaseUser;
-import com.google.firebase.auth.GetTokenResult;
 
 import java.util.Map;
 
@@ -38,6 +38,7 @@ public class SettingsActivity extends AppCompatActivity {
     private TextView tvUserEmail, tvUserName;
     private Button btnLogout, btnUpdateEmail, btnChangePassword, btnNotifications, btnDeleteAccount, btnReportBug, btnModerationHistory, btnModeratorDashboard;
     private MaterialSwitch switchGraphicContent;
+    private ImageView btnBack;
 
     private FirebaseManager firebaseManager;
     private SessionManager sessionManager;
@@ -66,6 +67,7 @@ public class SettingsActivity extends AppCompatActivity {
         sharedPreferences = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
 
         // Bind or inflate the UI pieces this method needs before it can update the screen.
+        btnBack = findViewById(R.id.btnBack);
         tvUserEmail = findViewById(R.id.tvUserEmail);
         tvUserName = findViewById(R.id.tvUserName);
         btnNotifications = findViewById(R.id.btnNotifications);
@@ -96,6 +98,8 @@ public class SettingsActivity extends AppCompatActivity {
             loadUserProfile(user);
             checkModeratorRole(user);
         });
+
+        btnBack.setOnClickListener(v -> finish());
 
         // Attach the user interaction that should run when the Notifications button is tapped.
         btnNotifications.setOnClickListener(v -> {

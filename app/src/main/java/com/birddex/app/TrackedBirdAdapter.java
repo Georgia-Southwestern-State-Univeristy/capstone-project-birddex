@@ -4,10 +4,14 @@ import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.ImageButton;
+import android.widget.ImageView;
 import android.widget.TextView;
 
 import androidx.annotation.NonNull;
 import androidx.recyclerview.widget.RecyclerView;
+
+import com.bumptech.glide.Glide;
+import com.bumptech.glide.load.engine.DiskCacheStrategy;
 
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
@@ -53,6 +57,7 @@ public class TrackedBirdAdapter extends RecyclerView.Adapter<TrackedBirdAdapter.
     }
 
     static class VH extends RecyclerView.ViewHolder {
+        ImageView ivBirdImage;
         TextView tvCommonName;
         TextView tvScientificName;
         TextView tvTrackedAt;
@@ -65,6 +70,7 @@ public class TrackedBirdAdapter extends RecyclerView.Adapter<TrackedBirdAdapter.
          */
         VH(@NonNull View itemView) {
             super(itemView);
+            ivBirdImage = itemView.findViewById(R.id.ivTrackedBirdImage);
             tvCommonName = itemView.findViewById(R.id.tvTrackedBirdName);
             tvScientificName = itemView.findViewById(R.id.tvTrackedBirdScientificName);
             tvTrackedAt = itemView.findViewById(R.id.tvTrackedBirdDate);
@@ -96,6 +102,22 @@ public class TrackedBirdAdapter extends RecyclerView.Adapter<TrackedBirdAdapter.
         holder.tvCommonName.setText(!isBlank(trackedBird.getCommonName()) ? trackedBird.getCommonName() : "Unknown bird");
         holder.tvScientificName.setText(!isBlank(trackedBird.getScientificName()) ? trackedBird.getScientificName() : "Scientific name unavailable");
         holder.tvTrackedAt.setText(formatTrackedDate(trackedBird.getTrackedAt()));
+
+        if (!isBlank(trackedBird.getImageUrl())) {
+            holder.ivBirdImage.setTag(null);
+            holder.ivBirdImage.setVisibility(View.VISIBLE);
+            Glide.with(holder.itemView.getContext())
+                    .load(trackedBird.getImageUrl())
+                    .diskCacheStrategy(DiskCacheStrategy.ALL)
+                    .into(holder.ivBirdImage);
+        } else {
+            BirdImageLoader.loadBirdImageInto(
+                    holder.ivBirdImage,
+                    trackedBird.getBirdId(),
+                    trackedBird.getCommonName(),
+                    trackedBird.getScientificName()
+            );
+        }
 
         holder.btnRemove.setVisibility(removable ? View.VISIBLE : View.GONE);
         holder.btnRemove.setOnClickListener(v -> listener.onTrackedBirdRemoveClicked(trackedBird));

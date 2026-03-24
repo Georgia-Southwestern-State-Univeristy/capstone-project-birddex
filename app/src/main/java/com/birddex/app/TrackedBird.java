@@ -18,6 +18,7 @@ public class TrackedBird {
     private String birdId;
     private String commonName;
     private String scientificName;
+    private String imageUrl;
     private Date trackedAt;
     private Date lastNotifiedAt;
     private String lastNotifiedSightingId;
@@ -27,11 +28,12 @@ public class TrackedBird {
         // Required for Firestore
     }
 
-    public TrackedBird(String birdId, String commonName, String scientificName) {
+    public TrackedBird(String birdId, String commonName, String scientificName, String imageUrl) {
         this.documentId = birdId;
         this.birdId = birdId;
         this.commonName = commonName;
         this.scientificName = scientificName;
+        this.imageUrl = imageUrl;
     }
 
     public String getDocumentId() {
@@ -64,6 +66,14 @@ public class TrackedBird {
 
     public void setScientificName(String scientificName) {
         this.scientificName = scientificName;
+    }
+
+    public String getImageUrl() {
+        return imageUrl;
+    }
+
+    public void setImageUrl(String imageUrl) {
+        this.imageUrl = imageUrl;
     }
 
     @ServerTimestamp

@@ -9,8 +9,10 @@ import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
 import android.os.Bundle;
+import android.text.Editable;
 import android.text.InputFilter;
 import android.text.InputType;
+import android.text.TextWatcher;
 import android.text.format.DateUtils;
 import android.util.Log;
 import android.util.TypedValue;
@@ -142,6 +144,14 @@ public class NearbyHeatmapActivity extends AppCompatActivity
     private FirebaseFirestore db;
     private FirebaseAuth mAuth;
     private TextView tvMapSubtitle;
+    private ImageButton btnBirdSearch;
+
+    private final List<Bird> searchableBirds = new ArrayList<>();
+    private boolean isSearchDataLoading = false;
+    private String selectedBirdId;
+    private String selectedBirdCommonName;
+    private String selectedBirdScientificName;
+    private String selectedBirdLabel;
 
     private TileOverlay userOverlay;
     private TileOverlay eBirdOverlay;
@@ -205,6 +215,21 @@ public class NearbyHeatmapActivity extends AppCompatActivity
         // Bind or inflate the UI pieces this method needs before it can update the screen.
         findViewById(R.id.btnBack).setOnClickListener(v -> finish());
         tvMapSubtitle = findViewById(R.id.tvMapSubtitle);
+        btnBirdSearch = findViewById(R.id.btnBirdSearch);
+
+        if (btnBirdSearch != null) {
+            btnBirdSearch.setOnClickListener(v -> openBirdSearchDialog());
+            btnBirdSearch.setOnLongClickListener(v -> {
+                if (hasSelectedBirdFilter()) {
+                    clearSelectedBirdFilter();
+                    Toast.makeText(this, "Bird filter cleared", Toast.LENGTH_SHORT).show();
+                    return true;
+                }
+                return false;
+            });
+        }
+        updateBirdSearchUi();
+        primeSearchableBirds();
 
         legendHeader = findViewById(R.id.legendHeader);
         legendContent = findViewById(R.id.legendContent);
@@ -243,6 +268,184 @@ public class NearbyHeatmapActivity extends AppCompatActivity
         legendContent.setVisibility(isLegendExpanded ? View.VISIBLE : View.GONE);
         tvLegendToggle.setText(isLegendExpanded ? "▲" : "▼");
     }
+
+    private void updateBirdSearchUi() {
+        if (btnBirdSearch == null) return;
+
+        boolean hasFilter = hasSelectedBirdFilter();
+        btnBirdSearch.setAlpha(hasFilter ? 1f : 0.82f);
+        btnBirdSearch.setContentDescription(
+                hasFilter
+                        ? "Bird filter: " + safeSelectedBirdLabel() + ". Long press to clear."
+                        : "Search birds"
+        );
+    }
+
+    private void primeSearchableBirds() {
+        if (isSearchDataLoading || !searchableBirds.isEmpty()) return;
+
+        isSearchDataLoading = true;
+        firebaseManager.getAllBirds(task -> {
+            try {
+                if (task.isSuccessful() && task.getResult() != null) {
+                    List<Bird> loaded = new ArrayList<>();
+                    for (DocumentSnapshot d : task.getResult().getDocuments()) {
+                        Bird bird = d.toObject(Bird.class);
+                        if (bird == null) continue;
+                        if (bird.getId() == null || bird.getId().trim().isEmpty()) {
+                            bird.setId(d.getId());
+                        }
+                        loaded.add(bird);
+                    }
+
+                    loaded.sort((left, right) -> safeBirdLabel(left).compareToIgnoreCase(safeBirdLabel(right)));
+                    searchableBirds.clear();
+                    searchableBirds.addAll(loaded);
+                }
+            } finally {
+                isSearchDataLoading = false;
+            }
+        });
+    }
+
+    private void openBirdSearchDialog() {
+        if (searchableBirds.isEmpty()) {
+            primeSearchableBirds();
+            Toast.makeText(this, isSearchDataLoading ? "Loading birds..." : "Bird list is not ready yet.", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        List<Bird> birds = buildNearbySearchBirdList();
+        if (birds.isEmpty()) {
+            Toast.makeText(this, "No birds available yet.", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        View content = LayoutInflater.from(this).inflate(R.layout.bottom_sheet_nearby_bird_search, null, false);
+        EditText etSearch = content.findViewById(R.id.etBirdSearch);
+        RecyclerView rvBirdSearch = content.findViewById(R.id.rvBirdSearch);
+        TextView tvEmpty = content.findViewById(R.id.tvBirdSearchEmpty);
+        ImageButton btnClearBirdSearchSheet = content.findViewById(R.id.btnClearBirdSearchSheet);
+
+        BottomSheetDialog dialog = new BottomSheetDialog(this);
+        dialog.setContentView(content);
+
+        NearbyBirdSearchAdapter searchAdapter = new NearbyBirdSearchAdapter(birds, bird -> {
+            dialog.dismiss();
+            applySelectedBirdFilter(bird);
+        });
+
+        rvBirdSearch.setLayoutManager(new LinearLayoutManager(this));
+        rvBirdSearch.setAdapter(searchAdapter);
+
+        String initialQuery = hasSelectedBirdFilter() ? safeSelectedBirdLabel() : "";
+        etSearch.setText(initialQuery);
+        etSearch.setSelection(etSearch.getText().length());
+
+        searchAdapter.filter(initialQuery);
+        tvEmpty.setVisibility(searchAdapter.getItemCount() == 0 ? View.VISIBLE : View.GONE);
+        btnClearBirdSearchSheet.setVisibility(
+                (hasSelectedBirdFilter() || !initialQuery.trim().isEmpty()) ? View.VISIBLE : View.GONE
+        );
+
+        btnClearBirdSearchSheet.setOnClickListener(v -> {
+            etSearch.setText("");
+            clearSelectedBirdFilter();
+            searchAdapter.filter("");
+            tvEmpty.setVisibility(searchAdapter.getItemCount() == 0 ? View.VISIBLE : View.GONE);
+            btnClearBirdSearchSheet.setVisibility(View.GONE);
+        });
+
+        etSearch.addTextChangedListener(new TextWatcher() {
+            @Override
+            public void beforeTextChanged(CharSequence s, int start, int count, int after) {
+            }
+
+            @Override
+            public void onTextChanged(CharSequence s, int start, int before, int count) {
+                String query = s == null ? "" : s.toString();
+                searchAdapter.filter(query);
+                tvEmpty.setVisibility(searchAdapter.getItemCount() == 0 ? View.VISIBLE : View.GONE);
+                btnClearBirdSearchSheet.setVisibility(
+                        (hasSelectedBirdFilter() || !query.trim().isEmpty()) ? View.VISIBLE : View.GONE
+                );
+            }
+
+            @Override
+            public void afterTextChanged(Editable s) {
+            }
+        });
+
+        dialog.show();
+    }
+
+    private void applySelectedBirdFilter(@NonNull Bird bird) {
+        selectedBirdId = safeTrim(bird.getId());
+        selectedBirdCommonName = safeTrim(cleanBirdText(bird.getCommonName()));
+        selectedBirdScientificName = safeTrim(cleanBirdText(bird.getScientificName()));
+        selectedBirdLabel = firstNonBlank(selectedBirdCommonName, selectedBirdScientificName, null, "Unknown bird");
+
+        updateBirdSearchUi();
+        renderHeatmaps();
+        focusCameraOnSelectedBirdHotspots();
+    }
+
+    private void clearSelectedBirdFilter() {
+        if (!hasSelectedBirdFilter()) return;
+
+        selectedBirdId = null;
+        selectedBirdCommonName = null;
+        selectedBirdScientificName = null;
+        selectedBirdLabel = null;
+
+        updateBirdSearchUi();
+        renderHeatmaps();
+    }
+
+    private boolean hasSelectedBirdFilter() {
+        return safeTrim(selectedBirdId) != null
+                || safeTrim(selectedBirdCommonName) != null
+                || safeTrim(selectedBirdScientificName) != null
+                || safeTrim(selectedBirdLabel) != null;
+    }
+
+    private String safeSelectedBirdLabel() {
+        return firstNonBlank(selectedBirdLabel, selectedBirdCommonName, selectedBirdScientificName, "Selected bird");
+    }
+
+    private List<Bird> buildNearbySearchBirdList() {
+        LinkedHashMap<String, Bird> deduped = new LinkedHashMap<>();
+        for (Bird bird : searchableBirds) {
+            if (bird == null || bird.getId() == null || bird.getId().trim().isEmpty()) continue;
+
+            String key = bird.getId().trim();
+            Bird existing = deduped.get(key);
+            if (existing == null) {
+                deduped.put(key, bird);
+            } else {
+                if ((existing.getCommonName() == null || existing.getCommonName().trim().isEmpty())
+                        && bird.getCommonName() != null && !bird.getCommonName().trim().isEmpty()) {
+                    existing.setCommonName(bird.getCommonName());
+                }
+                if ((existing.getScientificName() == null || existing.getScientificName().trim().isEmpty())
+                        && bird.getScientificName() != null && !bird.getScientificName().trim().isEmpty()) {
+                    existing.setScientificName(bird.getScientificName());
+                }
+            }
+        }
+
+        List<Bird> birds = new ArrayList<>(deduped.values());
+        birds.sort((left, right) -> safeBirdLabel(left).compareToIgnoreCase(safeBirdLabel(right)));
+        return birds;
+    }
+
+    private String safeBirdLabel(@Nullable Bird bird) {
+        if (bird == null) return "";
+        if (bird.getCommonName() != null && !bird.getCommonName().trim().isEmpty()) return bird.getCommonName().trim();
+        if (bird.getScientificName() != null && !bird.getScientificName().trim().isEmpty()) return bird.getScientificName().trim();
+        return "Unknown Bird";
+    }
+
 
     /**
      * Runs when the screen returns to the foreground, so it often refreshes UI state or restarts
@@ -1203,11 +1406,14 @@ public class NearbyHeatmapActivity extends AppCompatActivity
         }
         clearHotspotCircles();
 
-        if (!eBirdHeatPoints.isEmpty()) {
+        List<WeightedLatLng> displayEBirdHeatPoints = buildDisplayHeatPoints(false);
+        List<WeightedLatLng> displayUserHeatPoints = buildDisplayHeatPoints(true);
+
+        if (!displayEBirdHeatPoints.isEmpty()) {
             eBirdOverlay = googleMap.addTileOverlay(
                     new TileOverlayOptions().tileProvider(
                             new HeatmapTileProvider.Builder()
-                                    .weightedData(eBirdHeatPoints)
+                                    .weightedData(displayEBirdHeatPoints)
                                     .radius(45)
                                     .opacity(0.65)
                                     .gradient(EBIRD_GRADIENT)
@@ -1216,11 +1422,11 @@ public class NearbyHeatmapActivity extends AppCompatActivity
             );
         }
 
-        if (!userHeatPoints.isEmpty()) {
+        if (!displayUserHeatPoints.isEmpty()) {
             userOverlay = googleMap.addTileOverlay(
                     new TileOverlayOptions().tileProvider(
                             new HeatmapTileProvider.Builder()
-                                    .weightedData(userHeatPoints)
+                                    .weightedData(displayUserHeatPoints)
                                     .radius(45)
                                     .opacity(0.70)
                                     .gradient(USER_GRADIENT)
@@ -1231,13 +1437,21 @@ public class NearbyHeatmapActivity extends AppCompatActivity
 
         renderHotspotCircles();
 
-        if (userHeatPoints.isEmpty() && eBirdHeatPoints.isEmpty()) {
-            tvMapSubtitle.setText("No recent sightings found.");
+        if (displayUserHeatPoints.isEmpty() && displayEBirdHeatPoints.isEmpty()) {
+            if (hasSelectedBirdFilter()) {
+                tvMapSubtitle.setText("No nearby sightings for " + safeSelectedBirdLabel() + ".");
+            } else {
+                tvMapSubtitle.setText("No recent sightings found.");
+            }
+        } else if (hasSelectedBirdFilter()) {
+            tvMapSubtitle.setText(safeSelectedBirdLabel() + ": " + displayUserHeatPoints.size() + " unverified, " + displayEBirdHeatPoints.size() + " verified nearby");
         } else {
-            tvMapSubtitle.setText("Heatmap: " + userHeatPoints.size() + " unverified, " + eBirdHeatPoints.size() + " verified");
+            tvMapSubtitle.setText("Heatmap: " + displayUserHeatPoints.size() + " unverified, " + displayEBirdHeatPoints.size() + " verified");
         }
 
-        maybeOpenTrackedBirdHotspot();
+        if (!hasSelectedBirdFilter()) {
+            maybeOpenTrackedBirdHotspot();
+        }
     }
 
     private void maybeOpenTrackedBirdHotspot() {
@@ -1325,9 +1539,22 @@ public class NearbyHeatmapActivity extends AppCompatActivity
      * sightings the user sees.
      */
     private void renderHotspotCircles() {
+        boolean filterActive = hasSelectedBirdFilter();
+
         for (HotspotBucket b : hotspotBuckets.values()) {
             if (b.pointCount == 0) continue;
-            Circle c = googleMap.addCircle(new CircleOptions().center(new LatLng(b.getCenterLat(), b.getCenterLng())).radius(HOTSPOT_CIRCLE_RADIUS_METERS).strokeWidth(2f).strokeColor(Color.argb(110, 255, 255, 255)).fillColor(Color.argb(35, 255, 255, 255)).clickable(true).zIndex(3f));
+            if (filterActive && !bucketMatchesSelectedBird(b)) continue;
+
+            Circle c = googleMap.addCircle(
+                    new CircleOptions()
+                            .center(new LatLng(b.getCenterLat(), b.getCenterLng()))
+                            .radius(HOTSPOT_CIRCLE_RADIUS_METERS)
+                            .strokeWidth(filterActive ? 3.5f : 2f)
+                            .strokeColor(filterActive ? Color.argb(210, 255, 191, 0) : Color.argb(110, 255, 255, 255))
+                            .fillColor(filterActive ? Color.argb(78, 255, 191, 0) : Color.argb(35, 255, 255, 255))
+                            .clickable(true)
+                            .zIndex(filterActive ? 3.5f : 3f)
+            );
             hotspotCircles.add(c);
             circleIdToBucket.put(c.getId(), b);
         }
@@ -1528,6 +1755,113 @@ public class NearbyHeatmapActivity extends AppCompatActivity
      * Location values are handled here, so this is part of the logic that decides what area/bird
      * sightings the user sees.
      */
+
+    private List<WeightedLatLng> buildDisplayHeatPoints(boolean user) {
+        if (!hasSelectedBirdFilter()) {
+            return new ArrayList<>(user ? userHeatPoints : eBirdHeatPoints);
+        }
+
+        List<WeightedLatLng> filtered = new ArrayList<>();
+        List<HotspotSighting> source = user ? userHotspotSightings : eBirdHotspotSightings;
+        double intensity = user ? 1.8d : 1.0d;
+
+        for (HotspotSighting sighting : source) {
+            if (!matchesSelectedBird(sighting.birdId, sighting.commonName, sighting.scientificName, sighting.displayName)) {
+                continue;
+            }
+            filtered.add(new WeightedLatLng(new LatLng(sighting.lat, sighting.lng), intensity));
+        }
+
+        return filtered;
+    }
+
+    private boolean bucketMatchesSelectedBird(@NonNull HotspotBucket bucket) {
+        for (BirdSheetRow row : bucket.birdRows.values()) {
+            if (matchesSelectedBird(row.birdId, row.commonName, row.scientificName, row.displayName)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean matchesSelectedBird(@Nullable String birdId,
+                                        @Nullable String commonName,
+                                        @Nullable String scientificName,
+                                        @Nullable String displayName) {
+        if (!hasSelectedBirdFilter()) return true;
+
+        String normalizedBirdId = normalizeBirdValue(birdId);
+        String normalizedCommonName = normalizeBirdValue(commonName);
+        String normalizedScientificName = normalizeBirdValue(scientificName);
+        String normalizedDisplayName = normalizeBirdValue(displayName);
+
+        String normalizedSelectedId = normalizeBirdValue(selectedBirdId);
+        String normalizedSelectedCommon = normalizeBirdValue(selectedBirdCommonName);
+        String normalizedSelectedScientific = normalizeBirdValue(selectedBirdScientificName);
+        String normalizedSelectedLabel = normalizeBirdValue(selectedBirdLabel);
+
+        return (normalizedSelectedId != null && normalizedSelectedId.equals(normalizedBirdId))
+                || (normalizedSelectedCommon != null && (normalizedSelectedCommon.equals(normalizedCommonName)
+                || normalizedSelectedCommon.equals(normalizedScientificName)
+                || normalizedSelectedCommon.equals(normalizedDisplayName)))
+                || (normalizedSelectedScientific != null && (normalizedSelectedScientific.equals(normalizedScientificName)
+                || normalizedSelectedScientific.equals(normalizedCommonName)
+                || normalizedSelectedScientific.equals(normalizedDisplayName)))
+                || (normalizedSelectedLabel != null && (normalizedSelectedLabel.equals(normalizedDisplayName)
+                || normalizedSelectedLabel.equals(normalizedCommonName)
+                || normalizedSelectedLabel.equals(normalizedScientificName)));
+    }
+
+    @Nullable
+    private String normalizeBirdValue(@Nullable String value) {
+        if (value == null) return null;
+
+        String normalized = value.trim()
+                .replace("_", " ")
+                .replace("-", " ")
+                .replaceAll("\\s+", " ")
+                .toLowerCase(Locale.US);
+
+        return normalized.isEmpty() ? null : normalized;
+    }
+
+    private void focusCameraOnSelectedBirdHotspots() {
+        if (googleMap == null || !hasSelectedBirdFilter()) return;
+
+        LatLng onlyTarget = null;
+        LatLngBounds.Builder boundsBuilder = new LatLngBounds.Builder();
+        int matches = 0;
+
+        for (HotspotBucket bucket : hotspotBuckets.values()) {
+            if (!bucketMatchesSelectedBird(bucket)) continue;
+
+            LatLng point = new LatLng(bucket.getCenterLat(), bucket.getCenterLng());
+            boundsBuilder.include(point);
+            onlyTarget = point;
+            matches++;
+        }
+
+        if (matches == 0) {
+            Toast.makeText(this, "No nearby sightings for " + safeSelectedBirdLabel() + " in this map area.", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        if (matches == 1 && onlyTarget != null) {
+            float targetZoom = Math.max(googleMap.getCameraPosition().zoom, 11f);
+            googleMap.animateCamera(CameraUpdateFactory.newLatLngZoom(onlyTarget, targetZoom));
+        } else {
+            googleMap.animateCamera(CameraUpdateFactory.newLatLngBounds(boundsBuilder.build(), dpToPx(72)));
+        }
+    }
+
+    private int dpToPx(int dp) {
+        return Math.round(TypedValue.applyDimension(
+                TypedValue.COMPLEX_UNIT_DIP,
+                dp,
+                getResources().getDisplayMetrics()
+        ));
+    }
+
     private boolean shouldBeFiltered(double lat, double lng, Long time) {
         if (time != null && (System.currentTimeMillis() - time > SIGHTING_RECENCY_MS)) return true;
         if (currentVisibleBounds != null)

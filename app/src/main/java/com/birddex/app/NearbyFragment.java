@@ -1,7 +1,6 @@
 package com.birddex.app;
 
 import android.Manifest;
-import android.app.AlertDialog;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.location.Address;
@@ -9,15 +8,14 @@ import android.location.Geocoder;
 import android.location.Location;
 import android.os.Bundle;
 import android.os.Looper;
+import android.text.Editable;
+import android.text.TextWatcher;
 import android.util.Log;
-import android.util.TypedValue;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
-import android.widget.ArrayAdapter;
-import android.widget.AutoCompleteTextView;
+import android.widget.EditText;
 import android.widget.ImageButton;
-import android.widget.LinearLayout;
 import android.widget.ProgressBar;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -38,6 +36,7 @@ import com.google.android.gms.location.LocationResult;
 import com.google.android.gms.location.LocationServices;
 import com.google.android.gms.location.Priority;
 import com.google.firebase.Timestamp;
+import com.google.android.material.bottomsheet.BottomSheetDialog;
 import com.google.firebase.firestore.DocumentSnapshot;
 import com.google.firebase.firestore.FirebaseFirestore;
 import com.google.firebase.firestore.Source;
@@ -48,6 +47,7 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Date;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -513,48 +513,78 @@ public class NearbyFragment extends Fragment {
     private void openBirdSearchDialog() {
         if (!isAdded()) return;
         // Give the user immediate feedback about the result of this action.
-        if (searchableBirds.isEmpty()) { primeSearchableBirds(); Toast.makeText(requireContext(), "Loading search data...", Toast.LENGTH_SHORT).show(); return; }
-        List<SearchBirdItem> items = new ArrayList<>();
-        for (Bird b : searchableBirds) if (!isBlank(b.getId())) items.add(new SearchBirdItem(b.getId(), b.getCommonName() + " (" + b.getScientificName() + ")", b.getCommonName(), b.getScientificName()));
-        if (items.isEmpty()) return;
-        Collections.sort(items, (a, b) -> a.label.compareToIgnoreCase(b.label));
+        if (searchableBirds.isEmpty()) {
+            primeSearchableBirds();
+            Toast.makeText(requireContext(), "Loading birds...", Toast.LENGTH_SHORT).show();
+            return;
+        }
 
-        AutoCompleteTextView input = new AutoCompleteTextView(requireContext());
-        input.setHint("Search birds"); input.setThreshold(1); input.setSingleLine(true); input.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
-        input.setTextColor(ContextCompat.getColor(requireContext(), R.color.on_page)); input.setHintTextColor(ContextCompat.getColor(requireContext(), R.color.on_page_variant));
-        input.setBackground(ContextCompat.getDrawable(requireContext(), R.drawable.bg_input)); input.setDropDownBackgroundDrawable(ContextCompat.getDrawable(requireContext(), R.drawable.bg_white_button));
-        input.setPadding(36, 28, 36, 28);
-        // Hook the data source to the list/grid adapter so model objects can render as UI rows/cards.
-        input.setAdapter(new ArrayAdapter<>(requireContext(), R.layout.item_bird_search_suggestion, R.id.tvSuggestionText, items));
+        List<Bird> birds = buildNearbySearchBirdList();
+        if (birds.isEmpty()) return;
 
-        int p = (int) (16 * requireContext().getResources().getDisplayMetrics().density);
-        LinearLayout container = new LinearLayout(requireContext()); container.setOrientation(LinearLayout.VERTICAL); container.setPadding(p, p / 2, p, 0);
-        container.addView(input, new LinearLayout.LayoutParams(-1, -2));
+        View content = LayoutInflater.from(requireContext()).inflate(R.layout.bottom_sheet_nearby_bird_search, null, false);
+        EditText etSearch = content.findViewById(R.id.etBirdSearch);
+        RecyclerView rvBirdSearch = content.findViewById(R.id.rvBirdSearch);
+        TextView tvEmpty = content.findViewById(R.id.tvBirdSearchEmpty);
 
-        final AlertDialog dialog = new AlertDialog.Builder(requireContext()).setTitle("Search Birds").setMessage("Type a common name or scientific name.").setView(container).setPositiveButton("Open", null).setNegativeButton("Cancel", null).create();
-        input.setOnItemClickListener((parent, view, position, id) -> { dialog.dismiss(); openBirdWikiPage(((SearchBirdItem) parent.getItemAtPosition(position)).birdId); });
-        dialog.setOnShowListener(d -> {
-            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setTextColor(ContextCompat.getColor(requireContext(), R.color.on_page));
-            dialog.getButton(AlertDialog.BUTTON_NEGATIVE).setTextColor(ContextCompat.getColor(requireContext(), R.color.on_page_variant));
-            // Attach the user interaction that should run when this control is tapped.
-            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
-                String q = input.getText() != null ? input.getText().toString() : "";
-                SearchBirdItem match = findBirdMatch(q, items);
-                if (match == null) input.setError("Bird not found"); else { dialog.dismiss(); openBirdWikiPage(match.birdId); }
-            });
+        BottomSheetDialog dialog = new BottomSheetDialog(requireContext());
+        dialog.setContentView(content);
+
+        NearbyBirdSearchAdapter searchAdapter = new NearbyBirdSearchAdapter(birds, bird -> {
+            dialog.dismiss();
+            openBirdWikiPage(bird.getId());
         });
-        dialog.show(); input.requestFocus();
+
+        rvBirdSearch.setLayoutManager(new LinearLayoutManager(requireContext()));
+        rvBirdSearch.setAdapter(searchAdapter);
+        tvEmpty.setVisibility(searchAdapter.getItemCount() == 0 ? View.VISIBLE : View.GONE);
+
+        etSearch.addTextChangedListener(new TextWatcher() {
+            @Override
+            public void beforeTextChanged(CharSequence s, int start, int count, int after) {
+            }
+
+            @Override
+            public void onTextChanged(CharSequence s, int start, int before, int count) {
+                searchAdapter.filter(s == null ? "" : s.toString());
+                tvEmpty.setVisibility(searchAdapter.getItemCount() == 0 ? View.VISIBLE : View.GONE);
+            }
+
+            @Override
+            public void afterTextChanged(Editable s) {
+            }
+        });
+
+        dialog.show();
     }
 
     /**
      * Main logic block for this part of the feature.
      */
-    private SearchBirdItem findBirdMatch(String query, List<SearchBirdItem> items) {
-        String normalized = query == null ? "" : query.trim().toLowerCase(Locale.getDefault());
-        if (normalized.isEmpty()) return null;
-        for (SearchBirdItem item : items) if (item.commonName.equals(normalized) || item.scientificName.equals(normalized) || item.label.equalsIgnoreCase(query.trim())) return item;
-        for (SearchBirdItem item : items) if (item.commonName.contains(normalized) || item.scientificName.contains(normalized)) return item;
-        return null;
+    private List<Bird> buildNearbySearchBirdList() {
+        LinkedHashMap<String, Bird> deduped = new LinkedHashMap<>();
+        for (Bird bird : searchableBirds) {
+            if (bird == null || isBlank(bird.getId())) continue;
+            String key = bird.getId().trim();
+            Bird existing = deduped.get(key);
+            if (existing == null) {
+                deduped.put(key, bird);
+            } else {
+                if (isBlank(existing.getCommonName()) && !isBlank(bird.getCommonName())) existing.setCommonName(bird.getCommonName());
+                if (isBlank(existing.getScientificName()) && !isBlank(bird.getScientificName())) existing.setScientificName(bird.getScientificName());
+            }
+        }
+
+        List<Bird> birds = new ArrayList<>(deduped.values());
+        birds.sort((left, right) -> safeBirdLabel(left).compareToIgnoreCase(safeBirdLabel(right)));
+        return birds;
+    }
+
+    private String safeBirdLabel(Bird bird) {
+        if (bird == null) return "";
+        if (!isBlank(bird.getCommonName())) return bird.getCommonName().trim();
+        if (!isBlank(bird.getScientificName())) return bird.getScientificName().trim();
+        return "Unknown Bird";
     }
 
     /**
@@ -588,10 +618,4 @@ public class NearbyFragment extends Fragment {
     private Double getDoubleValue(DocumentSnapshot d, String... paths) { for (String p : paths) { Object v = getNestedValue(d, p); if (v instanceof Number) return ((Number) v).doubleValue(); } return null; }
     private Long getTimeMillisValue(DocumentSnapshot d, String... paths) { for (String p : paths) { Object v = getNestedValue(d, p); if (v instanceof Timestamp) return ((Timestamp) v).toDate().getTime(); if (v instanceof Date) return ((Date) v).getTime(); if (v instanceof Number) return ((Number) v).longValue(); } return null; }
     private Object getNestedValue(DocumentSnapshot d, String p) { if (p == null || p.isEmpty()) return null; if (!p.contains(".")) return d.get(p); String[] pts = p.split("\\."); Object cur = d.get(pts[0]); for (int i = 1; i < pts.length; i++) { if (!(cur instanceof Map)) return null; cur = ((Map<?, ?>) cur).get(pts[i]); } return cur; }
-
-    private static class SearchBirdItem {
-        final String birdId, label, commonName, scientificName;
-        SearchBirdItem(String id, String l, String c, String s) { this.birdId = id; this.label = l; this.commonName = c != null ? c.toLowerCase() : ""; this.scientificName = s != null ? s.toLowerCase() : ""; }
-        @NonNull @Override public String toString() { return label; }
-    }
 }

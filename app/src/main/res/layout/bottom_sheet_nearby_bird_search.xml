@@ -1,0 +1,81 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="@android:color/transparent">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="vertical"
+        android:background="?attr/colorSurface"
+        android:paddingStart="18dp"
+        android:paddingTop="10dp"
+        android:paddingEnd="18dp"
+        android:paddingBottom="18dp">
+
+        <View
+            android:layout_width="44dp"
+            android:layout_height="5dp"
+            android:layout_gravity="center_horizontal"
+            android:layout_marginBottom="12dp"
+            android:background="@android:color/darker_gray" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Browse birds"
+            android:textColor="?attr/colorOnSurface"
+            android:textSize="20sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:text="Scroll the full bird list or type to filter by common or scientific name."
+            android:textColor="?attr/colorOnSurfaceVariant"
+            android:textSize="13sp" />
+
+        <EditText
+            android:id="@+id/etBirdSearch"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="14dp"
+            android:background="@drawable/bg_input"
+            android:hint="Search birds"
+            android:imeOptions="actionDone"
+            android:inputType="text"
+            android:maxLines="1"
+            android:paddingStart="14dp"
+            android:paddingTop="14dp"
+            android:paddingEnd="14dp"
+            android:paddingBottom="14dp"
+            android:textColor="?attr/colorOnSurface"
+            android:textColorHint="?attr/colorOnSurfaceVariant" />
+
+        <TextView
+            android:id="@+id/tvBirdSearchEmpty"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="18dp"
+            android:text="No birds match that search."
+            android:textColor="?attr/colorOnSurfaceVariant"
+            android:textSize="14sp"
+            android:visibility="gone" />
+
+        <androidx.recyclerview.widget.RecyclerView
+            android:id="@+id/rvBirdSearch"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_marginTop="10dp"
+            android:layout_weight="1"
+            android:clipToPadding="false"
+            android:paddingBottom="8dp"
+            tools:listitem="@layout/item_heatmap_bird_placeholder" />
+
+    </LinearLayout>
+
+</LinearLayout>

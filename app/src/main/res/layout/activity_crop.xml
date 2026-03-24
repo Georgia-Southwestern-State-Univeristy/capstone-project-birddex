@@ -3,7 +3,8 @@
     xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
-    android:layout_height="match_parent">
+    android:layout_height="match_parent"
+    android:background="@color/page_cream">
 
     <com.canhub.cropper.CropImageView
         android:id="@+id/cropImageView"
@@ -24,6 +25,7 @@
         android:orientation="horizontal"
         android:gravity="center"
         android:padding="16dp"
+        android:background="@color/page_cream"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent">
@@ -32,14 +34,18 @@
             android:id="@+id/btnCancel"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="Cancel"/>
+            android:text="Cancel"
+            android:textColor="@color/page_cream"
+            app:backgroundTint="@color/nav_brown"/>
 
         <Button
             android:id="@+id/btnIdentify"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginStart="16dp"
-            android:text="Identify"/>
+            android:text="Identify"
+            android:textColor="@color/page_cream"
+            app:backgroundTint="@color/nav_brown"/>
     </LinearLayout>
 
 </androidx.constraintlayout.widget.ConstraintLayout>

@@ -2,7 +2,9 @@ package com.birddex.app;
 
 import android.Manifest;
 import android.content.ContentValues;
+import android.content.Context;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.net.Uri;
 import android.os.Bundle;
@@ -12,6 +14,7 @@ import android.view.LayoutInflater;
 import android.view.ScaleGestureDetector;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.CheckBox;
 import android.widget.ImageButton;
 import android.widget.Toast;
 
@@ -31,6 +34,7 @@ import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 import androidx.fragment.app.Fragment;
 
+import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 import com.google.common.util.concurrent.ListenableFuture;
 
 import java.text.SimpleDateFormat;
@@ -47,6 +51,9 @@ import java.util.concurrent.ExecutionException;
 public class CameraFragment extends Fragment {
 
     private static final String TAG = "BirdDexCam";
+    private static final String PREFS_NAME = "BirdDexPrefs";
+    private static final String KEY_SHOW_CAMERA_TIP = "show_camera_tip";
+    
     private PreviewView previewView;
     private ImageButton btnFlip, btnCapture, btnFlash;
     private ProcessCameraProvider cameraProvider;
@@ -129,7 +136,28 @@ public class CameraFragment extends Fragment {
             });
         }
 
+        showCameraTipIfNeeded();
+
         return v;
+    }
+
+    private void showCameraTipIfNeeded() {
+        SharedPreferences prefs = requireContext().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+        boolean showTip = prefs.getBoolean(KEY_SHOW_CAMERA_TIP, true);
+        
+        if (showTip) {
+            View dialogView = LayoutInflater.from(requireContext()).inflate(R.layout.dialog_camera_tip, null);
+            CheckBox checkBox = dialogView.findViewById(R.id.checkBoxDontShow);
+            
+            new MaterialAlertDialogBuilder(requireContext())
+                    .setView(dialogView)
+                    .setPositiveButton(R.string.ok, (dialog, which) -> {
+                        if (checkBox.isChecked()) {
+                            prefs.edit().putBoolean(KEY_SHOW_CAMERA_TIP, false).apply();
+                        }
+                    })
+                    .show();
+        }
     }
 
     /**

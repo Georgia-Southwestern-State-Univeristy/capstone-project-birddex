@@ -53,7 +53,7 @@
             android:layout_width="match_parent"
             android:layout_height="match_parent"
             android:orientation="vertical"
-            android:padding="20dp">
+            android:padding="16dp">
 
             <TextView
                 android:id="@+id/tvUserNameLabel"
@@ -78,7 +78,7 @@
             <View
                 android:layout_width="match_parent"
                 android:layout_height="1dp"
-                android:layout_marginVertical="16dp"
+                android:layout_marginVertical="8dp"
                 android:background="#F0F0F0" />
 
             <TextView
@@ -105,7 +105,7 @@
                 android:id="@+id/btnUpdateEmail"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="12dp"
+                android:layout_marginTop="8dp"
                 android:text="@string/btn_change_email"
                 android:textColor="@color/page_cream"
                 app:backgroundTint="@color/nav_brown"
@@ -114,7 +114,7 @@
             <View
                 android:layout_width="match_parent"
                 android:layout_height="1dp"
-                android:layout_marginVertical="16dp"
+                android:layout_marginVertical="8dp"
                 android:background="#F0F0F0" />
 
             <TextView
@@ -132,7 +132,7 @@
                 android:id="@+id/btnModerationHistory"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="12dp"
+                android:layout_marginTop="8dp"
                 android:text="@string/btn_moderation_history"
                 android:textColor="@color/page_cream"
                 app:backgroundTint="@color/nav_brown"
@@ -142,7 +142,7 @@
                 android:id="@+id/btnModeratorDashboard"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="8dp"
+                android:layout_marginTop="4dp"
                 android:text="Moderator Dashboard"
                 android:textColor="@color/page_cream"
                 android:visibility="gone"
@@ -153,7 +153,7 @@
                 android:id="@+id/btnChangePassword"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="8dp"
+                android:layout_marginTop="4dp"
                 android:text="@string/btn_change_password"
                 android:textColor="@color/page_cream"
                 app:backgroundTint="@color/nav_brown"
@@ -162,7 +162,7 @@
             <View
                 android:layout_width="match_parent"
                 android:layout_height="1dp"
-                android:layout_marginVertical="16dp"
+                android:layout_marginVertical="8dp"
                 android:background="#F0F0F0" />
 
             <TextView
@@ -179,7 +179,7 @@
                 android:id="@+id/btnNotifications"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="12dp"
+                android:layout_marginTop="8dp"
                 android:text="@string/btn_notifications"
                 android:textColor="@color/page_cream"
                 app:backgroundTint="@color/nav_brown"
@@ -189,7 +189,7 @@
                 android:id="@+id/btnReportBug"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="8dp"
+                android:layout_marginTop="4dp"
                 android:text="@string/btn_report_bug"
                 android:textColor="@color/page_cream"
                 app:backgroundTint="@color/nav_brown"
@@ -198,7 +198,7 @@
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="16dp"
+                android:layout_marginTop="8dp"
                 android:gravity="center_vertical"
                 android:orientation="horizontal">
 
@@ -240,7 +240,7 @@
                 style="@style/Widget.Material3.Button.OutlinedButton"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="16dp"
+                android:layout_marginTop="8dp"
                 android:text="@string/btn_logout"
                 android:textColor="@color/md_theme_error"
                 app:cornerRadius="12dp"

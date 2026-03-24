@@ -80,4 +80,10 @@
     <string name="open_ai">Open AI</string>
     <string name="retake_image">Retake Image</string>
     <string name="user_image">User Image</string>
+
+    <!-- Camera Tip -->
+    <string name="camera_tip_title">Camera Tip</string>
+    <string name="camera_tip_message">Make Sure To Only Include One Bird When Cropping</string>
+    <string name="dont_show_again">Don\'t show again</string>
+    <string name="ok">OK</string>
 </resources>

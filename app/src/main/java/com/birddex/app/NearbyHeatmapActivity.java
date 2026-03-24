@@ -107,6 +107,10 @@ public class NearbyHeatmapActivity extends AppCompatActivity
     private String trackedBirdIdFromNotification;
     private String trackedBirdNameFromNotification;
     private static final String KEY_GRAPHIC_CONTENT = "show_graphic_content";
+    private View legendHeader;
+    private View legendContent;
+    private TextView tvLegendToggle;
+    private boolean isLegendExpanded = true;
     private LatLngBounds currentVisibleBounds;
     private float lastAppliedZoom = -1f;
     private LatLng lastAppliedTarget;
@@ -202,6 +206,13 @@ public class NearbyHeatmapActivity extends AppCompatActivity
         findViewById(R.id.btnBack).setOnClickListener(v -> finish());
         tvMapSubtitle = findViewById(R.id.tvMapSubtitle);
 
+        legendHeader = findViewById(R.id.legendHeader);
+        legendContent = findViewById(R.id.legendContent);
+        tvLegendToggle = findViewById(R.id.tvLegendToggle);
+
+        legendHeader.setOnClickListener(v -> toggleLegend());
+        updateLegendUi();
+
         if (getIntent() != null && getIntent().hasExtra(EXTRA_CENTER_LAT)) {
             centerLat = getIntent().getDoubleExtra(EXTRA_CENTER_LAT, Double.NaN);
             centerLng = getIntent().getDoubleExtra(EXTRA_CENTER_LNG, Double.NaN);
@@ -219,6 +230,18 @@ public class NearbyHeatmapActivity extends AppCompatActivity
             Toast.makeText(this, "Map failed to load", Toast.LENGTH_SHORT).show();
             finish();
         }
+    }
+
+    private void toggleLegend() {
+        isLegendExpanded = !isLegendExpanded;
+        updateLegendUi();
+    }
+
+    private void updateLegendUi() {
+        if (legendContent == null || tvLegendToggle == null) return;
+
+        legendContent.setVisibility(isLegendExpanded ? View.VISIBLE : View.GONE);
+        tvLegendToggle.setText(isLegendExpanded ? "▲" : "▼");
     }
 
     /**

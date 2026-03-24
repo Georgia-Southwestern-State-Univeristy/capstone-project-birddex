@@ -145,6 +145,10 @@ public class NearbyHeatmapActivity extends AppCompatActivity
     private FirebaseAuth mAuth;
     private TextView tvMapSubtitle;
     private ImageButton btnBirdSearch;
+    private ImageButton btnPinFilter;
+
+    private final Set<String> followedUserIds = new HashSet<>();
+    private boolean showFollowingPinsOnly = false;
 
     private final List<Bird> searchableBirds = new ArrayList<>();
     private boolean isSearchDataLoading = false;
@@ -216,6 +220,7 @@ public class NearbyHeatmapActivity extends AppCompatActivity
         findViewById(R.id.btnBack).setOnClickListener(v -> finish());
         tvMapSubtitle = findViewById(R.id.tvMapSubtitle);
         btnBirdSearch = findViewById(R.id.btnBirdSearch);
+        btnPinFilter = findViewById(R.id.btnPinFilter);
 
         if (btnBirdSearch != null) {
             btnBirdSearch.setOnClickListener(v -> openBirdSearchDialog());
@@ -228,7 +233,13 @@ public class NearbyHeatmapActivity extends AppCompatActivity
                 return false;
             });
         }
+
+        if (btnPinFilter != null) {
+            btnPinFilter.setOnClickListener(this::showPinFilterMenu);
+        }
+
         updateBirdSearchUi();
+        updatePinFilterUi();
         primeSearchableBirds();
 
         legendHeader = findViewById(R.id.legendHeader);
@@ -279,6 +290,93 @@ public class NearbyHeatmapActivity extends AppCompatActivity
                         ? "Bird filter: " + safeSelectedBirdLabel() + ". Long press to clear."
                         : "Search birds"
         );
+    }
+
+    private void updatePinFilterUi() {
+        if (btnPinFilter == null) return;
+
+        btnPinFilter.setAlpha(showFollowingPinsOnly ? 1f : 0.82f);
+        btnPinFilter.setContentDescription(
+                showFollowingPinsOnly
+                        ? "Pin filter: following only"
+                        : "Pin filter: all pins"
+        );
+    }
+
+    private void showPinFilterMenu(View anchor) {
+        PopupMenu popupMenu = new PopupMenu(this, anchor);
+
+        popupMenu.getMenu().add(
+                0,
+                1,
+                0,
+                showFollowingPinsOnly ? "All pins" : "✓ All pins"
+        );
+
+        popupMenu.getMenu().add(
+                0,
+                2,
+                1,
+                showFollowingPinsOnly ? "✓ Following only" : "Following only"
+        );
+
+        popupMenu.setOnMenuItemClickListener(item -> {
+            if (item.getItemId() == 1) {
+                setFollowingPinsOnly(false);
+                return true;
+            } else if (item.getItemId() == 2) {
+                setFollowingPinsOnly(true);
+                return true;
+            }
+            return false;
+        });
+
+        popupMenu.show();
+    }
+
+    private void setFollowingPinsOnly(boolean enabled) {
+        if (!enabled) {
+            showFollowingPinsOnly = false;
+            updatePinFilterUi();
+            loadForumPins();
+            return;
+        }
+
+        ensureFollowedUserIdsLoaded(() -> {
+            showFollowingPinsOnly = true;
+            updatePinFilterUi();
+            loadForumPins();
+
+            if (followedUserIds.isEmpty()) {
+                Toast.makeText(this, "You are not following anyone yet.", Toast.LENGTH_SHORT).show();
+            }
+        });
+    }
+
+    private void ensureFollowedUserIdsLoaded(Runnable onComplete) {
+        FirebaseUser currentUser = mAuth.getCurrentUser();
+        if (currentUser == null) {
+            followedUserIds.clear();
+            if (onComplete != null) onComplete.run();
+            return;
+        }
+
+        db.collection("users")
+                .document(currentUser.getUid())
+                .collection("following")
+                .get()
+                .addOnSuccessListener(snap -> {
+                    followedUserIds.clear();
+                    for (DocumentSnapshot doc : snap.getDocuments()) {
+                        followedUserIds.add(doc.getId());
+                    }
+                    if (onComplete != null) onComplete.run();
+                })
+                .addOnFailureListener(e -> {
+                    Log.e(TAG, "Failed to load followed users for heatmap pin filter", e);
+                    followedUserIds.clear();
+                    if (onComplete != null) onComplete.run();
+                });
     }
 
     private void primeSearchableBirds() {
@@ -636,13 +734,27 @@ public class NearbyHeatmapActivity extends AppCompatActivity
     private void processForumPins(com.google.firebase.firestore.QuerySnapshot snap) {
         clearForumMarkers();
         boolean showGraphic = getSharedPreferences(PREFS_NAME, MODE_PRIVATE).getBoolean(KEY_GRAPHIC_CONTENT, false);
+
         for (DocumentSnapshot doc : snap.getDocuments()) {
             ForumPost p = doc.toObject(ForumPost.class);
-            if (p != null) {
-                p.setId(doc.getId());
-                if (!isHeatmapPinVisible(p)) continue;
-                boolean inBounds = currentVisibleBounds == null || currentVisibleBounds.contains(new LatLng(p.getLatitude(), p.getLongitude()));
-                if (inBounds && (showGraphic || !p.isHunted())) addPinToMap(p);
+            if (p == null) continue;
+
+            p.setId(doc.getId());
+
+            if (!isHeatmapPinVisible(p)) continue;
+
+            if (showFollowingPinsOnly) {
+                String postUserId = p.getUserId();
+                if (postUserId == null || !followedUserIds.contains(postUserId)) {
+                    continue;
+                }
+            }
+
+            boolean inBounds = currentVisibleBounds == null
+                    || currentVisibleBounds.contains(new LatLng(p.getLatitude(), p.getLongitude()));
+
+            if (inBounds && (showGraphic || !p.isHunted())) {
+                addPinToMap(p);
             }
         }
     }

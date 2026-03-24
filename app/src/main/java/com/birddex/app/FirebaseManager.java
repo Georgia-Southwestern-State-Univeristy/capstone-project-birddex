@@ -424,7 +424,7 @@ public class FirebaseManager {
 
 
 
-    public void trackBird(String birdId, String commonName, String scientificName, OnCompleteListener<Void> listener) {
+    public void trackBird(String birdId, String commonName, String scientificName, String imageUrl, OnCompleteListener<Void> listener) {
         FirebaseUser currentUser = mAuth.getCurrentUser();
         if (currentUser == null) {
             if (listener != null) {
@@ -439,6 +439,7 @@ public class FirebaseManager {
         data.put("birdId", birdId);
         data.put("commonName", commonName != null ? commonName : "");
         data.put("scientificName", scientificName != null ? scientificName : "");
+        data.put("imageUrl", imageUrl != null ? imageUrl : "");
         data.put("trackedAt", new Date());
 
         db.collection("users")

@@ -62,6 +62,7 @@ public class BirdWikiActivity extends AppCompatActivity {
 
     private ImageView ivBirdHeaderImage;
     private ImageButton btnTrackBird;
+    private ImageView btnBack;
     private TextView tvPageTitle;
     private TextView tvPageScientificName;
     private View contentScrollView;
@@ -76,6 +77,7 @@ public class BirdWikiActivity extends AppCompatActivity {
     private String currentBirdId;
     private String currentCommonName;
     private String currentScientificName;
+    private String currentImageUrl;
 
     private final Map<String, TextView> factViews = new HashMap<>();
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
@@ -147,8 +149,13 @@ public class BirdWikiActivity extends AppCompatActivity {
         loadingOverlay = findViewById(R.id.loadingOverlay);
         ivBirdHeaderImage = findViewById(R.id.ivBirdHeaderImage);
         btnTrackBird = findViewById(R.id.btnTrackBird);
+        btnBack = findViewById(R.id.btnBack);
         tvPageTitle = findViewById(R.id.tvPageTitle);
         tvPageScientificName = findViewById(R.id.tvPageScientificName);
+
+        if (btnBack != null) {
+            btnBack.setOnClickListener(v -> finish());
+        }
 
         if (btnTrackBird != null) {
             btnTrackBird.setOnClickListener(v -> toggleTrackedBirdState());
@@ -363,6 +370,7 @@ public class BirdWikiActivity extends AppCompatActivity {
      */
     private void loadBirdImage(String birdId, String commonName, String scientificName) {
         if (isBlank(birdId) && isBlank(commonName) && isBlank(scientificName)) {
+            currentImageUrl = null;
             ivBirdHeaderImage.setImageDrawable(null);
             ivBirdHeaderImage.setVisibility(View.GONE);
             markImageLoaded();
@@ -373,6 +381,7 @@ public class BirdWikiActivity extends AppCompatActivity {
         tryBirdImageFromCollection("nuthatch_images", birdId, commonName, scientificName, () ->
                 tryBirdImageFromCollection("inaturalist_images", birdId, commonName, scientificName, () -> {
                     if (isFinishing() || isDestroyed()) return;
+                    currentImageUrl = null;
                     ivBirdHeaderImage.setImageDrawable(null);
                     ivBirdHeaderImage.setVisibility(View.GONE);
                     markImageLoaded();
@@ -524,6 +533,7 @@ public class BirdWikiActivity extends AppCompatActivity {
     private void processImage(DocumentSnapshot imageDoc) {
         if (isFinishing() || isDestroyed()) return;
         if (!imageDoc.exists()) {
+            currentImageUrl = null;
             ivBirdHeaderImage.setImageDrawable(null);
             ivBirdHeaderImage.setVisibility(View.GONE);
             markImageLoaded();
@@ -531,6 +541,7 @@ public class BirdWikiActivity extends AppCompatActivity {
         }
 
         String imageUrl = extractImageUrl(imageDoc);
+        currentImageUrl = imageUrl;
 
         if (isBlank(imageUrl)) {
             ivBirdHeaderImage.setImageDrawable(null);
@@ -793,6 +804,7 @@ public class BirdWikiActivity extends AppCompatActivity {
                     currentBirdId,
                     currentCommonName,
                     currentScientificName,
+                    currentImageUrl,
                     task -> {
                         if (task.isSuccessful()) {
                             isCurrentBirdTracked = true;

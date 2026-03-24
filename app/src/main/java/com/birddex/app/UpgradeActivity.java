@@ -1,6 +1,7 @@
 package com.birddex.app;
 
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.content.Intent;
 import android.os.Bundle;
 import android.util.Log;
@@ -16,6 +17,7 @@ import android.widget.Toast;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.core.content.ContextCompat;
 import androidx.recyclerview.widget.RecyclerView;
 import androidx.viewpager2.widget.ViewPager2;
 
@@ -31,7 +33,8 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * UpgradeActivity allows users to preview card rarities and spend points to upgrade their cards.
+ * UpgradeActivity allows users to preview card rarities and spend or recover points
+ * by upgrading or reverting their cards.
  */
 public class UpgradeActivity extends AppCompatActivity {
 
@@ -74,8 +77,6 @@ public class UpgradeActivity extends AppCompatActivity {
         state = getIntent().getStringExtra(CollectionCardAdapter.EXTRA_STATE);
         locality = getIntent().getStringExtra(CollectionCardAdapter.EXTRA_LOCALITY);
         caughtTime = getIntent().getLongExtra(CollectionCardAdapter.EXTRA_CAUGHT_TIME, -1L);
-        
-        Log.d(TAG, "parseIntent: slotId=" + slotId + ", birdId=" + birdId + ", rarity=" + currentRarity);
     }
 
     private void initUI() {
@@ -104,15 +105,12 @@ public class UpgradeActivity extends AppCompatActivity {
         if (uid == null) return;
 
         FirebaseFirestore.getInstance().collection("users").document(uid)
-                .addSnapshotListener((snapshot, e) -> {
-                    if (e != null) {
-                        Log.w(TAG, "Listen failed.", e);
-                        return;
-                    }
+                .addSnapshotListener(this, (snapshot, e) -> {
+                    if (e != null) return;
                     if (snapshot != null && snapshot.exists()) {
                         userTotalPoints = snapshot.getLong("totalPoints") != null ? snapshot.getLong("totalPoints") : 0;
                         txtUserPoints.setText("Points: " + userTotalPoints);
-                        setupUpgradeOptions(); // Refresh buttons based on points
+                        setupUpgradeOptions();
                     }
                 });
     }
@@ -120,8 +118,6 @@ public class UpgradeActivity extends AppCompatActivity {
     private void setupPreviews() {
         CardPreviewAdapter adapter = new CardPreviewAdapter(availableRarities);
         cardViewPager.setAdapter(adapter);
-        
-        // Start at current rarity
         int startIndex = CardRarityHelper.getRarityIndex(currentRarity);
         if (startIndex >= 0) {
             cardViewPager.setCurrentItem(startIndex, false);
@@ -139,7 +135,7 @@ public class UpgradeActivity extends AppCompatActivity {
         if (sciTxt != null) sciTxt.setText(scientificName != null ? scientificName : "--");
         if (locTxt != null) locTxt.setText(CardFormatUtils.formatLocation(state, locality));
         if (dateTxt != null) dateTxt.setText(CardFormatUtils.formatCaughtDate(caughtTime > 0 ? new Date(caughtTime) : null));
-        
+
         if (img != null && imageUrl != null) {
             Glide.with(this).load(imageUrl).into(img);
         }
@@ -153,96 +149,108 @@ public class UpgradeActivity extends AppCompatActivity {
 
     private void setupUpgradeOptions() {
         upgradeOptionsHorizontalContainer.removeAllViews();
-
         int currentIndex = CardRarityHelper.getRarityIndex(currentRarity);
         LayoutInflater inflater = LayoutInflater.from(this);
         float density = getResources().getDisplayMetrics().density;
 
-        for (int i = currentIndex + 1; i < availableRarities.size(); i++) {
+        for (int i = 0; i < availableRarities.size(); i++) {
             String targetRarity = availableRarities.get(i);
-            int cost = CardRarityHelper.getUpgradeCost(currentRarity, targetRarity);
 
             View optionView = inflater.inflate(R.layout.item_upgrade_option, upgradeOptionsHorizontalContainer, false);
             TextView txtTarget = optionView.findViewById(R.id.txtTargetRarity);
             TextView txtCost = optionView.findViewById(R.id.txtUpgradeCost);
 
             txtTarget.setText(targetRarity.toUpperCase());
-            txtCost.setText(cost + " pts");
 
-            boolean canAfford = userTotalPoints >= cost;
-            optionView.setEnabled(canAfford);
-            optionView.setAlpha(canAfford ? 1.0f : 0.5f);
+            if (i < currentIndex) {
+                // REVERT Option
+                int refund = CardRarityHelper.getDowngradeRefund(currentRarity, targetRarity);
+                txtCost.setText("Revert (+" + refund + " pts)");
+                txtCost.setTextColor(ContextCompat.getColor(this, android.R.color.holo_blue_dark));
+                optionView.setOnClickListener(v -> showConfirmRevertDialog(targetRarity, refund));
+            } else if (i == currentIndex) {
+                // CURRENT Rarity
+                txtCost.setText("CURRENT");
+                txtCost.setTextColor(ContextCompat.getColor(this, android.R.color.darker_gray));
+                optionView.setEnabled(false);
+                optionView.setAlpha(0.8f);
+            } else {
+                // UPGRADE Option
+                int cost = CardRarityHelper.getUpgradeCost(currentRarity, targetRarity);
+                txtCost.setText("Upgrade (" + cost + " pts)");
+                txtCost.setTextColor(ContextCompat.getColor(this, R.color.uncommon_green));
 
-            if (canAfford) {
-                optionView.setOnClickListener(v -> performUpgrade(targetRarity, cost));
+                boolean canAfford = userTotalPoints >= cost;
+                optionView.setEnabled(canAfford);
+                optionView.setAlpha(canAfford ? 1.0f : 0.5f);
+                if (canAfford) {
+                    optionView.setOnClickListener(v -> performUpgrade(targetRarity));
+                }
             }
 
             LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
-                    (int) (120 * density), ViewGroup.LayoutParams.WRAP_CONTENT);
+                    (int) (140 * density), ViewGroup.LayoutParams.WRAP_CONTENT);
             lp.setMargins(0, 0, (int) (12 * density), 0);
             optionView.setLayoutParams(lp);
-
             upgradeOptionsHorizontalContainer.addView(optionView);
-        }
-        
-        if (upgradeOptionsHorizontalContainer.getChildCount() == 0) {
-            TextView tv = new TextView(this);
-            tv.setText("Max Level");
-            tv.setPadding(32, 16, 32, 16);
-            upgradeOptionsHorizontalContainer.addView(tv);
         }
     }
 
-    private void performUpgrade(String targetRarity, int cost) {
-        loadingOverlay.setVisibility(View.VISIBLE);
+    private void showConfirmRevertDialog(String targetRarity, int refund) {
+        new AlertDialog.Builder(this)
+                .setTitle("Revert Card Rarity?")
+                .setMessage("Are you sure you want to revert this card to " + targetRarity.toUpperCase() + "? You will receive a refund of " + refund + " points (75% of spent points).")
+                .setPositiveButton("Revert", (dialog, which) -> performRevert(targetRarity))
+                .setNegativeButton("Cancel", null)
+                .show();
+    }
 
+    private void performUpgrade(String targetRarity) {
+        callBackendUpgradeFunction("upgradeCollectionSlotRarity", targetRarity);
+    }
+
+    private void performRevert(String targetRarity) {
+        callBackendUpgradeFunction("revertCollectionSlotRarity", targetRarity);
+    }
+
+    private void callBackendUpgradeFunction(String functionName, String targetRarity) {
+        loadingOverlay.setVisibility(View.VISIBLE);
         Map<String, Object> data = new HashMap<>();
         data.put("slotId", slotId);
         data.put("targetRarity", targetRarity);
 
         FirebaseFunctions.getInstance()
-                .getHttpsCallable("upgradeCollectionSlotRarity")
+                .getHttpsCallable(functionName)
                 .call(data)
                 .addOnSuccessListener(result -> {
                     loadingOverlay.setVisibility(View.GONE);
                     currentRarity = targetRarity;
-                    Toast.makeText(this, "Card upgraded to " + targetRarity, Toast.LENGTH_SHORT).show();
-                    
-                    // Set result to let ViewBirdCardActivity know it needs to refresh its UI
+                    Toast.makeText(this, "Success: Card rarity updated!", Toast.LENGTH_SHORT).show();
+
                     Intent resultIntent = new Intent();
                     resultIntent.putExtra(EXTRA_NEW_RARITY, targetRarity);
                     setResult(Activity.RESULT_OK, resultIntent);
-                    
-                    // Update the preview shown in the viewpager to the new rarity
+
                     int newIndex = CardRarityHelper.getRarityIndex(targetRarity);
-                    if (newIndex >= 0) {
-                        cardViewPager.setCurrentItem(newIndex, true);
-                    }
-                    
+                    if (newIndex >= 0) cardViewPager.setCurrentItem(newIndex, true);
                     setupUpgradeOptions();
                 })
                 .addOnFailureListener(e -> {
                     loadingOverlay.setVisibility(View.GONE);
-                    Log.e(TAG, "Upgrade error", e);
+                    Log.e(TAG, "Backend call failed", e);
                     Toast.makeText(this, "Error: " + e.getMessage(), Toast.LENGTH_SHORT).show();
                 });
     }
 
     private class CardPreviewAdapter extends RecyclerView.Adapter<CardPreviewAdapter.ViewHolder> {
         private final List<String> rarities;
-
-        CardPreviewAdapter(List<String> rarities) {
-            this.rarities = rarities;
-        }
+        CardPreviewAdapter(List<String> rarities) { this.rarities = rarities; }
 
         @NonNull
         @Override
         public ViewHolder onCreateViewHolder(@NonNull ViewGroup parent, int viewType) {
             View v = LayoutInflater.from(parent.getContext()).inflate(viewType, parent, false);
-            // ViewPager2 children must have match_parent layout params
-            v.setLayoutParams(new ViewGroup.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, 
-                    ViewGroup.LayoutParams.MATCH_PARENT));
+            v.setLayoutParams(new ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
             return new ViewHolder(v);
         }
 
@@ -257,14 +265,10 @@ public class UpgradeActivity extends AppCompatActivity {
         }
 
         @Override
-        public int getItemCount() {
-            return rarities.size();
-        }
+        public int getItemCount() { return rarities.size(); }
 
         class ViewHolder extends RecyclerView.ViewHolder {
-            ViewHolder(@NonNull View itemView) {
-                super(itemView);
-            }
+            ViewHolder(@NonNull View itemView) { super(itemView); }
         }
     }
 }

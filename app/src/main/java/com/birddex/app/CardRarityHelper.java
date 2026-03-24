@@ -87,6 +87,26 @@ public final class CardRarityHelper {
         return total;
     }
 
+    /**
+     * Calculates the refund for reverting to a lower rarity.
+     * Refund is 75% of the total points spent between the target and current rarity.
+     */
+    public static int getDowngradeRefund(@Nullable String currentRarity, @Nullable String targetRarity) {
+        int currentIndex = getRarityIndex(currentRarity);
+        int targetIndex = getRarityIndex(targetRarity);
+
+        if (currentIndex < 0 || targetIndex < 0 || targetIndex >= currentIndex) {
+            return -1;
+        }
+
+        int totalCost = 0;
+        for (int i = targetIndex + 1; i <= currentIndex; i++) {
+            totalCost += getStepCostForIndex(i);
+        }
+
+        return (int) Math.floor(totalCost * 0.75);
+    }
+
     @NonNull
     public static String getNextRarity(@Nullable String rarity) {
         int index = getRarityIndex(rarity);
@@ -97,6 +117,7 @@ public final class CardRarityHelper {
     }
 
     private static int getStepCostForIndex(int rarityIndex) {
+
         switch (rarityIndex) {
             case 1:
                 return 10; // common -> uncommon

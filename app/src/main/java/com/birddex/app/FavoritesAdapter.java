@@ -118,8 +118,8 @@ public class FavoritesAdapter extends RecyclerView.Adapter<FavoritesAdapter.VH> 
 
         if (holder.txtBirdName != null) {
             holder.txtBirdName.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
-            holder.txtBirdName.setMinLines(1);
-            holder.txtBirdName.setMaxLines(2);
+            holder.txtBirdName.setMinLines(2);
+            holder.txtBirdName.setMaxLines(3);
             holder.txtBirdName.setEllipsize(TextUtils.TruncateAt.END);
             holder.txtBirdName.setGravity(Gravity.CENTER);
         }
@@ -127,8 +127,8 @@ public class FavoritesAdapter extends RecyclerView.Adapter<FavoritesAdapter.VH> 
         if (holder.imgBird != null) {
             ViewGroup.LayoutParams imageLp = holder.imgBird.getLayoutParams();
             if (imageLp != null) {
-                // Matching the 140dp height and FIT_CENTER from collection adapter
-                imageLp.height = (int) (140 * density);
+                // Match collection card spacing so long names have extra room.
+                imageLp.height = (int) (128 * density);
                 holder.imgBird.setLayoutParams(imageLp);
                 holder.imgBird.setScaleType(ImageView.ScaleType.FIT_CENTER);
             }

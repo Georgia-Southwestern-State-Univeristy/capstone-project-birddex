@@ -53,6 +53,8 @@ public class UpgradeActivity extends AppCompatActivity {
 
     private long userTotalPoints = 0;
     private List<String> availableRarities = CardRarityHelper.ORDER;
+    private boolean isUpgradeConfirmationShowing = false;
+    private boolean isUpgradeInFlight = false;
 
     @Override
     protected void onCreate(@Nullable Bundle savedInstanceState) {
@@ -184,7 +186,7 @@ public class UpgradeActivity extends AppCompatActivity {
                 optionView.setEnabled(canAfford);
                 optionView.setAlpha(canAfford ? 1.0f : 0.5f);
                 if (canAfford) {
-                    optionView.setOnClickListener(v -> performUpgrade(targetRarity));
+                    optionView.setOnClickListener(v -> showUpgradeConfirmation(targetRarity, cost));
                 }
             }
 
@@ -194,6 +196,26 @@ public class UpgradeActivity extends AppCompatActivity {
             optionView.setLayoutParams(lp);
             upgradeOptionsHorizontalContainer.addView(optionView);
         }
+    }
+
+    private void showUpgradeConfirmation(String targetRarity, int cost) {
+        if (isUpgradeConfirmationShowing || isUpgradeInFlight) return;
+        isUpgradeConfirmationShowing = true;
+
+        String fromRarityLabel = CardRarityHelper.normalizeRarity(currentRarity).toUpperCase();
+        String toRarityLabel = CardRarityHelper.normalizeRarity(targetRarity).toUpperCase();
+
+        new AlertDialog.Builder(this)
+                .setTitle("Confirm Upgrade")
+                .setMessage("Upgrade this card from " + fromRarityLabel + " to " + toRarityLabel
+                        + " for " + cost + " points?")
+                .setNegativeButton("Cancel", (dialog, which) -> isUpgradeConfirmationShowing = false)
+                .setPositiveButton("Upgrade", (dialog, which) -> {
+                    isUpgradeConfirmationShowing = false;
+                    performUpgrade(targetRarity);
+                })
+                .setOnDismissListener(dialog -> isUpgradeConfirmationShowing = false)
+                .show();
     }
 
     private void showConfirmRevertDialog(String targetRarity, int refund) {
@@ -214,6 +236,8 @@ public class UpgradeActivity extends AppCompatActivity {
     }
 
     private void callBackendUpgradeFunction(String functionName, String targetRarity) {
+        if (isUpgradeInFlight) return;
+        isUpgradeInFlight = true;
         loadingOverlay.setVisibility(View.VISIBLE);
         Map<String, Object> data = new HashMap<>();
         data.put("slotId", slotId);
@@ -223,6 +247,7 @@ public class UpgradeActivity extends AppCompatActivity {
                 .getHttpsCallable(functionName)
                 .call(data)
                 .addOnSuccessListener(result -> {
+                    isUpgradeInFlight = false;
                     loadingOverlay.setVisibility(View.GONE);
                     currentRarity = targetRarity;
                     Toast.makeText(this, "Success: Card rarity updated!", Toast.LENGTH_SHORT).show();
@@ -236,6 +261,7 @@ public class UpgradeActivity extends AppCompatActivity {
                     setupUpgradeOptions();
                 })
                 .addOnFailureListener(e -> {
+                    isUpgradeInFlight = false;
                     loadingOverlay.setVisibility(View.GONE);
                     Log.e(TAG, "Backend call failed", e);
                     Toast.makeText(this, "Error: " + e.getMessage(), Toast.LENGTH_SHORT).show();

@@ -1094,6 +1094,9 @@ public class ProfileFragment extends Fragment implements
             intent.putExtra(CollectionCardAdapter.EXTRA_STATE, slot.getState());
             intent.putExtra(CollectionCardAdapter.EXTRA_LOCALITY, slot.getLocality());
             intent.putExtra(CollectionCardAdapter.EXTRA_BIRD_ID, slot.getBirdId());
+            intent.putExtra(CollectionCardAdapter.EXTRA_SLOT_ID, slot.getId());
+            intent.putExtra(CollectionCardAdapter.EXTRA_RARITY, slot.getRarity());
+            intent.putExtra(CollectionCardAdapter.EXTRA_IS_FAVORITE, slot.isFavorite());
             if (slot.getTimestamp() != null) intent.putExtra(CollectionCardAdapter.EXTRA_CAUGHT_TIME, slot.getTimestamp().getTime());
             startActivity(intent);
         }

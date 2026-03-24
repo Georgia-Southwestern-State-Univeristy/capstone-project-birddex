@@ -155,8 +155,9 @@ public class CollectionCardAdapter extends RecyclerView.Adapter<CollectionCardAd
 
         if (holder.txtBirdName != null) {
             holder.txtBirdName.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
-            holder.txtBirdName.setMinLines(1);
-            holder.txtBirdName.setMaxLines(2);
+            // Reserve a bit more vertical room for long names while capping runaway growth.
+            holder.txtBirdName.setMinLines(2);
+            holder.txtBirdName.setMaxLines(3);
             holder.txtBirdName.setEllipsize(TextUtils.TruncateAt.END);
             holder.txtBirdName.setGravity(Gravity.CENTER);
 
@@ -172,8 +173,8 @@ public class CollectionCardAdapter extends RecyclerView.Adapter<CollectionCardAd
         if (holder.imgBird != null) {
             ViewGroup.LayoutParams imgLp = holder.imgBird.getLayoutParams();
             if (imgLp != null) {
-                // Image height slightly adjusted
-                imgLp.height = (int) (140 * d);
+                // Keep cards compact while giving header text an extra line of room.
+                imgLp.height = (int) (128 * d);
                 holder.imgBird.setLayoutParams(imgLp);
                 // Use fitCenter to ensure the image is not cut off
                 holder.imgBird.setScaleType(ImageView.ScaleType.FIT_CENTER);

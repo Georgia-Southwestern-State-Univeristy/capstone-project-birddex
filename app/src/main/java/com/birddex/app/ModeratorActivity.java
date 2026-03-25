@@ -6,6 +6,7 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.widget.EditText;
 import android.widget.FrameLayout;
+import android.widget.ImageView;
 import android.widget.ProgressBar;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -13,9 +14,11 @@ import android.widget.Toast;
 import androidx.annotation.NonNull;
 import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.cardview.widget.CardView;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
+import com.bumptech.glide.Glide;
 import com.google.android.material.button.MaterialButton;
 
 import java.text.SimpleDateFormat;
@@ -316,6 +319,67 @@ public class ModeratorActivity extends AppCompatActivity {
         });
     }
 
+
+    private static void bindEvidenceImage(ImageView imageView, Map<String, Object> data, String... keys) {
+        String url = null;
+        if (data != null && keys != null) {
+            for (String key : keys) {
+                Object value = data.get(key);
+                if (value instanceof String && !((String) value).trim().isEmpty()) {
+                    url = ((String) value).trim();
+                    break;
+                }
+            }
+        }
+
+        if (url == null || url.isEmpty()) {
+            imageView.setVisibility(View.GONE);
+            imageView.setOnClickListener(null);
+            return;
+        }
+
+        imageView.setVisibility(View.VISIBLE);
+        Glide.with(imageView.getContext())
+                .load(url)
+                .placeholder(R.drawable.bg_image_placeholder)
+                .error(R.drawable.bg_image_placeholder)
+                .into(imageView);
+
+        final String finalUrl = url;
+        imageView.setOnClickListener(v -> showEvidenceImageDialog(v.getContext(), finalUrl));
+    }
+
+    private static void showEvidenceImageDialog(android.content.Context context, String imageUrl) {
+        if (context == null || imageUrl == null || imageUrl.trim().isEmpty()) {
+            return;
+        }
+
+        ImageView imageView = new ImageView(context);
+        imageView.setAdjustViewBounds(true);
+        imageView.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        int padding = Math.round(context.getResources().getDisplayMetrics().density * 16f);
+        imageView.setPadding(padding, padding, padding, padding);
+
+        Glide.with(context)
+                .load(imageUrl)
+                .placeholder(R.drawable.bg_image_placeholder)
+                .error(R.drawable.bg_image_placeholder)
+                .into(imageView);
+
+        CardView container = new CardView(context);
+        container.setRadius(Math.round(context.getResources().getDisplayMetrics().density * 18f));
+        container.addView(imageView, new ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+        ));
+
+        new AlertDialog.Builder(context)
+                .setTitle("Flagged image")
+                .setView(container)
+                .setPositiveButton("Close", null)
+                .show();
+    }
+
     private static String mapSelectedUserAction(int which) {
         switch (which) {
             case 1:
@@ -460,14 +524,23 @@ public class ModeratorActivity extends AppCompatActivity {
         private void bindAppeal(@NonNull ViewHolder holder, Map<String, Object> appeal) {
             String actionType = formatModerationValue(getDisplayValue(appeal, "snapshotActionType", "Unknown"));
             String reasonCode = formatModerationValue(getDisplayValue(appeal, "snapshotReasonCode", "Unknown"));
+            String reasonText = truncate(getDisplayValue(appeal, "snapshotReasonText", ""), 180);
             String userId = getDisplayValue(appeal, "userId", "Unknown");
             String appealText = truncate(getDisplayValue(appeal, "appealText", "No appeal text provided."), 180);
 
             holder.tvType.setText("PENDING APPEAL");
-            holder.tvReason.setText("User ID: " + userId + "\nAction: " + actionType + "\nAppeal: " + appealText);
+            StringBuilder reasonBuilder = new StringBuilder();
+            reasonBuilder.append("User ID: ").append(userId);
+            reasonBuilder.append("\nAction: ").append(actionType);
+            reasonBuilder.append("\nAppeal: ").append(appealText);
+            if (!reasonText.isEmpty()) {
+                reasonBuilder.append("\nOriginal reason: ").append(reasonText);
+            }
+            holder.tvReason.setText(reasonBuilder.toString());
             holder.tvStatus.setText("Reason Code: " + reasonCode);
             holder.tvDate.setText("Submitted: " + formatTimestamp(appeal.get("createdAt")));
             holder.btnAppeal.setText("Review Appeal");
+            bindEvidenceImage(holder.ivEvidenceImage, appeal, "snapshotEvidenceImageUrl", "evidenceImageUrl");
         }
 
         private void bindReport(@NonNull ViewHolder holder, Map<String, Object> report) {
@@ -498,6 +571,7 @@ public class ModeratorActivity extends AppCompatActivity {
             holder.tvStatus.setText(statusBuilder.toString());
             holder.tvDate.setText("Reported: " + formatTimestamp(report.get("timestamp")));
             holder.btnAppeal.setText("Review Report");
+            bindEvidenceImage(holder.ivEvidenceImage, report, "evidenceImageUrl", "snapshotEvidenceImageUrl");
         }
 
         @Override
@@ -508,6 +582,7 @@ public class ModeratorActivity extends AppCompatActivity {
         static class ViewHolder extends RecyclerView.ViewHolder {
             TextView tvType, tvReason, tvStatus, tvDate;
             MaterialButton btnAppeal;
+            ImageView ivEvidenceImage;
 
             ViewHolder(View v) {
                 super(v);
@@ -516,6 +591,7 @@ public class ModeratorActivity extends AppCompatActivity {
                 tvStatus = v.findViewById(R.id.tvStatus);
                 tvDate = v.findViewById(R.id.tvDate);
                 btnAppeal = v.findViewById(R.id.btnAppeal);
+                ivEvidenceImage = v.findViewById(R.id.ivEvidenceImage);
             }
         }
     }

@@ -15,6 +15,19 @@
         android:orientation="vertical"
         android:padding="12dp">
 
+        <ImageView
+            android:id="@+id/ivEvidenceImage"
+            android:layout_width="match_parent"
+            android:layout_height="180dp"
+            android:layout_marginBottom="8dp"
+            android:contentDescription="Flagged evidence image"
+            android:foreground="?attr/selectableItemBackground"
+            android:scaleType="centerCrop"
+            android:visibility="gone"
+            tools:src="@drawable/bg_image_placeholder"
+            tools:visibility="visible" />
+
+
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"

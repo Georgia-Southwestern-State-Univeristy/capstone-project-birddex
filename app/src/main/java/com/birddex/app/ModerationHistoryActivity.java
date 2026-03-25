@@ -6,6 +6,7 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.widget.EditText;
 import android.widget.FrameLayout;
+import android.widget.ImageView;
 import android.widget.ProgressBar;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -13,9 +14,11 @@ import android.widget.Toast;
 import androidx.annotation.NonNull;
 import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.cardview.widget.CardView;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
+import com.bumptech.glide.Glide;
 import com.google.android.material.button.MaterialButton;
 
 import java.text.SimpleDateFormat;
@@ -104,7 +107,7 @@ public class ModerationHistoryActivity extends AppCompatActivity {
         if (state.get("strikeCount") instanceof Number) {
             strikes = ((Number) state.get("strikeCount")).longValue();
         }
-        
+
         boolean isPermBan = Boolean.TRUE.equals(state.get("permanentForumBan"));
         Object suspendedUntil = state.get("forumSuspendedUntil");
 
@@ -159,7 +162,7 @@ public class ModerationHistoryActivity extends AppCompatActivity {
         final EditText input = new EditText(this);
         input.setHint(R.string.hint_appeal_reason);
         input.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE);
-        
+
         FrameLayout container = new FrameLayout(this);
         FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         params.leftMargin = 48;
@@ -212,10 +215,71 @@ public class ModerationHistoryActivity extends AppCompatActivity {
                 date = new Date(((Number) map.get("_seconds")).longValue() * 1000);
             }
         }
-        
+
         if (date == null) return "N/A";
         SimpleDateFormat sdf = new SimpleDateFormat("MMM dd, yyyy HH:mm", Locale.getDefault());
         return sdf.format(date);
+    }
+
+
+    private static void bindEvidenceImage(ImageView imageView, Map<String, Object> data, String... keys) {
+        String url = null;
+        if (data != null && keys != null) {
+            for (String key : keys) {
+                Object value = data.get(key);
+                if (value instanceof String && !((String) value).trim().isEmpty()) {
+                    url = ((String) value).trim();
+                    break;
+                }
+            }
+        }
+
+        if (url == null || url.isEmpty()) {
+            imageView.setVisibility(View.GONE);
+            imageView.setOnClickListener(null);
+            return;
+        }
+
+        imageView.setVisibility(View.VISIBLE);
+        Glide.with(imageView.getContext())
+                .load(url)
+                .placeholder(R.drawable.bg_image_placeholder)
+                .error(R.drawable.bg_image_placeholder)
+                .into(imageView);
+
+        final String finalUrl = url;
+        imageView.setOnClickListener(v -> showEvidenceImageDialog(v.getContext(), finalUrl));
+    }
+
+    private static void showEvidenceImageDialog(android.content.Context context, String imageUrl) {
+        if (context == null || imageUrl == null || imageUrl.trim().isEmpty()) {
+            return;
+        }
+
+        ImageView imageView = new ImageView(context);
+        imageView.setAdjustViewBounds(true);
+        imageView.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        int padding = Math.round(context.getResources().getDisplayMetrics().density * 16f);
+        imageView.setPadding(padding, padding, padding, padding);
+
+        Glide.with(context)
+                .load(imageUrl)
+                .placeholder(R.drawable.bg_image_placeholder)
+                .error(R.drawable.bg_image_placeholder)
+                .into(imageView);
+
+        CardView container = new CardView(context);
+        container.setRadius(Math.round(context.getResources().getDisplayMetrics().density * 18f));
+        container.addView(imageView, new ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+        ));
+
+        new AlertDialog.Builder(context)
+                .setTitle("Flagged image")
+                .setView(container)
+                .setPositiveButton("Close", null)
+                .show();
     }
 
     // --- Inner Adapter Class for Events ---
@@ -246,23 +310,24 @@ public class ModerationHistoryActivity extends AppCompatActivity {
             Map<String, Object> event = events.get(position);
             String actionType = (String) event.get("actionType");
             holder.tvType.setText(actionType != null ? actionType.replace("_", " ").toUpperCase() : "UNKNOWN");
-            
+
             StringBuilder reasonDetails = new StringBuilder("Reason: ").append(event.get("reasonCode"));
             Object expiresAt = event.get("expiresAt");
             if (expiresAt != null) {
                 reasonDetails.append("\nExpires: ").append(formatTimestamp(expiresAt));
             }
             holder.tvReason.setText(reasonDetails.toString());
-            
+
             String status = (String) event.get("status");
             holder.tvStatus.setText("Status: " + (status != null ? status : "active"));
-            
+
             holder.tvDate.setText("Created: " + formatTimestamp(event.get("createdAt")));
-            
+            bindEvidenceImage(holder.ivEvidenceImage, event, "evidenceImageUrl", "snapshotEvidenceImageUrl");
+
             Object id = event.get("id");
             if (id == null) id = event.get("eventId");
             String eventIdStr = id != null ? id.toString() : null;
-            
+
             boolean alreadyAppealed = eventIdStr != null && appealedEventIds.contains(eventIdStr);
             boolean appealable = Boolean.TRUE.equals(event.get("appealable"));
 
@@ -287,6 +352,7 @@ public class ModerationHistoryActivity extends AppCompatActivity {
         static class ViewHolder extends RecyclerView.ViewHolder {
             TextView tvType, tvReason, tvStatus, tvDate;
             MaterialButton btnAppeal;
+            ImageView ivEvidenceImage;
             ViewHolder(View v) {
                 super(v);
                 tvType = v.findViewById(R.id.tvActionType);
@@ -294,6 +360,7 @@ public class ModerationHistoryActivity extends AppCompatActivity {
                 tvStatus = v.findViewById(R.id.tvStatus);
                 tvDate = v.findViewById(R.id.tvDate);
                 btnAppeal = v.findViewById(R.id.btnAppeal);
+                ivEvidenceImage = v.findViewById(R.id.ivEvidenceImage);
             }
         }
     }
@@ -317,15 +384,33 @@ public class ModerationHistoryActivity extends AppCompatActivity {
         @Override
         public void onBindViewHolder(@NonNull ViewHolder holder, int position) {
             Map<String, Object> appeal = appeals.get(position);
+            String actionType = String.valueOf(appeal.get("snapshotActionType") != null
+                    ? appeal.get("snapshotActionType")
+                    : "appeal");
+            String reasonCode = String.valueOf(appeal.get("snapshotReasonCode") != null
+                    ? appeal.get("snapshotReasonCode")
+                    : "unknown");
+            String reasonText = appeal.get("snapshotReasonText") instanceof String
+                    ? ((String) appeal.get("snapshotReasonText")).trim()
+                    : "";
+
             holder.tvType.setText("APPEAL");
-            holder.tvReason.setText("Text: " + appeal.get("appealText"));
-            
+            StringBuilder reasonBuilder = new StringBuilder();
+            reasonBuilder.append("Decision: ").append(actionType.replace("_", " ").toUpperCase(Locale.getDefault()));
+            reasonBuilder.append("\nCode: ").append(reasonCode.replace("_", " "));
+            reasonBuilder.append("\nAppeal: ").append(String.valueOf(appeal.get("appealText")));
+            if (!reasonText.isEmpty()) {
+                reasonBuilder.append("\nOriginal reason: ").append(reasonText);
+            }
+            holder.tvReason.setText(reasonBuilder.toString());
+
             String status = (String) appeal.get("status");
             holder.tvStatus.setText("Status: " + (status != null ? status : "pending"));
             holder.tvDate.setText("Submitted: " + formatTimestamp(appeal.get("createdAt")));
-            
+
             holder.btnAppeal.setVisibility(View.GONE);
-            
+            bindEvidenceImage(holder.ivEvidenceImage, appeal, "snapshotEvidenceImageUrl", "evidenceImageUrl");
+
             if ("denied".equals(status) && appeal.containsKey("decisionNote")) {
                 holder.tvStatus.setText(holder.tvStatus.getText() + "\nNote: " + appeal.get("decisionNote"));
             } else if ("approved".equals(status)) {
@@ -339,6 +424,7 @@ public class ModerationHistoryActivity extends AppCompatActivity {
         static class ViewHolder extends RecyclerView.ViewHolder {
             TextView tvType, tvReason, tvStatus, tvDate;
             MaterialButton btnAppeal;
+            ImageView ivEvidenceImage;
             ViewHolder(View v) {
                 super(v);
                 tvType = v.findViewById(R.id.tvActionType);
@@ -346,6 +432,7 @@ public class ModerationHistoryActivity extends AppCompatActivity {
                 tvStatus = v.findViewById(R.id.tvStatus);
                 tvDate = v.findViewById(R.id.tvDate);
                 btnAppeal = v.findViewById(R.id.btnAppeal);
+                ivEvidenceImage = v.findViewById(R.id.ivEvidenceImage);
             }
         }
     }

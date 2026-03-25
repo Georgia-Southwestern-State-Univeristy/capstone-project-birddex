@@ -3247,7 +3247,7 @@ exports.getMyModerationState = onCall(async (request) => {
         db.collection("moderationAppeals").where("userId", "==", userId).limit(25).get(),
     ]);
 
-    const events = eventsSnap.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+    const events = eventsSnap.docs.map((doc) => ({ id: doc.id, ...doc.data() })); // evidenceImageUrl is forwarded automatically via the document spread (moderation-image-evidence)
     events.sort((a, b) => (timestampToMillis(b.createdAt) || 0) - (timestampToMillis(a.createdAt) || 0));
 
     const appeals = appealsSnap.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
@@ -3329,6 +3329,8 @@ exports.submitModerationAppeal = onCall(async (request) => {
                 decisionNote: null,
                 snapshotActionType: eventData.actionType || null,
                 snapshotReasonCode: eventData.reasonCode || null,
+                snapshotReasonText: eventData.reasonText || null,
+                snapshotEvidenceImageUrl: eventData.evidenceImageUrl || null,
             });
         });
 
@@ -3354,7 +3356,36 @@ exports.getPendingModerationAppeals = onCall(async (request) => {
         .limit(100)
         .get();
 
-    const appeals = appealsSnap.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+    const appeals = await Promise.all(appealsSnap.docs.map(async (doc) => {
+        const data = doc.data() || {};
+        const moderationEventId = sanitizeText(data.moderationEventId || "", 200).trim();
+
+        let linkedEventData = {};
+        if (moderationEventId) {
+            try {
+                const linkedEventSnap = await db.collection("moderationEvents").doc(moderationEventId).get();
+                if (linkedEventSnap.exists) {
+                    linkedEventData = linkedEventSnap.data() || {};
+                }
+            } catch (error) {
+                logger.warn("getPendingModerationAppeals: failed to fetch linked moderation event", error);
+            }
+        }
+
+        return {
+            id: doc.id,
+            ...data,
+            snapshotReasonText: sanitizeText(
+                data.snapshotReasonText || linkedEventData.reasonText || "",
+                500
+            ) || null,
+            snapshotEvidenceImageUrl: typeof data.snapshotEvidenceImageUrl === "string" && data.snapshotEvidenceImageUrl.trim()
+                ? data.snapshotEvidenceImageUrl.trim()
+                : (typeof linkedEventData.evidenceImageUrl === "string" && linkedEventData.evidenceImageUrl.trim()
+                    ? linkedEventData.evidenceImageUrl.trim()
+                    : null),
+        };
+    }));
     appeals.sort((a, b) => (timestampToMillis(b.createdAt) || 0) - (timestampToMillis(a.createdAt) || 0));
 
     return {
@@ -3417,6 +3448,22 @@ exports.getPendingModerationReports = onCall(async (request) => {
             }
         }
 
+        let evidenceImageUrl = null;
+        if (data.targetId) {
+            try {
+                const evSnap = await db.collection("moderationEvents")
+                    .where("targetId", "==", data.targetId)
+                    .where("actionType", "==", "reject_content")
+                    .limit(1)
+                    .get();
+                if (!evSnap.empty) {
+                    evidenceImageUrl = evSnap.docs[0].data().evidenceImageUrl || null;
+                }
+            } catch (e) {
+                logger.warn("getPendingModerationReports: failed to fetch evidenceImageUrl", e);
+            }
+        }
+
         return {
             id: doc.id,
             ...data,
@@ -3428,6 +3475,7 @@ exports.getPendingModerationReports = onCall(async (request) => {
             targetModerationStatus,
             currentUniqueReporterCount,
             currentReportCount,
+            evidenceImageUrl,
         };
     }));
 
@@ -4584,6 +4632,7 @@ function buildModerationEventPayload({
     appealable = false,
     expiresAt = null,
     metadata = {},
+    evidenceImageUrl = null,
 }) {
     return {
         eventId,
@@ -4603,6 +4652,7 @@ function buildModerationEventPayload({
         reviewedBy: null,
         reversalReason: null,
         metadata: metadata || {},
+        evidenceImageUrl: evidenceImageUrl || null,
     };
 }
 
@@ -5215,6 +5265,7 @@ exports.createForumPost = onCall(async (request) => {
             });
 
             const contentEventRef = createModerationEventRef();
+            const evidenceImageUrl = imageModeration.archivedUrl || birdImageUrl;
             t.set(contentEventRef, buildModerationEventPayload({
                 eventId: contentEventRef.id,
                 userId,
@@ -5225,6 +5276,7 @@ exports.createForumPost = onCall(async (request) => {
                 reasonText: `Forum image upload was blocked by SafeSearch. ${imageModeration.reasonText}`,
                 source: "vision_safesearch",
                 appealable: true,
+                evidenceImageUrl,
                 metadata: {
                     penaltyType: penaltySummary.penaltyType,
                     linkedModerationEventIds: Array.isArray(penaltySummary.linkedModerationEventIds)

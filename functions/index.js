@@ -221,7 +221,7 @@ const SERVER_BIRD_WHITELIST = [
 const EMAIL_PATTERN = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,6}/;
 const PHONE_PATTERN = /\b(\+?\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b/;
 const URL_PATTERN = /https?:\/\/\S+\s?/i;
-const SPAM_REPETITION_PATTERN = /(.)\1{4,}/;
+const LONG_CHAR_SPAM_PATTERN = /(.)\1{11,}/s;
 const CREDIT_CARD_PATTERN = /\b(?:\d[ -]*?){13,16}\b/;
 const ZALGO_PATTERN = /[\u0300-\u036F\u1DC0-\u1DFF\u20D0-\u20FF\uFE20-\uFE2F]{3,}/;
 
@@ -268,6 +268,31 @@ function isBirdWhitelistMatch(rawInput, blockedWord) {
     return SERVER_BIRD_WHITELIST.some((white) => input.includes(white) && white.includes(blockedWord));
 }
 
+function isExcessiveCharacterSpam(text) {
+    const raw = String(text || "");
+    const compact = raw.replace(/\s+/g, "");
+    if (!compact) return false;
+
+    // Allow normal stretched words like "heyyyyyyy" or "nooooooo",
+    // but still block obvious floods such as "aaaaaaaaaaaa" or "!!!!!!!!!!!!".
+    if (LONG_CHAR_SPAM_PATTERN.test(raw)) return true;
+
+    if (compact.length >= 18) {
+        const counts = new Map();
+        let maxCount = 0;
+        for (const ch of compact.toLowerCase()) {
+            const next = (counts.get(ch) || 0) + 1;
+            counts.set(ch, next);
+            if (next > maxCount) maxCount = next;
+        }
+        if (maxCount >= 12 && (maxCount / compact.length) >= 0.75) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 function getBlockedContentReason(text) {
     if (text == null || String(text).trim() === "") return null;
 
@@ -282,7 +307,7 @@ function getBlockedContentReason(text) {
     if (EMAIL_PATTERN.test(String(text))) return "an email address";
     if (PHONE_PATTERN.test(String(text))) return "a phone number";
     if (URL_PATTERN.test(String(text))) return "external links";
-    if (SPAM_REPETITION_PATTERN.test(String(text))) return "excessive character repetition";
+    if (isExcessiveCharacterSpam(String(text))) return "excessive character repetition";
 
     const normalized = normalizeContentFilterText(lower);
     for (const word of SERVER_NSFW_WORDS) {

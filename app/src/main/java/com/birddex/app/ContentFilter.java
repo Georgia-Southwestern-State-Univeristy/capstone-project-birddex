@@ -95,11 +95,11 @@ public class ContentFilter {
     private static final Pattern EMAIL_PATTERN = Pattern.compile("[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,6}");
     private static final Pattern PHONE_PATTERN = Pattern.compile("\\b(\\+?\\d{1,3}[-.\\s]?)?\\(?\\d{3}\\)?[-.\\s]?\\d{3}[-.\\s]?\\d{4}\\b");
     private static final Pattern URL_PATTERN = Pattern.compile("https?://\\S+\\s?");
-    private static final Pattern SPAM_REPETITION_PATTERN = Pattern.compile("(.)\\1{4,}");
-    
+    private static final Pattern LONG_CHAR_SPAM_PATTERN = Pattern.compile("(.)\1{11,}", Pattern.DOTALL);
+
     // Detects Credit Card patterns (13 to 16 digits)
     private static final Pattern CREDIT_CARD_PATTERN = Pattern.compile("\\b(?:\\d[ -]*?){13,16}\\b");
-    
+
     // Detects Zalgo / Glitch text (excessive combining marks that break UI)
     private static final Pattern ZALGO_PATTERN = Pattern.compile("[\\u0300-\u036F\\u1DC0-\u1DFF\\u20D0-\u20FF\\uFE20-\uFE2F]{3,}");
 
@@ -145,7 +145,7 @@ public class ContentFilter {
         // 2. Normalize Unicode (converts accented chars like 'fûck' to 'fuck')
         String unicodeNormalized = Normalizer.normalize(text, Normalizer.Form.NFD)
                 .replaceAll("[^\\p{ASCII}]", "");
-        
+
         String lower = unicodeNormalized.toLowerCase();
 
         // 3. Check for Financial Data
@@ -159,7 +159,7 @@ public class ContentFilter {
         if (URL_PATTERN.matcher(text).find()) return "external links";
 
         // 6. Check for Spam/Keyboard smashing
-        if (SPAM_REPETITION_PATTERN.matcher(text).find()) return "excessive character repetition";
+        if (isExcessiveCharacterSpam(text)) return "excessive character repetition";
 
         // 7. Check for Language
         if (hasInappropriateLanguage(lower)) return "inappropriate language";
@@ -170,6 +170,34 @@ public class ContentFilter {
     /**
      * Returns the current value/state this class needs somewhere else in the app.
      */
+    private static boolean isExcessiveCharacterSpam(String text) {
+        String raw = text == null ? "" : text;
+        String compact = raw.replaceAll("\\s+", "");
+        if (compact.isEmpty()) return false;
+
+        // Allow normal stretched words like "heyyyyyyy" or "nooooooo",
+        // but still block obvious floods like "aaaaaaaaaaaa" or "!!!!!!!!!!!!".
+        if (LONG_CHAR_SPAM_PATTERN.matcher(raw).find()) return true;
+
+        if (compact.length() >= 18) {
+            int[] counts = new int[Character.MAX_VALUE + 1];
+            int maxCount = 0;
+            String lowerCompact = compact.toLowerCase();
+            for (int i = 0; i < lowerCompact.length(); i++) {
+                char ch = lowerCompact.charAt(i);
+                counts[ch]++;
+                if (counts[ch] > maxCount) {
+                    maxCount = counts[ch];
+                }
+            }
+            if (maxCount >= 12 && ((double) maxCount / (double) compact.length()) >= 0.75d) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     private static boolean hasInappropriateLanguage(String input) {
         String normalizedInput = normalize(input);
 

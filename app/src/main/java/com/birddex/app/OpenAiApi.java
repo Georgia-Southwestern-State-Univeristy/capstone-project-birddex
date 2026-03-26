@@ -10,13 +10,13 @@ import java.util.Map;
 import androidx.annotation.Nullable; // Import for Nullable annotation
 
 /**
-/**
+ /**
  * for: Interface/model contract used to keep different parts of the app communicating with a shared shape.
  *
  * These comments focus on what the actual code blocks are doing so the file is easier to trace
  * when you are debugging or presenting the app. Only comments were added; runtime logic was not changed.
  */
- /* OpenAiApi is a helper class for interacting with OpenAI's Chat Completions API via Cloud Functions.
+/* OpenAiApi is a helper class for interacting with OpenAI's Chat Completions API via Cloud Functions.
  * It sends a Base64 encoded image to a secure server-side function to identify bird species.
  */
 public class OpenAiApi {
@@ -27,7 +27,11 @@ public class OpenAiApi {
      * Callback interface for handling results from the OpenAI API call.
      */
     public interface OpenAiCallback {
-        void onSuccess(String response, boolean isVerified, boolean isGore);
+        void onSuccess(String response,
+                       boolean isVerified,
+                       boolean isGore,
+                       boolean isInDatabase,
+                       @Nullable String reasonCode);
         void onFailure(Exception e, String message);
     }
 
@@ -76,18 +80,18 @@ public class OpenAiApi {
                 .addOnSuccessListener(result -> {
                     try {
                         Map<String, Object> resMap = (Map<String, Object>) result.getData();
-                        String content = (String) resMap.get("result");
-                        boolean isVerified = (boolean) resMap.get("isVerified");
-                        boolean isGore = resMap.containsKey("isGore") && (boolean) resMap.get("isGore");
-                        if (content != null) {
-                            Log.i(TAG, "[SUCCESS] Received content from cloud function");
-                            callback.onSuccess(content, isVerified, isGore);
-                        } else {
-                            callback.onFailure(new Exception("Null response"), "Cloud function returned empty result.");
-                        }
-                    /**
-                     * Main logic block for this part of the feature.
-                     */
+                        String content = resMap.get("result") instanceof String ? (String) resMap.get("result") : null;
+                        boolean isVerified = Boolean.TRUE.equals(resMap.get("isVerified"));
+                        boolean isGore = Boolean.TRUE.equals(resMap.get("isGore"));
+                        boolean isInDatabase = !resMap.containsKey("isInDatabase") || Boolean.TRUE.equals(resMap.get("isInDatabase"));
+                        String reasonCode = resMap.get("reasonCode") instanceof String ? (String) resMap.get("reasonCode") : null;
+
+                        Log.i(TAG, "[SUCCESS] Received content from cloud function. isVerified="
+                                + isVerified + ", isInDatabase=" + isInDatabase + ", reasonCode=" + reasonCode);
+                        callback.onSuccess(content, isVerified, isGore, isInDatabase, reasonCode);
+                        /**
+                         * Main logic block for this part of the feature.
+                         */
                     } catch (Exception e) {
                         Log.e(TAG, "Error parsing Cloud Function response", e);
                         callback.onFailure(e, "Failed to parse server response.");

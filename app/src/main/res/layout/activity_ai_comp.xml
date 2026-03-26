@@ -39,7 +39,7 @@
         android:layout_height="wrap_content"
         android:layout_marginTop="12dp"
         android:gravity="center"
-        android:text="BirdDex found one or more matches. Please understand that these selections are of lower confidence than the previous."
+        android:text="AI found two more supported matches. Select the bird that looks most like your photo."
         android:textAllCaps="false"
         android:textColor="@color/on_page"
         android:textSize="14sp"
@@ -84,15 +84,53 @@
             android:textSize="18sp"
             android:textStyle="bold" />
 
-        <ImageView
-            android:id="@+id/ivAiImage1"
+        <FrameLayout
             android:layout_width="match_parent"
             android:layout_height="180dp"
-            android:layout_marginTop="8dp"
-            android:adjustViewBounds="true"
-            android:contentDescription="@string/bird_image"
-            android:scaleType="centerCrop"
-            tools:srcCompat="@tools:sample/avatars" />
+            android:layout_marginTop="8dp">
+
+            <ImageView
+                android:id="@+id/ivAiImage1"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:adjustViewBounds="true"
+                android:contentDescription="@string/bird_image"
+                android:scaleType="centerCrop"
+                tools:srcCompat="@tools:sample/avatars" />
+
+            <ProgressBar
+                android:id="@+id/progressAiBird1"
+                style="?android:attr/progressBarStyle"
+                android:layout_width="36dp"
+                android:layout_height="36dp"
+                android:layout_gravity="center"
+                android:visibility="gone" />
+
+            <TextView
+                android:id="@+id/tvAiStatus1"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:gravity="center"
+                android:padding="16dp"
+                android:text=""
+                android:textColor="@color/on_page"
+                android:textSize="14sp"
+                android:visibility="gone" />
+        </FrameLayout>
+
+        <TextView
+            android:id="@+id/tvAiAttribution1"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:gravity="center"
+            android:text=""
+            android:textColor="@color/on_page"
+            android:textSize="11sp"
+            android:lineSpacingExtra="1dp"
+            android:linksClickable="true"
+            android:textColorLink="@color/nav_brown"
+            android:visibility="gone" />
     </LinearLayout>
 
     <LinearLayout
@@ -121,15 +159,53 @@
             android:textSize="18sp"
             android:textStyle="bold" />
 
-        <ImageView
-            android:id="@+id/ivAiImage2"
+        <FrameLayout
             android:layout_width="match_parent"
             android:layout_height="180dp"
-            android:layout_marginTop="8dp"
-            android:adjustViewBounds="true"
-            android:contentDescription="@string/bird_image"
-            android:scaleType="centerCrop"
-            tools:srcCompat="@tools:sample/avatars" />
+            android:layout_marginTop="8dp">
+
+            <ImageView
+                android:id="@+id/ivAiImage2"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:adjustViewBounds="true"
+                android:contentDescription="@string/bird_image"
+                android:scaleType="centerCrop"
+                tools:srcCompat="@tools:sample/avatars" />
+
+            <ProgressBar
+                android:id="@+id/progressAiBird2"
+                style="?android:attr/progressBarStyle"
+                android:layout_width="36dp"
+                android:layout_height="36dp"
+                android:layout_gravity="center"
+                android:visibility="gone" />
+
+            <TextView
+                android:id="@+id/tvAiStatus2"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:gravity="center"
+                android:padding="16dp"
+                android:text=""
+                android:textColor="@color/on_page"
+                android:textSize="14sp"
+                android:visibility="gone" />
+        </FrameLayout>
+
+        <TextView
+            android:id="@+id/tvAiAttribution2"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:gravity="center"
+            android:text=""
+            android:textColor="@color/on_page"
+            android:textSize="11sp"
+            android:lineSpacingExtra="1dp"
+            android:linksClickable="true"
+            android:textColorLink="@color/nav_brown"
+            android:visibility="gone" />
     </LinearLayout>
 
     <Button

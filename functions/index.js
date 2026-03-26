@@ -1235,6 +1235,410 @@ function buildExcludedBirdChoiceTokens(birds) {
     return excluded;
 }
 
+function sanitizeLookupSegment(value, fallback = "") {
+    const cleaned = sanitizeText(String(value || ""), 200).trim().toLowerCase();
+    const normalized = cleaned.replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+    return normalized || fallback;
+}
+
+function buildFetchedIdentificationLookupKey(birdId, commonName, scientificName) {
+    const birdKey = sanitizeLookupSegment(birdId, "");
+    if (birdKey) return birdKey;
+
+    const commonKey = sanitizeLookupSegment(commonName, "common");
+    const scientificKey = sanitizeLookupSegment(scientificName, "scientific");
+    const hash = crypto
+        .createHash("md5")
+        .update(`${commonName || ""}|${scientificName || ""}`)
+        .digest("hex")
+        .slice(0, 10);
+    return `lookup_${commonKey}_${scientificKey}_${hash}`;
+}
+
+function buildFetchedIdentificationStorageKey(birdId, commonName, scientificName) {
+    const birdKey = sanitizeLookupSegment(birdId, "");
+    if (birdKey) return birdKey;
+
+    const preferred = sanitizeLookupSegment(commonName, "") || sanitizeLookupSegment(scientificName, "bird");
+    const hash = crypto
+        .createHash("md5")
+        .update(`${birdId || ""}|${commonName || ""}|${scientificName || ""}`)
+        .digest("hex")
+        .slice(0, 8);
+    return `ident_${preferred}_${hash}`;
+}
+
+function extractImageUrlFromRecord(record) {
+    if (!record || typeof record !== "object") return null;
+    const directUrl = typeof record.imageUrl === "string" ? record.imageUrl.trim() : "";
+    if (directUrl) return directUrl;
+
+    if (Array.isArray(record.imageUrls)) {
+        for (const candidate of record.imageUrls) {
+            if (typeof candidate === "string" && candidate.trim()) return candidate.trim();
+        }
+    }
+
+    if (Array.isArray(record.images)) {
+        for (const image of record.images) {
+            const candidate = typeof image?.url === "string" ? image.url.trim() : "";
+            if (candidate) return candidate;
+        }
+    }
+
+    return null;
+}
+
+async function findReferenceImageRecord(birdId, commonName, scientificName) {
+    const collectionsToTry = ["nuthatch_images", "inaturalist_images", "images_fecthed_Identifications"];
+    const trimmedBirdId = typeof birdId === "string" ? birdId.trim() : "";
+    const fetchedLookupKey = buildFetchedIdentificationLookupKey(birdId, commonName, scientificName);
+    if (fetchedLookupKey) {
+        const fetchedDoc = await db.collection("images_fecthed_Identifications").doc(fetchedLookupKey).get();
+        if (fetchedDoc.exists) {
+            const fetchedData = fetchedDoc.data() || {};
+            const fetchedUrl = extractImageUrlFromRecord(fetchedData);
+            if (fetchedUrl) {
+                return { collectionName: "images_fecthed_Identifications", docId: fetchedDoc.id, data: fetchedData, imageUrl: fetchedUrl };
+            }
+        }
+    }
+    const trimmedCommon = typeof commonName === "string" ? commonName.trim() : "";
+    const trimmedScientific = typeof scientificName === "string" ? scientificName.trim() : "";
+
+    for (const collectionName of collectionsToTry) {
+        if (trimmedBirdId) {
+            const doc = await db.collection(collectionName).doc(trimmedBirdId).get();
+            if (doc.exists) {
+                const data = doc.data() || {};
+                const imageUrl = extractImageUrlFromRecord(data);
+                if (imageUrl) return { collectionName, docId: doc.id, data, imageUrl };
+            }
+        }
+
+        const fieldNames = collectionName === "images_fecthed_Identifications"
+            ? ["birdId", "commonName", "scientificName"]
+            : ["speciesCode", "commonName", "scientificName"];
+
+        const values = [trimmedBirdId, trimmedCommon, trimmedScientific];
+        for (let i = 0; i < fieldNames.length; i++) {
+            const value = values[i];
+            if (!value) continue;
+            const snapshot = await db.collection(collectionName)
+                .where(fieldNames[i], "==", value)
+                .limit(1)
+                .get();
+            if (!snapshot.empty) {
+                const doc = snapshot.docs[0];
+                const data = doc.data() || {};
+                const imageUrl = extractImageUrlFromRecord(data);
+                if (imageUrl) return { collectionName, docId: doc.id, data, imageUrl };
+            }
+        }
+    }
+
+    return null;
+}
+
+function isAllowedCommercialLicense(licenseStr) {
+    const lower = sanitizeText(String(licenseStr || ""), 200).trim().toLowerCase();
+    if (!lower) return false;
+    if (lower.includes("nc") || lower.includes("nd")) return false;
+
+    return lower.includes("public domain")
+        || lower === "pd"
+        || lower.includes("cc0")
+        || lower === "cc-by"
+        || lower === "cc by"
+        || lower.startsWith("cc-by-")
+        || lower.startsWith("cc by ");
+}
+
+async function downloadBinaryFile(url, headers = {}) {
+    const response = await axios.get(url, {
+        responseType: "arraybuffer",
+        timeout: 30000,
+        headers,
+        maxRedirects: 5,
+    });
+    return {
+        buffer: Buffer.from(response.data),
+        contentType: response.headers["content-type"] || "image/jpeg",
+    };
+}
+
+async function searchNuthatchReferenceImage(commonName, scientificName) {
+    const queries = [commonName, scientificName].filter((value) => typeof value === "string" && value.trim());
+    for (const query of queries) {
+        const response = await axios.get("https://nuthatch.lastelm.software/v2/birds", {
+            params: { name: query, hasImg: true },
+            headers: { "api-key": NUTHATCH_API_KEY.value() },
+            timeout: 15000,
+        });
+
+        const entities = Array.isArray(response.data?.entities) ? response.data.entities : [];
+        if (!entities.length) continue;
+
+        const lowerQuery = query.trim().toLowerCase();
+        const bestEntity = entities.find((entity) => {
+            const name = String(entity?.name || "").trim().toLowerCase();
+            const sciName = String(entity?.sciName || "").trim().toLowerCase();
+            return name === lowerQuery || sciName === lowerQuery;
+        }) || entities[0];
+
+        const imageUrl = Array.isArray(bestEntity?.images)
+            ? bestEntity.images.find((candidate) => typeof candidate === "string" && candidate.trim())
+            : null;
+
+        if (!imageUrl) continue;
+
+        const download = await downloadBinaryFile(imageUrl, { "User-Agent": "BirdDex/1.0" });
+        return {
+            source: "nuthatch",
+            sourceLabel: "Nuthatch API",
+            imageUrl,
+            buffer: download.buffer,
+            contentType: download.contentType,
+            license: "public_use_via_nuthatch",
+            attribution: null,
+            licenseVerified: false,
+        };
+    }
+
+    return null;
+}
+
+async function searchWikimediaReferenceImage(commonName, scientificName) {
+    const searchTerms = [scientificName, commonName, `${commonName || ""} bird`].filter((value) => typeof value === "string" && value.trim());
+
+    const isGoodTitle = (title) => {
+        const lower = String(title || "").toLowerCase();
+        return (lower.endsWith(".jpg") || lower.endsWith(".jpeg") || lower.endsWith(".png"))
+            && !lower.includes("map")
+            && !lower.includes("range")
+            && !lower.includes("distribution")
+            && !lower.includes("icon")
+            && !lower.includes("logo")
+            && !lower.includes("flag")
+            && !lower.includes("stamp")
+            && !lower.includes("coin")
+            && !lower.includes("silhouette");
+    };
+
+    for (const term of searchTerms) {
+        const commonsSearch = await axios.get("https://commons.wikimedia.org/w/api.php", {
+            params: {
+                action: "query",
+                list: "search",
+                srsearch: term,
+                srnamespace: 6,
+                srlimit: 15,
+                format: "json",
+            },
+            timeout: 15000,
+            headers: { "User-Agent": "BirdDex/1.0 (contact@birddex.app)" },
+        });
+
+        const candidateTitles = [];
+        const commonsResults = Array.isArray(commonsSearch.data?.query?.search) ? commonsSearch.data.query.search : [];
+        for (const result of commonsResults) {
+            if (isGoodTitle(result?.title)) candidateTitles.push(result.title);
+        }
+
+        if (!candidateTitles.length) {
+            const articleSearch = await axios.get("https://en.wikipedia.org/w/api.php", {
+                params: {
+                    action: "query",
+                    list: "search",
+                    srsearch: term,
+                    srnamespace: 0,
+                    srlimit: 3,
+                    format: "json",
+                },
+                timeout: 15000,
+                headers: { "User-Agent": "BirdDex/1.0 (contact@birddex.app)" },
+            });
+            const pages = Array.isArray(articleSearch.data?.query?.search) ? articleSearch.data.query.search : [];
+            const bestPage = pages[0];
+            if (bestPage?.title) {
+                const articleImages = await axios.get("https://en.wikipedia.org/w/api.php", {
+                    params: {
+                        action: "query",
+                        titles: bestPage.title,
+                        prop: "images",
+                        imlimit: 20,
+                        format: "json",
+                    },
+                    timeout: 15000,
+                    headers: { "User-Agent": "BirdDex/1.0 (contact@birddex.app)" },
+                });
+                const pageData = Object.values(articleImages.data?.query?.pages || {})[0] || {};
+                const images = Array.isArray(pageData?.images) ? pageData.images : [];
+                for (const image of images) {
+                    if (isGoodTitle(image?.title)) candidateTitles.push(image.title);
+                }
+            }
+        }
+
+        for (const fileTitle of candidateTitles.slice(0, 10)) {
+            const infoResponse = await axios.get("https://commons.wikimedia.org/w/api.php", {
+                params: {
+                    action: "query",
+                    titles: fileTitle,
+                    prop: "imageinfo",
+                    iiprop: "url|extmetadata|size",
+                    format: "json",
+                },
+                timeout: 15000,
+                headers: { "User-Agent": "BirdDex/1.0 (contact@birddex.app)" },
+            });
+
+            const infoPage = Object.values(infoResponse.data?.query?.pages || {})[0] || {};
+            const imageInfo = Array.isArray(infoPage?.imageinfo) ? infoPage.imageinfo[0] : null;
+            const imageUrl = imageInfo?.url;
+            if (!imageUrl) continue;
+            if ((imageInfo?.width || 0) < 200 || (imageInfo?.height || 0) < 200) continue;
+
+            const license = imageInfo?.extmetadata?.LicenseShortName?.value
+                || imageInfo?.extmetadata?.License?.value
+                || "";
+            if (!isAllowedCommercialLicense(license)) continue;
+
+            const attribution = imageInfo?.extmetadata?.Artist?.value
+                || imageInfo?.extmetadata?.Attribution?.value
+                || null;
+            const download = await downloadBinaryFile(imageUrl, { "User-Agent": "BirdDex/1.0 (contact@birddex.app)" });
+            return {
+                source: "wikimedia",
+                sourceLabel: "Wikimedia Commons",
+                imageUrl,
+                buffer: download.buffer,
+                contentType: download.contentType,
+                license,
+                attribution,
+                licenseVerified: true,
+            };
+        }
+    }
+
+    return null;
+}
+
+async function searchINaturalistReferenceImage(commonName, scientificName) {
+    const queries = [scientificName, commonName].filter((value) => typeof value === "string" && value.trim());
+    for (const query of queries) {
+        const taxaResponse = await axios.get("https://api.inaturalist.org/v1/taxa", {
+            params: { q: query, rank: "species", per_page: 5 },
+            timeout: 15000,
+            headers: { "User-Agent": "BirdDex/1.0" },
+        });
+
+        const results = Array.isArray(taxaResponse.data?.results) ? taxaResponse.data.results : [];
+        if (!results.length) continue;
+
+        const lowerScientific = String(scientificName || "").trim().toLowerCase();
+        const lowerCommon = String(commonName || "").trim().toLowerCase();
+        const taxon = results.find((item) =>
+            String(item?.name || "").trim().toLowerCase() === lowerScientific ||
+            String(item?.preferred_common_name || "").trim().toLowerCase() === lowerCommon
+        ) || results[0];
+
+        if (!taxon?.id) continue;
+
+        const taxonResponse = await axios.get(`https://api.inaturalist.org/v1/taxa/${taxon.id}`, {
+            timeout: 15000,
+            headers: { "User-Agent": "BirdDex/1.0" },
+        });
+
+        const taxonData = Array.isArray(taxonResponse.data?.results) ? taxonResponse.data.results[0] : null;
+        const safePhoto = Array.isArray(taxonData?.taxon_photos)
+            ? taxonData.taxon_photos.find((item) => {
+                const license = String(item?.photo?.license_code || "").trim().toLowerCase();
+                return license === "cc0" || license === "cc-by";
+            })
+            : null;
+
+        const rawUrl = safePhoto?.photo?.url;
+        if (!rawUrl) continue;
+
+        const imageUrl = String(rawUrl).replace("square", "medium");
+        const download = await downloadBinaryFile(imageUrl, { "User-Agent": "BirdDex/1.0" });
+        return {
+            source: "inaturalist",
+            sourceLabel: "iNaturalist",
+            imageUrl,
+            buffer: download.buffer,
+            contentType: download.contentType,
+            license: safePhoto?.photo?.license_code || null,
+            attribution: safePhoto?.photo?.attribution || null,
+            licenseVerified: true,
+        };
+    }
+
+    return null;
+}
+
+async function saveFetchedIdentificationImageRecord({
+    birdId,
+    commonName,
+    scientificName,
+    fetchedImage,
+}) {
+    const lookupKey = buildFetchedIdentificationLookupKey(birdId, commonName, scientificName);
+    const storageEntityKey = buildFetchedIdentificationStorageKey(birdId, commonName, scientificName);
+    const bucket = storage.bucket();
+    const ext = String(fetchedImage?.contentType || "").toLowerCase().includes("png") ? "png" : "jpg";
+    const folderName = fetchedImage?.source === "nuthatch"
+        ? "nuthatchImages"
+        : fetchedImage?.source === "wikimedia"
+            ? "wikimediaImages"
+            : "iNaturalistImages";
+    const storagePath = `${folderName}/${storageEntityKey}/identification_fetch.${ext}`;
+    const file = bucket.file(storagePath);
+
+    await file.save(fetchedImage.buffer, {
+        metadata: {
+            contentType: fetchedImage.contentType || "image/jpeg",
+            metadata: {
+                license: fetchedImage.license || "",
+                attribution: fetchedImage.attribution || "",
+                source: fetchedImage.sourceLabel || fetchedImage.source || "unknown",
+                licenseVerified: fetchedImage.licenseVerified ? "true" : "false",
+            },
+        },
+        resumable: false,
+    });
+
+    try {
+        await file.makePublic();
+    } catch (error) {
+        logger.warn(`saveFetchedIdentificationImageRecord: makePublic failed for ${storagePath}`, error);
+    }
+
+    const publicUrl = `https://storage.googleapis.com/${bucket.name}/${storagePath}`;
+    const record = {
+        lookupKey,
+        birdId: birdId || null,
+        speciesCode: birdId || null,
+        commonName: commonName || null,
+        scientificName: scientificName || null,
+        source: fetchedImage.sourceLabel || fetchedImage.source || "unknown",
+        sourceKey: fetchedImage.source || "unknown",
+        imageUrl: publicUrl,
+        imageUrls: [publicUrl],
+        storagePath,
+        license: fetchedImage.license || null,
+        attribution: fetchedImage.attribution || null,
+        licenseVerified: !!fetchedImage.licenseVerified,
+        fetchedAt: admin.firestore.FieldValue.serverTimestamp(),
+        fetchMode: "identification_on_demand",
+    };
+
+    await db.collection("images_fecthed_Identifications").doc(lookupKey).set(record, { merge: true });
+    await db.collection("images_fecthed_Identifications_failed").doc(lookupKey).delete().catch(() => null);
+    return record;
+}
+
 async function callOpenAiBirdReviewCandidates(base64Image, candidateA, candidateB, excludedBirds = []) {
     const excludedLines = (excludedBirds || []).map((bird, index) => {
         const normalized = normalizeBirdData(bird, bird?.id || bird?.birdId || null);
@@ -1725,6 +2129,119 @@ exports.identifyBird = onCall({ secrets: [OPENAI_API_KEY, BIRDDEX_MODEL_API_KEY]
         logger.error("Hybrid identification failed:", error);
         if (error instanceof HttpsError) throw error;
         throw new HttpsError("internal", `Hybrid identification failed: ${error.message}`);
+    }
+});
+
+exports.fetchIdentificationReferenceImage = onCall({ secrets: [NUTHATCH_API_KEY], timeoutSeconds: 60 }, async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
+
+    const birdId = sanitizeText(request.data?.birdId || "", 200).trim() || null;
+    const commonName = sanitizeText(request.data?.commonName || "", 200).trim() || null;
+    const scientificName = sanitizeText(request.data?.scientificName || "", 200).trim() || null;
+
+    if (!birdId && !commonName && !scientificName) {
+        throw new HttpsError("invalid-argument", "birdId, commonName, or scientificName is required.");
+    }
+
+    const lookupKey = buildFetchedIdentificationLookupKey(birdId, commonName, scientificName);
+    const failureLogRef = db.collection("images_fecthed_Identifications_failed").doc(lookupKey);
+
+    try {
+        const existingRecord = await findReferenceImageRecord(birdId, commonName, scientificName);
+        if (existingRecord?.imageUrl) {
+            return {
+                found: true,
+                imageUrl: existingRecord.imageUrl,
+                source: existingRecord.data?.source || existingRecord.collectionName,
+                license: existingRecord.data?.license || null,
+                attribution: existingRecord.data?.attribution || null,
+                licenseVerified: existingRecord.data?.licenseVerified !== false,
+                lookupKey,
+                fromCache: existingRecord.collectionName === "images_fecthed_Identifications",
+            };
+        }
+
+        const failureLogDoc = await failureLogRef.get();
+        if (failureLogDoc.exists) {
+            const failureData = failureLogDoc.data() || {};
+            return {
+                found: false,
+                skippedBecausePreviouslyMissing: true,
+                lookupKey,
+                userMessage: "Reference photo unavailable",
+                lastFailureReason: failureData.reason || null,
+                triedSources: failureData.triedSources || [],
+            };
+        }
+
+        const triedSources = [];
+        let fetchedImage = null;
+
+        triedSources.push("nuthatch");
+        try {
+            fetchedImage = await searchNuthatchReferenceImage(commonName, scientificName);
+        } catch (error) {
+            logger.warn(`fetchIdentificationReferenceImage: Nuthatch lookup failed for ${lookupKey}`, error);
+        }
+
+        if (!fetchedImage) {
+            triedSources.push("wikimedia");
+            try {
+                fetchedImage = await searchWikimediaReferenceImage(commonName, scientificName);
+            } catch (error) {
+                logger.warn(`fetchIdentificationReferenceImage: Wikimedia lookup failed for ${lookupKey}`, error);
+            }
+        }
+
+        if (!fetchedImage) {
+            triedSources.push("inaturalist");
+            try {
+                fetchedImage = await searchINaturalistReferenceImage(commonName, scientificName);
+            } catch (error) {
+                logger.warn(`fetchIdentificationReferenceImage: iNaturalist lookup failed for ${lookupKey}`, error);
+            }
+        }
+
+        if (!fetchedImage) {
+            await failureLogRef.set({
+                lookupKey,
+                birdId,
+                commonName,
+                scientificName,
+                triedSources,
+                reason: "No acceptable reference image found from fallback sources",
+                checkedAt: admin.firestore.FieldValue.serverTimestamp(),
+            }, { merge: true });
+
+            return {
+                found: false,
+                lookupKey,
+                userMessage: "Reference photo unavailable",
+                triedSources,
+            };
+        }
+
+        const savedRecord = await saveFetchedIdentificationImageRecord({
+            birdId,
+            commonName,
+            scientificName,
+            fetchedImage,
+        });
+
+        return {
+            found: true,
+            imageUrl: savedRecord.imageUrl,
+            source: savedRecord.source,
+            license: savedRecord.license,
+            attribution: savedRecord.attribution,
+            licenseVerified: savedRecord.licenseVerified,
+            lookupKey,
+            fromCache: false,
+        };
+    } catch (error) {
+        logger.error("fetchIdentificationReferenceImage failed:", error);
+        if (error instanceof HttpsError) throw error;
+        throw new HttpsError("internal", `Failed to fetch reference image: ${error.message}`);
     }
 });
 

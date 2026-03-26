@@ -32,6 +32,12 @@ public class AiCompActivity extends AppCompatActivity {
         ImageView ivMain = findViewById(R.id.ivMain);
         ImageView ivAiImage1 = findViewById(R.id.ivAiImage1);
         ImageView ivAiImage2 = findViewById(R.id.ivAiImage2);
+        View progressAiBird1 = findViewById(R.id.progressAiBird1);
+        View progressAiBird2 = findViewById(R.id.progressAiBird2);
+        TextView tvAiStatus1 = findViewById(R.id.tvAiStatus1);
+        TextView tvAiStatus2 = findViewById(R.id.tvAiStatus2);
+        TextView tvAiAttribution1 = findViewById(R.id.tvAiAttribution1);
+        TextView tvAiAttribution2 = findViewById(R.id.tvAiAttribution2);
         TextView tvAiName1 = findViewById(R.id.tvAiName1);
         TextView tvAiName2 = findViewById(R.id.tvAiName2);
         LinearLayout llAiBird1 = findViewById(R.id.llAiBird1);
@@ -53,8 +59,8 @@ public class AiCompActivity extends AppCompatActivity {
                     .into(ivMain);
         }
 
-        bindCandidate(llAiBird1, ivAiImage1, tvAiName1, getCandidateAt(0));
-        bindCandidate(llAiBird2, ivAiImage2, tvAiName2, getCandidateAt(1));
+        bindCandidate(llAiBird1, ivAiImage1, progressAiBird1, tvAiStatus1, tvAiAttribution1, tvAiName1, getCandidateAt(0));
+        bindCandidate(llAiBird2, ivAiImage2, progressAiBird2, tvAiStatus2, tvAiAttribution2, tvAiName2, getCandidateAt(1));
 
         btnRetake.setOnClickListener(v -> {
             openAiApi.syncIdentificationFeedback(
@@ -72,7 +78,13 @@ public class AiCompActivity extends AppCompatActivity {
         });
     }
 
-    private void bindCandidate(LinearLayout container, ImageView imageView, TextView nameView, @Nullable Bundle candidate) {
+    private void bindCandidate(LinearLayout container,
+                               ImageView imageView,
+                               View progressView,
+                               TextView statusView,
+                               TextView attributionView,
+                               TextView nameView,
+                               @Nullable Bundle candidate) {
         if (candidate == null) {
             container.setVisibility(View.INVISIBLE);
             container.setClickable(false);
@@ -83,11 +95,36 @@ public class AiCompActivity extends AppCompatActivity {
 
         container.setVisibility(View.VISIBLE);
         nameView.setText(candidate.getString("candidateCommonName", "Unknown Bird"));
-        BirdImageLoader.loadBirdImageInto(
+        if (attributionView != null) {
+            attributionView.setText("");
+            attributionView.setVisibility(View.GONE);
+        }
+        if (progressView != null) progressView.setVisibility(View.VISIBLE);
+        statusView.setText("Loading reference photo...");
+        statusView.setVisibility(View.VISIBLE);
+        BirdImageLoader.loadBirdImageIntoWithFetch(
+                this,
                 imageView,
+                progressView,
+                statusView,
                 candidate.getString("candidateBirdId"),
                 candidate.getString("candidateCommonName"),
-                candidate.getString("candidateScientificName")
+                candidate.getString("candidateScientificName"),
+                new BirdImageLoader.MetadataLoadCallback() {
+                    @Override
+                    public void onLoaded(@Nullable BirdImageLoader.ImageMetadata metadata) {
+                        if (attributionView == null || isFinishing() || isDestroyed()) return;
+                        BirdImageLoader.applyAttributionText(attributionView, metadata);
+                    }
+
+                    @Override
+                    public void onNotFound() {
+                        if (attributionView != null) {
+                            attributionView.setText("");
+                            attributionView.setVisibility(View.GONE);
+                        }
+                    }
+                }
         );
 
         View.OnClickListener clickListener = v -> {

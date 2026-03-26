@@ -44,6 +44,12 @@ public class NotMyBirdActivity extends AppCompatActivity {
         ImageView ivMain = findViewById(R.id.ivMain);
         ImageView iv1 = findViewById(R.id.iv1);
         ImageView iv2 = findViewById(R.id.iv2);
+        View progressBird1 = findViewById(R.id.progressBird1);
+        View progressBird2 = findViewById(R.id.progressBird2);
+        TextView tvStatus1 = findViewById(R.id.tvStatus1);
+        TextView tvStatus2 = findViewById(R.id.tvStatus2);
+        TextView tvAttribution1 = findViewById(R.id.tvAttribution1);
+        TextView tvAttribution2 = findViewById(R.id.tvAttribution2);
         TextView tvName1 = findViewById(R.id.tvName1);
         TextView tvName2 = findViewById(R.id.tvName2);
         TextView tvInstruction = findViewById(R.id.tvInstruction);
@@ -67,8 +73,8 @@ public class NotMyBirdActivity extends AppCompatActivity {
                     .into(ivMain);
         }
 
-        bindCandidate(llBird1, iv1, tvName1, getCandidateAt(0));
-        bindCandidate(llBird2, iv2, tvName2, getCandidateAt(1));
+        bindCandidate(llBird1, iv1, progressBird1, tvStatus1, tvAttribution1, tvName1, getCandidateAt(0));
+        bindCandidate(llBird2, iv2, progressBird2, tvStatus2, tvAttribution2, tvName2, getCandidateAt(1));
 
         if (modelAlternatives.isEmpty()) {
             tvInstruction.setText("No other BirdDex matches were available. Tap below to ask AI for two more options.");
@@ -93,7 +99,13 @@ public class NotMyBirdActivity extends AppCompatActivity {
         });
     }
 
-    private void bindCandidate(LinearLayout container, ImageView imageView, TextView nameView, @Nullable Bundle candidate) {
+    private void bindCandidate(LinearLayout container,
+                               ImageView imageView,
+                               View progressView,
+                               TextView statusView,
+                               TextView attributionView,
+                               TextView nameView,
+                               @Nullable Bundle candidate) {
         if (candidate == null) {
             container.setVisibility(View.INVISIBLE);
             container.setClickable(false);
@@ -102,11 +114,36 @@ public class NotMyBirdActivity extends AppCompatActivity {
 
         container.setVisibility(View.VISIBLE);
         nameView.setText(candidate.getString("candidateCommonName", "Unknown Bird"));
-        BirdImageLoader.loadBirdImageInto(
+        if (attributionView != null) {
+            attributionView.setText("");
+            attributionView.setVisibility(View.GONE);
+        }
+        if (progressView != null) progressView.setVisibility(View.VISIBLE);
+        statusView.setText("Loading reference photo...");
+        statusView.setVisibility(View.VISIBLE);
+        BirdImageLoader.loadBirdImageIntoWithFetch(
+                this,
                 imageView,
+                progressView,
+                statusView,
                 candidate.getString("candidateBirdId"),
                 candidate.getString("candidateCommonName"),
-                candidate.getString("candidateScientificName")
+                candidate.getString("candidateScientificName"),
+                new BirdImageLoader.MetadataLoadCallback() {
+                    @Override
+                    public void onLoaded(@Nullable BirdImageLoader.ImageMetadata metadata) {
+                        if (attributionView == null || isFinishing() || isDestroyed()) return;
+                        BirdImageLoader.applyAttributionText(attributionView, metadata);
+                    }
+
+                    @Override
+                    public void onNotFound() {
+                        if (attributionView != null) {
+                            attributionView.setText("");
+                            attributionView.setVisibility(View.GONE);
+                        }
+                    }
+                }
         );
 
         View.OnClickListener clickListener = v -> {

@@ -16,23 +16,128 @@
             android:layout_height="wrap_content"
             android:paddingBottom="24dp">
 
+            <androidx.constraintlayout.widget.Guideline
+                android:id="@+id/comparisonGuideline"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                app:layout_constraintGuide_percent="0.5" />
+
+            <TextView
+                android:id="@+id/tvComparePrompt"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="20dp"
+                android:layout_marginHorizontal="24dp"
+                android:gravity="center"
+                android:text="Is this your bird?"
+                android:textColor="?attr/colorOnSurface"
+                android:textSize="22sp"
+                android:textStyle="bold"
+                app:layout_constraintEnd_toEndOf="parent"
+                app:layout_constraintStart_toStartOf="parent"
+                app:layout_constraintTop_toTopOf="parent" />
+
+            <TextView
+                android:id="@+id/tvCompareSubtitle"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:layout_marginHorizontal="24dp"
+                android:gravity="center"
+                android:text="Compare your photo with BirdDex's reference photo before you save it."
+                android:textColor="?attr/colorOnSurface"
+                android:textSize="14sp"
+                app:layout_constraintEnd_toEndOf="parent"
+                app:layout_constraintStart_toStartOf="parent"
+                app:layout_constraintTop_toBottomOf="@id/tvComparePrompt" />
+
+            <TextView
+                android:id="@+id/tvYourPhotoLabel"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:layout_marginEnd="4dp"
+                android:layout_marginTop="18dp"
+                android:gravity="center"
+                android:text="Your Photo"
+                android:textColor="?attr/colorOnSurface"
+                android:textSize="15sp"
+                android:textStyle="bold"
+                app:layout_constraintEnd_toStartOf="@id/comparisonGuideline"
+                app:layout_constraintStart_toStartOf="parent"
+                app:layout_constraintTop_toBottomOf="@id/tvCompareSubtitle" />
+
+            <TextView
+                android:id="@+id/tvReferencePhotoLabel"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="4dp"
+                android:layout_marginEnd="8dp"
+                android:layout_marginTop="18dp"
+                android:gravity="center"
+                android:text="Reference Photo"
+                android:textColor="?attr/colorOnSurface"
+                android:textSize="15sp"
+                android:textStyle="bold"
+                app:layout_constraintEnd_toEndOf="parent"
+                app:layout_constraintStart_toStartOf="@id/comparisonGuideline"
+                app:layout_constraintTop_toBottomOf="@id/tvCompareSubtitle" />
+
             <ImageView
                 android:id="@+id/birdImageView"
                 android:layout_width="0dp"
                 android:layout_height="0dp"
-                android:layout_margin="16dp"
+                android:layout_marginStart="8dp"
+                android:layout_marginEnd="4dp"
+                android:layout_marginTop="8dp"
+                android:adjustViewBounds="true"
+                android:scaleType="centerCrop"
+                app:layout_constraintDimensionRatio="1:1"
+                app:layout_constraintEnd_toStartOf="@id/comparisonGuideline"
+                app:layout_constraintStart_toStartOf="parent"
+                app:layout_constraintTop_toBottomOf="@id/tvYourPhotoLabel"
+                tools:srcCompat="@tools:sample/avatars" />
+
+            <FrameLayout
+                android:id="@+id/referenceBirdFrame"
+                android:layout_width="0dp"
+                android:layout_height="0dp"
+                android:layout_marginStart="4dp"
+                android:layout_marginEnd="8dp"
+                android:layout_marginTop="8dp"
                 app:layout_constraintDimensionRatio="1:1"
                 app:layout_constraintEnd_toEndOf="parent"
-                app:layout_constraintStart_toStartOf="parent"
-                app:layout_constraintTop_toTopOf="parent"
-                tools:srcCompat="@tools:sample/avatars" />
+                app:layout_constraintStart_toStartOf="@id/comparisonGuideline"
+                app:layout_constraintTop_toBottomOf="@id/tvReferencePhotoLabel">
+
+                <ImageView
+                    android:id="@+id/referenceBirdImageView"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:adjustViewBounds="true"
+                    android:scaleType="centerCrop"
+                    android:visibility="invisible"
+                    tools:srcCompat="@drawable/bird_image" />
+
+                <TextView
+                    android:id="@+id/referenceImageStatusTextView"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:gravity="center"
+                    android:padding="16dp"
+                    android:text="Loading reference photo..."
+                    android:textColor="?attr/colorOnSurface"
+                    android:textSize="14sp" />
+
+            </FrameLayout>
 
             <TextView
                 android:id="@+id/commonNameTextView"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="16dp"
-                android:layout_marginHorizontal="24dp"
+                android:layout_marginTop="14dp"
+                android:layout_marginHorizontal="20dp"
                 android:gravity="center"
                 android:text="Common Name: "
                 android:textSize="18sp"

@@ -3,6 +3,7 @@ package com.birddex.app;
 import android.content.Intent;
 import android.net.Uri;
 import android.os.Bundle;
+import android.view.View;
 import android.widget.Button;
 import android.widget.ImageView;
 import android.widget.RadioButton;
@@ -40,8 +41,12 @@ public class BirdInfoActivity extends AppCompatActivity {
     private RadioGroup rgQuantity;
     private Button btnStore;
     private TextView commonNameTextView, scientificNameTextView, speciesTextView, familyTextView;
+    private TextView referenceImageStatusTextView;
+    private ImageView birdImageView;
+    private ImageView referenceBirdImageView;
     private boolean awardPoints = true;
-    
+    private boolean useReferenceNameLookupOnly = false;
+
     // FIX: Guard against double-tap launching multiple activities
     private final AtomicBoolean storeClicked = new AtomicBoolean(false);
 
@@ -53,12 +58,20 @@ public class BirdInfoActivity extends AppCompatActivity {
                     String selectedSci = result.getData().getStringExtra("selectedScientificName");
                     String selectedSpec = result.getData().getStringExtra("selectedSpecies");
                     String selectedFam = result.getData().getStringExtra("selectedFamily");
+                    String selectedBirdId = result.getData().getStringExtra("selectedBirdId");
 
                     if (selectedCommon != null) {
                         currentCommonName = selectedCommon;
                         currentScientificName = selectedSci;
                         currentSpecies = selectedSpec;
                         currentFamily = selectedFam;
+
+                        if (selectedBirdId != null && !selectedBirdId.trim().isEmpty()) {
+                            currentBirdId = selectedBirdId;
+                            useReferenceNameLookupOnly = false;
+                        } else {
+                            useReferenceNameLookupOnly = true;
+                        }
 
                         updateBirdUi();
                         showUpdatePopup(selectedCommon);
@@ -83,7 +96,9 @@ public class BirdInfoActivity extends AppCompatActivity {
         setContentView(R.layout.activity_bird_info);
 
         // Bind or inflate the UI pieces this method needs before it can update the screen.
-        ImageView birdImageView = findViewById(R.id.birdImageView);
+        birdImageView = findViewById(R.id.birdImageView);
+        referenceBirdImageView = findViewById(R.id.referenceBirdImageView);
+        referenceImageStatusTextView = findViewById(R.id.referenceImageStatusTextView);
         commonNameTextView = findViewById(R.id.commonNameTextView);
         scientificNameTextView = findViewById(R.id.scientificNameTextView);
         speciesTextView = findViewById(R.id.speciesTextView);
@@ -107,7 +122,7 @@ public class BirdInfoActivity extends AppCompatActivity {
         currentState = getIntent().getStringExtra("state");
         currentCountry = getIntent().getStringExtra("country");
 
-        if (currentImageUriStr != null) {
+        if (currentImageUriStr != null && birdImageView != null) {
             birdImageView.setImageURI(Uri.parse(currentImageUriStr));
         }
 
@@ -120,10 +135,10 @@ public class BirdInfoActivity extends AppCompatActivity {
         // Attach the user interaction that should run when this control is tapped.
         btnStore.setOnClickListener(v -> {
             if (!storeClicked.compareAndSet(false, true)) return;
-            
+
             String quantity = getSelectedQuantity();
             long caughtTime = System.currentTimeMillis();
-            
+
             Intent i = new Intent(BirdInfoActivity.this, CardMakerActivity.class);
             i.putExtra(CardMakerActivity.EXTRA_IMAGE_URI, currentImageUriStr);
             i.putExtra(CardMakerActivity.EXTRA_LOCALITY, currentLocalityName);
@@ -166,6 +181,41 @@ public class BirdInfoActivity extends AppCompatActivity {
         if (scientificNameTextView != null) scientificNameTextView.setText("Scientific Name: " + (currentScientificName != null ? currentScientificName : "N/A"));
         if (speciesTextView != null) speciesTextView.setText("Species: " + (currentSpecies != null ? currentSpecies : "N/A"));
         if (familyTextView != null) familyTextView.setText("Family: " + (currentFamily != null ? currentFamily : "N/A"));
+        loadReferenceBirdImage();
+    }
+
+    private void loadReferenceBirdImage() {
+        if (referenceBirdImageView == null || referenceImageStatusTextView == null) return;
+
+        String lookupBirdId = useReferenceNameLookupOnly ? null : currentBirdId;
+
+        referenceBirdImageView.setImageDrawable(null);
+        referenceBirdImageView.setVisibility(View.INVISIBLE);
+        referenceImageStatusTextView.setText("Loading reference photo...");
+        referenceImageStatusTextView.setVisibility(View.VISIBLE);
+
+        BirdImageLoader.loadBirdImageInto(
+                referenceBirdImageView,
+                lookupBirdId,
+                currentCommonName,
+                currentScientificName,
+                new BirdImageLoader.LoadCallback() {
+                    @Override
+                    public void onLoaded() {
+                        if (isFinishing() || isDestroyed()) return;
+                        referenceImageStatusTextView.setVisibility(View.GONE);
+                    }
+
+                    @Override
+                    public void onNotFound() {
+                        if (isFinishing() || isDestroyed()) return;
+                        referenceBirdImageView.setImageDrawable(null);
+                        referenceBirdImageView.setVisibility(View.GONE);
+                        referenceImageStatusTextView.setText("Reference photo unavailable");
+                        referenceImageStatusTextView.setVisibility(View.VISIBLE);
+                    }
+                }
+        );
     }
 
     private void showUpdatePopup(String birdName) {
@@ -202,6 +252,6 @@ public class BirdInfoActivity extends AppCompatActivity {
             RadioButton rb = findViewById(checkedId);
             return rb.getText().toString();
         }
-        return "N/A";
+        return "1-3";
     }
 }

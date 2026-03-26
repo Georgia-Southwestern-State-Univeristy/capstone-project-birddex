@@ -51,6 +51,14 @@ public final class BirdImageLoader {
                                          @Nullable String birdId,
                                          @Nullable String commonName,
                                          @Nullable String scientificName) {
+        loadBirdImageInto(imageView, birdId, commonName, scientificName, null);
+    }
+
+    public static void loadBirdImageInto(@NonNull ImageView imageView,
+                                         @Nullable String birdId,
+                                         @Nullable String commonName,
+                                         @Nullable String scientificName,
+                                         @Nullable LoadCallback loadCallback) {
         String requestKey = firstNonBlank(birdId, commonName, scientificName, "__none__");
         imageView.setTag(requestKey);
         Glide.with(imageView).clear(imageView);
@@ -59,21 +67,23 @@ public final class BirdImageLoader {
 
         if (isBlank(birdId) && isBlank(commonName) && isBlank(scientificName)) {
             imageView.setVisibility(View.GONE);
+            notifyNotFound(loadCallback);
             return;
         }
 
         // Fast path: use the in-memory URL cache if this bird was already resolved earlier.
         String cachedUrl = getCachedUrl(birdId, commonName, scientificName);
         if (!isBlank(cachedUrl)) {
-            loadResolvedUrl(imageView, requestKey, cachedUrl);
+            loadResolvedUrl(imageView, requestKey, cachedUrl, loadCallback);
             return;
         }
 
-        tryFromCollection(imageView, requestKey, "nuthatch_images", birdId, commonName, scientificName, () ->
-                tryFromCollection(imageView, requestKey, "inaturalist_images", birdId, commonName, scientificName, () -> {
+        tryFromCollection(imageView, requestKey, "nuthatch_images", birdId, commonName, scientificName, loadCallback, () ->
+                tryFromCollection(imageView, requestKey, "inaturalist_images", birdId, commonName, scientificName, loadCallback, () -> {
                     if (!isStillBound(imageView, requestKey)) return;
                     imageView.setImageDrawable(null);
                     imageView.setVisibility(View.GONE);
+                    notifyNotFound(loadCallback);
                 })
         );
     }
@@ -84,6 +94,7 @@ public final class BirdImageLoader {
                                           @Nullable String birdId,
                                           @Nullable String commonName,
                                           @Nullable String scientificName,
+                                          @Nullable LoadCallback loadCallback,
                                           @NonNull Runnable onNotFound) {
         if (!isStillBound(imageView, requestKey)) return;
 
@@ -92,19 +103,19 @@ public final class BirdImageLoader {
                     doc -> {
                         if (!isStillBound(imageView, requestKey)) return;
                         if (doc != null && doc.exists()) {
-                            processImageDoc(imageView, requestKey, birdId, commonName, scientificName, doc);
+                            processImageDoc(imageView, requestKey, birdId, commonName, scientificName, doc, loadCallback);
                         } else {
-                            queryFallbacks(imageView, requestKey, collectionName, birdId, commonName, scientificName, onNotFound);
+                            queryFallbacks(imageView, requestKey, collectionName, birdId, commonName, scientificName, loadCallback, onNotFound);
                         }
                     },
                     e -> {
                         Log.e(TAG, "Failed direct image lookup in " + collectionName + " for birdId=" + birdId, e);
                         if (!isStillBound(imageView, requestKey)) return;
-                        queryFallbacks(imageView, requestKey, collectionName, birdId, commonName, scientificName, onNotFound);
+                        queryFallbacks(imageView, requestKey, collectionName, birdId, commonName, scientificName, loadCallback, onNotFound);
                     }
             );
         } else {
-            queryFallbacks(imageView, requestKey, collectionName, birdId, commonName, scientificName, onNotFound);
+            queryFallbacks(imageView, requestKey, collectionName, birdId, commonName, scientificName, loadCallback, onNotFound);
         }
     }
 
@@ -114,12 +125,13 @@ public final class BirdImageLoader {
                                        @Nullable String birdId,
                                        @Nullable String commonName,
                                        @Nullable String scientificName,
+                                       @Nullable LoadCallback loadCallback,
                                        @NonNull Runnable onNotFound) {
         if (!isStillBound(imageView, requestKey)) return;
 
-        queryByField(imageView, requestKey, collectionName, "speciesCode", birdId, birdId, commonName, scientificName, () ->
-                queryByField(imageView, requestKey, collectionName, "commonName", commonName, birdId, commonName, scientificName, () ->
-                        queryByField(imageView, requestKey, collectionName, "scientificName", scientificName, birdId, commonName, scientificName, onNotFound)
+        queryByField(imageView, requestKey, collectionName, "speciesCode", birdId, birdId, commonName, scientificName, loadCallback, () ->
+                queryByField(imageView, requestKey, collectionName, "commonName", commonName, birdId, commonName, scientificName, loadCallback, () ->
+                        queryByField(imageView, requestKey, collectionName, "scientificName", scientificName, birdId, commonName, scientificName, loadCallback, onNotFound)
                 )
         );
     }
@@ -132,6 +144,7 @@ public final class BirdImageLoader {
                                      @Nullable String birdId,
                                      @Nullable String commonName,
                                      @Nullable String scientificName,
+                                     @Nullable LoadCallback loadCallback,
                                      @NonNull Runnable onNotFound) {
         if (!isStillBound(imageView, requestKey)) return;
 
@@ -143,7 +156,7 @@ public final class BirdImageLoader {
         getSingleQueryResultCacheThenServer(collectionName, fieldName, value,
                 querySnapshot -> {
                     if (!isStillBound(imageView, requestKey)) return;
-                    handleQueryResult(imageView, requestKey, birdId, commonName, scientificName, querySnapshot, onNotFound);
+                    handleQueryResult(imageView, requestKey, birdId, commonName, scientificName, querySnapshot, loadCallback, onNotFound);
                 },
                 e -> {
                     Log.e(TAG, "Failed image query in " + collectionName + " where " + fieldName + "=" + value, e);
@@ -211,11 +224,12 @@ public final class BirdImageLoader {
                                           @Nullable String commonName,
                                           @Nullable String scientificName,
                                           @Nullable QuerySnapshot querySnapshot,
+                                          @Nullable LoadCallback loadCallback,
                                           @NonNull Runnable onNotFound) {
         if (!isStillBound(imageView, requestKey)) return;
 
         if (querySnapshot != null && !querySnapshot.isEmpty()) {
-            processImageDoc(imageView, requestKey, birdId, commonName, scientificName, querySnapshot.getDocuments().get(0));
+            processImageDoc(imageView, requestKey, birdId, commonName, scientificName, querySnapshot.getDocuments().get(0), loadCallback);
         } else {
             onNotFound.run();
         }
@@ -226,23 +240,26 @@ public final class BirdImageLoader {
                                         @Nullable String birdId,
                                         @Nullable String commonName,
                                         @Nullable String scientificName,
-                                        @NonNull DocumentSnapshot imageDoc) {
+                                        @NonNull DocumentSnapshot imageDoc,
+                                        @Nullable LoadCallback loadCallback) {
         if (!isStillBound(imageView, requestKey)) return;
 
         String imageUrl = extractImageUrl(imageDoc);
         if (isBlank(imageUrl)) {
             imageView.setImageDrawable(null);
             imageView.setVisibility(View.GONE);
+            notifyNotFound(loadCallback);
             return;
         }
 
         cacheResolvedUrl(birdId, commonName, scientificName, imageUrl);
-        loadResolvedUrl(imageView, requestKey, imageUrl);
+        loadResolvedUrl(imageView, requestKey, imageUrl, loadCallback);
     }
 
     private static void loadResolvedUrl(@NonNull ImageView imageView,
                                         @NonNull String requestKey,
-                                        @NonNull String imageUrl) {
+                                        @NonNull String imageUrl,
+                                        @Nullable LoadCallback loadCallback) {
         if (!isStillBound(imageView, requestKey)) return;
 
         imageView.setVisibility(View.VISIBLE);
@@ -259,6 +276,7 @@ public final class BirdImageLoader {
                         if (!isStillBound(imageView, requestKey)) return false;
                         imageView.setImageDrawable(null);
                         imageView.setVisibility(View.GONE);
+                        notifyNotFound(loadCallback);
                         return false;
                     }
 
@@ -266,6 +284,7 @@ public final class BirdImageLoader {
                     public boolean onResourceReady(Drawable resource, Object model, Target<Drawable> target, DataSource dataSource, boolean isFirstResource) {
                         if (!isStillBound(imageView, requestKey)) return false;
                         imageView.setVisibility(View.VISIBLE);
+                        notifyLoaded(loadCallback);
                         return false;
                     }
                 })
@@ -373,6 +392,23 @@ public final class BirdImageLoader {
         if (!isBlank(b)) return b.trim();
         if (!isBlank(c)) return c.trim();
         return fallback;
+    }
+
+    private static void notifyLoaded(@Nullable LoadCallback loadCallback) {
+        if (loadCallback != null) {
+            loadCallback.onLoaded();
+        }
+    }
+
+    private static void notifyNotFound(@Nullable LoadCallback loadCallback) {
+        if (loadCallback != null) {
+            loadCallback.onNotFound();
+        }
+    }
+
+    public interface LoadCallback {
+        void onLoaded();
+        void onNotFound();
     }
 
     private interface DocumentHandler {

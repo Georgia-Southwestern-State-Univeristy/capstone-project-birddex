@@ -1073,7 +1073,7 @@ public class NearbyHeatmapActivity extends AppCompatActivity
             if (item.getTitle().equals("Delete")) showDeleteConfirmation(p, dialog);
             else if (item.getTitle().equals("Save Post")) savePostForLater(p);
             else if (item.getTitle().equals("Unsave Post")) unsavePost(p);
-            else if (item.getTitle().equals("Report")) showReportDialog("post", p.getId());
+            else if (item.getTitle().equals("Report")) showReportDialog("post", p.getId(), p.getId());
             return true;
         });
         popup.show();
@@ -1228,12 +1228,12 @@ public class NearbyHeatmapActivity extends AppCompatActivity
     /**
      * Takes prepared data and presents it on screen or in a dialog/menu.
      */
-    private void showReportDialog(String type, String id) {
+    private void showReportDialog(String type, String id, String threadId) {
         String[] rs = {"Inappropriate Language", "Spam", "Harassment", "Other"};
         new AlertDialog.Builder(this).setTitle("Report").setItems(rs, (d, w) -> {
             if (rs[w].equals("Other"))
-                showOtherReportDialog(reason -> submitReport(type, id, reason));
-            else submitReport(type, id, rs[w]);
+                showOtherReportDialog(reason -> submitReport(type, id, threadId, "heatmap", reason));
+            else submitReport(type, id, threadId, "heatmap", rs[w]);
         }).show();
     }
 
@@ -1242,11 +1242,11 @@ public class NearbyHeatmapActivity extends AppCompatActivity
      * User-facing feedback is shown here so the user knows whether the action succeeded, failed,
      * or needs attention.
      */
-    private void submitReport(String type, String id, String r) {
+    private void submitReport(String type, String id, String threadId, String sourceContext, String r) {
         FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
         if (user == null) return;
         // Give the user immediate feedback about the result of this action.
-        firebaseManager.addReport(new Report(type, id, user.getUid(), r), t -> {
+        firebaseManager.addReport(new Report(type, id, user.getUid(), r, sourceContext, threadId), t -> {
             if (t.isSuccessful()) Toast.makeText(this, "Reported", Toast.LENGTH_SHORT).show();
         });
     }
@@ -1338,7 +1338,7 @@ public class NearbyHeatmapActivity extends AppCompatActivity
         if (user != null && !c.getUserId().equals(user.getUid())) p.getMenu().add("Report");
         p.setOnMenuItemClickListener(item -> {
             if (item.getTitle().equals("Delete")) showCommentDeleteConfirmation(c);
-            else if (item.getTitle().equals("Report")) showReportDialog("comment", c.getId());
+            else if (item.getTitle().equals("Report")) showReportDialog(c.getParentCommentId() != null ? "reply" : "comment", c.getId(), activePost != null ? activePost.getId() : null);
             return true;
         });
         p.show();

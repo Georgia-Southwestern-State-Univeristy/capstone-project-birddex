@@ -320,6 +320,37 @@ public class ModeratorActivity extends AppCompatActivity {
     }
 
 
+
+    private static void bindContentText(TextView labelView, TextView valueView, String label, Map<String, Object> data, String... keys) {
+        if (labelView == null || valueView == null) return;
+
+        String value = null;
+        if (data != null && keys != null) {
+            for (String key : keys) {
+                Object raw = data.get(key);
+                if (raw instanceof String) {
+                    String cleaned = ((String) raw).trim();
+                    if (!cleaned.isEmpty()) {
+                        value = cleaned;
+                        break;
+                    }
+                }
+            }
+        }
+
+        if (value == null || value.isEmpty()) {
+            labelView.setVisibility(View.GONE);
+            valueView.setVisibility(View.GONE);
+            valueView.setText(null);
+            return;
+        }
+
+        labelView.setText(label);
+        labelView.setVisibility(View.VISIBLE);
+        valueView.setText(value);
+        valueView.setVisibility(View.VISIBLE);
+    }
+
     private static void bindEvidenceImage(ImageView imageView, Map<String, Object> data, String... keys) {
         String url = null;
         if (data != null && keys != null) {
@@ -484,6 +515,27 @@ public class ModeratorActivity extends AppCompatActivity {
         return builder.toString();
     }
 
+    private static String formatTargetTypeLabel(String rawType) {
+        String normalized = getDisplayValueRaw(rawType);
+        if ("reply".equals(normalized)) return "Reply";
+        if ("comment".equals(normalized)) return "Comment";
+        if ("post".equals(normalized)) return "Post";
+        return formatModerationValue(rawType);
+    }
+
+    private static String formatSourceContextLabel(String sourceContext) {
+        String normalized = getDisplayValueRaw(sourceContext);
+        if ("heatmap".equals(normalized)) return "Heatmap";
+        if ("post_detail".equals(normalized)) return "Post detail";
+        if ("forum_feed".equals(normalized)) return "Forum feed";
+        if ("profile".equals(normalized)) return "Profile";
+        return sourceContext == null || sourceContext.trim().isEmpty() ? "" : formatModerationValue(sourceContext);
+    }
+
+    private static String getDisplayValueRaw(String value) {
+        return value == null ? "" : value.trim().toLowerCase(Locale.getDefault());
+    }
+
     private static class ModeratorQueueAdapter extends RecyclerView.Adapter<ModeratorQueueAdapter.ViewHolder> {
         private List<Map<String, Object>> items = new ArrayList<>();
         private final OnReviewClickListener listener;
@@ -527,11 +579,17 @@ public class ModeratorActivity extends AppCompatActivity {
             String reasonText = truncate(getDisplayValue(appeal, "snapshotReasonText", ""), 180);
             String userId = getDisplayValue(appeal, "userId", "Unknown");
             String appealText = truncate(getDisplayValue(appeal, "appealText", "No appeal text provided."), 180);
+            String targetType = formatTargetTypeLabel(getDisplayValue(appeal, "targetType", "content"));
+            String sourceLabel = formatSourceContextLabel(getDisplayValue(appeal, "snapshotSourceContext", ""));
 
             holder.tvType.setText("PENDING APPEAL");
             StringBuilder reasonBuilder = new StringBuilder();
             reasonBuilder.append("User ID: ").append(userId);
             reasonBuilder.append("\nAction: ").append(actionType);
+            reasonBuilder.append("\nTarget: ").append(targetType);
+            if (!sourceLabel.isEmpty()) {
+                reasonBuilder.append("\nSource: ").append(sourceLabel);
+            }
             reasonBuilder.append("\nAppeal: ").append(appealText);
             if (!reasonText.isEmpty()) {
                 reasonBuilder.append("\nOriginal reason: ").append(reasonText);
@@ -541,27 +599,28 @@ public class ModeratorActivity extends AppCompatActivity {
             holder.tvDate.setText("Submitted: " + formatTimestamp(appeal.get("createdAt")));
             holder.btnAppeal.setText("Review Appeal");
             bindEvidenceImage(holder.ivEvidenceImage, appeal, "snapshotEvidenceImageUrl", "evidenceImageUrl");
+            bindContentText(holder.tvContentLabel, holder.tvContentValue, "Flagged user text", appeal, "snapshotEvidenceText", "evidenceText", "targetTextSnapshot", "targetPreview");
         }
 
         private void bindReport(@NonNull ViewHolder holder, Map<String, Object> report) {
-            String targetType = formatModerationValue(getDisplayValue(report, "targetType", "content"));
+            String targetType = formatTargetTypeLabel(getDisplayValue(report, "targetType", "content"));
             String ownerLabel = getDisplayValue(report, "targetOwnerUsername", getDisplayValue(report, "targetOwnerId", "Unknown"));
             String reasonCode = formatModerationValue(getDisplayValue(report, "reasonCode", "other"));
             String reasonText = truncate(getDisplayValue(report, "reasonText", "No report reason provided."), 150);
-            String preview = truncate(getDisplayValue(report, "targetPreview", ""), 150);
             String moderationStatus = formatModerationValue(getDisplayValue(report, "targetModerationStatus", "visible"));
+            String sourceLabel = formatSourceContextLabel(getDisplayValue(report, "sourceContext", ""));
             boolean targetExists = getBooleanValue(report, "targetExists", false);
 
             StringBuilder reasonBuilder = new StringBuilder();
             reasonBuilder.append("Target: ").append(targetType).append(" by ").append(ownerLabel);
-            reasonBuilder.append("\nReason: ").append(reasonText);
-            if (!preview.isEmpty()) {
-                reasonBuilder.append("\nPreview: ").append(preview);
+            reasonBuilder.append("\nReporter category: ").append(reasonCode);
+            if (!sourceLabel.isEmpty()) {
+                reasonBuilder.append("\nReported from: ").append(sourceLabel);
             }
+            reasonBuilder.append("\nReporter note: ").append(reasonText);
 
             StringBuilder statusBuilder = new StringBuilder();
-            statusBuilder.append("Report Code: ").append(reasonCode);
-            statusBuilder.append(" • Status: ").append(moderationStatus);
+            statusBuilder.append("Current content status: ").append(moderationStatus);
             if (!targetExists) {
                 statusBuilder.append(" • Target missing");
             }
@@ -572,6 +631,7 @@ public class ModeratorActivity extends AppCompatActivity {
             holder.tvDate.setText("Reported: " + formatTimestamp(report.get("timestamp")));
             holder.btnAppeal.setText("Review Report");
             bindEvidenceImage(holder.ivEvidenceImage, report, "evidenceImageUrl", "snapshotEvidenceImageUrl");
+            bindContentText(holder.tvContentLabel, holder.tvContentValue, "Reported text", report, "targetTextSnapshot", "targetPreview", "evidenceText", "snapshotEvidenceText");
         }
 
         @Override
@@ -580,7 +640,7 @@ public class ModeratorActivity extends AppCompatActivity {
         }
 
         static class ViewHolder extends RecyclerView.ViewHolder {
-            TextView tvType, tvReason, tvStatus, tvDate;
+            TextView tvType, tvReason, tvStatus, tvDate, tvContentLabel, tvContentValue;
             MaterialButton btnAppeal;
             ImageView ivEvidenceImage;
 
@@ -590,6 +650,8 @@ public class ModeratorActivity extends AppCompatActivity {
                 tvReason = v.findViewById(R.id.tvReason);
                 tvStatus = v.findViewById(R.id.tvStatus);
                 tvDate = v.findViewById(R.id.tvDate);
+                tvContentLabel = v.findViewById(R.id.tvContentLabel);
+                tvContentValue = v.findViewById(R.id.tvContentValue);
                 btnAppeal = v.findViewById(R.id.btnAppeal);
                 ivEvidenceImage = v.findViewById(R.id.ivEvidenceImage);
             }

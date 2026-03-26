@@ -587,7 +587,7 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
     private void submitReport(ForumPost post, String reason) {
         FirebaseUser u = mAuth.getCurrentUser(); if (u == null) return;
         // Give the user immediate feedback about the result of this action.
-        firebaseManager.addReport(new Report("post", post.getId(), u.getUid(), reason), t -> { if (t.isSuccessful()) Toast.makeText(this, "Reported", Toast.LENGTH_SHORT).show(); });
+        firebaseManager.addReport(new Report("post", post.getId(), u.getUid(), reason, "post_detail", post.getId()), t -> { if (t.isSuccessful()) Toast.makeText(this, "Reported", Toast.LENGTH_SHORT).show(); });
     }
 
     /**
@@ -946,7 +946,7 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
     private void submitCommentReport(ForumComment c, String reason) {
         FirebaseUser u = mAuth.getCurrentUser(); if (u == null) return;
         // Give the user immediate feedback about the result of this action.
-        firebaseManager.addReport(new Report("comment", c.getId(), u.getUid(), reason), t -> { if (t.isSuccessful()) Toast.makeText(this, "Reported", Toast.LENGTH_SHORT).show(); });
+        firebaseManager.addReport(new Report(c.getParentCommentId() != null ? "reply" : "comment", c.getId(), u.getUid(), reason, "post_detail", postId), t -> { if (t.isSuccessful()) Toast.makeText(this, "Reported", Toast.LENGTH_SHORT).show(); });
     }
 
     /**

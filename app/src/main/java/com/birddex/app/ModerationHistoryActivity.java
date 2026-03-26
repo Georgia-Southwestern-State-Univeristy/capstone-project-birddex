@@ -222,6 +222,37 @@ public class ModerationHistoryActivity extends AppCompatActivity {
     }
 
 
+
+    private static void bindContentText(TextView labelView, TextView valueView, String label, Map<String, Object> data, String... keys) {
+        if (labelView == null || valueView == null) return;
+
+        String value = null;
+        if (data != null && keys != null) {
+            for (String key : keys) {
+                Object raw = data.get(key);
+                if (raw instanceof String) {
+                    String cleaned = ((String) raw).trim();
+                    if (!cleaned.isEmpty()) {
+                        value = cleaned;
+                        break;
+                    }
+                }
+            }
+        }
+
+        if (value == null || value.isEmpty()) {
+            labelView.setVisibility(View.GONE);
+            valueView.setVisibility(View.GONE);
+            valueView.setText(null);
+            return;
+        }
+
+        labelView.setText(label);
+        labelView.setVisibility(View.VISIBLE);
+        valueView.setText(value);
+        valueView.setVisibility(View.VISIBLE);
+    }
+
     private static void bindEvidenceImage(ImageView imageView, Map<String, Object> data, String... keys) {
         String url = null;
         if (data != null && keys != null) {
@@ -282,6 +313,62 @@ public class ModerationHistoryActivity extends AppCompatActivity {
                 .show();
     }
 
+    private static String formatTargetTypeLabel(String rawType) {
+        if (rawType == null) return "Content";
+        String normalized = rawType.trim().toLowerCase(Locale.getDefault());
+        if ("reply".equals(normalized)) return "Reply";
+        if ("comment".equals(normalized)) return "Comment";
+        if ("post".equals(normalized)) return "Post";
+        return rawType.replace("_", " ");
+    }
+
+    private static String formatSourceContextLabel(String sourceContext) {
+        if (sourceContext == null) return "";
+        String normalized = sourceContext.trim().toLowerCase(Locale.getDefault());
+        if (normalized.isEmpty()) return "";
+        if ("heatmap".equals(normalized)) return "Heatmap";
+        if ("post_detail".equals(normalized)) return "Post detail";
+        if ("forum_feed".equals(normalized)) return "Forum feed";
+        if ("profile".equals(normalized)) return "Profile";
+        return sourceContext.replace("_", " ");
+    }
+
+    private static String getTrimmedString(Map<String, Object> data, String... keys) {
+        if (data == null || keys == null) return "";
+        for (String key : keys) {
+            Object value = data.get(key);
+            if (value instanceof String) {
+                String trimmed = ((String) value).trim();
+                if (!trimmed.isEmpty()) {
+                    return trimmed;
+                }
+            }
+        }
+        return "";
+    }
+
+    private static String formatModerationSourceLabel(String rawSource) {
+        String source = rawSource != null ? rawSource.trim() : "";
+        if (source.isEmpty()) return "";
+
+        int tagStart = source.lastIndexOf(" (");
+        String base = tagStart > 0 && source.endsWith(")")
+                ? source.substring(0, tagStart)
+                : source;
+
+        return base.replace("_", " ");
+    }
+
+    private static String extractModeratorIdentity(String rawSource) {
+        String source = rawSource != null ? rawSource.trim() : "";
+        if (source.isEmpty() || !source.endsWith(")")) return "";
+
+        int tagStart = source.lastIndexOf(" (");
+        if (tagStart < 0 || tagStart + 2 >= source.length() - 1) return "";
+
+        return source.substring(tagStart + 2, source.length() - 1).trim();
+    }
+
     // --- Inner Adapter Class for Events ---
     private static class ModerationAdapter extends RecyclerView.Adapter<ModerationAdapter.ViewHolder> {
         private List<Map<String, Object>> events = new ArrayList<>();
@@ -312,6 +399,17 @@ public class ModerationHistoryActivity extends AppCompatActivity {
             holder.tvType.setText(actionType != null ? actionType.replace("_", " ").toUpperCase() : "UNKNOWN");
 
             StringBuilder reasonDetails = new StringBuilder("Reason: ").append(event.get("reasonCode"));
+            String targetType = formatTargetTypeLabel(String.valueOf(event.get("targetType") != null ? event.get("targetType") : "content"));
+            Object metadataObj = event.get("metadata");
+            String sourceLabel = "";
+            if (metadataObj instanceof Map) {
+                Object rawSource = ((Map<?, ?>) metadataObj).get("sourceContext");
+                sourceLabel = formatSourceContextLabel(rawSource != null ? String.valueOf(rawSource) : null);
+            }
+            reasonDetails.append("\nTarget: ").append(targetType);
+            if (!sourceLabel.isEmpty()) {
+                reasonDetails.append("\nSource: ").append(sourceLabel);
+            }
             Object expiresAt = event.get("expiresAt");
             if (expiresAt != null) {
                 reasonDetails.append("\nExpires: ").append(formatTimestamp(expiresAt));
@@ -323,6 +421,7 @@ public class ModerationHistoryActivity extends AppCompatActivity {
 
             holder.tvDate.setText("Created: " + formatTimestamp(event.get("createdAt")));
             bindEvidenceImage(holder.ivEvidenceImage, event, "evidenceImageUrl", "snapshotEvidenceImageUrl");
+            bindContentText(holder.tvContentLabel, holder.tvContentValue, "Your text", event, "evidenceText", "snapshotEvidenceText", "targetTextSnapshot", "targetPreview");
 
             Object id = event.get("id");
             if (id == null) id = event.get("eventId");
@@ -350,7 +449,7 @@ public class ModerationHistoryActivity extends AppCompatActivity {
         public int getItemCount() { return events.size(); }
 
         static class ViewHolder extends RecyclerView.ViewHolder {
-            TextView tvType, tvReason, tvStatus, tvDate;
+            TextView tvType, tvReason, tvStatus, tvDate, tvContentLabel, tvContentValue;
             MaterialButton btnAppeal;
             ImageView ivEvidenceImage;
             ViewHolder(View v) {
@@ -359,6 +458,8 @@ public class ModerationHistoryActivity extends AppCompatActivity {
                 tvReason = v.findViewById(R.id.tvReason);
                 tvStatus = v.findViewById(R.id.tvStatus);
                 tvDate = v.findViewById(R.id.tvDate);
+                tvContentLabel = v.findViewById(R.id.tvContentLabel);
+                tvContentValue = v.findViewById(R.id.tvContentValue);
                 btnAppeal = v.findViewById(R.id.btnAppeal);
                 ivEvidenceImage = v.findViewById(R.id.ivEvidenceImage);
             }
@@ -387,6 +488,18 @@ public class ModerationHistoryActivity extends AppCompatActivity {
             String actionType = String.valueOf(appeal.get("snapshotActionType") != null
                     ? appeal.get("snapshotActionType")
                     : "appeal");
+            String targetType = formatTargetTypeLabel(String.valueOf(appeal.get("targetType") != null
+                    ? appeal.get("targetType")
+                    : "content"));
+            String sourceLabel = formatSourceContextLabel(String.valueOf(appeal.get("snapshotSourceContext") != null
+                    ? appeal.get("snapshotSourceContext")
+                    : ""));
+            String moderationSourceRaw = getTrimmedString(appeal, "snapshotSource", "source");
+            String moderationSourceLabel = formatModerationSourceLabel(moderationSourceRaw);
+            String moderatorIdentity = extractModeratorIdentity(moderationSourceRaw);
+            if (moderatorIdentity.isEmpty()) {
+                moderatorIdentity = getTrimmedString(appeal, "reviewedBy", "createdBy");
+            }
             String reasonCode = String.valueOf(appeal.get("snapshotReasonCode") != null
                     ? appeal.get("snapshotReasonCode")
                     : "unknown");
@@ -398,6 +511,10 @@ public class ModerationHistoryActivity extends AppCompatActivity {
             StringBuilder reasonBuilder = new StringBuilder();
             reasonBuilder.append("Decision: ").append(actionType.replace("_", " ").toUpperCase(Locale.getDefault()));
             reasonBuilder.append("\nCode: ").append(reasonCode.replace("_", " "));
+            reasonBuilder.append("\nTarget: ").append(targetType);
+            if (!sourceLabel.isEmpty()) {
+                reasonBuilder.append("\nSource: ").append(sourceLabel);
+            }
             reasonBuilder.append("\nAppeal: ").append(String.valueOf(appeal.get("appealText")));
             if (!reasonText.isEmpty()) {
                 reasonBuilder.append("\nOriginal reason: ").append(reasonText);
@@ -410,6 +527,7 @@ public class ModerationHistoryActivity extends AppCompatActivity {
 
             holder.btnAppeal.setVisibility(View.GONE);
             bindEvidenceImage(holder.ivEvidenceImage, appeal, "snapshotEvidenceImageUrl", "evidenceImageUrl");
+            bindContentText(holder.tvContentLabel, holder.tvContentValue, "Your text", appeal, "snapshotEvidenceText", "evidenceText", "targetTextSnapshot", "targetPreview");
 
             if ("denied".equals(status) && appeal.containsKey("decisionNote")) {
                 holder.tvStatus.setText(holder.tvStatus.getText() + "\nNote: " + appeal.get("decisionNote"));
@@ -422,7 +540,7 @@ public class ModerationHistoryActivity extends AppCompatActivity {
         public int getItemCount() { return appeals.size(); }
 
         static class ViewHolder extends RecyclerView.ViewHolder {
-            TextView tvType, tvReason, tvStatus, tvDate;
+            TextView tvType, tvReason, tvStatus, tvDate, tvContentLabel, tvContentValue;
             MaterialButton btnAppeal;
             ImageView ivEvidenceImage;
             ViewHolder(View v) {
@@ -431,6 +549,8 @@ public class ModerationHistoryActivity extends AppCompatActivity {
                 tvReason = v.findViewById(R.id.tvReason);
                 tvStatus = v.findViewById(R.id.tvStatus);
                 tvDate = v.findViewById(R.id.tvDate);
+                tvContentLabel = v.findViewById(R.id.tvContentLabel);
+                tvContentValue = v.findViewById(R.id.tvContentValue);
                 btnAppeal = v.findViewById(R.id.btnAppeal);
                 ivEvidenceImage = v.findViewById(R.id.ivEvidenceImage);
             }

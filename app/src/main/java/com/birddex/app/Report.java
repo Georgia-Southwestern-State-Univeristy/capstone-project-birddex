@@ -11,10 +11,12 @@ import com.google.firebase.firestore.ServerTimestamp;
  */
 public class Report {
     private String id;
-    private String targetType; // "post", "comment", or "user"
+    private String targetType; // "post", "comment", "reply", or "user"
     private String targetId;   // ID of the post, comment, or user being reported
     private String reporterId;
     private String reason;
+    private String sourceContext; // "heatmap", "post_detail", etc.
+    private String threadId;
     @ServerTimestamp
     private Timestamp timestamp;
 
@@ -31,10 +33,20 @@ public class Report {
      * state.
      */
     public Report(String targetType, String targetId, String reporterId, String reason) {
+        this(targetType, targetId, reporterId, reason, null);
+    }
+
+    public Report(String targetType, String targetId, String reporterId, String reason, String sourceContext) {
+        this(targetType, targetId, reporterId, reason, sourceContext, null);
+    }
+
+    public Report(String targetType, String targetId, String reporterId, String reason, String sourceContext, String threadId) {
         this.targetType = targetType;
         this.targetId = targetId;
         this.reporterId = reporterId;
         this.reason = reason;
+        this.sourceContext = sourceContext;
+        this.threadId = threadId;
     }
 
     // Getters and Setters
@@ -48,6 +60,10 @@ public class Report {
     public void setReporterId(String reporterId) { this.reporterId = reporterId; }
     public String getReason() { return reason; }
     public void setReason(String reason) { this.reason = reason; }
+    public String getSourceContext() { return sourceContext; }
+    public void setSourceContext(String sourceContext) { this.sourceContext = sourceContext; }
+    public String getThreadId() { return threadId; }
+    public void setThreadId(String threadId) { this.threadId = threadId; }
     public Timestamp getTimestamp() { return timestamp; }
     public void setTimestamp(Timestamp timestamp) { this.timestamp = timestamp; }
 }

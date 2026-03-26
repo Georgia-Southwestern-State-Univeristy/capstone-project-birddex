@@ -221,7 +221,7 @@ const SERVER_BIRD_WHITELIST = [
 const EMAIL_PATTERN = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,6}/;
 const PHONE_PATTERN = /\b(\+?\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b/;
 const URL_PATTERN = /https?:\/\/\S+\s?/i;
-const LONG_CHAR_SPAM_PATTERN = /(.)\1{11,}/s;
+const SPAM_REPETITION_PATTERN = /(.)\1{4,}/;
 const CREDIT_CARD_PATTERN = /\b(?:\d[ -]*?){13,16}\b/;
 const ZALGO_PATTERN = /[\u0300-\u036F\u1DC0-\u1DFF\u20D0-\u20FF\uFE20-\uFE2F]{3,}/;
 
@@ -263,34 +263,23 @@ function checkBlockedWordWithBypass(input, word) {
     return new RegExp(regexString, "i").test(input);
 }
 
+function buildModeratorTaggedSource(baseSource, moderatorMeta = {}) {
+    const base = sanitizeText(baseSource || "", 120).trim() || "moderator_action";
+
+    const email = sanitizeText(moderatorMeta.email || "", 200).trim();
+    const username = sanitizeText(
+        moderatorMeta.username || moderatorMeta.displayName || "",
+        120
+    ).trim();
+    const uid = sanitizeText(moderatorMeta.uid || "", 200).trim();
+
+    const who = email || username || uid;
+    return who ? `${base} (${who})` : base;
+}
+
 function isBirdWhitelistMatch(rawInput, blockedWord) {
     const input = String(rawInput || "").toLowerCase();
     return SERVER_BIRD_WHITELIST.some((white) => input.includes(white) && white.includes(blockedWord));
-}
-
-function isExcessiveCharacterSpam(text) {
-    const raw = String(text || "");
-    const compact = raw.replace(/\s+/g, "");
-    if (!compact) return false;
-
-    // Allow normal stretched words like "heyyyyyyy" or "nooooooo",
-    // but still block obvious floods such as "aaaaaaaaaaaa" or "!!!!!!!!!!!!".
-    if (LONG_CHAR_SPAM_PATTERN.test(raw)) return true;
-
-    if (compact.length >= 18) {
-        const counts = new Map();
-        let maxCount = 0;
-        for (const ch of compact.toLowerCase()) {
-            const next = (counts.get(ch) || 0) + 1;
-            counts.set(ch, next);
-            if (next > maxCount) maxCount = next;
-        }
-        if (maxCount >= 12 && (maxCount / compact.length) >= 0.75) {
-            return true;
-        }
-    }
-
-    return false;
 }
 
 function getBlockedContentReason(text) {
@@ -307,7 +296,7 @@ function getBlockedContentReason(text) {
     if (EMAIL_PATTERN.test(String(text))) return "an email address";
     if (PHONE_PATTERN.test(String(text))) return "a phone number";
     if (URL_PATTERN.test(String(text))) return "external links";
-    if (isExcessiveCharacterSpam(String(text))) return "excessive character repetition";
+    if (SPAM_REPETITION_PATTERN.test(String(text))) return "excessive character repetition";
 
     const normalized = normalizeContentFilterText(lower);
     for (const word of SERVER_NSFW_WORDS) {
@@ -3098,14 +3087,20 @@ exports.submitReport = onCall(async (request) => {
     const targetId = sanitizeText(data.targetId || "", 200).trim();
     const targetType = sanitizeText(data.targetType || "", 50).trim();
     const rawReason = typeof data.reason === "string" ? data.reason : "";
+    const sourceContext = normalizeReportSourceContext(data.sourceContext || "");
+    const threadId = sanitizeText(data.threadId || "", 200).trim();
 
     if (!targetId || !targetType || !rawReason.trim()) {
         throw new HttpsError("invalid-argument", "targetId, targetType, and reason are required.");
     }
 
+    if ((targetType === "comment" || targetType === "reply") && !threadId) {
+        throw new HttpsError("invalid-argument", "threadId is required for comment and reply reports.");
+    }
+
     const reasonCode = normalizeReportReason(rawReason);
     const reasonText = sanitizeText(rawReason, 500);
-    const target = await resolveModerationTargetOrThrow(targetType, targetId);
+    const target = await resolveModerationTargetOrThrow(targetType, targetId, threadId);
 
     if (!target.ownerUserId) {
         throw new HttpsError("failed-precondition", "The target owner could not be determined.");
@@ -3156,6 +3151,7 @@ exports.submitReport = onCall(async (request) => {
             const nextUniqueReporterCount = currentUniqueReporterCount + 1;
             const currentStatus = normalizeModerationStatus(freshTargetData.moderationStatus);
             const nowTimestamp = admin.firestore.FieldValue.serverTimestamp();
+            const targetTextSnapshot = extractModerationTargetText(freshTargetData) || extractModerationTargetText(target.data) || null;
 
             const targetUpdates = {
                 reportCount: currentReportCount + 1,
@@ -3194,13 +3190,15 @@ exports.submitReport = onCall(async (request) => {
                 reportId,
                 reporterId,
                 targetId: target.targetId,
-                targetType: target.canonicalType,
-                threadId: target.threadId || null,
+                targetType: target.rawType || target.canonicalType,
+                threadId: target.threadId || threadId || null,
                 targetOwnerId: target.ownerUserId,
+                sourceContext: sourceContext || null,
                 reasonCode,
                 reasonText,
                 timestamp: nowTimestamp,
                 status: "pending",
+                targetTextSnapshot,
             });
 
             t.set(target.ref, targetUpdates, { merge: true });
@@ -3212,7 +3210,7 @@ exports.submitReport = onCall(async (request) => {
                 t.set(contentEventRef, buildModerationEventPayload({
                     eventId: contentEventRef.id,
                     userId: target.ownerUserId,
-                    targetType: target.canonicalType,
+                    targetType: target.rawType || target.canonicalType,
                     targetId: target.targetId,
                     actionType: "hide_content",
                     reasonCode: "reported_content",
@@ -3221,7 +3219,10 @@ exports.submitReport = onCall(async (request) => {
                     appealable: true,
                     metadata: {
                         uniqueReporterCount: nextUniqueReporterCount,
+                        sourceContext: sourceContext || null,
+                        threadId: target.threadId || threadId || null,
                     },
+                    evidenceText: targetTextSnapshot,
                 }));
 
                 penaltySummary = await applyAutomaticPenaltyForUser({
@@ -3232,8 +3233,9 @@ exports.submitReport = onCall(async (request) => {
                     source: "report_threshold",
                     reasonCode: "reported_content",
                     reasonText: "Repeated unique reports caused content to be hidden automatically.",
-                    targetType: target.canonicalType,
+                    targetType: target.rawType || target.canonicalType,
                     targetId: target.targetId,
+                    evidenceText: targetTextSnapshot,
                 });
             }
 
@@ -3251,10 +3253,21 @@ exports.submitReport = onCall(async (request) => {
             penaltyType: result.penaltySummary?.penaltyType || null,
         };
     } catch (error) {
-        if (error instanceof HttpsError) throw error;
-        logger.error("submitReport transaction failed:", error);
-        throw new HttpsError("internal", "Failed to submit report.");
-    }
+    logger.error("submitReport transaction failed:", {
+        message: error?.message || null,
+        code: error?.code || null,
+        stack: error?.stack || null,
+        targetId,
+        targetType,
+        reporterId,
+    });
+
+    if (error instanceof HttpsError) throw error;
+
+    throw new HttpsError(
+        "internal",
+        error?.message || "Failed to submit report.");
+}
 });
 
 // ======================================================
@@ -3356,6 +3369,9 @@ exports.submitModerationAppeal = onCall(async (request) => {
                 snapshotReasonCode: eventData.reasonCode || null,
                 snapshotReasonText: eventData.reasonText || null,
                 snapshotEvidenceImageUrl: eventData.evidenceImageUrl || null,
+                snapshotEvidenceText: eventData.evidenceText || null,
+                snapshotSourceContext: normalizeReportSourceContext((eventData.metadata && eventData.metadata.sourceContext) || "") || null,
+                snapshotThreadId: sanitizeText((eventData.metadata && eventData.metadata.threadId) || "", 200).trim() || null,
             });
         });
 
@@ -3409,6 +3425,15 @@ exports.getPendingModerationAppeals = onCall(async (request) => {
                 : (typeof linkedEventData.evidenceImageUrl === "string" && linkedEventData.evidenceImageUrl.trim()
                     ? linkedEventData.evidenceImageUrl.trim()
                     : null),
+            snapshotEvidenceText: sanitizeText(
+                data.snapshotEvidenceText || linkedEventData.evidenceText || "",
+                1000
+            ) || null,
+            snapshotSourceContext: normalizeReportSourceContext(
+                data.snapshotSourceContext
+                    || (linkedEventData.metadata && linkedEventData.metadata.sourceContext)
+                    || ""
+            ) || null,
         };
     }));
     appeals.sort((a, b) => (timestampToMillis(b.createdAt) || 0) - (timestampToMillis(a.createdAt) || 0));
@@ -3435,21 +3460,28 @@ exports.getPendingModerationReports = onCall(async (request) => {
         const data = doc.data() || {};
 
         let targetExists = false;
-        let targetPreview = null;
+        let targetPreview = sanitizeText(data.targetTextSnapshot || "", 1000).trim() || null;
         let targetModerationStatus = null;
         let currentUniqueReporterCount = null;
         let currentReportCount = null;
         let resolvedThreadId = sanitizeText(data.threadId || "", 200).trim() || null;
         let resolvedTargetOwnerId = sanitizeText(data.targetOwnerId || "", 200).trim() || null;
+        let resolvedTargetType = sanitizeText(data.targetType || "", 50).trim().toLowerCase() || null;
+        let resolvedSourceContext = normalizeReportSourceContext(data.sourceContext || "") || null;
 
         try {
-            const target = await resolveModerationTargetOrThrow(data.targetType || "", data.targetId || "");
+            const target = await resolveModerationTargetOrThrow(
+                data.targetType || "",
+                data.targetId || "",
+                data.threadId || ""
+            );
             const targetData = target.data || {};
 
             targetExists = true;
             resolvedThreadId = resolvedThreadId || target.threadId || null;
             resolvedTargetOwnerId = resolvedTargetOwnerId || target.ownerUserId || null;
-            targetPreview = sanitizeText(targetData.message || targetData.text || "", 240) || null;
+            resolvedTargetType = target.rawType || target.canonicalType || resolvedTargetType;
+            targetPreview = sanitizeText(targetPreview || extractModerationTargetText(targetData) || "", 1000) || null;
             targetModerationStatus = normalizeModerationStatus(targetData.moderationStatus);
             currentUniqueReporterCount = typeof targetData.uniqueReporterCount === "number"
                 ? targetData.uniqueReporterCount
@@ -3492,6 +3524,8 @@ exports.getPendingModerationReports = onCall(async (request) => {
         return {
             id: doc.id,
             ...data,
+            targetType: resolvedTargetType || data.targetType || null,
+            sourceContext: resolvedSourceContext,
             threadId: resolvedThreadId,
             targetOwnerId: resolvedTargetOwnerId,
             targetOwnerUsername,
@@ -3501,6 +3535,7 @@ exports.getPendingModerationReports = onCall(async (request) => {
             currentUniqueReporterCount,
             currentReportCount,
             evidenceImageUrl,
+            targetTextSnapshot: targetPreview,
         };
     }));
 
@@ -3516,7 +3551,7 @@ exports.getPendingModerationReports = onCall(async (request) => {
 // reviewModerationAppeal — moderator approval/denial with reversal handling
 // ======================================================
 exports.reviewModerationAppeal = onCall(async (request) => {
-    const { reviewedBy } = getModerationReviewerIdentityOrThrow(request);
+    const { reviewedBy, moderatorSourceMeta } = getModerationReviewerIdentityOrThrow(request);
 
     const data = request.data || {};
     const appealId = sanitizeText(data.appealId || "", 300).trim();
@@ -3568,7 +3603,10 @@ exports.reviewModerationAppeal = onCall(async (request) => {
                 resolveModerationTargetForTransaction(
                     t,
                     appealData.targetType || eventData.targetType || "user",
-                    appealData.targetId || eventData.targetId || null
+                    appealData.targetId || eventData.targetId || null,
+                    appealData.snapshotThreadId
+                        || (eventData.metadata && eventData.metadata.threadId)
+                        || null
                 ),
             ]);
 
@@ -3649,7 +3687,7 @@ exports.reviewModerationAppeal = onCall(async (request) => {
                 t.set(target.ref, {
                     ...buildContentModerationUpdate(
                         MODERATION_STATUS_VISIBLE,
-                        "appeal_approved",
+                        buildModeratorTaggedSource("appeal_approved", moderatorSourceMeta),
                         decisionNote || "Appeal approved.",
                         admin.firestore.FieldValue.serverTimestamp()
                     ),
@@ -3674,7 +3712,7 @@ exports.reviewModerationAppeal = onCall(async (request) => {
 // reviewPendingReport — moderator review path for pending user reports
 // ======================================================
 exports.reviewPendingReport = onCall(async (request) => {
-    const { reviewedBy } = getModerationReviewerIdentityOrThrow(request);
+    const { reviewedBy, moderatorSourceMeta } = getModerationReviewerIdentityOrThrow(request);
 
     const data = request.data || {};
     const reportId = sanitizeText(data.reportId || "", 300).trim();
@@ -3714,7 +3752,12 @@ exports.reviewPendingReport = onCall(async (request) => {
             let target = null;
 
             if (contentAction !== "keep" || !sanitizeText(reportData.targetOwnerId || "", 200).trim()) {
-                target = await resolveModerationTargetForTransaction(t, targetType, targetId);
+                target = await resolveModerationTargetForTransaction(
+                    t,
+                    targetType,
+                    targetId,
+                    sanitizeText(reportData.threadId || "", 200).trim() || null
+                );
             }
 
             if (contentAction !== "keep" && !target) {
@@ -3747,10 +3790,17 @@ exports.reviewPendingReport = onCall(async (request) => {
             const nowTimestamp = admin.firestore.FieldValue.serverTimestamp();
             const reportReasonCode = sanitizeText(reportData.reasonCode || "reported_content", 100).trim() || "reported_content";
             const reportReasonText = sanitizeText(reportData.reasonText || "Content was reported.", 250).trim() || "Content was reported.";
+            const reportTargetText = sanitizeText(
+                reportData.targetTextSnapshot
+                    || extractModerationTargetText(target && target.snap ? (target.snap.data() || {}) : null)
+                    || "",
+                1000
+            ).trim() || null;
             const moderatorReasonText = decisionNote || `Moderator reviewed a pending report: ${reportReasonText}`;
-            const normalizedTargetType = target && target.canonicalType
-                ? target.canonicalType
+            const normalizedTargetType = target && (target.rawType || target.canonicalType)
+                ? (target.rawType || target.canonicalType)
                 : (targetType || "user");
+            const reportSourceContext = normalizeReportSourceContext(reportData.sourceContext || "") || null;
 
             if (userAction !== "none") {
                 const moderationDefaults = buildUserModerationDefaults(userData);
@@ -3793,7 +3843,7 @@ exports.reviewPendingReport = onCall(async (request) => {
                     actionType,
                     reasonCode: reportReasonCode,
                     reasonText: moderatorReasonText,
-                    source: "moderator_report_review",
+                    source: buildModeratorTaggedSource("moderator_report_review", moderatorSourceMeta),
                     createdBy: reviewedBy,
                     appealable: true,
                     expiresAt,
@@ -3801,7 +3851,10 @@ exports.reviewPendingReport = onCall(async (request) => {
                         reportId,
                         reviewUserAction: userAction,
                         reviewContentAction: contentAction,
+                        sourceContext: reportSourceContext,
+                        threadId: sanitizeText(reportData.threadId || "", 200).trim() || null,
                     },
+                    evidenceText: reportTargetText,
                 }));
                 t.set(userRef, userUpdate, { merge: true });
                 createdModerationEventIds.push(userEventRef.id);
@@ -3816,25 +3869,28 @@ exports.reviewPendingReport = onCall(async (request) => {
                 t.set(contentEventRef, buildModerationEventPayload({
                     eventId: contentEventRef.id,
                     userId: affectedUserId || sanitizeText((target.snap.data() || {}).userId || "", 200).trim() || null,
-                    targetType: target.canonicalType,
+                    targetType: target.rawType || target.canonicalType,
                     targetId: targetId || null,
                     actionType: contentAction,
                     reasonCode: reportReasonCode,
                     reasonText: moderatorReasonText,
-                    source: "moderator_report_review",
+                    source: buildModeratorTaggedSource("moderator_report_review", moderatorSourceMeta),
                     createdBy: reviewedBy,
                     appealable: true,
                     metadata: {
                         reportId,
                         reviewUserAction: userAction,
                         reviewContentAction: contentAction,
+                        sourceContext: reportSourceContext,
+                        threadId: sanitizeText(reportData.threadId || "", 200).trim() || null,
                     },
+                    evidenceText: reportTargetText,
                 }));
 
                 t.set(target.ref, {
                     ...buildContentModerationUpdate(
                         moderationStatus,
-                        "moderator_report_review",
+                        buildModeratorTaggedSource("moderator_report_review", moderatorSourceMeta),
                         moderatorReasonText,
                         nowTimestamp
                     ),
@@ -4582,9 +4638,24 @@ function normalizeReportReason(reason) {
     return "other";
 }
 
-async function resolveModerationTargetOrThrow(targetType, targetId) {
+function extractModerationTargetText(data, maxLength = 1000) {
+    if (!data || typeof data !== "object") return null;
+
+    const candidates = [data.message, data.text, data.content];
+    for (const candidate of candidates) {
+        if (typeof candidate === "string") {
+            const cleaned = sanitizeText(candidate, maxLength).trim();
+            if (cleaned) return cleaned;
+        }
+    }
+
+    return null;
+}
+
+async function resolveModerationTargetOrThrow(targetType, targetId, threadId = null) {
     const normalizedType = sanitizeText(targetType || "", 50).trim().toLowerCase();
     const normalizedTargetId = sanitizeText(targetId || "", 200).trim();
+    const normalizedThreadId = sanitizeText(threadId || "", 200).trim();
 
     if (!normalizedTargetId) {
         throw new HttpsError("invalid-argument", "targetId is required.");
@@ -4598,6 +4669,7 @@ async function resolveModerationTargetOrThrow(targetType, targetId) {
         }
         return {
             canonicalType: "post",
+            rawType: "post",
             ref,
             snap,
             data: snap.data() || {},
@@ -4608,27 +4680,28 @@ async function resolveModerationTargetOrThrow(targetType, targetId) {
     }
 
     if (normalizedType === "comment" || normalizedType === "reply") {
-        const querySnap = await db.collectionGroup("comments")
-            .where(admin.firestore.FieldPath.documentId(), "==", normalizedTargetId)
-            .limit(1)
-            .get();
+        if (!normalizedThreadId) {
+            throw new HttpsError("invalid-argument", "threadId is required for comment and reply reports.");
+        }
 
-        if (querySnap.empty) {
+        const ref = db.collection("forumThreads").doc(normalizedThreadId).collection("comments").doc(normalizedTargetId);
+        const snap = await ref.get();
+
+        if (!snap.exists) {
             throw new HttpsError("not-found", "Comment not found.");
         }
 
-        const snap = querySnap.docs[0];
-        const ref = snap.ref;
-        const threadId = ref.parent && ref.parent.parent ? ref.parent.parent.id : null;
         const data = snap.data() || {};
+        const rawType = data.parentCommentId ? "reply" : "comment";
 
         return {
             canonicalType: "comment",
+            rawType,
             ref,
             snap,
             data,
             targetId: snap.id,
-            threadId,
+            threadId: normalizedThreadId,
             ownerUserId: sanitizeText(data.userId || "", 200).trim() || null,
         };
     }
@@ -4658,6 +4731,7 @@ function buildModerationEventPayload({
     expiresAt = null,
     metadata = {},
     evidenceImageUrl = null,
+    evidenceText = null,
 }) {
     return {
         eventId,
@@ -4678,6 +4752,7 @@ function buildModerationEventPayload({
         reversalReason: null,
         metadata: metadata || {},
         evidenceImageUrl: evidenceImageUrl || null,
+        evidenceText: sanitizeText(evidenceText || "", 1000) || null,
     };
 }
 
@@ -4719,9 +4794,17 @@ function getModerationReviewerIdentityOrThrow(request) {
         throw new HttpsError("permission-denied", "Moderator access required.");
     }
 
+    const reviewerId = request.auth.uid;
+    const reviewedBy = sanitizeText(token.email || request.auth.uid || "moderator", 200);
+
     return {
-        reviewerId: request.auth.uid,
-        reviewedBy: sanitizeText(token.email || request.auth.uid || "moderator", 200),
+        reviewerId,
+        reviewedBy,
+        moderatorSourceMeta: {
+            uid: reviewerId,
+            email: sanitizeText(token.email || "", 200),
+            username: sanitizeText(token.name || token.displayName || "", 120),
+        },
     };
 }
 
@@ -4736,31 +4819,48 @@ function isModerationEventCurrentlyActive(eventData, nowMs = Date.now()) {
     return true;
 }
 
-async function resolveModerationTargetForTransaction(transaction, targetType, targetId) {
+async function resolveModerationTargetForTransaction(transaction, targetType, targetId, threadId = null) {
     const normalizedType = sanitizeText(targetType || "", 50).trim().toLowerCase();
     const normalizedTargetId = sanitizeText(targetId || "", 200).trim();
+    const normalizedThreadId = sanitizeText(threadId || "", 200).trim();
     if (!normalizedTargetId) return null;
 
     if (normalizedType === "post") {
         const ref = db.collection("forumThreads").doc(normalizedTargetId);
         const snap = await transaction.get(ref);
-        return snap.exists ? { ref, snap, canonicalType: "post" } : null;
+        return snap.exists ? { ref, snap, canonicalType: "post", rawType: "post", threadId: snap.id } : null;
     }
 
     if (normalizedType === "comment" || normalizedType === "reply") {
-        const querySnap = await transaction.get(
-            db.collectionGroup("comments")
-                .where(admin.firestore.FieldPath.documentId(), "==", normalizedTargetId)
-                .limit(1)
-        );
+        if (!normalizedThreadId) return null;
 
-        if (querySnap.empty) return null;
+        const ref = db.collection("forumThreads").doc(normalizedThreadId).collection("comments").doc(normalizedTargetId);
+        const snap = await transaction.get(ref);
+        if (!snap.exists) return null;
 
-        const snap = querySnap.docs[0];
-        return { ref: snap.ref, snap, canonicalType: "comment" };
+        const data = snap.data() || {};
+        return {
+            ref,
+            snap,
+            canonicalType: "comment",
+            rawType: data.parentCommentId ? "reply" : "comment",
+            threadId: normalizedThreadId,
+        };
     }
 
     return null;
+}
+
+function normalizeReportSourceContext(value) {
+    const normalized = sanitizeText(value || "", 80).trim().toLowerCase();
+    if (!normalized) return null;
+
+    if (normalized === "heatmap" || normalized === "nearby_heatmap") return "heatmap";
+    if (normalized === "post_detail" || normalized === "postdetail" || normalized === "post-detail") return "post_detail";
+    if (normalized === "forum_feed" || normalized === "forum" || normalized === "forum_fragment") return "forum_feed";
+    if (normalized === "profile" || normalized === "user_profile" || normalized === "profile_posts") return "profile";
+
+    return normalized;
 }
 
 function buildVisionAccessTokenProjectId() {
@@ -4918,6 +5018,7 @@ async function applyAutomaticPenaltyForUser({
     reasonText,
     targetType,
     targetId,
+    evidenceText = null,
 }) {
     const defaults = buildUserModerationDefaults(userData);
     const currentWarnings = defaults.warningCount;
@@ -4937,6 +5038,7 @@ async function applyAutomaticPenaltyForUser({
             source,
             appealable: false,
             expiresAt: admin.firestore.Timestamp.fromMillis(now + MODERATION_WARNING_EXPIRY_MS),
+            evidenceText,
         }));
         transaction.set(userRef, {
             warningCount: currentWarnings + 1,
@@ -4965,6 +5067,7 @@ async function applyAutomaticPenaltyForUser({
         source,
         appealable: true,
         expiresAt: admin.firestore.Timestamp.fromMillis(now + MODERATION_STRIKE_EXPIRY_MS),
+        evidenceText,
     }));
 
     const userUpdates = {
@@ -5017,6 +5120,7 @@ async function applyAutomaticPenaltyForUser({
             source,
             appealable: true,
             expiresAt: appliedRestriction.expiresAt,
+            evidenceText,
         }));
         linkedModerationEventIds.push(restrictionEventRef.id);
     }
@@ -5287,6 +5391,7 @@ exports.createForumPost = onCall(async (request) => {
                 reasonText: `Forum image upload was blocked by SafeSearch. ${imageModeration.reasonText}`,
                 targetType: "post",
                 targetId: postId,
+                evidenceText: message,
             });
 
             const contentEventRef = createModerationEventRef();
@@ -5308,6 +5413,7 @@ exports.createForumPost = onCall(async (request) => {
                         ? penaltySummary.linkedModerationEventIds
                         : [],
                 },
+                evidenceText: message,
             }));
         });
 
@@ -5415,56 +5521,62 @@ exports.createForumComment = onCall(async (request) => {
 
     try {
         await db.runTransaction(async (t) => {
-            const [threadSnap, existingCommentSnap] = await Promise.all([
-                t.get(threadRef),
-                t.get(commentRef),
-            ]);
+    const [threadSnap, existingCommentSnap] = await Promise.all([
+        t.get(threadRef),
+        t.get(commentRef),
+    ]);
 
-            if (!threadSnap.exists) {
-                throw new HttpsError("not-found", "Post not found.");
-            }
-            if (!isPublicForumStatus((threadSnap.data() || {}).moderationStatus)) {
-                throw new HttpsError("failed-precondition", "That post is no longer available for comments.");
-            }
-            if (existingCommentSnap.exists) {
-                throw new HttpsError("already-exists", "That comment already exists.");
-            }
+    if (!threadSnap.exists) {
+        throw new HttpsError("not-found", "Post not found.");
+    }
+    if (!isPublicForumStatus((threadSnap.data() || {}).moderationStatus)) {
+        throw new HttpsError("failed-precondition", "That post is no longer available for comments.");
+    }
+    if (existingCommentSnap.exists) {
+        throw new HttpsError("already-exists", "That comment already exists.");
+    }
 
-            await assertAndConsumeForumSubmissionCooldown(t, userId, parentCommentId ? "reply" : "comment");
+    let normalizedParentCommentId = null;
+    let parentUsername = null;
 
-            let normalizedParentCommentId = null;
-            let parentUsername = null;
+    if (parentCommentId) {
+        const parentRef = threadRef.collection("comments").doc(parentCommentId);
+        const parentSnap = await t.get(parentRef);
 
-            if (parentCommentId) {
-                const parentRef = threadRef.collection("comments").doc(parentCommentId);
-                const parentSnap = await t.get(parentRef);
-                if (!parentSnap.exists) {
-                    throw new HttpsError("not-found", "Parent comment not found.");
-                }
-                if (!isPublicForumStatus((parentSnap.data() || {}).moderationStatus)) {
-                    throw new HttpsError("failed-precondition", "That comment is no longer available for replies.");
-                }
-                normalizedParentCommentId = parentCommentId;
-                parentUsername = sanitizeText(parentSnap.data().username || "", 80).trim() || null;
-            }
+        if (!parentSnap.exists) {
+            throw new HttpsError("not-found", "Parent comment not found.");
+        }
+        if (!isPublicForumStatus((parentSnap.data() || {}).moderationStatus)) {
+            throw new HttpsError("failed-precondition", "That comment is no longer available for replies.");
+        }
 
-            t.create(commentRef, {
-                threadId,
-                userId,
-                username,
-                userProfilePictureUrl,
-                text,
-                timestamp: admin.firestore.FieldValue.serverTimestamp(),
-                likeCount: 0,
-                likedBy: {},
-                parentCommentId: normalizedParentCommentId,
-                parentUsername,
-                edited: false,
-                lastEditedAt: null,
-                likeNotificationSent: false,
-                ...buildInitialModerationFields(),
-            });
-        });
+        normalizedParentCommentId = parentCommentId;
+        parentUsername = sanitizeText(parentSnap.data().username || "", 80).trim() || null;
+    }
+
+    await assertAndConsumeForumSubmissionCooldown(
+        t,
+        userId,
+        parentCommentId ? "reply" : "comment"
+    );
+
+    t.create(commentRef, {
+        threadId,
+        userId,
+        username,
+        userProfilePictureUrl,
+        text,
+        timestamp: admin.firestore.FieldValue.serverTimestamp(),
+        likeCount: 0,
+        likedBy: {},
+        parentCommentId: normalizedParentCommentId,
+        parentUsername,
+        edited: false,
+        lastEditedAt: null,
+        likeNotificationSent: false,
+        ...buildInitialModerationFields(),
+    });
+});
 
         logger.info(`createForumComment: created comment ${commentId} in thread ${threadId} for user ${userId}`);
         return { success: true, commentId };

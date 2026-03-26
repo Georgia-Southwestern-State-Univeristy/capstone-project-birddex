@@ -13,7 +13,7 @@ public class AiCompActivity extends AppCompatActivity {
 
     private ImageView ivAiImage1, ivAiImage2;
     private TextView tvAiName1, tvAiName2;
-    private TextView tvAiConf1, tvAiConf2;
+
     private Button btnRetake;
 
     @Override
@@ -26,8 +26,7 @@ public class AiCompActivity extends AppCompatActivity {
         ivAiImage2 = findViewById(R.id.ivAiImage2);
         tvAiName1 = findViewById(R.id.tvAiName1);
         tvAiName2 = findViewById(R.id.tvAiName2);
-        tvAiConf1 = findViewById(R.id.tvAiConf1);
-        tvAiConf2 = findViewById(R.id.tvAiConf2);
+
         btnRetake = findViewById(R.id.btnRetake);
 
         // Setting names for display

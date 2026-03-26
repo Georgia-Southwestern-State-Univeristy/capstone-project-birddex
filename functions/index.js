@@ -922,7 +922,8 @@ async function findBirdByCommonName(commonName) {
         .get();
 
     if (snapshot.empty) return null;
-    return snapshot.docs[0].data();
+    const doc = snapshot.docs[0];
+    return normalizeBirdData(doc.data(), doc.id);
 }
 
 async function callBirdModelApi(base64Image) {
@@ -1108,6 +1109,174 @@ async function reserveOpenAiQuota(userRef, eventLogRef, userId) {
     });
 }
 
+function normalizeBirdData(birdData, explicitId = null) {
+    if (!birdData || typeof birdData !== "object") return null;
+    const resolvedId = explicitId || birdData.id || null;
+    return {
+        id: resolvedId,
+        commonName: birdData.commonName || null,
+        scientificName: birdData.scientificName || null,
+        family: birdData.family || null,
+        species: birdData.species || null,
+    };
+}
+
+async function getBirdById(birdId) {
+    if (!birdId || typeof birdId !== "string") return null;
+    const doc = await db.collection("birds").doc(birdId.trim()).get();
+    if (!doc.exists) return null;
+    return normalizeBirdData(doc.data(), doc.id);
+}
+
+function buildBirdChoicePayload(birdData, source, extra = {}) {
+    if (!birdData || !birdData.id) return null;
+    return {
+        birdId: birdData.id,
+        commonName: birdData.commonName || null,
+        scientificName: birdData.scientificName || null,
+        family: birdData.family || null,
+        species: birdData.species || null,
+        source: source || null,
+        ...extra,
+    };
+}
+
+function buildModelAlternativeChoices(topBirdMatches) {
+    return (topBirdMatches || [])
+        .slice(1, 3)
+        .map((birdData, index) => {
+            const normalized = normalizeBirdData(birdData);
+            if (!normalized || !normalized.id) return null;
+            return buildBirdChoicePayload(normalized, "model_alternative", {
+                rank: index + 2,
+            });
+        })
+        .filter(Boolean);
+}
+
+function cleanJsonResponseText(rawText) {
+    if (!rawText || typeof rawText !== "string") return "";
+    return rawText
+        .trim()
+        .replace(/^```json\s*/i, "")
+        .replace(/^```\s*/i, "")
+        .replace(/```$/i, "")
+        .trim();
+}
+
+function parseRankedBirdChoicesJson(rawText) {
+    const cleaned = cleanJsonResponseText(rawText);
+    if (!cleaned) return [];
+
+    const parsed = JSON.parse(cleaned);
+    const rawChoices = Array.isArray(parsed?.choices) ? parsed.choices : [];
+
+    return rawChoices.map((choice) => ({
+        birdId: sanitizeText(choice?.birdId || choice?.id || "", 200).trim() || null,
+        commonName: sanitizeText(choice?.commonName || choice?.name || "", 200).trim() || null,
+        scientificName: sanitizeText(choice?.scientificName || "", 200).trim() || null,
+        species: sanitizeText(choice?.species || "", 200).trim() || null,
+        family: sanitizeText(choice?.family || "", 200).trim() || null,
+    })).filter((choice) => choice.birdId || choice.commonName);
+}
+
+async function resolveBirdChoiceToSupportedBird(choice) {
+    if (!choice) return null;
+
+    const byId = await getBirdById(choice.birdId);
+    if (byId) return byId;
+
+    const byCommonName = await findBirdByCommonName(choice.commonName);
+    if (byCommonName) return normalizeBirdData(byCommonName, byCommonName.id || null);
+
+    return null;
+}
+
+async function callOpenAiBirdReviewCandidates(base64Image, candidateA, candidateB) {
+    const aiResponse = await axios.post(
+        "https://api.openai.com/v1/chat/completions",
+        {
+            model: "gpt-4o",
+            messages: [{
+                role: "user",
+                content: [
+                    {
+                        type: "text",
+                        text: `You are identifying a bird from an image for a BirdDex review flow.
+If the image contains a dead bird, gore, or graphic violence, respond ONLY with 'GORE'.
+Use the two BirdDex model hints below only as hints. They may be wrong.
+Return EXACTLY valid JSON with this schema and nothing else:
+{
+  "choices": [
+    {
+      "birdId": "ebird_or_birddex_species_code",
+      "commonName": "bird common name",
+      "scientificName": "scientific name",
+      "species": "species label",
+      "family": "family name"
+    },
+    {
+      "birdId": "ebird_or_birddex_species_code",
+      "commonName": "bird common name",
+      "scientificName": "scientific name",
+      "species": "species label",
+      "family": "family name"
+    },
+    {
+      "birdId": "ebird_or_birddex_species_code",
+      "commonName": "bird common name",
+      "scientificName": "scientific name",
+      "species": "species label",
+      "family": "family name"
+    }
+  ]
+}
+Rank the choices from most likely to less likely.
+Do not repeat the same bird twice.
+
+BirdDex model hint 1:
+ID: ${candidateA?.id || "Unknown"}
+Common Name: ${candidateA?.commonName || "Unknown"}
+Scientific Name: ${candidateA?.scientificName || "Unknown"}
+Species: ${candidateA?.species || "Unknown"}
+Family: ${candidateA?.family || "Unknown"}
+
+BirdDex model hint 2:
+ID: ${candidateB?.id || "Unknown"}
+Common Name: ${candidateB?.commonName || "Unknown"}
+Scientific Name: ${candidateB?.scientificName || "Unknown"}
+Species: ${candidateB?.species || "Unknown"}
+Family: ${candidateB?.family || "Unknown"}`
+                    },
+                    {
+                        type: "image_url",
+                        image_url: {
+                            url: `data:image/jpeg;base64,${base64Image}`,
+                            detail: "high",
+                        },
+                    },
+                ],
+            }],
+            max_tokens: 450,
+        },
+        {
+            headers: { "Authorization": `Bearer ${OPENAI_API_KEY.value()}` },
+            timeout: 25000,
+        }
+    );
+
+    if (!aiResponse.data?.choices?.[0]) {
+        throw new HttpsError("internal", "OpenAI review returned invalid response format.");
+    }
+
+    const identification = aiResponse.data.choices[0].message?.content;
+    if (!identification) {
+        throw new HttpsError("internal", "OpenAI review returned empty response.");
+    }
+
+    return identification;
+}
+
 async function persistHybridIdentification({
     userId,
     imageUrl,
@@ -1130,9 +1299,10 @@ async function persistHybridIdentification({
     const safeTop1 = modelPredictions[0] || null;
     const safeTop2 = modelPredictions[1] || null;
     const safeTop3 = modelPredictions[2] || null;
-    const birdMatch1 = topBirdMatches[0] || null;
-    const birdMatch2 = topBirdMatches[1] || null;
-    const birdMatch3 = topBirdMatches[2] || null;
+    const birdMatch1 = normalizeBirdData(topBirdMatches[0] || null);
+    const birdMatch2 = normalizeBirdData(topBirdMatches[1] || null);
+    const birdMatch3 = normalizeBirdData(topBirdMatches[2] || null);
+    const modelAlternativeChoices = buildModelAlternativeChoices(topBirdMatches);
 
     const identificationLogData = {
         userId,
@@ -1173,7 +1343,11 @@ async function persistHybridIdentification({
             candidate2Common: openAiCandidates?.[1]?.commonName || null,
             candidate2Scientific: openAiCandidates?.[1]?.scientificName || null,
             responseText: openAiRawResponse || null,
+            reviewRequestedAt: null,
+            reviewCandidates: [],
+            reviewResponseText: null,
         },
+        modelAlternatives: modelAlternativeChoices,
         finalResult: {
             birdId: finalBirdId || null,
             commonName: finalBirdData?.commonName || null,
@@ -1184,16 +1358,25 @@ async function persistHybridIdentification({
             verified: isVerified,
         },
         userFeedback: {
-            status: "unknown",
+            status: "awaiting_user_confirmation",
             confirmedCorrect: null,
             correctedBirdId: null,
             correctedCommonName: null,
             correctedScientificName: null,
+            correctedSpecies: null,
+            correctedFamily: null,
+            correctedSource: null,
             feedbackTimestamp: null,
+            initialResultRejectedAt: null,
+            modelAlternativesRejectedAt: null,
+            lastSelectionAt: null,
+            finalConfirmedAt: null,
         },
         training: {
             eligibleForTraining: false,
-            labelQuality: usedOpenAi ? (openAiMode === "tiebreak" ? "openai_tiebreak" : "openai_full_unconfirmed") : "model_only_unconfirmed",
+            labelQuality: usedOpenAi ? (openAiMode === "tiebreak" ? "openai_tiebreak_pending_confirmation" : "openai_full_pending_confirmation") : "model_only_pending_confirmation",
+            finalConfirmedBirdId: null,
+            finalConfirmedSource: null,
         },
     };
 
@@ -1217,6 +1400,16 @@ async function persistHybridIdentification({
             modelVersion,
             usedOpenAi,
             pipelineVersion: "hybrid_v1",
+            predictedBirdId: finalBirdId,
+            predictedCommonName: finalBirdData.commonName || null,
+            predictedScientificName: finalBirdData.scientificName || null,
+            predictedFamily: finalBirdData.family || null,
+            predictedSpecies: finalBirdData.species || null,
+            predictedSource: finalSource,
+            userConfirmed: false,
+            trainingEligible: false,
+            finalSelectionSource: null,
+            finalConfirmedAt: null,
         };
 
         await identificationRef.set(identificationData);
@@ -1224,7 +1417,40 @@ async function persistHybridIdentification({
         await identificationLogRef.set({ identificationId }, { merge: true });
     }
 
-    return { identificationLogId: identificationLogRef.id, identificationId };
+    return {
+        identificationLogId: identificationLogRef.id,
+        identificationId,
+        modelAlternativeChoices,
+    };
+}
+
+function buildIdentifyBirdResponse({
+    finalIdentification,
+    finalBirdData,
+    finalSource,
+    isVerified,
+    isGore,
+    identificationLogId,
+    identificationId,
+    imageUrl,
+    modelAlternativeChoices,
+    userMessage = null,
+}) {
+    return {
+        result: finalIdentification || null,
+        isVerified: !!isVerified,
+        isGore: !!isGore,
+        isInDatabase: !!isVerified,
+        userMessage,
+        imageUrl: imageUrl || "",
+        identificationLogId: identificationLogId || null,
+        identificationId: identificationId || null,
+        primaryBird: isVerified && finalBirdData
+            ? buildBirdChoicePayload(normalizeBirdData(finalBirdData, finalBirdData.id || null), finalSource || "initial_result")
+            : null,
+        modelAlternatives: Array.isArray(modelAlternativeChoices) ? modelAlternativeChoices : [],
+        openAiAlternatives: [],
+    };
 }
 
 // ======================================================
@@ -1275,8 +1501,8 @@ exports.identifyBird = onCall({ secrets: [OPENAI_API_KEY, BIRDDEX_MODEL_API_KEY]
 
         const top1 = modelPredictions[0] || null;
         const top2 = modelPredictions[1] || null;
-        const top1Bird = topBirdMatches[0] || null;
-        const top2Bird = topBirdMatches[1] || null;
+        const top1Bird = normalizeBirdData(topBirdMatches[0] || null);
+        const top2Bird = normalizeBirdData(topBirdMatches[1] || null);
         const top1Confidence = top1?.confidence ?? 0;
         const top2Confidence = top2?.confidence ?? 0;
         const topMargin = top1Confidence - top2Confidence;
@@ -1360,7 +1586,19 @@ exports.identifyBird = onCall({ secrets: [OPENAI_API_KEY, BIRDDEX_MODEL_API_KEY]
                     },
                 });
 
-                const goreResult = { result: "GORE", isVerified: false, isGore: true };
+                const goreResult = {
+                    result: "GORE",
+                    isVerified: false,
+                    isGore: true,
+                    isInDatabase: false,
+                    userMessage: "Please take a picture of a non-gore picture of a bird.",
+                    identificationLogId: goreLogRef.id,
+                    identificationId: null,
+                    imageUrl: imageUrl || "",
+                    primaryBird: null,
+                    modelAlternatives: [],
+                    openAiAlternatives: [],
+                };
                 await eventLogRef.set({
                     userId,
                     processedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -1371,12 +1609,7 @@ exports.identifyBird = onCall({ secrets: [OPENAI_API_KEY, BIRDDEX_MODEL_API_KEY]
             }
 
             const parsedOpenAi = parseBirdIdentificationText(openAiRawResponse);
-            const byIdDoc = parsedOpenAi.birdId
-                ? await db.collection("birds").doc(parsedOpenAi.birdId).get()
-                : null;
-            const matchedBird = byIdDoc?.exists
-                ? byIdDoc.data()
-                : await findBirdByCommonName(parsedOpenAi.commonName);
+            const matchedBird = await resolveBirdChoiceToSupportedBird(parsedOpenAi);
 
             if (matchedBird) {
                 finalBirdData = matchedBird;
@@ -1385,15 +1618,15 @@ exports.identifyBird = onCall({ secrets: [OPENAI_API_KEY, BIRDDEX_MODEL_API_KEY]
                 isVerified = true;
                 finalIdentification = buildBirdIdentificationText(finalBirdId, finalBirdData);
             } else {
-                finalBirdId = parsedOpenAi.birdId || "Unknown";
+                finalBirdData = null;
+                finalBirdId = null;
                 finalSource = openAiMode === "tiebreak" ? "openai_tiebreak_unverified" : "openai_full_unverified";
                 isVerified = false;
-                finalIdentification = `ID: Unknown
-${openAiRawResponse}`;
+                finalIdentification = null;
             }
         }
 
-        await persistHybridIdentification({
+        const persisted = await persistHybridIdentification({
             userId,
             imageUrl,
             locationId,
@@ -1411,7 +1644,32 @@ ${openAiRawResponse}`;
             isVerified,
         });
 
-        const finalResult = { result: finalIdentification, isVerified, isGore: false };
+        const finalResult = isVerified
+            ? buildIdentifyBirdResponse({
+                finalIdentification,
+                finalBirdData,
+                finalSource,
+                isVerified,
+                isGore: false,
+                identificationLogId: persisted.identificationLogId,
+                identificationId: persisted.identificationId,
+                imageUrl,
+                modelAlternativeChoices: persisted.modelAlternativeChoices,
+            })
+            : {
+                result: null,
+                isVerified: false,
+                isGore: false,
+                isInDatabase: false,
+                userMessage: "Sorry, this bird is not in our database just yet.",
+                imageUrl: imageUrl || "",
+                identificationLogId: persisted.identificationLogId,
+                identificationId: persisted.identificationId,
+                primaryBird: null,
+                modelAlternatives: persisted.modelAlternativeChoices || [],
+                openAiAlternatives: [],
+            };
+
         await eventLogRef.set({
             userId,
             processedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -1425,6 +1683,252 @@ ${openAiRawResponse}`;
         if (error instanceof HttpsError) throw error;
         throw new HttpsError("internal", `Hybrid identification failed: ${error.message}`);
     }
+});
+
+exports.reviewBirdAlternatives = onCall({ secrets: [OPENAI_API_KEY], timeoutSeconds: 60 }, async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
+
+    const userId = request.auth.uid;
+    const userRef = db.collection("users").doc(userId);
+    const { image, imageUrl, identificationLogId, requestId } = request.data || {};
+
+    if (!image || typeof image !== "string") {
+        throw new HttpsError("invalid-argument", "Image Base64 data is required.");
+    }
+    if (!identificationLogId || typeof identificationLogId !== "string") {
+        throw new HttpsError("invalid-argument", "identificationLogId is required.");
+    }
+
+    const idempotencyKey = requestId || `IDEN_REVIEW_${admin.firestore.Timestamp.now().toMillis()}`;
+    const eventLogRef = db.collection("processedAIEvents").doc(`REVIEW_${idempotencyKey}`);
+
+    try {
+        const existingEvent = await eventLogRef.get();
+        if (existingEvent.exists) {
+            const cached = existingEvent.data().result;
+            if (cached !== undefined) {
+                logger.info(`reviewBirdAlternatives: Request ${idempotencyKey} already processed. Returning cached result.`);
+                return cached;
+            }
+            throw new HttpsError("aborted", "Alternative review already in progress. Please retry in a moment.");
+        }
+
+        const identificationLogRef = db.collection("identificationLogs").doc(identificationLogId);
+        const identificationLogDoc = await identificationLogRef.get();
+        if (!identificationLogDoc.exists) {
+            throw new HttpsError("not-found", "Identification log not found.");
+        }
+
+        const identificationLogData = identificationLogDoc.data() || {};
+        if (identificationLogData.userId !== userId) {
+            throw new HttpsError("permission-denied", "You do not have access to this identification log.");
+        }
+
+        const top1Bird = await getBirdById(identificationLogData.localModel?.top1BirdId || null);
+        const top2Bird = await getBirdById(identificationLogData.localModel?.top2BirdId || null);
+
+        if (!top1Bird || !top2Bird) {
+            throw new HttpsError("failed-precondition", "Not enough BirdDex candidates were available for AI review.");
+        }
+
+        await reserveOpenAiQuota(userRef, eventLogRef, userId);
+
+        const openAiRawResponse = await callOpenAiBirdReviewCandidates(image, top1Bird, top2Bird);
+        if (openAiRawResponse.includes("GORE")) {
+            await identificationLogRef.set({
+                openAi: {
+                    reviewRequestedAt: admin.firestore.FieldValue.serverTimestamp(),
+                    reviewResponseText: openAiRawResponse,
+                    reviewCandidates: [],
+                },
+                userFeedback: {
+                    status: "openai_review_blocked_gore",
+                    feedbackTimestamp: admin.firestore.FieldValue.serverTimestamp(),
+                },
+            }, { merge: true });
+
+            const goreResult = {
+                isVerified: false,
+                isGore: true,
+                isInDatabase: false,
+                userMessage: "Please take a picture of a non-gore picture of a bird.",
+                openAiAlternatives: [],
+                identificationLogId,
+            };
+            await eventLogRef.set({
+                userId,
+                processedAt: admin.firestore.FieldValue.serverTimestamp(),
+                pending: false,
+                result: goreResult,
+            }, { merge: true });
+            return goreResult;
+        }
+
+        const parsedChoices = parseRankedBirdChoicesJson(openAiRawResponse);
+        const supportedChoices = [];
+        const seenBirdIds = new Set();
+        for (const parsedChoice of parsedChoices) {
+            const matchedBird = await resolveBirdChoiceToSupportedBird(parsedChoice);
+            if (!matchedBird || !matchedBird.id || seenBirdIds.has(matchedBird.id)) {
+                continue;
+            }
+            seenBirdIds.add(matchedBird.id);
+            supportedChoices.push(buildBirdChoicePayload(matchedBird, "openai_review"));
+            if (supportedChoices.length >= 2) break;
+        }
+
+        await identificationLogRef.set({
+            openAi: {
+                reviewRequestedAt: admin.firestore.FieldValue.serverTimestamp(),
+                reviewResponseText: openAiRawResponse,
+                reviewCandidates: supportedChoices,
+            },
+            userFeedback: {
+                status: supportedChoices.length > 0 ? "openai_review_candidates_ready" : "openai_review_no_supported_match",
+                feedbackTimestamp: admin.firestore.FieldValue.serverTimestamp(),
+            },
+        }, { merge: true });
+
+        const response = {
+            isVerified: supportedChoices.length > 0,
+            isGore: false,
+            isInDatabase: supportedChoices.length > 0,
+            userMessage: supportedChoices.length > 0 ? null : "Sorry, this bird is not in our database just yet.",
+            openAiAlternatives: supportedChoices,
+            identificationLogId,
+            imageUrl: imageUrl || identificationLogData.imageUrl || "",
+        };
+
+        await eventLogRef.set({
+            userId,
+            processedAt: admin.firestore.FieldValue.serverTimestamp(),
+            pending: false,
+            result: response,
+        }, { merge: true });
+
+        return response;
+    } catch (error) {
+        logger.error("Alternative review failed:", error);
+        if (error instanceof HttpsError) throw error;
+        throw new HttpsError("internal", `Alternative review failed: ${error.message}`);
+    }
+});
+
+exports.syncIdentificationFeedback = onCall(async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
+
+    const userId = request.auth.uid;
+    const {
+        identificationLogId,
+        identificationId,
+        action,
+        selectedBirdId,
+        selectedSource,
+    } = request.data || {};
+
+    if (!identificationLogId || typeof identificationLogId !== "string") {
+        throw new HttpsError("invalid-argument", "identificationLogId is required.");
+    }
+    if (!action || typeof action !== "string") {
+        throw new HttpsError("invalid-argument", "action is required.");
+    }
+
+    const identificationLogRef = db.collection("identificationLogs").doc(identificationLogId);
+    const identificationLogDoc = await identificationLogRef.get();
+    if (!identificationLogDoc.exists) {
+        throw new HttpsError("not-found", "Identification log not found.");
+    }
+
+    const identificationLogData = identificationLogDoc.data() || {};
+    if (identificationLogData.userId !== userId) {
+        throw new HttpsError("permission-denied", "You do not have access to this identification log.");
+    }
+
+    const identificationRef = identificationId ? db.collection("identifications").doc(String(identificationId)) : null;
+    if (identificationRef) {
+        const identificationDoc = await identificationRef.get();
+        if (identificationDoc.exists && identificationDoc.data()?.identificationLogId !== identificationLogId) {
+            throw new HttpsError("permission-denied", "Identification record does not belong to this log.");
+        }
+    }
+
+    const updatePayload = {
+        userFeedback: {
+            feedbackTimestamp: admin.firestore.FieldValue.serverTimestamp(),
+            lastAction: action,
+        },
+    };
+
+    let selectedBird = null;
+    if (["select_model_alternative", "select_openai_alternative", "confirm_final_choice"].includes(action)) {
+        selectedBird = await getBirdById(selectedBirdId);
+        if (!selectedBird) {
+            throw new HttpsError("failed-precondition", "Selected bird is not supported in the database.");
+        }
+        updatePayload.userFeedback.correctedBirdId = selectedBird.id;
+        updatePayload.userFeedback.correctedCommonName = selectedBird.commonName || null;
+        updatePayload.userFeedback.correctedScientificName = selectedBird.scientificName || null;
+        updatePayload.userFeedback.correctedSpecies = selectedBird.species || null;
+        updatePayload.userFeedback.correctedFamily = selectedBird.family || null;
+        updatePayload.userFeedback.correctedSource = selectedSource || null;
+        updatePayload.userFeedback.lastSelectionAt = admin.firestore.FieldValue.serverTimestamp();
+    }
+
+    switch (action) {
+    case "reject_initial_result":
+        updatePayload.userFeedback.status = "initial_result_rejected";
+        updatePayload.userFeedback.confirmedCorrect = false;
+        updatePayload.userFeedback.initialResultRejectedAt = admin.firestore.FieldValue.serverTimestamp();
+        break;
+    case "request_openai_review":
+        updatePayload.userFeedback.status = "openai_review_requested";
+        updatePayload.userFeedback.modelAlternativesRejectedAt = admin.firestore.FieldValue.serverTimestamp();
+        break;
+    case "select_model_alternative":
+        updatePayload.userFeedback.status = "model_alternative_selected";
+        updatePayload.userFeedback.confirmedCorrect = false;
+        break;
+    case "select_openai_alternative":
+        updatePayload.userFeedback.status = "openai_alternative_selected";
+        updatePayload.userFeedback.confirmedCorrect = false;
+        break;
+    case "confirm_final_choice":
+        updatePayload.userFeedback.status = "final_choice_confirmed";
+        updatePayload.userFeedback.confirmedCorrect = (selectedSource || "initial_result") === "initial_result";
+        updatePayload.userFeedback.finalConfirmedAt = admin.firestore.FieldValue.serverTimestamp();
+        updatePayload.training = {
+            eligibleForTraining: true,
+            finalConfirmedBirdId: selectedBird?.id || null,
+            finalConfirmedSource: selectedSource || null,
+        };
+        break;
+    case "retake_after_openai_review":
+        updatePayload.userFeedback.status = "retake_after_openai_review";
+        break;
+    case "discarded":
+        updatePayload.userFeedback.status = "discarded";
+        break;
+    default:
+        throw new HttpsError("invalid-argument", "Unsupported feedback action.");
+    }
+
+    await identificationLogRef.set(updatePayload, { merge: true });
+
+    if (identificationRef && action === "confirm_final_choice" && selectedBird) {
+        await identificationRef.set({
+            birdId: selectedBird.id,
+            commonName: selectedBird.commonName || null,
+            scientificName: selectedBird.scientificName || null,
+            family: selectedBird.family || null,
+            species: selectedBird.species || null,
+            userConfirmed: true,
+            trainingEligible: true,
+            finalSelectionSource: selectedSource || null,
+            finalConfirmedAt: admin.firestore.FieldValue.serverTimestamp(),
+        }, { merge: true });
+    }
+
+    return { success: true };
 });
 
 // ======================================================

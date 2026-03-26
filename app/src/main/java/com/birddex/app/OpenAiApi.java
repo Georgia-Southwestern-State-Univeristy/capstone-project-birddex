@@ -2,104 +2,234 @@ package com.birddex.app;
 
 import android.util.Log;
 
+import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
+
 import com.google.firebase.functions.FirebaseFunctions;
 
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
-import androidx.annotation.Nullable; // Import for Nullable annotation
-
 /**
- /**
- * for: Interface/model contract used to keep different parts of the app communicating with a shared shape.
- *
- * These comments focus on what the actual code blocks are doing so the file is easier to trace
- * when you are debugging or presenting the app. Only comments were added; runtime logic was not changed.
- */
-/* OpenAiApi is a helper class for interacting with OpenAI's Chat Completions API via Cloud Functions.
- * It sends a Base64 encoded image to a secure server-side function to identify bird species.
+ * OpenAiApi is a helper class for Cloud Function calls related to BirdDex identification.
  */
 public class OpenAiApi {
 
     private static final String TAG = "OpenAiApi";
 
-    /**
-     * Callback interface for handling results from the OpenAI API call.
-     */
-    public interface OpenAiCallback {
-        void onSuccess(String response,
-                       boolean isVerified,
-                       boolean isGore,
-                       boolean isInDatabase,
-                       @Nullable String reasonCode);
+    public static class BirdChoice {
+        @Nullable public String birdId;
+        @Nullable public String commonName;
+        @Nullable public String scientificName;
+        @Nullable public String species;
+        @Nullable public String family;
+        @Nullable public String source;
+        public boolean isSupportedInDatabase = true;
+    }
+
+    public static class IdentifyBirdResult {
+        @Nullable public String resultText;
+        public boolean isVerified;
+        public boolean isGore;
+        public boolean isInDatabase = true;
+        @Nullable public String reasonCode;
+        @Nullable public String identificationLogId;
+        @Nullable public String identificationId;
+        @Nullable public BirdChoice primaryBird;
+        public ArrayList<BirdChoice> modelAlternatives = new ArrayList<>();
+    }
+
+    public interface IdentifyBirdCallback {
+        void onSuccess(IdentifyBirdResult result);
         void onFailure(Exception e, String message);
     }
 
-    /**
-     * Main logic block for this part of the feature.
-     */
-    public OpenAiApi() {
-        // No longer needs OkHttpClient as it uses FirebaseFunctions
+    public interface BirdChoicesCallback {
+        void onSuccess(ArrayList<BirdChoice> candidates, @Nullable String userMessage, boolean isGore);
+        void onFailure(Exception e, String message);
     }
 
-    /**
-     * Sends a Base64 encoded image to the OpenAI GPT-4o model via Cloud Functions for bird identification.
-     * @param base64Image The image data encoded as a Base64 string.
-     * @param imageUrl The Firebase Storage URL where the image is stored (for logging).
-     * @param latitude The latitude where the image was taken (can be null if not available).
-     * @param longitude The longitude where the image was taken (can be null if not available).
-     * @param localityName The locality name where the image was taken (can be null if not available).
-     * @param requestId A unique ID for idempotency to prevent duplicate quota deductions.
-     * @param callback The callback to handle the response.
-     */
     public void identifyBirdFromImage(String base64Image,
                                       String imageUrl,
                                       @Nullable Double latitude,
                                       @Nullable Double longitude,
                                       @Nullable String localityName,
                                       String requestId,
-                                      OpenAiCallback callback) {
+                                      IdentifyBirdCallback callback) {
         Map<String, Object> data = new HashMap<>();
         data.put("image", base64Image);
         data.put("imageUrl", imageUrl);
-        data.put("requestId", requestId); // Added for idempotency
-
-        if (latitude != null) {
-            data.put("latitude", latitude);
-        }
-        if (longitude != null) {
-            data.put("longitude", longitude);
-        }
-        if (localityName != null) {
-            data.put("localityName", localityName);
-        }
+        data.put("requestId", requestId);
+        if (latitude != null) data.put("latitude", latitude);
+        if (longitude != null) data.put("longitude", longitude);
+        if (localityName != null) data.put("localityName", localityName);
 
         FirebaseFunctions.getInstance()
                 .getHttpsCallable("identifyBird")
                 .call(data)
                 .addOnSuccessListener(result -> {
                     try {
-                        Map<String, Object> resMap = (Map<String, Object>) result.getData();
-                        String content = resMap.get("result") instanceof String ? (String) resMap.get("result") : null;
-                        boolean isVerified = Boolean.TRUE.equals(resMap.get("isVerified"));
-                        boolean isGore = Boolean.TRUE.equals(resMap.get("isGore"));
-                        boolean isInDatabase = !resMap.containsKey("isInDatabase") || Boolean.TRUE.equals(resMap.get("isInDatabase"));
-                        String reasonCode = resMap.get("reasonCode") instanceof String ? (String) resMap.get("reasonCode") : null;
-
-                        Log.i(TAG, "[SUCCESS] Received content from cloud function. isVerified="
-                                + isVerified + ", isInDatabase=" + isInDatabase + ", reasonCode=" + reasonCode);
-                        callback.onSuccess(content, isVerified, isGore, isInDatabase, reasonCode);
-                        /**
-                         * Main logic block for this part of the feature.
-                         */
+                        Map<String, Object> resMap = castMap(result.getData());
+                        IdentifyBirdResult parsed = new IdentifyBirdResult();
+                        parsed.resultText = getString(resMap, "result");
+                        parsed.isVerified = Boolean.TRUE.equals(resMap.get("isVerified"));
+                        parsed.isGore = Boolean.TRUE.equals(resMap.get("isGore"));
+                        parsed.isInDatabase = !resMap.containsKey("isInDatabase") || Boolean.TRUE.equals(resMap.get("isInDatabase"));
+                        parsed.reasonCode = getString(resMap, "reasonCode");
+                        parsed.identificationLogId = getString(resMap, "identificationLogId");
+                        parsed.identificationId = getString(resMap, "identificationId");
+                        parsed.primaryBird = parseBirdChoice(resMap.get("primaryBird"));
+                        parsed.modelAlternatives = parseBirdChoices(resMap.get("modelAlternatives"));
+                        callback.onSuccess(parsed);
                     } catch (Exception e) {
-                        Log.e(TAG, "Error parsing Cloud Function response", e);
+                        Log.e(TAG, "Error parsing identifyBird response", e);
                         callback.onFailure(e, "Failed to parse server response.");
                     }
                 })
                 .addOnFailureListener(e -> {
-                    Log.e(TAG, "Cloud Function call failed", e);
+                    Log.e(TAG, "identifyBird Cloud Function call failed", e);
                     callback.onFailure(new Exception(e), "API Error. Check Logcat for details.");
                 });
+    }
+
+    public void requestOpenAiReviewCandidates(String base64Image,
+                                              String imageUrl,
+                                              String identificationLogId,
+                                              String requestId,
+                                              BirdChoicesCallback callback) {
+        Map<String, Object> data = new HashMap<>();
+        data.put("image", base64Image);
+        data.put("imageUrl", imageUrl);
+        data.put("identificationLogId", identificationLogId);
+        data.put("requestId", requestId);
+
+        FirebaseFunctions.getInstance()
+                .getHttpsCallable("reviewBirdAlternatives")
+                .call(data)
+                .addOnSuccessListener(result -> {
+                    try {
+                        Map<String, Object> resMap = castMap(result.getData());
+                        boolean isGore = Boolean.TRUE.equals(resMap.get("isGore"));
+                        String userMessage = getString(resMap, "userMessage");
+                        ArrayList<BirdChoice> candidates = parseBirdChoices(resMap.get("openAiAlternatives"));
+                        callback.onSuccess(candidates, userMessage, isGore);
+                    } catch (Exception e) {
+                        Log.e(TAG, "Error parsing reviewBirdAlternatives response", e);
+                        callback.onFailure(e, "Failed to parse AI review response.");
+                    }
+                })
+                .addOnFailureListener(e -> {
+                    Log.e(TAG, "reviewBirdAlternatives failed", e);
+                    callback.onFailure(new Exception(e), "AI review failed.");
+                });
+    }
+
+    public void syncIdentificationFeedback(@Nullable String identificationLogId,
+                                           @Nullable String identificationId,
+                                           @NonNull String action,
+                                           @Nullable String selectedBirdId,
+                                           @Nullable String selectionSource,
+                                           @Nullable String note) {
+        syncIdentificationFeedback(
+                identificationLogId,
+                identificationId,
+                action,
+                selectedBirdId,
+                selectionSource,
+                note,
+                null,
+                null,
+                null,
+                null
+        );
+    }
+
+    public void syncIdentificationFeedback(@Nullable String identificationLogId,
+                                           @Nullable String identificationId,
+                                           @NonNull String action,
+                                           @Nullable String selectedBirdId,
+                                           @Nullable String selectionSource,
+                                           @Nullable String note,
+                                           @Nullable String selectedCommonName,
+                                           @Nullable String selectedScientificName,
+                                           @Nullable String selectedSpecies,
+                                           @Nullable String selectedFamily) {
+        if (identificationLogId == null || identificationLogId.trim().isEmpty()) {
+            return;
+        }
+
+        Map<String, Object> data = new HashMap<>();
+        data.put("identificationLogId", identificationLogId);
+        if (identificationId != null) data.put("identificationId", identificationId);
+        data.put("action", action);
+        if (selectedBirdId != null) data.put("selectedBirdId", selectedBirdId);
+        if (selectionSource != null) data.put("selectionSource", selectionSource);
+        if (note != null) data.put("note", note);
+        if (selectedCommonName != null) data.put("selectedCommonName", selectedCommonName);
+        if (selectedScientificName != null) data.put("selectedScientificName", selectedScientificName);
+        if (selectedSpecies != null) data.put("selectedSpecies", selectedSpecies);
+        if (selectedFamily != null) data.put("selectedFamily", selectedFamily);
+
+        FirebaseFunctions.getInstance()
+                .getHttpsCallable("syncIdentificationFeedback")
+                .call(data)
+                .addOnFailureListener(e -> Log.e(TAG, "syncIdentificationFeedback failed", e));
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> castMap(Object obj) {
+        return obj instanceof Map ? (Map<String, Object>) obj : new HashMap<>();
+    }
+
+    @Nullable
+    private String getString(Map<String, Object> map, String key) {
+        Object value = map.get(key);
+        return value instanceof String ? (String) value : null;
+    }
+
+    @Nullable
+    @SuppressWarnings("unchecked")
+    private BirdChoice parseBirdChoice(Object raw) {
+        if (!(raw instanceof Map)) {
+            return null;
+        }
+        Map<String, Object> map = (Map<String, Object>) raw;
+        BirdChoice choice = new BirdChoice();
+        choice.birdId = getString(map, "birdId");
+        choice.commonName = getString(map, "commonName");
+        choice.scientificName = getString(map, "scientificName");
+        choice.species = getString(map, "species");
+        choice.family = getString(map, "family");
+        choice.source = getString(map, "source");
+        choice.isSupportedInDatabase = !map.containsKey("isSupportedInDatabase") || Boolean.TRUE.equals(map.get("isSupportedInDatabase"));
+        return choice;
+    }
+
+    @SuppressWarnings("unchecked")
+    private ArrayList<BirdChoice> parseBirdChoices(Object raw) {
+        ArrayList<BirdChoice> results = new ArrayList<>();
+        if (!(raw instanceof List)) {
+            return results;
+        }
+        for (Object item : (List<Object>) raw) {
+            BirdChoice choice = parseBirdChoice(item);
+            if (choice != null && hasDisplayableBirdData(choice)) {
+                results.add(choice);
+            }
+        }
+        return results;
+    }
+
+    private boolean hasDisplayableBirdData(@Nullable BirdChoice choice) {
+        if (choice == null) return false;
+        return hasText(choice.birdId)
+                || hasText(choice.commonName)
+                || hasText(choice.scientificName);
+    }
+
+    private boolean hasText(@Nullable String value) {
+        return value != null && !value.trim().isEmpty();
     }
 }

@@ -1,28 +1,42 @@
 package com.birddex.app;
 
 import android.content.Intent;
+import android.graphics.Bitmap;
+import android.graphics.ImageDecoder;
+import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.provider.MediaStore;
+import android.util.Base64;
+import android.util.Log;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatActivity;
 
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.UUID;
+
 /**
- * AiCompLoadingActivity: A transitional loading screen that simulates AI processing
- * between NotMyBirdActivity and AiCompActivity.
+ * AiCompLoadingActivity: Loading screen while BirdDex asks OpenAI for two more options.
  */
 public class AiCompLoadingActivity extends AppCompatActivity {
+
+    private static final String TAG = "AiCompLoadingActivity";
 
     private TextView tvLoadingMessage;
     private final String[] messages = {
             "Consulting AI...",
-            "Analyzing plumage patterns...",
-            "Checking beak morphology...",
-            "Comparing with regional data...",
+            "Comparing your bird against more species...",
+            "Checking plumage and shape...",
+            "Preparing two more options...",
             "Almost there..."
     };
     private int messageIndex = 0;
@@ -38,10 +52,11 @@ public class AiCompLoadingActivity extends AppCompatActivity {
         }
     };
 
+    private final OpenAiApi openAiApi = new OpenAiApi();
+
     private final ActivityResultLauncher<Intent> aiCompLauncher = registerForActivityResult(
             new ActivityResultContracts.StartActivityForResult(),
             result -> {
-                // Pass the result back to NotMyBirdActivity
                 setResult(result.getResultCode(), result.getData());
                 finish();
             }
@@ -56,15 +71,116 @@ public class AiCompLoadingActivity extends AppCompatActivity {
         tvLoadingMessage = findViewById(R.id.tvLoadingMessage);
         handler.post(messageSwitcher);
 
-        // Simulate "AI work" for 3 seconds, then move to AiCompActivity
-        handler.postDelayed(() -> {
-            Intent intent = new Intent(AiCompLoadingActivity.this, AiCompActivity.class);
-            // Pass all extras received from NotMyBirdActivity
-            if (getIntent().getExtras() != null) {
-                intent.putExtras(getIntent().getExtras());
+        String imageUriStr = getIntent().getStringExtra("imageUri");
+        String imageUrl = getIntent().getStringExtra("imageUrl");
+        String identificationLogId = getIntent().getStringExtra("identificationLogId");
+        String identificationId = getIntent().getStringExtra("identificationId");
+
+        if (imageUriStr == null || identificationLogId == null) {
+            Toast.makeText(this, "Unable to start AI review.", Toast.LENGTH_LONG).show();
+            finish();
+            return;
+        }
+
+        String base64Image = encodeImage(Uri.parse(imageUriStr));
+        if (base64Image == null) {
+            Toast.makeText(this, "Failed to prepare image for AI review.", Toast.LENGTH_LONG).show();
+            finish();
+            return;
+        }
+
+        openAiApi.requestOpenAiReviewCandidates(
+                base64Image,
+                imageUrl != null ? imageUrl : "",
+                identificationLogId,
+                UUID.randomUUID().toString(),
+                new OpenAiApi.BirdChoicesCallback() {
+                    @Override
+                    public void onSuccess(ArrayList<OpenAiApi.BirdChoice> candidates, @Nullable String userMessage, boolean isGore) {
+                        if (isFinishing() || isDestroyed()) return;
+
+                        if (isGore) {
+                            Toast.makeText(AiCompLoadingActivity.this, userMessage != null ? userMessage : "Please take a picture of a non-gore picture of a bird.", Toast.LENGTH_LONG).show();
+                            finish();
+                            return;
+                        }
+
+                        if (candidates == null || candidates.isEmpty()) {
+                            Toast.makeText(AiCompLoadingActivity.this, userMessage != null ? userMessage : "Sorry, AI could not produce two more options.", Toast.LENGTH_LONG).show();
+                            finish();
+                            return;
+                        }
+
+                        Intent intent = new Intent(AiCompLoadingActivity.this, AiCompActivity.class);
+                        intent.putExtra("imageUri", imageUriStr);
+                        intent.putExtra("identificationLogId", identificationLogId);
+                        intent.putExtra("identificationId", identificationId);
+                        intent.putParcelableArrayListExtra("openAiAlternatives", toCandidateBundles(candidates));
+                        aiCompLauncher.launch(intent);
+                    }
+
+                    @Override
+                    public void onFailure(Exception e, String message) {
+                        if (isFinishing() || isDestroyed()) return;
+                        Log.e(TAG, "OpenAI review failed", e);
+                        Toast.makeText(AiCompLoadingActivity.this, message, Toast.LENGTH_LONG).show();
+                        finish();
+                    }
+                }
+        );
+    }
+
+    private ArrayList<Bundle> toCandidateBundles(ArrayList<OpenAiApi.BirdChoice> candidates) {
+        ArrayList<Bundle> bundles = new ArrayList<>();
+        if (candidates == null) {
+            return bundles;
+        }
+
+        for (OpenAiApi.BirdChoice candidate : candidates) {
+            if (candidate == null) {
+                continue;
             }
-            aiCompLauncher.launch(intent);
-        }, 3000);
+            boolean hasText = (candidate.commonName != null && !candidate.commonName.trim().isEmpty())
+                    || (candidate.scientificName != null && !candidate.scientificName.trim().isEmpty())
+                    || (candidate.birdId != null && !candidate.birdId.trim().isEmpty());
+            if (!hasText) {
+                continue;
+            }
+            Bundle bundle = new Bundle();
+            bundle.putString("candidateBirdId", candidate.birdId);
+            bundle.putString("candidateCommonName", candidate.commonName);
+            bundle.putString("candidateScientificName", candidate.scientificName);
+            bundle.putString("candidateSpecies", candidate.species);
+            bundle.putString("candidateFamily", candidate.family);
+            bundle.putString("candidateSource", candidate.source);
+            bundles.add(bundle);
+        }
+        return bundles;
+    }
+
+    private String encodeImage(Uri imageUri) {
+        try {
+            Bitmap bitmap = (Build.VERSION.SDK_INT >= 28)
+                    ? ImageDecoder.decodeBitmap(ImageDecoder.createSource(this.getContentResolver(), imageUri))
+                    : MediaStore.Images.Media.getBitmap(this.getContentResolver(), imageUri);
+
+            int maxWidth = 1024;
+            int maxHeight = 1024;
+            float ratio = Math.min((float) maxWidth / bitmap.getWidth(), (float) maxHeight / bitmap.getHeight());
+            if (ratio < 1.0f) {
+                bitmap = Bitmap.createScaledBitmap(bitmap,
+                        Math.round(ratio * bitmap.getWidth()),
+                        Math.round(ratio * bitmap.getHeight()),
+                        true);
+            }
+
+            ByteArrayOutputStream baos = new ByteArrayOutputStream();
+            bitmap.compress(Bitmap.CompressFormat.JPEG, 90, baos);
+            return Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP);
+        } catch (IOException e) {
+            Log.e(TAG, "encodeImage failed", e);
+            return null;
+        }
     }
 
     @Override

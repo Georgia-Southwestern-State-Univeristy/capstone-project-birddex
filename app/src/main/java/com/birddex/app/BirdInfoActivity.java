@@ -9,28 +9,30 @@ import android.widget.ImageView;
 import android.widget.RadioButton;
 import android.widget.RadioGroup;
 import android.widget.TextView;
+
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.annotation.Nullable;
 import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
 
+import com.bumptech.glide.Glide;
+
+import java.util.ArrayList;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-/**
- * BirdInfoActivity: Activity class for one BirdDex screen. It owns screen setup, user actions, and navigation for this part of the app.
- *
- * These comments focus on what the actual code blocks are doing so the file is easier to trace
- * when you are debugging or presenting the app. Only comments were added; runtime logic was not changed.
- */
 public class BirdInfoActivity extends AppCompatActivity {
 
     private String currentImageUriStr;
+    private String currentImageUrl;
     private String currentBirdId;
     private String currentCommonName;
     private String currentScientificName;
     private String currentSpecies;
     private String currentFamily;
+    private String identificationLogId;
+    private String identificationId;
+    private String currentSelectionSource;
 
     private Double currentLatitude;
     private Double currentLongitude;
@@ -38,16 +40,20 @@ public class BirdInfoActivity extends AppCompatActivity {
     private String currentState;
     private String currentCountry;
 
+    private ArrayList<Bundle> modelAlternatives = new ArrayList<>();
+
     private RadioGroup rgQuantity;
     private Button btnStore;
     private TextView commonNameTextView, scientificNameTextView, speciesTextView, familyTextView;
     private TextView referenceImageStatusTextView;
+    private TextView referenceAttributionTextView;
+    private View referenceImageProgressBar;
     private ImageView birdImageView;
     private ImageView referenceBirdImageView;
     private boolean awardPoints = true;
     private boolean useReferenceNameLookupOnly = false;
+    private final OpenAiApi openAiApi = new OpenAiApi();
 
-    // FIX: Guard against double-tap launching multiple activities
     private final AtomicBoolean storeClicked = new AtomicBoolean(false);
 
     private final ActivityResultLauncher<Intent> birdSelectionLauncher = registerForActivityResult(
@@ -59,17 +65,20 @@ public class BirdInfoActivity extends AppCompatActivity {
                     String selectedSpec = result.getData().getStringExtra("selectedSpecies");
                     String selectedFam = result.getData().getStringExtra("selectedFamily");
                     String selectedBirdId = result.getData().getStringExtra("selectedBirdId");
+                    String selectedSource = result.getData().getStringExtra("selectedSource");
 
                     if (selectedCommon != null) {
                         currentCommonName = selectedCommon;
                         currentScientificName = selectedSci;
                         currentSpecies = selectedSpec;
                         currentFamily = selectedFam;
+                        currentSelectionSource = selectedSource;
 
                         if (selectedBirdId != null && !selectedBirdId.trim().isEmpty()) {
                             currentBirdId = selectedBirdId;
                             useReferenceNameLookupOnly = false;
                         } else {
+                            currentBirdId = null;
                             useReferenceNameLookupOnly = true;
                         }
 
@@ -80,25 +89,17 @@ public class BirdInfoActivity extends AppCompatActivity {
             }
     );
 
-    /**
-     * Android calls this when the Activity is first created. This is where the screen usually
-     * inflates its layout, grabs views, creates helpers, and wires listeners.
-     * It grabs layout/view references here so later code can read from them, update them, or
-     * attach listeners.
-     * It wires user actions here, so taps on buttons/cards/menus trigger the next step in the
-     * flow.
-     * It also packages extras into an Intent when this flow needs to open another Activity.
-     */
     @Override
     protected void onCreate(@Nullable Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         SystemBarHelper.applyStandardNavBar(this);
         setContentView(R.layout.activity_bird_info);
 
-        // Bind or inflate the UI pieces this method needs before it can update the screen.
         birdImageView = findViewById(R.id.birdImageView);
         referenceBirdImageView = findViewById(R.id.referenceBirdImageView);
         referenceImageStatusTextView = findViewById(R.id.referenceImageStatusTextView);
+        referenceAttributionTextView = findViewById(R.id.referenceAttributionTextView);
+        referenceImageProgressBar = findViewById(R.id.referenceImageProgressBar);
         commonNameTextView = findViewById(R.id.commonNameTextView);
         scientificNameTextView = findViewById(R.id.scientificNameTextView);
         speciesTextView = findViewById(R.id.speciesTextView);
@@ -109,11 +110,15 @@ public class BirdInfoActivity extends AppCompatActivity {
         rgQuantity = findViewById(R.id.rgQuantity);
 
         currentImageUriStr = getIntent().getStringExtra("imageUri");
+        currentImageUrl = getIntent().getStringExtra("imageUrl");
         currentBirdId = getIntent().getStringExtra("birdId");
         currentCommonName = getIntent().getStringExtra("commonName");
         currentScientificName = getIntent().getStringExtra("scientificName");
         currentSpecies = getIntent().getStringExtra("species");
         currentFamily = getIntent().getStringExtra("family");
+        identificationLogId = getIntent().getStringExtra("identificationLogId");
+        identificationId = getIntent().getStringExtra("identificationId");
+        currentSelectionSource = getIntent().getStringExtra("selectionSource");
         awardPoints = getIntent().getBooleanExtra("awardPoints", true);
 
         currentLatitude = getIntent().hasExtra("latitude") ? getIntent().getDoubleExtra("latitude", 0.0) : null;
@@ -122,19 +127,36 @@ public class BirdInfoActivity extends AppCompatActivity {
         currentState = getIntent().getStringExtra("state");
         currentCountry = getIntent().getStringExtra("country");
 
+        ArrayList<Bundle> incomingAlternatives = getIntent().getParcelableArrayListExtra("modelAlternatives");
+        if (incomingAlternatives != null) {
+            modelAlternatives = incomingAlternatives;
+        }
+
         if (currentImageUriStr != null && birdImageView != null) {
-            birdImageView.setImageURI(Uri.parse(currentImageUriStr));
+            Glide.with(this)
+                    .load(Uri.parse(currentImageUriStr))
+                    .into(birdImageView);
         }
 
         updateBirdUi();
 
-        rgQuantity.setOnCheckedChangeListener((group, checkedId) ->
-                btnStore.setEnabled(checkedId != -1)
-        );
+        rgQuantity.setOnCheckedChangeListener((group, checkedId) -> btnStore.setEnabled(checkedId != -1));
 
-        // Attach the user interaction that should run when this control is tapped.
         btnStore.setOnClickListener(v -> {
             if (!storeClicked.compareAndSet(false, true)) return;
+
+            openAiApi.syncIdentificationFeedback(
+                    identificationLogId,
+                    identificationId,
+                    "confirm_final_choice",
+                    currentBirdId,
+                    currentSelectionSource,
+                    null,
+                    currentCommonName,
+                    currentScientificName,
+                    currentSpecies,
+                    currentFamily
+            );
 
             String quantity = getSelectedQuantity();
             long caughtTime = System.currentTimeMillis();
@@ -157,18 +179,52 @@ public class BirdInfoActivity extends AppCompatActivity {
             if (currentLatitude != null) i.putExtra(CardMakerActivity.EXTRA_LATITUDE, currentLatitude);
             if (currentLongitude != null) i.putExtra(CardMakerActivity.EXTRA_LONGITUDE, currentLongitude);
             i.putExtra(CardMakerActivity.EXTRA_COUNTRY, currentCountry);
-
-            // Move into the next screen and pass the identifiers/data that screen needs.
             startActivity(i);
         });
 
         btnNotMyBird.setOnClickListener(v -> {
-            Intent intent = new Intent(BirdInfoActivity.this, AiLoadingActivity.class);
+            openAiApi.syncIdentificationFeedback(
+                    identificationLogId,
+                    identificationId,
+                    "reject_initial_result",
+                    currentBirdId,
+                    currentSelectionSource,
+                    null,
+                    currentCommonName,
+                    currentScientificName,
+                    currentSpecies,
+                    currentFamily
+            );
+
+            Intent intent = new Intent(BirdInfoActivity.this, NotMyBirdActivity.class);
             intent.putExtra("imageUri", currentImageUriStr);
+            intent.putExtra("imageUrl", currentImageUrl);
+            intent.putExtra("birdId", currentBirdId);
+            intent.putExtra("commonName", currentCommonName);
+            intent.putExtra("scientificName", currentScientificName);
+            intent.putExtra("species", currentSpecies);
+            intent.putExtra("family", currentFamily);
+            intent.putExtra("identificationLogId", identificationLogId);
+            intent.putExtra("identificationId", identificationId);
+            intent.putExtra("selectionSource", currentSelectionSource);
+            intent.putParcelableArrayListExtra("modelAlternatives", modelAlternatives);
             birdSelectionLauncher.launch(intent);
         });
 
         btnDiscard.setOnClickListener(v -> {
+            openAiApi.syncIdentificationFeedback(
+                    identificationLogId,
+                    identificationId,
+                    "discarded",
+                    null,
+                    currentSelectionSource,
+                    null,
+                    currentCommonName,
+                    currentScientificName,
+                    currentSpecies,
+                    currentFamily
+            );
+
             Intent home = new Intent(BirdInfoActivity.this, HomeActivity.class);
             home.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
             startActivity(home);
@@ -177,42 +233,49 @@ public class BirdInfoActivity extends AppCompatActivity {
     }
 
     private void updateBirdUi() {
-        if (commonNameTextView != null) commonNameTextView.setText("Common Name: " + (currentCommonName != null ? currentCommonName : "N/A"));
-        if (scientificNameTextView != null) scientificNameTextView.setText("Scientific Name: " + (currentScientificName != null ? currentScientificName : "N/A"));
-        if (speciesTextView != null) speciesTextView.setText("Species: " + (currentSpecies != null ? currentSpecies : "N/A"));
-        if (familyTextView != null) familyTextView.setText("Family: " + (currentFamily != null ? currentFamily : "N/A"));
+        commonNameTextView.setText("Common Name: " + (currentCommonName != null ? currentCommonName : "N/A"));
+        scientificNameTextView.setText("Scientific Name: " + (currentScientificName != null ? currentScientificName : "N/A"));
+        speciesTextView.setText("Species: " + (currentSpecies != null ? currentSpecies : "N/A"));
+        familyTextView.setText("Family: " + (currentFamily != null ? currentFamily : "N/A"));
         loadReferenceBirdImage();
     }
 
     private void loadReferenceBirdImage() {
-        if (referenceBirdImageView == null || referenceImageStatusTextView == null) return;
-
         String lookupBirdId = useReferenceNameLookupOnly ? null : currentBirdId;
 
         referenceBirdImageView.setImageDrawable(null);
         referenceBirdImageView.setVisibility(View.INVISIBLE);
+        if (referenceImageProgressBar != null) {
+            referenceImageProgressBar.setVisibility(View.VISIBLE);
+        }
+        if (referenceAttributionTextView != null) {
+            referenceAttributionTextView.setText("");
+            referenceAttributionTextView.setVisibility(View.GONE);
+        }
         referenceImageStatusTextView.setText("Loading reference photo...");
         referenceImageStatusTextView.setVisibility(View.VISIBLE);
 
-        BirdImageLoader.loadBirdImageInto(
+        BirdImageLoader.loadBirdImageIntoWithFetch(
+                this,
                 referenceBirdImageView,
+                referenceImageProgressBar,
+                referenceImageStatusTextView,
                 lookupBirdId,
                 currentCommonName,
                 currentScientificName,
-                new BirdImageLoader.LoadCallback() {
+                new BirdImageLoader.MetadataLoadCallback() {
                     @Override
-                    public void onLoaded() {
-                        if (isFinishing() || isDestroyed()) return;
-                        referenceImageStatusTextView.setVisibility(View.GONE);
+                    public void onLoaded(@Nullable BirdImageLoader.ImageMetadata metadata) {
+                        if (referenceAttributionTextView == null || isFinishing() || isDestroyed()) return;
+                        BirdImageLoader.applyAttributionText(referenceAttributionTextView, metadata);
                     }
 
                     @Override
                     public void onNotFound() {
-                        if (isFinishing() || isDestroyed()) return;
-                        referenceBirdImageView.setImageDrawable(null);
-                        referenceBirdImageView.setVisibility(View.GONE);
-                        referenceImageStatusTextView.setText("Reference photo unavailable");
-                        referenceImageStatusTextView.setVisibility(View.VISIBLE);
+                        if (referenceAttributionTextView != null) {
+                            referenceAttributionTextView.setText("");
+                            referenceAttributionTextView.setVisibility(View.GONE);
+                        }
                     }
                 }
         );
@@ -226,29 +289,15 @@ public class BirdInfoActivity extends AppCompatActivity {
                 .show();
     }
 
-    /**
-     * Runs when the screen returns to the foreground, so it often refreshes UI state or restarts
-     * listeners.
-     * Part of this method writes changes back to Firestore/storage, so this is where app actions
-     * become permanent.
-     */
     @Override
     protected void onResume() {
         super.onResume();
-        // Reset guard if returning to this activity
-        // Persist the new state so the action is saved outside the current screen.
         storeClicked.set(false);
     }
 
-    /**
-     * Returns the current value/state this class needs somewhere else in the app.
-     * It grabs layout/view references here so later code can read from them, update them, or
-     * attach listeners.
-     */
     private String getSelectedQuantity() {
         int checkedId = rgQuantity.getCheckedRadioButtonId();
         if (checkedId != -1) {
-            // Bind or inflate the UI pieces this method needs before it can update the screen.
             RadioButton rb = findViewById(checkedId);
             return rb.getText().toString();
         }

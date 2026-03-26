@@ -56,8 +56,8 @@
                 android:id="@+id/tvYourPhotoLabel"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
-                android:layout_marginStart="8dp"
-                android:layout_marginEnd="4dp"
+                android:layout_marginStart="16dp"
+                android:layout_marginEnd="8dp"
                 android:layout_marginTop="18dp"
                 android:gravity="center"
                 android:text="Your Photo"
@@ -72,8 +72,8 @@
                 android:id="@+id/tvReferencePhotoLabel"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
-                android:layout_marginStart="4dp"
-                android:layout_marginEnd="8dp"
+                android:layout_marginStart="8dp"
+                android:layout_marginEnd="16dp"
                 android:layout_marginTop="18dp"
                 android:gravity="center"
                 android:text="Reference Photo"
@@ -88,10 +88,12 @@
                 android:id="@+id/birdImageView"
                 android:layout_width="0dp"
                 android:layout_height="0dp"
-                android:layout_marginStart="8dp"
-                android:layout_marginEnd="4dp"
+                android:layout_marginStart="16dp"
+                android:layout_marginEnd="8dp"
                 android:layout_marginTop="8dp"
                 android:adjustViewBounds="true"
+                android:background="@drawable/bg_image_placeholder"
+                android:padding="2dp"
                 android:scaleType="centerCrop"
                 app:layout_constraintDimensionRatio="1:1"
                 app:layout_constraintEnd_toStartOf="@id/comparisonGuideline"
@@ -103,9 +105,11 @@
                 android:id="@+id/referenceBirdFrame"
                 android:layout_width="0dp"
                 android:layout_height="0dp"
-                android:layout_marginStart="4dp"
-                android:layout_marginEnd="8dp"
+                android:layout_marginStart="8dp"
+                android:layout_marginEnd="16dp"
                 android:layout_marginTop="8dp"
+                android:background="@drawable/bg_image_placeholder"
+                android:padding="2dp"
                 app:layout_constraintDimensionRatio="1:1"
                 app:layout_constraintEnd_toEndOf="parent"
                 app:layout_constraintStart_toStartOf="@id/comparisonGuideline"
@@ -120,6 +124,13 @@
                     android:visibility="invisible"
                     tools:srcCompat="@drawable/bird_image" />
 
+                <ProgressBar
+                    android:id="@+id/referenceImageProgressBar"
+                    style="?android:attr/progressBarStyle"
+                    android:layout_width="36dp"
+                    android:layout_height="36dp"
+                    android:layout_gravity="center" />
+
                 <TextView
                     android:id="@+id/referenceImageStatusTextView"
                     android:layout_width="match_parent"
@@ -131,20 +142,38 @@
                     android:textSize="14sp" />
 
             </FrameLayout>
+            <TextView
+                android:id="@+id/referenceAttributionTextView"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:layout_marginEnd="16dp"
+                android:layout_marginTop="6dp"
+                android:gravity="center"
+                android:text=""
+                android:textColor="?attr/colorOnSurface"
+                android:textSize="11sp"
+                android:lineSpacingExtra="1dp"
+                android:linksClickable="true"
+                android:textColorLink="@color/nav_brown"
+                android:visibility="gone"
+                app:layout_constraintEnd_toEndOf="parent"
+                app:layout_constraintStart_toStartOf="@id/comparisonGuideline"
+                app:layout_constraintTop_toBottomOf="@id/referenceBirdFrame" />
 
             <TextView
                 android:id="@+id/commonNameTextView"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="14dp"
-                android:layout_marginHorizontal="20dp"
+                android:layout_marginTop="18dp"
+                android:layout_marginHorizontal="24dp"
                 android:gravity="center"
                 android:text="Common Name: "
                 android:textSize="18sp"
                 android:textStyle="bold"
                 app:layout_constraintEnd_toEndOf="parent"
                 app:layout_constraintStart_toStartOf="parent"
-                app:layout_constraintTop_toBottomOf="@id/birdImageView" />
+                app:layout_constraintTop_toBottomOf="@id/referenceAttributionTextView" />
 
             <TextView
                 android:id="@+id/scientificNameTextView"

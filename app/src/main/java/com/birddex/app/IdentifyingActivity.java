@@ -33,9 +33,9 @@ import com.google.firebase.storage.StorageReference;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.Date;
 
 /**
  * IdentifyingActivity orchestrates the bird identification process.
@@ -261,31 +261,8 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
             return;
         }
 
-        Log.d(TAG, "startIdentificationFlow: checking limits");
-
-        // Set up or query the Firebase layer that supplies/stores this feature's data.
-        firebaseManager.getOpenAiRequestsRemaining(new FirebaseManager.OpenAiRequestLimitListener() {
-            @Override
-            public void onCheckComplete(boolean hasRequestsRemaining, int remaining, Date expirationDate) {
-                if (identificationCompleted.get() || isFinishing() || isDestroyed()) return;
-
-                if (hasRequestsRemaining) {
-                    Log.d(TAG, "onCheckComplete: " + remaining + " requests remaining. Uploading image to identificationImages first...");
-                    // Reverted: Upload to identificationImages FIRST, then identify
-                    uploadImageToIdentificationStorage(imageUri, latitude, longitude, localityName, state, country);
-                } else {
-                    Log.w(TAG, "onCheckComplete: Daily limit reached");
-                    finishActivityWithToast("Daily limit reached for AI requests.");
-                }
-            }
-
-            @Override
-            public void onFailure(String errorMessage) {
-                if (identificationCompleted.get() || isFinishing() || isDestroyed()) return;
-                Log.e(TAG, "Failed to check OpenAI request limits: " + errorMessage);
-                finishActivityWithToast("Failed to check AI limits.");
-            }
-        });
+        Log.d(TAG, "startIdentificationFlow: uploading identification image");
+        uploadImageToIdentificationStorage(imageUri, latitude, longitude, localityName, state, country);
     }
 
     /**
@@ -343,42 +320,37 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
         }
 
         // We pass the base64 for analysis AND the storage URL for logging AND requestId for idempotency
-        openAiApi.identifyBirdFromImage(base64Image, downloadUrl, latitude, longitude, localityName, requestId, new OpenAiApi.OpenAiCallback() {
+        openAiApi.identifyBirdFromImage(base64Image, downloadUrl, latitude, longitude, localityName, requestId, new OpenAiApi.IdentifyBirdCallback() {
             @Override
-            public void onSuccess(String response,
-                                  boolean isVerified,
-                                  boolean isGore,
-                                  boolean isInDatabase,
-                                  @Nullable String reasonCode) {
-                // Kick off an asynchronous one-time read; the callbacks below decide how the UI should react.
+            public void onSuccess(OpenAiApi.IdentifyBirdResult result) {
                 if (identificationCompleted.get() || isFinishing() || isDestroyed()) return;
-                Log.d(TAG, "OpenAI onSuccess: isVerified=" + isVerified
-                        + ", isGore=" + isGore
-                        + ", isInDatabase=" + isInDatabase
-                        + ", reasonCode=" + reasonCode);
+                Log.d(TAG, "identifyBird onSuccess: isVerified=" + result.isVerified
+                        + ", isGore=" + result.isGore
+                        + ", isInDatabase=" + result.isInDatabase
+                        + ", reasonCode=" + result.reasonCode);
 
-                if (isGore) {
+                if (result.isGore) {
                     finishActivityWithToast("Please take a picture of a non-gore picture of a bird.");
                     return;
                 }
 
-                if (!isInDatabase || "NOT_IN_DATABASE".equals(reasonCode)) {
+                if (!result.isInDatabase || "NOT_IN_DATABASE".equals(result.reasonCode)) {
                     finishActivityWithToast("Sorry, this bird is not in our database just yet.");
                     return;
                 }
 
-                if (!isVerified || response == null || response.trim().isEmpty()) {
+                if (!result.isVerified || result.primaryBird == null || result.primaryBird.birdId == null || result.primaryBird.birdId.trim().isEmpty()) {
                     finishActivityWithToast("Identification could not be verified.");
                     return;
                 }
 
-                proceedToInfoActivity(response, downloadUrl, latitude, longitude, localityName, state, country);
+                proceedToInfoActivity(result, downloadUrl, latitude, longitude, localityName, state, country);
             }
 
             @Override
             public void onFailure(Exception e, String message) {
                 if (identificationCompleted.get() || isFinishing() || isDestroyed()) return;
-                Log.e(TAG, "OpenAI onFailure: " + message, e);
+                Log.e(TAG, "identifyBird onFailure: " + message, e);
                 finishActivityWithToast("Identification failed: " + message);
             }
         });
@@ -388,30 +360,23 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
      * Main logic block for this part of the feature.
      * It also packages extras into an Intent when this flow needs to open another Activity.
      */
-    private void proceedToInfoActivity(String contentStr, @Nullable String downloadUrl, @Nullable Double latitude, @Nullable Double longitude, @Nullable String localityName, @Nullable String state, @Nullable String country) {
+    private void proceedToInfoActivity(OpenAiApi.IdentifyBirdResult result, @Nullable String downloadUrl, @Nullable Double latitude, @Nullable Double longitude, @Nullable String localityName, @Nullable String state, @Nullable String country) {
         if (identificationCompleted.compareAndSet(false, true)) {
             timeoutHandler.removeCallbacks(timeoutRunnable);
 
-            Log.d(TAG, "proceedToInfoActivity: Parsing results...");
-            String birdId = "Unknown", commonName = "Unknown", scientificName = "Unknown", species = "Unknown", family = "Unknown";
-            String[] lines = contentStr.split("\r?\n");
-            for (String line : lines) {
-                String trimmed = line.trim();
-                if (trimmed.startsWith("ID: ")) birdId = trimmed.substring(4).trim();
-                else if (trimmed.startsWith("Common Name: ")) commonName = trimmed.substring(13).trim();
-                else if (trimmed.startsWith("Scientific Name: ")) scientificName = trimmed.substring(17).trim();
-                else if (trimmed.startsWith("Species: ")) species = trimmed.substring(9).trim();
-                else if (trimmed.startsWith("Family: ")) family = trimmed.substring(8).trim();
-            }
-
+            OpenAiApi.BirdChoice primary = result.primaryBird;
             Intent intent = new Intent(IdentifyingActivity.this, BirdInfoActivity.class);
             intent.putExtra("imageUri", localImageUri.toString());
-            intent.putExtra("birdId", birdId);
-            intent.putExtra("commonName", commonName);
-            intent.putExtra("scientificName", scientificName);
-            intent.putExtra("species", species);
-            intent.putExtra("family", family);
+            intent.putExtra("birdId", primary.birdId);
+            intent.putExtra("commonName", primary.commonName);
+            intent.putExtra("scientificName", primary.scientificName);
+            intent.putExtra("species", primary.species);
+            intent.putExtra("family", primary.family);
             intent.putExtra("imageUrl", downloadUrl);
+            intent.putExtra("identificationLogId", result.identificationLogId);
+            intent.putExtra("identificationId", result.identificationId);
+            intent.putExtra("selectionSource", primary.source != null ? primary.source : "initial_result");
+            intent.putParcelableArrayListExtra("modelAlternatives", toCandidateBundles(result.modelAlternatives));
 
             boolean awardPoints = getIntent().getBooleanExtra("awardPoints", true);
             intent.putExtra("awardPoints", awardPoints);
@@ -424,10 +389,31 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
                 intent.putExtra("country", country);
             }
 
-            // Move into the next screen and pass the identifiers/data that screen needs.
             startActivity(intent);
             finish();
         }
+    }
+
+    private ArrayList<Bundle> toCandidateBundles(ArrayList<OpenAiApi.BirdChoice> candidates) {
+        ArrayList<Bundle> bundles = new ArrayList<>();
+        if (candidates == null) {
+            return bundles;
+        }
+
+        for (OpenAiApi.BirdChoice candidate : candidates) {
+            if (candidate == null || candidate.birdId == null || candidate.birdId.trim().isEmpty()) {
+                continue;
+            }
+            Bundle bundle = new Bundle();
+            bundle.putString("candidateBirdId", candidate.birdId);
+            bundle.putString("candidateCommonName", candidate.commonName);
+            bundle.putString("candidateScientificName", candidate.scientificName);
+            bundle.putString("candidateSpecies", candidate.species);
+            bundle.putString("candidateFamily", candidate.family);
+            bundle.putString("candidateSource", candidate.source);
+            bundles.add(bundle);
+        }
+        return bundles;
     }
 
     /**

@@ -345,20 +345,33 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
         // We pass the base64 for analysis AND the storage URL for logging AND requestId for idempotency
         openAiApi.identifyBirdFromImage(base64Image, downloadUrl, latitude, longitude, localityName, requestId, new OpenAiApi.OpenAiCallback() {
             @Override
-            public void onSuccess(String response, boolean isVerified, boolean isGore) {
+            public void onSuccess(String response,
+                                  boolean isVerified,
+                                  boolean isGore,
+                                  boolean isInDatabase,
+                                  @Nullable String reasonCode) {
                 // Kick off an asynchronous one-time read; the callbacks below decide how the UI should react.
                 if (identificationCompleted.get() || isFinishing() || isDestroyed()) return;
-                Log.d(TAG, "OpenAI onSuccess: isVerified=" + isVerified + ", isGore=" + isGore);
+                Log.d(TAG, "OpenAI onSuccess: isVerified=" + isVerified
+                        + ", isGore=" + isGore
+                        + ", isInDatabase=" + isInDatabase
+                        + ", reasonCode=" + reasonCode);
 
                 if (isGore) {
                     finishActivityWithToast("Please take a picture of a non-gore picture of a bird.");
                     return;
                 }
 
-                if (!isVerified) {
-                    finishActivityWithToast("Bird not recognized in Georgia regional data.");
+                if (!isInDatabase || "NOT_IN_DATABASE".equals(reasonCode)) {
+                    finishActivityWithToast("Sorry, this bird is not in our database just yet.");
                     return;
                 }
+
+                if (!isVerified || response == null || response.trim().isEmpty()) {
+                    finishActivityWithToast("Identification could not be verified.");
+                    return;
+                }
+
                 proceedToInfoActivity(response, downloadUrl, latitude, longitude, localityName, state, country);
             }
 

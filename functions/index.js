@@ -1129,14 +1129,36 @@ async function getBirdById(birdId) {
 }
 
 function buildBirdChoicePayload(birdData, source, extra = {}) {
-    if (!birdData || !birdData.id) return null;
+    const normalized = normalizeBirdData(birdData, birdData?.id || birdData?.birdId || null);
+    if (!normalized && !extra?.commonName && !extra?.scientificName) return null;
     return {
-        birdId: birdData.id,
-        commonName: birdData.commonName || null,
-        scientificName: birdData.scientificName || null,
-        family: birdData.family || null,
-        species: birdData.species || null,
+        birdId: normalized?.id || birdData?.birdId || null,
+        commonName: normalized?.commonName || extra?.commonName || birdData?.commonName || null,
+        scientificName: normalized?.scientificName || extra?.scientificName || birdData?.scientificName || null,
+        family: normalized?.family || extra?.family || birdData?.family || null,
+        species: normalized?.species || extra?.species || birdData?.species || null,
         source: source || null,
+        isSupportedInDatabase: extra?.isSupportedInDatabase !== undefined ? !!extra.isSupportedInDatabase : !!(normalized?.id || birdData?.id),
+        ...extra,
+    };
+}
+
+function buildOpenAiLooseChoicePayload(choice, source, extra = {}) {
+    if (!choice) return null;
+    const commonName = sanitizeText(choice.commonName || choice.name || "", 200).trim() || null;
+    const scientificName = sanitizeText(choice.scientificName || "", 200).trim() || null;
+    const species = sanitizeText(choice.species || "", 200).trim() || null;
+    const family = sanitizeText(choice.family || "", 200).trim() || null;
+    const birdId = sanitizeText(choice.birdId || choice.id || "", 200).trim() || null;
+    if (!birdId && !commonName && !scientificName) return null;
+    return {
+        birdId,
+        commonName,
+        scientificName,
+        family,
+        species,
+        source: source || null,
+        isSupportedInDatabase: false,
         ...extra,
     };
 }
@@ -1192,7 +1214,37 @@ async function resolveBirdChoiceToSupportedBird(choice) {
     return null;
 }
 
-async function callOpenAiBirdReviewCandidates(base64Image, candidateA, candidateB) {
+function normalizeBirdChoiceToken(value) {
+    return sanitizeText(String(value || ""), 200).trim().toLowerCase();
+}
+
+function buildExcludedBirdChoiceTokens(birds) {
+    const excluded = new Set();
+    for (const bird of (birds || [])) {
+        const normalized = normalizeBirdData(bird, bird?.id || bird?.birdId || null);
+        const rawBirdId = bird?.birdId || bird?.id || null;
+        const birdId = normalized?.id || rawBirdId;
+        const commonName = normalized?.commonName || bird?.commonName || null;
+
+        const birdIdToken = normalizeBirdChoiceToken(birdId);
+        const commonNameToken = normalizeBirdChoiceToken(commonName);
+
+        if (birdIdToken) excluded.add(`id:${birdIdToken}`);
+        if (commonNameToken) excluded.add(`name:${commonNameToken}`);
+    }
+    return excluded;
+}
+
+async function callOpenAiBirdReviewCandidates(base64Image, candidateA, candidateB, excludedBirds = []) {
+    const excludedLines = (excludedBirds || []).map((bird, index) => {
+        const normalized = normalizeBirdData(bird, bird?.id || bird?.birdId || null);
+        const birdId = normalized?.id || bird?.birdId || bird?.id || "Unknown";
+        const commonName = normalized?.commonName || bird?.commonName || "Unknown";
+        return `${index + 1}. ID: ${birdId} | Common Name: ${commonName}`;
+    }).filter(Boolean);
+
+    const excludedBirdsBlock = excludedLines.length > 0 ? excludedLines.join("\n") : "None";
+
     const aiResponse = await axios.post(
         "https://api.openai.com/v1/chat/completions",
         {
@@ -1205,25 +1257,13 @@ async function callOpenAiBirdReviewCandidates(base64Image, candidateA, candidate
                         text: `You are identifying a bird from an image for a BirdDex review flow.
 If the image contains a dead bird, gore, or graphic violence, respond ONLY with 'GORE'.
 Use the two BirdDex model hints below only as hints. They may be wrong.
+Do NOT return any bird that appears in the excluded list.
+Do NOT repeat the same bird twice.
 Return EXACTLY valid JSON with this schema and nothing else:
 {
   "choices": [
     {
-      "birdId": "ebird_or_birddex_species_code",
-      "commonName": "bird common name",
-      "scientificName": "scientific name",
-      "species": "species label",
-      "family": "family name"
-    },
-    {
-      "birdId": "ebird_or_birddex_species_code",
-      "commonName": "bird common name",
-      "scientificName": "scientific name",
-      "species": "species label",
-      "family": "family name"
-    },
-    {
-      "birdId": "ebird_or_birddex_species_code",
+      "birdId": "ebird_or_birddex_species_code_or_null",
       "commonName": "bird common name",
       "scientificName": "scientific name",
       "species": "species label",
@@ -1231,8 +1271,8 @@ Return EXACTLY valid JSON with this schema and nothing else:
     }
   ]
 }
-Rank the choices from most likely to less likely.
-Do not repeat the same bird twice.
+Return up to 6 ranked choices from most likely to less likely so BirdDex can filter excluded birds and keep two fresh options.
+It is OK if a likely bird is not in BirdDex's supported birds collection yet. In that case still return its best common name and scientific name and leave birdId null or blank.
 
 BirdDex model hint 1:
 ID: ${candidateA?.id || "Unknown"}
@@ -1246,7 +1286,10 @@ ID: ${candidateB?.id || "Unknown"}
 Common Name: ${candidateB?.commonName || "Unknown"}
 Scientific Name: ${candidateB?.scientificName || "Unknown"}
 Species: ${candidateB?.species || "Unknown"}
-Family: ${candidateB?.family || "Unknown"}`
+Family: ${candidateB?.family || "Unknown"}
+
+Excluded birds (never return these):
+${excludedBirdsBlock}`
                     },
                     {
                         type: "image_url",
@@ -1257,7 +1300,7 @@ Family: ${candidateB?.family || "Unknown"}`
                     },
                 ],
             }],
-            max_tokens: 450,
+            max_tokens: 700,
         },
         {
             headers: { "Authorization": `Bearer ${OPENAI_API_KEY.value()}` },
@@ -1726,20 +1769,26 @@ exports.reviewBirdAlternatives = onCall({ secrets: [OPENAI_API_KEY], timeoutSeco
 
         const top1Bird = await getBirdById(identificationLogData.localModel?.top1BirdId || null);
         const top2Bird = await getBirdById(identificationLogData.localModel?.top2BirdId || null);
+        const top3Bird = await getBirdById(identificationLogData.localModel?.top3BirdId || null);
 
         if (!top1Bird || !top2Bird) {
             throw new HttpsError("failed-precondition", "Not enough BirdDex candidates were available for AI review.");
         }
 
+        const excludedBirds = [top1Bird, top2Bird, top3Bird].filter(Boolean);
+        const excludedTokens = buildExcludedBirdChoiceTokens(excludedBirds);
+
         await reserveOpenAiQuota(userRef, eventLogRef, userId);
 
-        const openAiRawResponse = await callOpenAiBirdReviewCandidates(image, top1Bird, top2Bird);
+        const openAiRawResponse = await callOpenAiBirdReviewCandidates(image, top1Bird, top2Bird, excludedBirds);
         if (openAiRawResponse.includes("GORE")) {
             await identificationLogRef.set({
                 openAi: {
                     reviewRequestedAt: admin.firestore.FieldValue.serverTimestamp(),
                     reviewResponseText: openAiRawResponse,
                     reviewCandidates: [],
+                    excludedBirdIds: excludedBirds.map((bird) => bird.id || null).filter(Boolean),
+                    excludedCommonNames: excludedBirds.map((bird) => bird.commonName || null).filter(Boolean),
                 },
                 userFeedback: {
                     status: "openai_review_blocked_gore",
@@ -1765,36 +1814,85 @@ exports.reviewBirdAlternatives = onCall({ secrets: [OPENAI_API_KEY], timeoutSeco
         }
 
         const parsedChoices = parseRankedBirdChoicesJson(openAiRawResponse);
-        const supportedChoices = [];
-        const seenBirdIds = new Set();
+        const responseChoices = [];
+        const seenChoiceTokens = new Set();
+
         for (const parsedChoice of parsedChoices) {
-            const matchedBird = await resolveBirdChoiceToSupportedBird(parsedChoice);
-            if (!matchedBird || !matchedBird.id || seenBirdIds.has(matchedBird.id)) {
+            const parsedBirdIdToken = normalizeBirdChoiceToken(parsedChoice?.birdId);
+            const parsedCommonNameToken = normalizeBirdChoiceToken(parsedChoice?.commonName);
+            if ((parsedBirdIdToken && excludedTokens.has(`id:${parsedBirdIdToken}`)) ||
+                (parsedCommonNameToken && excludedTokens.has(`name:${parsedCommonNameToken}`))) {
                 continue;
             }
-            seenBirdIds.add(matchedBird.id);
-            supportedChoices.push(buildBirdChoicePayload(matchedBird, "openai_review"));
-            if (supportedChoices.length >= 2) break;
+
+            const matchedBird = await resolveBirdChoiceToSupportedBird(parsedChoice);
+            let responseChoice = null;
+
+            if (matchedBird && matchedBird.id) {
+                const matchedBirdIdToken = normalizeBirdChoiceToken(matchedBird.id);
+                const matchedCommonNameToken = normalizeBirdChoiceToken(matchedBird.commonName);
+                if ((matchedBirdIdToken && excludedTokens.has(`id:${matchedBirdIdToken}`)) ||
+                    (matchedCommonNameToken && excludedTokens.has(`name:${matchedCommonNameToken}`))) {
+                    continue;
+                }
+
+                const dedupeToken = matchedBirdIdToken || `name:${matchedCommonNameToken}`;
+                if (dedupeToken && seenChoiceTokens.has(dedupeToken)) {
+                    continue;
+                }
+                if (dedupeToken) seenChoiceTokens.add(dedupeToken);
+
+                responseChoice = buildBirdChoicePayload(matchedBird, "openai_review", {
+                    isSupportedInDatabase: true,
+                });
+            } else {
+                responseChoice = buildOpenAiLooseChoicePayload(parsedChoice, "openai_review_unsupported", {
+                    isSupportedInDatabase: false,
+                });
+                if (!responseChoice) {
+                    continue;
+                }
+
+                const looseBirdIdToken = normalizeBirdChoiceToken(responseChoice.birdId);
+                const looseCommonNameToken = normalizeBirdChoiceToken(responseChoice.commonName);
+                if ((looseBirdIdToken && excludedTokens.has(`id:${looseBirdIdToken}`)) ||
+                    (looseCommonNameToken && excludedTokens.has(`name:${looseCommonNameToken}`))) {
+                    continue;
+                }
+
+                const dedupeToken = looseBirdIdToken || `name:${looseCommonNameToken}`;
+                if (dedupeToken && seenChoiceTokens.has(dedupeToken)) {
+                    continue;
+                }
+                if (dedupeToken) seenChoiceTokens.add(dedupeToken);
+            }
+
+            if (responseChoice) {
+                responseChoices.push(responseChoice);
+            }
+            if (responseChoices.length >= 2) break;
         }
 
         await identificationLogRef.set({
             openAi: {
                 reviewRequestedAt: admin.firestore.FieldValue.serverTimestamp(),
                 reviewResponseText: openAiRawResponse,
-                reviewCandidates: supportedChoices,
+                reviewCandidates: responseChoices,
+                excludedBirdIds: excludedBirds.map((bird) => bird.id || null).filter(Boolean),
+                excludedCommonNames: excludedBirds.map((bird) => bird.commonName || null).filter(Boolean),
             },
             userFeedback: {
-                status: supportedChoices.length > 0 ? "openai_review_candidates_ready" : "openai_review_no_supported_match",
+                status: responseChoices.length > 0 ? "openai_review_candidates_ready" : "openai_review_no_candidates",
                 feedbackTimestamp: admin.firestore.FieldValue.serverTimestamp(),
             },
         }, { merge: true });
 
         const response = {
-            isVerified: supportedChoices.length > 0,
+            isVerified: responseChoices.length > 0,
             isGore: false,
-            isInDatabase: supportedChoices.length > 0,
-            userMessage: supportedChoices.length > 0 ? null : "Sorry, this bird is not in our database just yet.",
-            openAiAlternatives: supportedChoices,
+            isInDatabase: responseChoices.length > 0,
+            userMessage: responseChoices.length > 0 ? null : "Sorry, AI could not produce two more options.",
+            openAiAlternatives: responseChoices,
             identificationLogId,
             imageUrl: imageUrl || identificationLogData.imageUrl || "",
         };
@@ -1823,7 +1921,12 @@ exports.syncIdentificationFeedback = onCall(async (request) => {
         identificationId,
         action,
         selectedBirdId,
-        selectedSource,
+        selectionSource,
+        note,
+        selectedCommonName,
+        selectedScientificName,
+        selectedSpecies,
+        selectedFamily,
     } = request.data || {};
 
     if (!identificationLogId || typeof identificationLogId !== "string") {
@@ -1844,7 +1947,7 @@ exports.syncIdentificationFeedback = onCall(async (request) => {
         throw new HttpsError("permission-denied", "You do not have access to this identification log.");
     }
 
-    const identificationRef = identificationId ? db.collection("identifications").doc(String(identificationId)) : null;
+    let identificationRef = identificationId ? db.collection("identifications").doc(String(identificationId)) : null;
     if (identificationRef) {
         const identificationDoc = await identificationRef.get();
         if (identificationDoc.exists && identificationDoc.data()?.identificationLogId !== identificationLogId) {
@@ -1856,20 +1959,49 @@ exports.syncIdentificationFeedback = onCall(async (request) => {
         userFeedback: {
             feedbackTimestamp: admin.firestore.FieldValue.serverTimestamp(),
             lastAction: action,
+            note: typeof note === "string" ? note : null,
         },
     };
 
+    const selectionActions = ["select_model_alternative", "select_openai_alternative", "confirm_final_choice"];
     let selectedBird = null;
-    if (["select_model_alternative", "select_openai_alternative", "confirm_final_choice"].includes(action)) {
-        selectedBird = await getBirdById(selectedBirdId);
-        if (!selectedBird) {
-            throw new HttpsError("failed-precondition", "Selected bird is not supported in the database.");
+    const selectedSource = typeof selectionSource === "string" ? selectionSource : null;
+    const normalizedSelectedCommonName = sanitizeText(selectedCommonName || "", 200).trim() || null;
+    const normalizedSelectedScientificName = sanitizeText(selectedScientificName || "", 200).trim() || null;
+    const normalizedSelectedSpecies = sanitizeText(selectedSpecies || "", 200).trim() || null;
+    const normalizedSelectedFamily = sanitizeText(selectedFamily || "", 200).trim() || null;
+    const isUnsupportedOpenAiSelection = !selectedBirdId && selectedSource && selectedSource.startsWith("openai_review");
+
+    if (selectionActions.includes(action)) {
+        if (selectedBirdId) {
+            selectedBird = await getBirdById(selectedBirdId);
         }
-        updatePayload.userFeedback.correctedBirdId = selectedBird.id;
-        updatePayload.userFeedback.correctedCommonName = selectedBird.commonName || null;
-        updatePayload.userFeedback.correctedScientificName = selectedBird.scientificName || null;
-        updatePayload.userFeedback.correctedSpecies = selectedBird.species || null;
-        updatePayload.userFeedback.correctedFamily = selectedBird.family || null;
+
+        if (selectedBird) {
+            updatePayload.userFeedback.correctedBirdId = selectedBird.id;
+            updatePayload.userFeedback.correctedCommonName = selectedBird.commonName || null;
+            updatePayload.userFeedback.correctedScientificName = selectedBird.scientificName || null;
+            updatePayload.userFeedback.correctedSpecies = selectedBird.species || null;
+            updatePayload.userFeedback.correctedFamily = selectedBird.family || null;
+            updatePayload.userFeedback.correctedIsSupportedInDatabase = true;
+        } else if (isUnsupportedOpenAiSelection || action === "reject_initial_result" || action === "discarded") {
+            updatePayload.userFeedback.correctedBirdId = selectedBirdId || null;
+            updatePayload.userFeedback.correctedCommonName = normalizedSelectedCommonName;
+            updatePayload.userFeedback.correctedScientificName = normalizedSelectedScientificName;
+            updatePayload.userFeedback.correctedSpecies = normalizedSelectedSpecies;
+            updatePayload.userFeedback.correctedFamily = normalizedSelectedFamily;
+            updatePayload.userFeedback.correctedIsSupportedInDatabase = false;
+        } else if (!selectedBird && (normalizedSelectedCommonName || normalizedSelectedScientificName)) {
+            updatePayload.userFeedback.correctedBirdId = selectedBirdId || null;
+            updatePayload.userFeedback.correctedCommonName = normalizedSelectedCommonName;
+            updatePayload.userFeedback.correctedScientificName = normalizedSelectedScientificName;
+            updatePayload.userFeedback.correctedSpecies = normalizedSelectedSpecies;
+            updatePayload.userFeedback.correctedFamily = normalizedSelectedFamily;
+            updatePayload.userFeedback.correctedIsSupportedInDatabase = false;
+        } else if (action !== "reject_initial_result" && action !== "discarded") {
+            throw new HttpsError("failed-precondition", "Selected bird data was missing.");
+        }
+
         updatePayload.userFeedback.correctedSource = selectedSource || null;
         updatePayload.userFeedback.lastSelectionAt = admin.firestore.FieldValue.serverTimestamp();
     }
@@ -1889,7 +2021,7 @@ exports.syncIdentificationFeedback = onCall(async (request) => {
         updatePayload.userFeedback.confirmedCorrect = false;
         break;
     case "select_openai_alternative":
-        updatePayload.userFeedback.status = "openai_alternative_selected";
+        updatePayload.userFeedback.status = selectedBird ? "openai_alternative_selected" : "openai_alternative_selected_unsupported";
         updatePayload.userFeedback.confirmedCorrect = false;
         break;
     case "confirm_final_choice":
@@ -1897,9 +2029,15 @@ exports.syncIdentificationFeedback = onCall(async (request) => {
         updatePayload.userFeedback.confirmedCorrect = (selectedSource || "initial_result") === "initial_result";
         updatePayload.userFeedback.finalConfirmedAt = admin.firestore.FieldValue.serverTimestamp();
         updatePayload.training = {
-            eligibleForTraining: true,
+            eligibleForTraining: !!selectedBird,
             finalConfirmedBirdId: selectedBird?.id || null,
+            finalConfirmedCommonName: selectedBird?.commonName || normalizedSelectedCommonName || null,
+            finalConfirmedScientificName: selectedBird?.scientificName || normalizedSelectedScientificName || null,
+            finalConfirmedSpecies: selectedBird?.species || normalizedSelectedSpecies || null,
+            finalConfirmedFamily: selectedBird?.family || normalizedSelectedFamily || null,
             finalConfirmedSource: selectedSource || null,
+            finalConfirmedIsSupportedInDatabase: !!selectedBird,
+            labelQuality: selectedBird ? "user_confirmed_supported" : "user_confirmed_unsupported_openai_review",
         };
         break;
     case "retake_after_openai_review":
@@ -1914,16 +2052,41 @@ exports.syncIdentificationFeedback = onCall(async (request) => {
 
     await identificationLogRef.set(updatePayload, { merge: true });
 
-    if (identificationRef && action === "confirm_final_choice" && selectedBird) {
+    if (!identificationRef && action === "confirm_final_choice") {
+        identificationRef = db.collection("identifications").doc();
         await identificationRef.set({
-            birdId: selectedBird.id,
-            commonName: selectedBird.commonName || null,
-            scientificName: selectedBird.scientificName || null,
-            family: selectedBird.family || null,
-            species: selectedBird.species || null,
+            identificationLogId,
+            imageUrl: identificationLogData.imageUrl || "",
+            locationId: identificationLogData.locationId || null,
+            timestamp: admin.firestore.FieldValue.serverTimestamp(),
+            source: identificationLogData.finalResult?.source || null,
+            modelVersion: identificationLogData.modelVersion || null,
+            usedOpenAi: !!identificationLogData.decision?.usedOpenAi,
+            pipelineVersion: identificationLogData.pipelineVersion || "hybrid_v1",
+            predictedBirdId: identificationLogData.finalResult?.birdId || null,
+            predictedCommonName: identificationLogData.finalResult?.commonName || null,
+            predictedScientificName: identificationLogData.finalResult?.scientificName || null,
+            predictedFamily: identificationLogData.finalResult?.family || null,
+            predictedSpecies: identificationLogData.finalResult?.species || null,
+            predictedSource: identificationLogData.finalResult?.source || null,
+            userConfirmed: false,
+            trainingEligible: false,
+        }, { merge: true });
+        await identificationLogRef.set({ identificationId: identificationRef.id }, { merge: true });
+    }
+
+    if (identificationRef && action === "confirm_final_choice") {
+        await identificationRef.set({
+            birdId: selectedBird?.id || null,
+            commonName: selectedBird?.commonName || normalizedSelectedCommonName || null,
+            scientificName: selectedBird?.scientificName || normalizedSelectedScientificName || null,
+            family: selectedBird?.family || normalizedSelectedFamily || null,
+            species: selectedBird?.species || normalizedSelectedSpecies || null,
+            verified: !!selectedBird,
             userConfirmed: true,
-            trainingEligible: true,
+            trainingEligible: !!selectedBird,
             finalSelectionSource: selectedSource || null,
+            finalSelectionSupportedInDatabase: !!selectedBird,
             finalConfirmedAt: admin.firestore.FieldValue.serverTimestamp(),
         }, { merge: true });
     }

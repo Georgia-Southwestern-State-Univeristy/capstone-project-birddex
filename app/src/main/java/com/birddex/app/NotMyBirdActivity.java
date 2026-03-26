@@ -71,7 +71,7 @@ public class NotMyBirdActivity extends AppCompatActivity {
         bindCandidate(llBird2, iv2, tvName2, getCandidateAt(1));
 
         if (modelAlternatives.isEmpty()) {
-            tvInstruction.setText("No other BirdDex matches were available. Tap below to ask AI for two more supported options.");
+            tvInstruction.setText("No other BirdDex matches were available. Tap below to ask AI for two more options.");
         }
 
         btnStillNotMyBird.setOnClickListener(v -> {
@@ -117,7 +117,11 @@ public class NotMyBirdActivity extends AppCompatActivity {
                     "select_model_alternative",
                     selectedBirdId,
                     "model_alternative",
-                    null
+                    null,
+                    candidate.getString("candidateCommonName"),
+                    candidate.getString("candidateScientificName"),
+                    candidate.getString("candidateSpecies"),
+                    candidate.getString("candidateFamily")
             );
             Intent resultIntent = buildSelectionIntent(candidate, "model_alternative");
             setResult(RESULT_OK, resultIntent);

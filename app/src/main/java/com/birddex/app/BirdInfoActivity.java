@@ -147,7 +147,11 @@ public class BirdInfoActivity extends AppCompatActivity {
                     "confirm_final_choice",
                     currentBirdId,
                     currentSelectionSource,
-                    null
+                    null,
+                    currentCommonName,
+                    currentScientificName,
+                    currentSpecies,
+                    currentFamily
             );
 
             String quantity = getSelectedQuantity();
@@ -175,6 +179,19 @@ public class BirdInfoActivity extends AppCompatActivity {
         });
 
         btnNotMyBird.setOnClickListener(v -> {
+            openAiApi.syncIdentificationFeedback(
+                    identificationLogId,
+                    identificationId,
+                    "reject_initial_result",
+                    currentBirdId,
+                    currentSelectionSource,
+                    null,
+                    currentCommonName,
+                    currentScientificName,
+                    currentSpecies,
+                    currentFamily
+            );
+
             Intent intent = new Intent(BirdInfoActivity.this, NotMyBirdActivity.class);
             intent.putExtra("imageUri", currentImageUriStr);
             intent.putExtra("imageUrl", currentImageUrl);
@@ -191,6 +208,19 @@ public class BirdInfoActivity extends AppCompatActivity {
         });
 
         btnDiscard.setOnClickListener(v -> {
+            openAiApi.syncIdentificationFeedback(
+                    identificationLogId,
+                    identificationId,
+                    "discarded",
+                    null,
+                    currentSelectionSource,
+                    null,
+                    currentCommonName,
+                    currentScientificName,
+                    currentSpecies,
+                    currentFamily
+            );
+
             Intent home = new Intent(BirdInfoActivity.this, HomeActivity.class);
             home.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
             startActivity(home);

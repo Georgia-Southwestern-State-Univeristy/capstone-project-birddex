@@ -25,7 +25,7 @@ import java.util.ArrayList;
 import java.util.UUID;
 
 /**
- * AiCompLoadingActivity: Loading screen while BirdDex asks OpenAI for two more supported options.
+ * AiCompLoadingActivity: Loading screen while BirdDex asks OpenAI for two more options.
  */
 public class AiCompLoadingActivity extends AppCompatActivity {
 
@@ -34,7 +34,7 @@ public class AiCompLoadingActivity extends AppCompatActivity {
     private TextView tvLoadingMessage;
     private final String[] messages = {
             "Consulting AI...",
-            "Comparing your bird against supported species...",
+            "Comparing your bird against more species...",
             "Checking plumage and shape...",
             "Preparing two more options...",
             "Almost there..."
@@ -106,7 +106,7 @@ public class AiCompLoadingActivity extends AppCompatActivity {
                         }
 
                         if (candidates == null || candidates.isEmpty()) {
-                            Toast.makeText(AiCompLoadingActivity.this, userMessage != null ? userMessage : "Sorry, this bird is not in our database just yet.", Toast.LENGTH_LONG).show();
+                            Toast.makeText(AiCompLoadingActivity.this, userMessage != null ? userMessage : "Sorry, AI could not produce two more options.", Toast.LENGTH_LONG).show();
                             finish();
                             return;
                         }
@@ -137,7 +137,13 @@ public class AiCompLoadingActivity extends AppCompatActivity {
         }
 
         for (OpenAiApi.BirdChoice candidate : candidates) {
-            if (candidate == null || candidate.birdId == null || candidate.birdId.trim().isEmpty()) {
+            if (candidate == null) {
+                continue;
+            }
+            boolean hasText = (candidate.commonName != null && !candidate.commonName.trim().isEmpty())
+                    || (candidate.scientificName != null && !candidate.scientificName.trim().isEmpty())
+                    || (candidate.birdId != null && !candidate.birdId.trim().isEmpty());
+            if (!hasText) {
                 continue;
             }
             Bundle bundle = new Bundle();

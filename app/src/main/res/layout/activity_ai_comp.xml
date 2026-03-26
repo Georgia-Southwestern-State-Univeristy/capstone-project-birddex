@@ -39,7 +39,7 @@
         android:layout_height="wrap_content"
         android:layout_marginTop="12dp"
         android:gravity="center"
-        android:text="AI found two more supported matches. Select the bird that looks most like your photo."
+        android:text="BirdDex found one or more matches. Please understand that these selections are of lower confidence than the previous."
         android:textAllCaps="false"
         android:textColor="@color/on_page"
         android:textSize="14sp"

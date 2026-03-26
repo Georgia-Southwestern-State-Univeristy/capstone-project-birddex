@@ -33,7 +33,7 @@ public class CropActivity extends AppCompatActivity {
     public static final String EXTRA_AWARD_POINTS = "awardPoints";
 
     private CropImageView cropImageView;
-    
+
     // FIX: Guard against double-tap starting multiple identification flows
     private final AtomicBoolean identifyClicked = new AtomicBoolean(false);
 
@@ -140,8 +140,9 @@ public class CropActivity extends AppCompatActivity {
             if (!dir.exists()) {
                 dir.mkdirs();
             }
-            // Create a temporary JPG file.
-            File file = new File(dir, "cropped_image.jpg");
+            // Create a unique temporary JPG file so Glide never reuses an older crop
+            // from a previous identification session that happened to use the same path.
+            File file = new File(dir, "cropped_" + System.currentTimeMillis() + ".jpg");
             FileOutputStream fos = new FileOutputStream(file);
             // Compress the bitmap into the file.
             bmp.compress(Bitmap.CompressFormat.JPEG, 100, fos);

@@ -26,6 +26,7 @@ public class OpenAiApi {
         @Nullable public String species;
         @Nullable public String family;
         @Nullable public String source;
+        public boolean isSupportedInDatabase = true;
     }
 
     public static class IdentifyBirdResult {
@@ -131,6 +132,30 @@ public class OpenAiApi {
                                            @Nullable String selectedBirdId,
                                            @Nullable String selectionSource,
                                            @Nullable String note) {
+        syncIdentificationFeedback(
+                identificationLogId,
+                identificationId,
+                action,
+                selectedBirdId,
+                selectionSource,
+                note,
+                null,
+                null,
+                null,
+                null
+        );
+    }
+
+    public void syncIdentificationFeedback(@Nullable String identificationLogId,
+                                           @Nullable String identificationId,
+                                           @NonNull String action,
+                                           @Nullable String selectedBirdId,
+                                           @Nullable String selectionSource,
+                                           @Nullable String note,
+                                           @Nullable String selectedCommonName,
+                                           @Nullable String selectedScientificName,
+                                           @Nullable String selectedSpecies,
+                                           @Nullable String selectedFamily) {
         if (identificationLogId == null || identificationLogId.trim().isEmpty()) {
             return;
         }
@@ -142,6 +167,10 @@ public class OpenAiApi {
         if (selectedBirdId != null) data.put("selectedBirdId", selectedBirdId);
         if (selectionSource != null) data.put("selectionSource", selectionSource);
         if (note != null) data.put("note", note);
+        if (selectedCommonName != null) data.put("selectedCommonName", selectedCommonName);
+        if (selectedScientificName != null) data.put("selectedScientificName", selectedScientificName);
+        if (selectedSpecies != null) data.put("selectedSpecies", selectedSpecies);
+        if (selectedFamily != null) data.put("selectedFamily", selectedFamily);
 
         FirebaseFunctions.getInstance()
                 .getHttpsCallable("syncIdentificationFeedback")
@@ -174,6 +203,7 @@ public class OpenAiApi {
         choice.species = getString(map, "species");
         choice.family = getString(map, "family");
         choice.source = getString(map, "source");
+        choice.isSupportedInDatabase = !map.containsKey("isSupportedInDatabase") || Boolean.TRUE.equals(map.get("isSupportedInDatabase"));
         return choice;
     }
 
@@ -185,10 +215,21 @@ public class OpenAiApi {
         }
         for (Object item : (List<Object>) raw) {
             BirdChoice choice = parseBirdChoice(item);
-            if (choice != null && choice.birdId != null && !choice.birdId.trim().isEmpty()) {
+            if (choice != null && hasDisplayableBirdData(choice)) {
                 results.add(choice);
             }
         }
         return results;
+    }
+
+    private boolean hasDisplayableBirdData(@Nullable BirdChoice choice) {
+        if (choice == null) return false;
+        return hasText(choice.birdId)
+                || hasText(choice.commonName)
+                || hasText(choice.scientificName);
+    }
+
+    private boolean hasText(@Nullable String value) {
+        return value != null && !value.trim().isEmpty();
     }
 }

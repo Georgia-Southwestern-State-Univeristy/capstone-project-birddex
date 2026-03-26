@@ -79,6 +79,8 @@ public class AiCompActivity extends AppCompatActivity {
             return;
         }
 
+        final String source = candidate.getString("candidateSource", "openai_review");
+
         container.setVisibility(View.VISIBLE);
         nameView.setText(candidate.getString("candidateCommonName", "Unknown Bird"));
         BirdImageLoader.loadBirdImageInto(
@@ -90,21 +92,31 @@ public class AiCompActivity extends AppCompatActivity {
 
         View.OnClickListener clickListener = v -> {
             String selectedBirdId = candidate.getString("candidateBirdId");
+            String selectedCommonName = candidate.getString("candidateCommonName");
+            String selectedScientificName = candidate.getString("candidateScientificName");
+            String selectedSpecies = candidate.getString("candidateSpecies");
+            String selectedFamily = candidate.getString("candidateFamily");
+
             openAiApi.syncIdentificationFeedback(
                     identificationLogId,
                     identificationId,
                     "select_openai_alternative",
                     selectedBirdId,
-                    "openai_review",
-                    null
+                    source,
+                    null,
+                    selectedCommonName,
+                    selectedScientificName,
+                    selectedSpecies,
+                    selectedFamily
             );
+
             Intent resultIntent = new Intent();
-            resultIntent.putExtra("selectedBirdId", candidate.getString("candidateBirdId"));
-            resultIntent.putExtra("selectedCommonName", candidate.getString("candidateCommonName"));
-            resultIntent.putExtra("selectedScientificName", candidate.getString("candidateScientificName"));
-            resultIntent.putExtra("selectedSpecies", candidate.getString("candidateSpecies"));
-            resultIntent.putExtra("selectedFamily", candidate.getString("candidateFamily"));
-            resultIntent.putExtra("selectedSource", "openai_review");
+            resultIntent.putExtra("selectedBirdId", selectedBirdId);
+            resultIntent.putExtra("selectedCommonName", selectedCommonName);
+            resultIntent.putExtra("selectedScientificName", selectedScientificName);
+            resultIntent.putExtra("selectedSpecies", selectedSpecies);
+            resultIntent.putExtra("selectedFamily", selectedFamily);
+            resultIntent.putExtra("selectedSource", source);
             setResult(RESULT_OK, resultIntent);
             finish();
         };

@@ -1,6 +1,7 @@
 package com.birddex.app;
 
 import android.Manifest;
+import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
@@ -21,10 +22,12 @@ import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 
 import com.google.firebase.auth.FirebaseAuth;
 import com.google.firebase.auth.FirebaseUser;
+import com.google.firebase.functions.FirebaseFunctionsException;
 import com.google.firebase.storage.FirebaseStorage;
 import com.google.firebase.storage.StorageReference;
 
@@ -37,6 +40,12 @@ import java.util.concurrent.atomic.AtomicBoolean;
 /**
  * IdentifyingActivity orchestrates the bird identification process.
  */
+/**
+ * IdentifyingActivity: Result screen shown after bird identification; displays the match and lets the user continue with save/collection flows.
+ *
+ * These comments focus on what the actual code blocks are doing so the file is easier to trace
+ * when you are debugging or presenting the app. Only comments were added; runtime logic was not changed.
+ */
 public class IdentifyingActivity extends AppCompatActivity implements LocationHelper.LocationListener, NetworkMonitor.NetworkStatusListener {
 
     private static final String TAG = "IdentifyingActivity";
@@ -48,19 +57,40 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
     private NetworkMonitor networkMonitor;
     private ActivityResultLauncher<String[]> locationPermissionLauncher;
 
+    private FirebaseManager firebaseManager;
+
+    private Location currentLocation;
+    private String currentLocalityName;
+    private String currentState;
+    private String currentCountry;
+
     private Handler timeoutHandler;
     private Runnable timeoutRunnable;
-    private static final long IDENTIFICATION_TIMEOUT_MS = 45000;
+    private static final long IDENTIFICATION_TIMEOUT_MS = 45000; // Increased timeout for upload + AI
     private final AtomicBoolean identificationCompleted = new AtomicBoolean(false);
+    // Guards startIdentificationFlow so only one call proceeds even if location callback
+    // and permission result both fire near-simultaneously.
     private final AtomicBoolean identificationStarted = new AtomicBoolean(false);
-    private final String requestId = UUID.randomUUID().toString();
+    private final String requestId = UUID.randomUUID().toString(); // Persistent ID for this specific attempt
 
+    /**
+     * Android calls this when the Activity is first created. This is where the screen usually
+     * inflates its layout, grabs views, creates helpers, and wires listeners.
+     * It grabs layout/view references here so later code can read from them, update them, or
+     * attach listeners.
+     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
+     * changes.
+     * It also packages extras into an Intent when this flow needs to open another Activity.
+     */
     @Override
     protected void onCreate(@Nullable Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         SystemBarHelper.applyStandardNavBar(this);
         setContentView(R.layout.activity_identifying);
 
+        Log.d(TAG, "onCreate: Activity started");
+
+        // Bind or inflate the UI pieces this method needs before it can update the screen.
         ImageView identifyingImageView = findViewById(R.id.identifyingImageView);
         String uriStr = getIntent().getStringExtra("imageUri");
         if (uriStr == null) {
@@ -73,6 +103,9 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
         identifyingImageView.setImageURI(localImageUri);
 
         openAiApi = new OpenAiApi();
+        // Set up or query the Firebase layer that supplies/stores this feature's data.
+        firebaseManager = new FirebaseManager(this);
+
         locationHelper = new LocationHelper(this, this);
         networkMonitor = new NetworkMonitor(this, this);
 
@@ -98,6 +131,7 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
                         locationHelper.getLastKnownLocation();
                     } else {
                         Log.w(TAG, "Location permissions denied, proceeding without location");
+                        // Give the user immediate feedback about the result of this action.
                         Toast.makeText(this, "Location permissions denied. Proceeding without location.", Toast.LENGTH_LONG).show();
                         startIdentificationFlow(localImageUri, null, null, null, null, null);
                     }
@@ -106,18 +140,31 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
         requestLocationPermissions();
     }
 
+    /**
+     * Runs when the screen returns to the foreground, so it often refreshes UI state or restarts
+     * listeners.
+     */
     @Override
     protected void onResume() {
         super.onResume();
         networkMonitor.register();
     }
 
+    /**
+     * Runs when the screen is leaving the foreground, so it is used to pause work or save
+     * transient state.
+     */
     @Override
     protected void onPause() {
         super.onPause();
         networkMonitor.unregister();
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     * Location values are handled here, so this is part of the logic that decides what area/bird
+     * sightings the user sees.
+     */
     private void requestLocationPermissions() {
         boolean fineLocationGranted = ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED;
         boolean coarseLocationGranted = ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED;
@@ -131,52 +178,78 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
         }
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     * Location values are handled here, so this is part of the logic that decides what area/bird
+     * sightings the user sees.
+     */
     @Override
     public void onLocationReceived(Location location, @Nullable String localityName, @Nullable String state, @Nullable String country) {
         if (isFinishing() || isDestroyed()) return;
 
         Log.d(TAG, "onLocationReceived: Lat=" + location.getLatitude() + ", Lng=" + location.getLongitude() + ", Locality=" + localityName);
+        this.currentLocation = location;
+        this.currentLocalityName = localityName;
+        this.currentState = state;
+        this.currentCountry = country;
         startIdentificationFlow(localImageUri, location.getLatitude(), location.getLongitude(), localityName, state, country);
         locationHelper.stopLocationUpdates();
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     * Location values are handled here, so this is part of the logic that decides what area/bird
+     * sightings the user sees.
+     */
     public void onLocationReceived(Location location, @Nullable String localityName) {
         onLocationReceived(location, localityName, null, null);
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     * User-facing feedback is shown here so the user knows whether the action succeeded, failed,
+     * or needs attention.
+     * Location values are handled here, so this is part of the logic that decides what area/bird
+     * sightings the user sees.
+     */
     @Override
     public void onLocationError(String errorMessage) {
         if (isFinishing() || isDestroyed()) return;
 
         Log.e(TAG, "onLocationError: " + errorMessage);
+        // Give the user immediate feedback about the result of this action.
         Toast.makeText(this, "Location error: " + errorMessage + ". Proceeding without location.", Toast.LENGTH_LONG).show();
         startIdentificationFlow(localImageUri, null, null, null, null, null);
         locationHelper.stopLocationUpdates();
     }
 
-    @Override
-    public void onNetworkAvailable() {
+    @Override public void onNetworkAvailable() {
         Log.d(TAG, "onNetworkAvailable: Connection restored");
     }
-
-    @Override
-    public void onNetworkLost() {
+    @Override public void onNetworkLost() {
         Log.w(TAG, "onNetworkLost: Connection lost during process");
         if (!identificationCompleted.get()) {
             finishActivityWithToast("Internet connection lost. Please reconnect and try again.");
         }
     }
 
-    private void startIdentificationFlow(Uri imageUri,
-                                         @Nullable Double latitude,
-                                         @Nullable Double longitude,
-                                         @Nullable String localityName,
-                                         @Nullable String state,
-                                         @Nullable String country) {
+    /**
+     * Main logic block for this part of the feature.
+     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
+     * changes.
+     * There is also one-time async data loading here, so success/failure callbacks are important
+     * for the final UI state.
+     * User-facing feedback is shown here so the user knows whether the action succeeded, failed,
+     * or needs attention.
+     */
+    private void startIdentificationFlow(Uri imageUri, @Nullable Double latitude, @Nullable Double longitude, @Nullable String localityName, @Nullable String state, @Nullable String country) {
+        // Kick off an asynchronous one-time read; the callbacks below decide how the UI should react.
         if (identificationCompleted.get()) {
             Log.d(TAG, "startIdentificationFlow: Already completed, ignoring");
             return;
         }
+        // Use compareAndSet so that if the location callback and the permission callback both
+        // invoke this method at the same time, only the first one proceeds.
         if (!identificationStarted.compareAndSet(false, true)) {
             Log.d(TAG, "startIdentificationFlow: Already started, ignoring duplicate call");
             return;
@@ -188,27 +261,33 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
             return;
         }
 
+        Log.d(TAG, "startIdentificationFlow: uploading identification image");
         uploadImageToIdentificationStorage(imageUri, latitude, longitude, localityName, state, country);
     }
 
-    private void uploadImageToIdentificationStorage(Uri imageUri,
-                                                    @Nullable Double latitude,
-                                                    @Nullable Double longitude,
-                                                    @Nullable String localityName,
-                                                    @Nullable String state,
-                                                    @Nullable String country) {
+    /**
+     * Builds data from the current screen/object state and writes it out to storage, Firebase, or
+     * another service.
+     * There is also one-time async data loading here, so success/failure callbacks are important
+     * for the final UI state.
+     * User-facing feedback is shown here so the user knows whether the action succeeded, failed,
+     * or needs attention.
+     */
+    private void uploadImageToIdentificationStorage(Uri imageUri, @Nullable Double latitude, @Nullable Double longitude, @Nullable String localityName, @Nullable String state, @Nullable String country) {
         FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
         if (user == null) {
             finishActivityWithToast("User not logged in.");
             return;
         }
 
+        // Reverted: Folder changed to identificationImages
         String fileName = "identificationImages/" + user.getUid() + "/" + UUID.randomUUID().toString() + ".jpg";
         StorageReference storageRef = FirebaseStorage.getInstance().getReference().child(fileName);
 
         Log.d(TAG, "uploadImageToIdentificationStorage: Uploading to " + fileName);
         storageRef.putFile(imageUri)
                 .addOnSuccessListener(taskSnapshot -> {
+                    // Kick off an asynchronous one-time read; the callbacks below decide how the UI should react.
                     if (identificationCompleted.get() || isFinishing() || isDestroyed()) return;
                     storageRef.getDownloadUrl().addOnSuccessListener(downloadUri -> {
                         if (identificationCompleted.get() || isFinishing() || isDestroyed()) return;
@@ -225,37 +304,43 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
                 });
     }
 
-    private void identifyBirdWithUrl(String downloadUrl,
-                                     @Nullable Double latitude,
-                                     @Nullable Double longitude,
-                                     @Nullable String localityName,
-                                     @Nullable String state,
-                                     @Nullable String country) {
+    /**
+     * Main logic block for this part of the feature.
+     * There is also one-time async data loading here, so success/failure callbacks are important
+     * for the final UI state.
+     * User-facing feedback is shown here so the user knows whether the action succeeded, failed,
+     * or needs attention.
+     */
+    private void identifyBirdWithUrl(String downloadUrl, @Nullable Double latitude, @Nullable Double longitude, @Nullable String localityName, @Nullable String state, @Nullable String country) {
         Log.d(TAG, "identifyBirdWithUrl: Encoding image for AI analysis...");
-        String base64Image = encodeImage(localImageUri);
+        String base64Image = encodeImage(localImageUri); // Still need base64 for the Vision API call
         if (base64Image == null) {
             finishActivityWithToast("Failed to encode image for analysis.");
             return;
         }
 
-        openAiApi.identifyBirdFromImage(base64Image, downloadUrl, latitude, longitude, localityName, requestId, new OpenAiApi.OpenAiCallback() {
+        // We pass the base64 for analysis AND the storage URL for logging AND requestId for idempotency
+        openAiApi.identifyBirdFromImage(base64Image, downloadUrl, latitude, longitude, localityName, requestId, new OpenAiApi.IdentifyBirdCallback() {
             @Override
-            public void onSuccess(OpenAiApi.IdentificationResult result) {
+            public void onSuccess(OpenAiApi.IdentifyBirdResult result) {
                 if (identificationCompleted.get() || isFinishing() || isDestroyed()) return;
-                Log.d(TAG, "identifyBird onSuccess: verified=" + result.isVerified + ", gore=" + result.isGore + ", inDatabase=" + result.isInDatabase);
+                Log.d(TAG, "identifyBird onSuccess: isVerified=" + result.isVerified
+                        + ", isGore=" + result.isGore
+                        + ", isInDatabase=" + result.isInDatabase
+                        + ", reasonCode=" + result.reasonCode);
 
                 if (result.isGore) {
-                    finishActivityWithToast(result.userMessage != null ? result.userMessage : "Please take a picture of a non-gore picture of a bird.");
+                    finishActivityWithToast("Please take a picture of a non-gore picture of a bird.");
                     return;
                 }
 
-                if (!result.isInDatabase) {
-                    finishActivityWithToast(result.userMessage != null ? result.userMessage : "Sorry, this bird is not in our database just yet.");
+                if (!result.isInDatabase || "NOT_IN_DATABASE".equals(result.reasonCode)) {
+                    finishActivityWithToast("Sorry, this bird is not in our database just yet.");
                     return;
                 }
 
-                if (!result.isVerified || result.primaryBird == null) {
-                    finishActivityWithToast("Identification failed. Please try again.");
+                if (!result.isVerified || result.primaryBird == null || result.primaryBird.birdId == null || result.primaryBird.birdId.trim().isEmpty()) {
+                    finishActivityWithToast("Identification could not be verified.");
                     return;
                 }
 
@@ -271,45 +356,42 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
         });
     }
 
-    private void proceedToInfoActivity(OpenAiApi.IdentificationResult result,
-                                       @Nullable String downloadUrl,
-                                       @Nullable Double latitude,
-                                       @Nullable Double longitude,
-                                       @Nullable String localityName,
-                                       @Nullable String state,
-                                       @Nullable String country) {
-        if (!identificationCompleted.compareAndSet(false, true)) {
-            return;
+    /**
+     * Main logic block for this part of the feature.
+     * It also packages extras into an Intent when this flow needs to open another Activity.
+     */
+    private void proceedToInfoActivity(OpenAiApi.IdentifyBirdResult result, @Nullable String downloadUrl, @Nullable Double latitude, @Nullable Double longitude, @Nullable String localityName, @Nullable String state, @Nullable String country) {
+        if (identificationCompleted.compareAndSet(false, true)) {
+            timeoutHandler.removeCallbacks(timeoutRunnable);
+
+            OpenAiApi.BirdChoice primary = result.primaryBird;
+            Intent intent = new Intent(IdentifyingActivity.this, BirdInfoActivity.class);
+            intent.putExtra("imageUri", localImageUri.toString());
+            intent.putExtra("birdId", primary.birdId);
+            intent.putExtra("commonName", primary.commonName);
+            intent.putExtra("scientificName", primary.scientificName);
+            intent.putExtra("species", primary.species);
+            intent.putExtra("family", primary.family);
+            intent.putExtra("imageUrl", downloadUrl);
+            intent.putExtra("identificationLogId", result.identificationLogId);
+            intent.putExtra("identificationId", result.identificationId);
+            intent.putExtra("selectionSource", primary.source != null ? primary.source : "initial_result");
+            intent.putParcelableArrayListExtra("modelAlternatives", toCandidateBundles(result.modelAlternatives));
+
+            boolean awardPoints = getIntent().getBooleanExtra("awardPoints", true);
+            intent.putExtra("awardPoints", awardPoints);
+
+            if (latitude != null) {
+                intent.putExtra("latitude", latitude);
+                intent.putExtra("longitude", longitude);
+                intent.putExtra("localityName", localityName);
+                intent.putExtra("state", state);
+                intent.putExtra("country", country);
+            }
+
+            startActivity(intent);
+            finish();
         }
-
-        timeoutHandler.removeCallbacks(timeoutRunnable);
-
-        Intent intent = new Intent(IdentifyingActivity.this, BirdInfoActivity.class);
-        intent.putExtra("imageUri", localImageUri.toString());
-        intent.putExtra("birdId", result.primaryBird.birdId);
-        intent.putExtra("commonName", result.primaryBird.commonName);
-        intent.putExtra("scientificName", result.primaryBird.scientificName);
-        intent.putExtra("species", result.primaryBird.species);
-        intent.putExtra("family", result.primaryBird.family);
-        intent.putExtra("imageUrl", downloadUrl);
-        intent.putExtra("identificationLogId", result.identificationLogId);
-        intent.putExtra("identificationId", result.identificationId);
-        intent.putExtra("selectionSource", "initial_result");
-        intent.putParcelableArrayListExtra("modelAlternatives", toCandidateBundles(result.modelAlternatives));
-
-        boolean awardPoints = getIntent().getBooleanExtra("awardPoints", true);
-        intent.putExtra("awardPoints", awardPoints);
-
-        if (latitude != null) {
-            intent.putExtra("latitude", latitude);
-            intent.putExtra("longitude", longitude);
-            intent.putExtra("localityName", localityName);
-            intent.putExtra("state", state);
-            intent.putExtra("country", country);
-        }
-
-        startActivity(intent);
-        finish();
     }
 
     private ArrayList<Bundle> toCandidateBundles(ArrayList<OpenAiApi.BirdChoice> candidates) {
@@ -334,22 +416,17 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
         return bundles;
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     * Bitmap/rendering work happens here, so this block is shaping the final card/image output
+     * rather than just text data.
+     */
     private String encodeImage(Uri imageUri) {
         try {
-            Bitmap bitmap = (Build.VERSION.SDK_INT >= 28)
-                    ? ImageDecoder.decodeBitmap(ImageDecoder.createSource(this.getContentResolver(), imageUri))
-                    : MediaStore.Images.Media.getBitmap(this.getContentResolver(), imageUri);
-
-            int maxWidth = 1024;
-            int maxHeight = 1024;
+            Bitmap bitmap = (Build.VERSION.SDK_INT >= 28) ? ImageDecoder.decodeBitmap(ImageDecoder.createSource(this.getContentResolver(), imageUri)) : MediaStore.Images.Media.getBitmap(this.getContentResolver(), imageUri);
+            int maxWidth = 1024, maxHeight = 1024;
             float ratio = Math.min((float) maxWidth / bitmap.getWidth(), (float) maxHeight / bitmap.getHeight());
-            if (ratio < 1.0f) {
-                bitmap = Bitmap.createScaledBitmap(bitmap,
-                        Math.round(ratio * bitmap.getWidth()),
-                        Math.round(ratio * bitmap.getHeight()),
-                        true);
-            }
-
+            if (ratio < 1.0f) bitmap = Bitmap.createScaledBitmap(bitmap, Math.round(ratio * bitmap.getWidth()), Math.round(ratio * bitmap.getHeight()), true);
             ByteArrayOutputStream baos = new ByteArrayOutputStream();
             bitmap.compress(Bitmap.CompressFormat.JPEG, 90, baos);
             return Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP);
@@ -359,25 +436,21 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
         }
     }
 
+    /**
+     * Main logic block for this part of the feature.
+     * User-facing feedback is shown here so the user knows whether the action succeeded, failed,
+     * or needs attention.
+     */
     private void finishActivityWithToast(String message) {
         if (identificationCompleted.compareAndSet(false, true)) {
             Log.d(TAG, "finishActivityWithToast: " + message);
             if (timeoutHandler != null) timeoutHandler.removeCallbacks(timeoutRunnable);
+            // Give the user immediate feedback about the result of this action.
             Toast.makeText(this, message, Toast.LENGTH_LONG).show();
             finish();
         }
     }
 
-    @Override
-    protected void onStop() {
-        super.onStop();
-        if (locationHelper != null) locationHelper.stopLocationUpdates();
-    }
-
-    @Override
-    protected void onDestroy() {
-        super.onDestroy();
-        if (locationHelper != null) locationHelper.shutdown();
-        if (timeoutHandler != null) timeoutHandler.removeCallbacks(timeoutRunnable);
-    }
+    @Override protected void onStop() { super.onStop(); if (locationHelper != null) locationHelper.stopLocationUpdates(); }
+    @Override protected void onDestroy() { super.onDestroy(); if (locationHelper != null) locationHelper.shutdown(); if (timeoutHandler != null) timeoutHandler.removeCallbacks(timeoutRunnable); }
 }

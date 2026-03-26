@@ -14,6 +14,8 @@ import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatActivity;
 
+import com.bumptech.glide.Glide;
+
 import java.util.ArrayList;
 
 public class NotMyBirdActivity extends AppCompatActivity {
@@ -60,8 +62,9 @@ public class NotMyBirdActivity extends AppCompatActivity {
         }
 
         if (imageUriStr != null) {
-            Uri imageUri = Uri.parse(imageUriStr);
-            ivMain.setImageURI(imageUri);
+            Glide.with(this)
+                    .load(Uri.parse(imageUriStr))
+                    .into(ivMain);
         }
 
         bindCandidate(llBird1, iv1, tvName1, getCandidateAt(0));

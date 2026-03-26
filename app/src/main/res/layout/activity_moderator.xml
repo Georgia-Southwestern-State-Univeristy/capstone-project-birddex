@@ -40,7 +40,7 @@
         android:layout_marginStart="16dp"
         android:layout_marginTop="2dp"
         android:layout_marginEnd="16dp"
-        android:text="Review pending moderation appeals and reports. Rejected images appear in each card and can be tapped to enlarge."
+        android:text="Review pending moderation appeals and reports. Cards show the reported text and any rejected image. Tap an image to enlarge it."
         android:textColor="@color/on_page_variant"
         android:textSize="13sp"
         app:layout_constraintEnd_toEndOf="parent"

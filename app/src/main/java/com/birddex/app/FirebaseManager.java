@@ -788,6 +788,12 @@ public class FirebaseManager {
         data.put("targetId", report.getTargetId());
         data.put("targetType", report.getTargetType());
         data.put("reason", report.getReason());
+        if (report.getSourceContext() != null && !report.getSourceContext().trim().isEmpty()) {
+            data.put("sourceContext", report.getSourceContext().trim());
+        }
+        if (report.getThreadId() != null && !report.getThreadId().trim().isEmpty()) {
+            data.put("threadId", report.getThreadId().trim());
+        }
         mFunctions.getHttpsCallable("submitReport").call(data).addOnCompleteListener(task -> {
             if (task.isSuccessful()) Log.d(TAG, "Report submitted success via CF.");
             else Log.e(TAG, "Report submission failed via CF.", task.getException());

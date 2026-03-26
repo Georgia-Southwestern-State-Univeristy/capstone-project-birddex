@@ -46,6 +46,8 @@ public class BirdInfoActivity extends AppCompatActivity {
     private Button btnStore;
     private TextView commonNameTextView, scientificNameTextView, speciesTextView, familyTextView;
     private TextView referenceImageStatusTextView;
+    private TextView referenceAttributionTextView;
+    private View referenceImageProgressBar;
     private ImageView birdImageView;
     private ImageView referenceBirdImageView;
     private boolean awardPoints = true;
@@ -96,6 +98,8 @@ public class BirdInfoActivity extends AppCompatActivity {
         birdImageView = findViewById(R.id.birdImageView);
         referenceBirdImageView = findViewById(R.id.referenceBirdImageView);
         referenceImageStatusTextView = findViewById(R.id.referenceImageStatusTextView);
+        referenceAttributionTextView = findViewById(R.id.referenceAttributionTextView);
+        referenceImageProgressBar = findViewById(R.id.referenceImageProgressBar);
         commonNameTextView = findViewById(R.id.commonNameTextView);
         scientificNameTextView = findViewById(R.id.scientificNameTextView);
         speciesTextView = findViewById(R.id.speciesTextView);
@@ -241,28 +245,37 @@ public class BirdInfoActivity extends AppCompatActivity {
 
         referenceBirdImageView.setImageDrawable(null);
         referenceBirdImageView.setVisibility(View.INVISIBLE);
+        if (referenceImageProgressBar != null) {
+            referenceImageProgressBar.setVisibility(View.VISIBLE);
+        }
+        if (referenceAttributionTextView != null) {
+            referenceAttributionTextView.setText("");
+            referenceAttributionTextView.setVisibility(View.GONE);
+        }
         referenceImageStatusTextView.setText("Loading reference photo...");
         referenceImageStatusTextView.setVisibility(View.VISIBLE);
 
-        BirdImageLoader.loadBirdImageInto(
+        BirdImageLoader.loadBirdImageIntoWithFetch(
+                this,
                 referenceBirdImageView,
+                referenceImageProgressBar,
+                referenceImageStatusTextView,
                 lookupBirdId,
                 currentCommonName,
                 currentScientificName,
-                new BirdImageLoader.LoadCallback() {
+                new BirdImageLoader.MetadataLoadCallback() {
                     @Override
-                    public void onLoaded() {
-                        if (isFinishing() || isDestroyed()) return;
-                        referenceImageStatusTextView.setVisibility(View.GONE);
+                    public void onLoaded(@Nullable BirdImageLoader.ImageMetadata metadata) {
+                        if (referenceAttributionTextView == null || isFinishing() || isDestroyed()) return;
+                        BirdImageLoader.applyAttributionText(referenceAttributionTextView, metadata);
                     }
 
                     @Override
                     public void onNotFound() {
-                        if (isFinishing() || isDestroyed()) return;
-                        referenceBirdImageView.setImageDrawable(null);
-                        referenceBirdImageView.setVisibility(View.GONE);
-                        referenceImageStatusTextView.setText("Reference photo unavailable");
-                        referenceImageStatusTextView.setVisibility(View.VISIBLE);
+                        if (referenceAttributionTextView != null) {
+                            referenceAttributionTextView.setText("");
+                            referenceAttributionTextView.setVisibility(View.GONE);
+                        }
                     }
                 }
         );

@@ -86,4 +86,8 @@
     <string name="camera_tip_message">Make Sure To Only Include One Bird When Cropping</string>
     <string name="dont_show_again">Don\'t show again</string>
     <string name="ok">OK</string>
+
+    <!-- BirdImageLoader Strings -->
+    <string name="searching_reference_photo">Searching free reference photo...</string>
+    <string name="reference_photo_unavailable">Reference photo unavailable</string>
 </resources>

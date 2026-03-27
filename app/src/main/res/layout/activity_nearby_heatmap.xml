@@ -49,7 +49,7 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="2dp"
-                android:text="Loading heatmap..."
+                android:text="@string/loading_heatmap"
                 android:textColor="?attr/colorOnSurfaceVariant"
                 android:textSize="13sp" />
         </LinearLayout>
@@ -150,7 +150,7 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:layout_marginBottom="4dp"
-                    android:text="Heatmap (Sightings)"
+                    android:text="@string/legend_heatmap_title"
                     android:textColor="?attr/colorOnSurfaceVariant"
                     android:textSize="10sp"
                     android:textStyle="bold" />
@@ -171,7 +171,7 @@
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:layout_marginStart="8dp"
-                        android:text="Unverified User Sightings"
+                        android:text="@string/legend_unverified_user_sightings"
                         android:textColor="?attr/colorOnSurface"
                         android:textSize="12sp" />
                 </LinearLayout>
@@ -193,7 +193,7 @@
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:layout_marginStart="8dp"
-                        android:text="Verified User Sightings"
+                        android:text="@string/legend_verified_user_sightings"
                         android:textColor="?attr/colorOnSurface"
                         android:textSize="12sp" />
                 </LinearLayout>
@@ -215,7 +215,7 @@
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:layout_marginStart="8dp"
-                        android:text="Verified Sightings"
+                        android:text="@string/legend_verified_sightings"
                         android:textColor="?attr/colorOnSurface"
                         android:textSize="12sp" />
                 </LinearLayout>
@@ -230,7 +230,7 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:layout_marginBottom="4dp"
-                    android:text="Chirps (Recent Posts)"
+                    android:text="@string/legend_chirps_title"
                     android:textColor="?attr/colorOnSurfaceVariant"
                     android:textSize="10sp"
                     android:textStyle="bold" />
@@ -245,13 +245,13 @@
                         android:layout_width="10dp"
                         android:layout_height="10dp"
                         android:background="@drawable/bg_circle"
-                        android:backgroundTint="#FFA500" />
+                        android:backgroundTint="#4CAF50" />
 
                     <TextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:layout_marginStart="8dp"
-                        android:text="Spotted Pin"
+                        android:text="@string/legend_spotted_pin"
                         android:textColor="?attr/colorOnSurface"
                         android:textSize="12sp" />
                 </LinearLayout>
@@ -267,13 +267,13 @@
                         android:layout_width="10dp"
                         android:layout_height="10dp"
                         android:background="@drawable/bg_circle"
-                        android:backgroundTint="#000000" />
+                        android:backgroundTint="#F44336" />
 
                     <TextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:layout_marginStart="8dp"
-                        android:text="Hunted Pin"
+                        android:text="@string/legend_hunted_pin"
                         android:textColor="?attr/colorOnSurface"
                         android:textSize="12sp" />
                 </LinearLayout>
@@ -294,20 +294,42 @@
                             android:layout_width="5dp"
                             android:layout_height="10dp"
                             android:background="@drawable/bg_circle"
-                            android:backgroundTint="#0000FF" />
+                            android:backgroundTint="#4CAF50" />
 
                         <View
                             android:layout_width="5dp"
                             android:layout_height="10dp"
                             android:background="@drawable/bg_circle"
-                            android:backgroundTint="#000000" />
+                            android:backgroundTint="#F44336" />
                     </LinearLayout>
 
                     <TextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:layout_marginStart="8dp"
-                        android:text="Spotted &amp; Hunted"
+                        android:text="@string/legend_spotted_hunted"
+                        android:textColor="?attr/colorOnSurface"
+                        android:textSize="12sp" />
+                </LinearLayout>
+
+                <LinearLayout
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+
+                    <View
+                        android:layout_width="10dp"
+                        android:layout_height="10dp"
+                        android:background="@drawable/bg_circle"
+                        android:backgroundTint="@color/epic_purple" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="8dp"
+                        android:text="@string/legend_place_of_interest"
                         android:textColor="?attr/colorOnSurface"
                         android:textSize="12sp" />
                 </LinearLayout>

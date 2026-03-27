@@ -774,12 +774,23 @@ public class NearbyHeatmapActivity extends AppCompatActivity
         String title = p.getUsername() + (status.length() > 0 ? " (" + status.toString().trim() + ")" : "");
 
         BitmapDescriptor icon;
-        if (p.isSpotted() && p.isHunted()) icon = createDualColorPin();
-        else if (p.isHunted()) icon = createColoredPin(Color.BLACK);
-        else if (p.isSpotted()) icon = createColoredPin(Color.rgb(255, 165, 0));
-        else icon = BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_AZURE);
+        if (p.isSpotted() && p.isHunted()) {
+            icon = createDualColorPin();
+        } else if (p.isHunted()) {
+            icon = createColoredPin(Color.parseColor("#F44336")); // red
+        } else if (p.isSpotted()) {
+            icon = createColoredPin(Color.parseColor("#4CAF50")); // green
+        } else {
+            icon = createColoredPin(Color.parseColor("#800080")); // purple map-only pin
+        }
 
-        Marker m = googleMap.addMarker(new MarkerOptions().position(pos).title(title).snippet(p.getMessage()).icon(icon));
+        Marker m = googleMap.addMarker(
+                new MarkerOptions()
+                        .position(pos)
+                        .title(title)
+                        .snippet(p.getMessage())
+                        .icon(icon)
+        );
         if (m != null) {
             m.setTag(p);
             forumMarkers.add(m);
@@ -816,14 +827,19 @@ public class NearbyHeatmapActivity extends AppCompatActivity
         Canvas c = new Canvas(bm);
         Paint p = new Paint();
         p.setAntiAlias(true);
-        p.setColor(Color.BLUE);
+
+        p.setColor(Color.parseColor("#4CAF50")); // green = spotted
         c.drawArc(size / 6f, 0, size * 5 / 6f, size * 2 / 3f, 90, 180, true, p);
-        p.setColor(Color.BLACK);
+
+        p.setColor(Color.parseColor("#F44336")); // red = hunted
         c.drawArc(size / 6f, 0, size * 5 / 6f, size * 2 / 3f, 270, 180, true, p);
-        p.setColor(Color.BLUE);
+
+        p.setColor(Color.parseColor("#4CAF50"));
         c.drawRect(size / 2f - 4, size / 2f, size / 2f, size * 0.9f, p);
-        p.setColor(Color.BLACK);
+
+        p.setColor(Color.parseColor("#F44336"));
         c.drawRect(size / 2f, size / 2f, size / 2f + 4, size * 0.9f, p);
+
         return BitmapDescriptorFactory.fromBitmap(bm);
     }
 

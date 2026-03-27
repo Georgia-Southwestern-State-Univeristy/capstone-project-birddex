@@ -2,7 +2,7 @@ package com.birddex.app;
 
 import android.content.Intent;
 import android.os.Bundle;
-import android.widget.ImageButton;
+import android.widget.ImageView;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -94,7 +94,7 @@ public class ChangeCardImageActivity extends AppCompatActivity {
             return insets;
         });
 
-        ImageButton btnBack = findViewById(R.id.btnBack);
+        ImageView btnBack = findViewById(R.id.btnBack);
         tvTitle = findViewById(R.id.tvTitle);
         tvSubtitle = findViewById(R.id.tvSubtitle);
         tvEmpty = findViewById(R.id.tvEmpty);

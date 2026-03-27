@@ -26,6 +26,7 @@
     <string name="legend_spotted_pin">Spotted Pin</string>
     <string name="legend_hunted_pin">Hunted Pin</string>
     <string name="legend_spotted_hunted">Spotted &amp; Hunted</string>
+    <string name="legend_place_of_interest">Place of Interest</string>
 
     <!-- Settings Strings -->
     <string name="settings_title">Settings</string>

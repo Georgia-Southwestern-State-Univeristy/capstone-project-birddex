@@ -77,6 +77,7 @@ public class UserSocialProfileActivity extends AppCompatActivity implements
     private TabLayout tabLayout;
     private TextView tvProfileTabEmpty;
     private AppBarLayout appBarLayout;
+    private View profileTopSection;
     private View profileHeader;
 
     private FirebaseFirestore db;
@@ -181,6 +182,7 @@ public class UserSocialProfileActivity extends AppCompatActivity implements
         tabLayout = findViewById(R.id.profileTabLayout);
         tvProfileTabEmpty = findViewById(R.id.tvProfileTabEmpty);
         appBarLayout = findViewById(R.id.appBarLayout);
+        profileTopSection = findViewById(R.id.profileTopSection);
         profileHeader = findViewById(R.id.profileHeader);
 
         FirebaseUser currentUser = FirebaseAuth.getInstance().getCurrentUser();
@@ -233,28 +235,29 @@ public class UserSocialProfileActivity extends AppCompatActivity implements
      * attach listeners.
      */
     private void applyTabState(int position) {
-        // Bind or inflate the UI pieces this method needs before it can update the screen.
-        Toolbar toolbar = findViewById(R.id.toolbar);
-        AppBarLayout.LayoutParams toolbarParams = (AppBarLayout.LayoutParams) toolbar.getLayoutParams();
-        AppBarLayout.LayoutParams headerParams = (AppBarLayout.LayoutParams) profileHeader.getLayoutParams();
+        AppBarLayout.LayoutParams topParams = (AppBarLayout.LayoutParams) profileTopSection.getLayoutParams();
+        AppBarLayout.LayoutParams tabParams = (AppBarLayout.LayoutParams) tabLayout.getLayoutParams();
 
         if (position == 0) {
             rvFavoriteCards.setVisibility(View.VISIBLE);
             rvPosts.setVisibility(View.GONE);
             tvProfileTabEmpty.setVisibility(View.GONE);
-            toolbarParams.setScrollFlags(0);
-            headerParams.setScrollFlags(0);
-            appBarLayout.setExpanded(true, true);
+            topParams.setScrollFlags(0);
+            tabParams.setScrollFlags(0);
+            appBarLayout.setExpanded(true, false);
         } else {
             rvFavoriteCards.setVisibility(View.GONE);
             rvPosts.setVisibility(postList.isEmpty() ? View.GONE : View.VISIBLE);
             tvProfileTabEmpty.setVisibility(postList.isEmpty() ? View.VISIBLE : View.GONE);
-            toolbarParams.setScrollFlags(AppBarLayout.LayoutParams.SCROLL_FLAG_SCROLL | AppBarLayout.LayoutParams.SCROLL_FLAG_ENTER_ALWAYS);
-            headerParams.setScrollFlags(AppBarLayout.LayoutParams.SCROLL_FLAG_SCROLL | AppBarLayout.LayoutParams.SCROLL_FLAG_EXIT_UNTIL_COLLAPSED);
+            topParams.setScrollFlags(
+                    AppBarLayout.LayoutParams.SCROLL_FLAG_SCROLL
+                            | AppBarLayout.LayoutParams.SCROLL_FLAG_ENTER_ALWAYS
+            );
+            tabParams.setScrollFlags(0);
         }
 
-        toolbar.setLayoutParams(toolbarParams);
-        profileHeader.setLayoutParams(headerParams);
+        profileTopSection.setLayoutParams(topParams);
+        tabLayout.setLayoutParams(tabParams);
     }
 
     /**

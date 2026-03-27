@@ -56,7 +56,7 @@ public class EditProfileActivity extends AppCompatActivity implements NetworkMon
 
     private static final String TAG = "EditProfileActivity";
     private static final int REQUEST_READ_EXTERNAL_STORAGE = 100;
-    private static final int MAX_BIO_LENGTH = 90;
+    private static final int MAX_BIO_LENGTH = 100;
 
     private TextInputEditText etUsername;
     private TextInputEditText etBio;

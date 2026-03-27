@@ -17,6 +17,7 @@ import android.text.TextWatcher;
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.annotation.NonNull;
+import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
@@ -583,9 +584,41 @@ public class CreatePostActivity extends AppCompatActivity {
                 if (isFinishing() || isDestroyed()) return;
                 viewModel.isPostInProgress.set(false);
                 setPostingUi(false);
+
+                if (hasAttachedImage(url) && isForumImageExplicitModerationError(errorMessage)) {
+                    showForumImageModerationPopup();
+                    return;
+                }
+
                 Toast.makeText(CreatePostActivity.this, errorMessage != null ? errorMessage : "Failed to share post", Toast.LENGTH_SHORT).show();
             }
         });
+    }
+
+
+    private boolean hasAttachedImage(String url) {
+        return url != null && !url.trim().isEmpty();
+    }
+
+    private boolean isForumImageExplicitModerationError(String errorMessage) {
+        if (errorMessage == null) return false;
+
+        String lower = errorMessage.toLowerCase();
+        return lower.contains("this image could not be posted because it was flagged as explicit")
+                || lower.contains("flagged as explicit")
+                || lower.contains("image could not be posted")
+                || lower.contains("appeal that moderation decision")
+                || lower.contains("nsfw_image")
+                || lower.contains("vision_safesearch")
+                || (lower.contains("explicit") && lower.contains("image"));
+    }
+
+    private void showForumImageModerationPopup() {
+        new AlertDialog.Builder(this)
+                .setTitle("Moderation Notice")
+                .setMessage("You have been issued a strike and/or warning. Check your Moderation History in the settings.")
+                .setPositiveButton("OK", null)
+                .show();
     }
 
 

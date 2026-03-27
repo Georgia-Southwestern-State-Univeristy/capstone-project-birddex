@@ -10,6 +10,7 @@ import android.os.Build;
 import android.os.Bundle;
 import android.util.Log;
 import android.view.View;
+import android.view.inputmethod.InputMethodManager;
 import android.widget.Toast;
 import android.text.Editable;
 import android.text.TextWatcher;
@@ -69,6 +70,18 @@ import java.util.UUID;
  * - keeps the existing image upload, rotation recovery, and post-limit flow intact
  */
 public class CreatePostActivity extends AppCompatActivity {
+
+    public static final String EXTRA_CREATED_POST_ID = "created_post_id";
+    public static final String EXTRA_CREATED_POST_USER_ID = "created_post_user_id";
+    public static final String EXTRA_CREATED_POST_USERNAME = "created_post_username";
+    public static final String EXTRA_CREATED_POST_USER_PROFILE_PIC_URL = "created_post_user_profile_pic_url";
+    public static final String EXTRA_CREATED_POST_MESSAGE = "created_post_message";
+    public static final String EXTRA_CREATED_POST_IMAGE_URL = "created_post_image_url";
+    public static final String EXTRA_CREATED_POST_SPOTTED = "created_post_spotted";
+    public static final String EXTRA_CREATED_POST_HUNTED = "created_post_hunted";
+    public static final String EXTRA_CREATED_POST_SHOW_LOCATION = "created_post_show_location";
+    public static final String EXTRA_CREATED_POST_LATITUDE = "created_post_latitude";
+    public static final String EXTRA_CREATED_POST_LONGITUDE = "created_post_longitude";
 
     private static final String TAG = "CreatePostActivity";
     private static final int REQUEST_READ_EXTERNAL_STORAGE = 101;
@@ -560,6 +573,8 @@ public class CreatePostActivity extends AppCompatActivity {
                 viewModel.isPostInProgress.set(false);
                 // Give the user immediate feedback about the result of this action.
                 Toast.makeText(CreatePostActivity.this, "Post shared!", Toast.LENGTH_SHORT).show();
+                hideKeyboardAndClearFocus();
+                setResult(Activity.RESULT_OK, buildCreatedPostResultIntent(post));
                 finish();
             }
 
@@ -571,6 +586,44 @@ public class CreatePostActivity extends AppCompatActivity {
                 Toast.makeText(CreatePostActivity.this, errorMessage != null ? errorMessage : "Failed to share post", Toast.LENGTH_SHORT).show();
             }
         });
+    }
+
+
+    private Intent buildCreatedPostResultIntent(ForumPost post) {
+        Intent data = new Intent();
+        data.putExtra(EXTRA_CREATED_POST_ID, post.getId());
+        data.putExtra(EXTRA_CREATED_POST_USER_ID, post.getUserId());
+        data.putExtra(EXTRA_CREATED_POST_USERNAME, post.getUsername());
+        data.putExtra(EXTRA_CREATED_POST_USER_PROFILE_PIC_URL, post.getUserProfilePictureUrl());
+        data.putExtra(EXTRA_CREATED_POST_MESSAGE, post.getMessage());
+        data.putExtra(EXTRA_CREATED_POST_IMAGE_URL, post.getBirdImageUrl());
+        data.putExtra(EXTRA_CREATED_POST_SPOTTED, post.isSpotted());
+        data.putExtra(EXTRA_CREATED_POST_HUNTED, post.isHunted());
+        data.putExtra(EXTRA_CREATED_POST_SHOW_LOCATION, post.isShowLocation());
+        if (post.getLatitude() != null) {
+            data.putExtra(EXTRA_CREATED_POST_LATITUDE, post.getLatitude());
+        }
+        if (post.getLongitude() != null) {
+            data.putExtra(EXTRA_CREATED_POST_LONGITUDE, post.getLongitude());
+        }
+        return data;
+    }
+
+    private void hideKeyboardAndClearFocus() {
+        if (binding == null) return;
+
+        View focusedView = getCurrentFocus();
+        if (focusedView == null) {
+            focusedView = binding.etPostMessage;
+        }
+
+        binding.etPostMessage.clearFocus();
+        binding.getRoot().requestFocus();
+
+        InputMethodManager imm = (InputMethodManager) getSystemService(INPUT_METHOD_SERVICE);
+        if (imm != null && focusedView != null && focusedView.getWindowToken() != null) {
+            imm.hideSoftInputFromWindow(focusedView.getWindowToken(), 0);
+        }
     }
 
     // -------------------------------------------------------------------------

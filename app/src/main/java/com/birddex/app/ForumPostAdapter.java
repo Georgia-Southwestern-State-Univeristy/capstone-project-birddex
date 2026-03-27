@@ -56,6 +56,49 @@ public class ForumPostAdapter extends RecyclerView.Adapter<ForumPostAdapter.Post
         notifyDataSetChanged();
     }
 
+    public void insertPostAtTop(ForumPost post) {
+        if (post == null) return;
+
+        int existingIndex = findPostIndexById(post.getId());
+        if (existingIndex >= 0) {
+            postList.remove(existingIndex);
+            notifyItemRemoved(existingIndex);
+        }
+
+        postList.add(0, post);
+        notifyItemInserted(0);
+    }
+
+    public void replacePostById(ForumPost post) {
+        if (post == null || post.getId() == null) return;
+
+        int index = findPostIndexById(post.getId());
+        if (index >= 0) {
+            postList.set(index, post);
+            notifyItemChanged(index);
+        }
+    }
+
+    public void removePostById(String postId) {
+        int index = findPostIndexById(postId);
+        if (index >= 0) {
+            postList.remove(index);
+            notifyItemRemoved(index);
+        }
+    }
+
+    private int findPostIndexById(String postId) {
+        if (postId == null) return -1;
+
+        for (int i = 0; i < postList.size(); i++) {
+            ForumPost currentPost = postList.get(i);
+            if (currentPost != null && postId.equals(currentPost.getId())) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
     /**
      * Main logic block for this part of the feature.
      * It grabs layout/view references here so later code can read from them, update them, or
@@ -101,7 +144,7 @@ public class ForumPostAdapter extends RecyclerView.Adapter<ForumPostAdapter.Post
         TextView tvViewCount;
         ImageButton btnOptions;
         LinearLayout btnViewOnMap;
-        
+
         TextView tvSpottedBadge;
         TextView tvHuntedBadge;
 
@@ -127,7 +170,7 @@ public class ForumPostAdapter extends RecyclerView.Adapter<ForumPostAdapter.Post
             tvViewCount = itemView.findViewById(R.id.tvViewCount);
             btnOptions = itemView.findViewById(R.id.btnPostOptions);
             btnViewOnMap = itemView.findViewById(R.id.btnViewOnMap);
-            
+
             tvSpottedBadge = itemView.findViewById(R.id.tvSpottedBadge);
             tvHuntedBadge = itemView.findViewById(R.id.tvHuntedBadge);
         }
@@ -172,6 +215,8 @@ public class ForumPostAdapter extends RecyclerView.Adapter<ForumPostAdapter.Post
             if (post.getTimestamp() != null) {
                 long time = post.getTimestamp().toDate().getTime();
                 tvTimestamp.setText(DateUtils.getRelativeTimeSpanString(time, System.currentTimeMillis(), DateUtils.MINUTE_IN_MILLIS));
+            } else {
+                tvTimestamp.setText("Just now");
             }
 
             // User Profile Picture
@@ -204,7 +249,7 @@ public class ForumPostAdapter extends RecyclerView.Adapter<ForumPostAdapter.Post
             btnComment.setOnClickListener(v -> listener.onCommentClick(post));
             itemView.setOnClickListener(v -> listener.onPostClick(post));
             btnOptions.setOnClickListener(v -> listener.onOptionsClick(post, v));
-            
+
             ivUserProfile.setOnClickListener(v -> listener.onUserClick(post.getUserId()));
             tvUsername.setOnClickListener(v -> listener.onUserClick(post.getUserId()));
         }

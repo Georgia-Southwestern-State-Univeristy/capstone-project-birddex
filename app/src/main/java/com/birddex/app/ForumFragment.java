@@ -1,5 +1,6 @@
 package com.birddex.app;
 
+import android.app.Activity;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
@@ -15,6 +16,8 @@ import android.widget.FrameLayout;
 import android.widget.PopupMenu;
 import android.widget.Toast;
 
+import androidx.activity.result.ActivityResultLauncher;
+import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.appcompat.app.AlertDialog;
@@ -24,6 +27,7 @@ import androidx.recyclerview.widget.RecyclerView;
 
 import com.birddex.app.databinding.FragmentForumBinding;
 import com.bumptech.glide.Glide;
+import com.google.firebase.Timestamp;
 import com.google.firebase.auth.FirebaseAuth;
 import com.google.firebase.auth.FirebaseUser;
 import com.google.firebase.firestore.DocumentSnapshot;
@@ -36,6 +40,7 @@ import com.google.firebase.storage.FirebaseStorage;
 import com.google.firebase.storage.StorageReference;
 
 import java.util.ArrayList;
+import java.util.Date;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
@@ -76,6 +81,29 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
 
     // FIX: Navigation guard
     private boolean isNavigating = false;
+
+    private ActivityResultLauncher<Intent> createPostLauncher;
+
+    @Override
+    public void onCreate(@Nullable Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        createPostLauncher = registerForActivityResult(
+                new ActivityResultContracts.StartActivityForResult(),
+                result -> {
+                    if (result.getResultCode() != Activity.RESULT_OK) {
+                        return;
+                    }
+
+                    ForumPost createdPost = extractCreatedPostFromResult(result.getData());
+                    if (shouldOptimisticallyInsert(createdPost)) {
+                        insertCreatedPostAtTop(createdPost);
+                        fetchSinglePostAndReplace(createdPost.getId());
+                    } else {
+                        refreshPosts();
+                    }
+                }
+        );
+    }
 
     /**
      * Android calls this to inflate the Fragment's XML and return the root view that will be shown
@@ -156,7 +184,7 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
             if (isNavigating) return;
             isNavigating = true;
             // Move into the next screen and pass the identifiers/data that screen needs.
-            startActivity(new Intent(getActivity(), CreatePostActivity.class));
+            createPostLauncher.launch(new Intent(getActivity(), CreatePostActivity.class));
         });
 
         binding.btnSocial.setOnClickListener(v -> {
@@ -220,6 +248,111 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
             // Load the image asynchronously so the UI can show remote/local media without blocking the main thread.
             if (getContext() != null) Glide.with(this).load(url).placeholder(R.drawable.ic_profile).into(binding.ivUserProfilePicture);
         });
+    }
+
+    private ForumPost extractCreatedPostFromResult(@Nullable Intent data) {
+        if (data == null) return null;
+
+        String postId = data.getStringExtra(CreatePostActivity.EXTRA_CREATED_POST_ID);
+        String userId = data.getStringExtra(CreatePostActivity.EXTRA_CREATED_POST_USER_ID);
+        String username = data.getStringExtra(CreatePostActivity.EXTRA_CREATED_POST_USERNAME);
+        String profilePicUrl = data.getStringExtra(CreatePostActivity.EXTRA_CREATED_POST_USER_PROFILE_PIC_URL);
+        String message = data.getStringExtra(CreatePostActivity.EXTRA_CREATED_POST_MESSAGE);
+        String imageUrl = data.getStringExtra(CreatePostActivity.EXTRA_CREATED_POST_IMAGE_URL);
+
+        if (postId == null || userId == null) {
+            return null;
+        }
+
+        ForumPost post = new ForumPost(userId, username, profilePicUrl, message, imageUrl);
+        post.setId(postId);
+        post.setTimestamp(new Timestamp(new Date()));
+        post.setSpotted(data.getBooleanExtra(CreatePostActivity.EXTRA_CREATED_POST_SPOTTED, false));
+        post.setHunted(data.getBooleanExtra(CreatePostActivity.EXTRA_CREATED_POST_HUNTED, false));
+        post.setShowLocation(data.getBooleanExtra(CreatePostActivity.EXTRA_CREATED_POST_SHOW_LOCATION, false));
+
+        if (data.hasExtra(CreatePostActivity.EXTRA_CREATED_POST_LATITUDE)) {
+            post.setLatitude(data.getDoubleExtra(CreatePostActivity.EXTRA_CREATED_POST_LATITUDE, 0d));
+        }
+        if (data.hasExtra(CreatePostActivity.EXTRA_CREATED_POST_LONGITUDE)) {
+            post.setLongitude(data.getDoubleExtra(CreatePostActivity.EXTRA_CREATED_POST_LONGITUDE, 0d));
+        }
+
+        return post;
+    }
+
+    private boolean shouldOptimisticallyInsert(@Nullable ForumPost post) {
+        if (post == null || post.getId() == null || !isAdded() || binding == null) {
+            return false;
+        }
+
+        if ("Following".equals(currentFilter)) {
+            return false;
+        }
+
+        boolean showGraphic = requireContext()
+                .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .getBoolean(KEY_GRAPHIC_CONTENT, false);
+
+        return isForumPostVisible(post) && (showGraphic || !post.isHunted());
+    }
+
+    private void insertCreatedPostAtTop(@NonNull ForumPost post) {
+        removePostFromLocalList(post.getId());
+        postList.add(0, post);
+        adapter.insertPostAtTop(post);
+        binding.rvForumPosts.scrollToPosition(0);
+    }
+
+    private void fetchSinglePostAndReplace(@Nullable String postId) {
+        if (postId == null || !isAdded() || binding == null) return;
+
+        boolean showGraphic = requireContext()
+                .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .getBoolean(KEY_GRAPHIC_CONTENT, false);
+
+        db.collection("forumThreads")
+                .document(postId)
+                .get(Source.SERVER)
+                .addOnSuccessListener(doc -> {
+                    if (!isAdded() || binding == null || !doc.exists()) return;
+
+                    ForumPost serverPost = doc.toObject(ForumPost.class);
+                    if (serverPost == null) return;
+
+                    serverPost.setId(doc.getId());
+
+                    if (!isForumPostVisible(serverPost) || (!showGraphic && serverPost.isHunted())) {
+                        removePostFromLocalList(postId);
+                        adapter.removePostById(postId);
+                        return;
+                    }
+
+                    int index = findLocalPostIndex(postId);
+                    if (index >= 0) {
+                        postList.set(index, serverPost);
+                        adapter.replacePostById(serverPost);
+                    }
+                });
+    }
+
+    private int findLocalPostIndex(@Nullable String postId) {
+        if (postId == null) return -1;
+
+        for (int i = 0; i < postList.size(); i++) {
+            ForumPost post = postList.get(i);
+            if (post != null && postId.equals(post.getId())) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    private void removePostFromLocalList(@Nullable String postId) {
+        int index = findLocalPostIndex(postId);
+        if (index >= 0) {
+            postList.remove(index);
+        }
     }
 
     /**

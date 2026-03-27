@@ -13,7 +13,13 @@ import android.widget.Button;
 import android.widget.EditText;
 import android.widget.ImageButton;
 import android.widget.TextView;
+import android.graphics.Color;
+import android.os.Build;
+import android.view.Window;
 
+import androidx.core.content.ContextCompat;
+import androidx.core.view.WindowCompat;
+import androidx.core.view.WindowInsetsControllerCompat;
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.annotation.NonNull;
@@ -205,6 +211,21 @@ public class SearchCollectionFragment extends Fragment {
         }
     }
 
+    private boolean isThreeButtonNavigationMode() {
+        int resId = requireContext().getResources().getIdentifier(
+                "config_navBarInteractionMode",
+                "integer",
+                "android"
+        );
+
+        if (resId > 0) {
+            int mode = requireContext().getResources().getInteger(resId);
+            return mode == 0; // 0 = 3-button, 1 = 2-button, 2 = gesture
+        }
+
+        return false;
+    }
+
     /**
      * Takes prepared data and presents it on screen or in a dialog/menu.
      */
@@ -229,6 +250,32 @@ public class SearchCollectionFragment extends Fragment {
                     bottomSheet.setBackgroundResource(android.R.color.transparent);
                     BottomSheetBehavior.from(bottomSheet).setState(BottomSheetBehavior.STATE_EXPANDED);
                 }
+
+                Window window = dialog.getWindow();
+                if (window != null) {
+                    boolean isThreeButtonNav = isThreeButtonNavigationMode();
+
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                        window.setNavigationBarContrastEnforced(false);
+                    }
+
+                    WindowInsetsControllerCompat controller =
+                            WindowCompat.getInsetsController(window, window.getDecorView());
+
+                    if (isThreeButtonNav) {
+                        // keep 3-button nav black
+                        window.setNavigationBarColor(Color.BLACK);
+                    } else {
+                        // gesture nav brown
+                        window.setNavigationBarColor(
+                                ContextCompat.getColor(requireContext(), R.color.nav_brown)
+                        );
+                    }
+
+                    if (controller != null) {
+                        controller.setAppearanceLightNavigationBars(false);
+                    }
+                }
             });
 
             dialog.setOnDismissListener(d -> {
@@ -236,6 +283,7 @@ public class SearchCollectionFragment extends Fragment {
                 filterDialog = null;
             });
 
+            TextView tvSortTitle = sheetView.findViewById(R.id.tvSortTitle);
             ChipGroup sortGroup = sheetView.findViewById(R.id.chipGroupSort);
             Chip chipSortDefault = sheetView.findViewById(R.id.chipSortDefault);
             Chip chipSortAz = sheetView.findViewById(R.id.chipSortAz);
@@ -313,9 +361,13 @@ public class SearchCollectionFragment extends Fragment {
                     break;
             }
 
+            updateSortSectionEnabled(tvSortTitle, sortGroup, !chipShowRecent.isChecked());
             updateRaritySectionEnabled(tvRarityTitle, rarityGroup, chipShowAll.isChecked());
 
             showGroup.setOnCheckedStateChangeListener((group, checkedIds) -> {
+                boolean enableSort = !chipShowRecent.isChecked();
+                updateSortSectionEnabled(tvSortTitle, sortGroup, enableSort);
+
                 boolean enableRarity = chipShowAll.isChecked();
                 if (!enableRarity) {
                     chipRarityAll.setChecked(true);
@@ -327,6 +379,7 @@ public class SearchCollectionFragment extends Fragment {
                 chipSortDefault.setChecked(true);
                 chipShowAll.setChecked(true);
                 chipRarityAll.setChecked(true);
+                updateSortSectionEnabled(tvSortTitle, sortGroup, true);
                 updateRaritySectionEnabled(tvRarityTitle, rarityGroup, true);
             });
 
@@ -388,6 +441,21 @@ public class SearchCollectionFragment extends Fragment {
             Log.e(TAG, "Failed to show filter dialog.", e);
             isFilterDialogOpening = false;
             filterDialog = null;
+        }
+    }
+
+    private void updateSortSectionEnabled(TextView titleView, ChipGroup sortGroup, boolean enabled) {
+        if (titleView != null) {
+            titleView.setAlpha(enabled ? 1f : 0.45f);
+        }
+
+        if (sortGroup == null) return;
+
+        sortGroup.setAlpha(enabled ? 1f : 0.45f);
+        for (int i = 0; i < sortGroup.getChildCount(); i++) {
+            View child = sortGroup.getChildAt(i);
+            child.setEnabled(enabled);
+            child.setClickable(enabled);
         }
     }
 

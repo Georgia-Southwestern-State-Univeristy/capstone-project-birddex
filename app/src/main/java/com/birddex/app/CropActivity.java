@@ -51,6 +51,7 @@ public class CropActivity extends AppCompatActivity {
     protected void onCreate(@Nullable Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_crop);
+        SystemBarHelper.applyStandardNavBar(this);
 
         // Initialize UI components.
         // Bind or inflate the UI pieces this method needs before it can update the screen.

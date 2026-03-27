@@ -11,14 +11,15 @@
         android:id="@+id/profileAppBar"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:background="?attr/colorSurface"
+        android:background="@color/page_cream"
         app:elevation="0dp"
-        app:liftOnScroll="true">
+        app:liftOnScroll="false">
 
         <androidx.constraintlayout.widget.ConstraintLayout
             android:id="@+id/profileHeader"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
+            android:background="@color/page_cream"
             android:paddingStart="20dp"
             android:paddingTop="20dp"
             android:paddingEnd="20dp"
@@ -189,7 +190,7 @@
             android:id="@+id/profileTabLayout"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:background="?attr/colorSurface"
+            android:background="@color/page_cream"
             app:tabGravity="fill"
             app:tabIconTint="?attr/colorOnSurface"
             app:tabIndicatorColor="?attr/colorPrimary"
@@ -215,11 +216,13 @@
         android:id="@+id/swipeRefreshLayout"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
+        android:background="@color/page_cream"
         app:layout_behavior="@string/appbar_scrolling_view_behavior">
 
         <FrameLayout
             android:layout_width="match_parent"
-            android:layout_height="match_parent">
+            android:layout_height="match_parent"
+            android:background="@color/page_cream">
 
             <TextView
                 android:id="@+id/tvProfileTabEmpty"
@@ -236,6 +239,7 @@
                 android:id="@+id/rvFavoriteCards"
                 android:layout_width="match_parent"
                 android:layout_height="match_parent"
+                android:background="@color/page_cream"
                 android:clipToPadding="false"
                 android:paddingStart="12dp"
                 android:paddingTop="12dp"
@@ -247,6 +251,7 @@
                 android:id="@+id/rvTrackedBirds"
                 android:layout_width="match_parent"
                 android:layout_height="match_parent"
+                android:background="@color/page_cream"
                 android:clipToPadding="false"
                 android:paddingStart="12dp"
                 android:paddingTop="12dp"
@@ -259,6 +264,7 @@
                 android:id="@+id/rvProfilePosts"
                 android:layout_width="match_parent"
                 android:layout_height="match_parent"
+                android:background="@color/page_cream"
                 android:clipToPadding="false"
                 android:paddingStart="12dp"
                 android:paddingTop="12dp"

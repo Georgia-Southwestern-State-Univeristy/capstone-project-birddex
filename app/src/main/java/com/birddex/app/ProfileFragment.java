@@ -381,7 +381,7 @@ public class ProfileFragment extends Fragment implements
      * Updates object/screen state by storing a new value or reconfiguring a dependency.
      */
     private void setAppBarScrollEnabled(boolean enabled) {
-        if (profileAppBar == null || profileHeader == null || profileTabLayout == null) return;
+        if (profileAppBar == null || profileHeader == null || profileTabLayout == null || swipeRefreshLayout == null) return;
 
         AppBarLayout.LayoutParams headerParams = (AppBarLayout.LayoutParams) profileHeader.getLayoutParams();
         AppBarLayout.LayoutParams tabParams = (AppBarLayout.LayoutParams) profileTabLayout.getLayoutParams();
@@ -395,6 +395,13 @@ public class ProfileFragment extends Fragment implements
 
         profileHeader.setLayoutParams(headerParams);
         profileTabLayout.setLayoutParams(tabParams);
+
+        // Keep every top surface cream so collapse/lift never flashes white.
+        profileAppBar.setBackgroundResource(R.color.page_cream);
+        profileHeader.setBackgroundResource(R.color.page_cream);
+        profileTabLayout.setBackgroundResource(R.color.page_cream);
+        swipeRefreshLayout.setBackgroundResource(R.color.page_cream);
+
         profileAppBar.setLiftOnScroll(enabled);
 
         if (!enabled) {

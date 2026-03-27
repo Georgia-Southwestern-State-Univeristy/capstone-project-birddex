@@ -43,6 +43,7 @@ public class BirdInfoActivity extends AppCompatActivity {
     private ArrayList<Bundle> modelAlternatives = new ArrayList<>();
 
     private RadioGroup rgQuantity;
+    private View layoutQuantity;
     private Button btnStore;
     private TextView commonNameTextView, scientificNameTextView, speciesTextView, familyTextView;
     private TextView referenceImageStatusTextView;
@@ -108,6 +109,7 @@ public class BirdInfoActivity extends AppCompatActivity {
         Button btnNotMyBird = findViewById(R.id.btnNotMyBird);
         Button btnDiscard = findViewById(R.id.btnDiscard);
         rgQuantity = findViewById(R.id.rgQuantity);
+        layoutQuantity = findViewById(R.id.layoutQuantity);
 
         currentImageUriStr = getIntent().getStringExtra("imageUri");
         currentImageUrl = getIntent().getStringExtra("imageUrl");
@@ -140,7 +142,13 @@ public class BirdInfoActivity extends AppCompatActivity {
 
         updateBirdUi();
 
-        rgQuantity.setOnCheckedChangeListener((group, checkedId) -> btnStore.setEnabled(checkedId != -1));
+        rgQuantity.setOnCheckedChangeListener((group, checkedId) -> {
+            if (awardPoints) {
+                btnStore.setEnabled(checkedId != -1);
+            }
+        });
+
+        configureQuantityUi();
 
         btnStore.setOnClickListener(v -> {
             if (!storeClicked.compareAndSet(false, true)) return;
@@ -295,7 +303,33 @@ public class BirdInfoActivity extends AppCompatActivity {
         storeClicked.set(false);
     }
 
+    private void configureQuantityUi() {
+        if (awardPoints) {
+            if (layoutQuantity != null) layoutQuantity.setAlpha(1f);
+            setQuantityOptionsEnabled(true);
+            btnStore.setEnabled(rgQuantity.getCheckedRadioButtonId() != -1);
+        } else {
+            rgQuantity.clearCheck();
+            if (layoutQuantity != null) layoutQuantity.setAlpha(0.45f);
+            setQuantityOptionsEnabled(false);
+            btnStore.setEnabled(true);
+        }
+    }
+
+    private void setQuantityOptionsEnabled(boolean enabled) {
+        rgQuantity.setEnabled(enabled);
+        for (int i = 0; i < rgQuantity.getChildCount(); i++) {
+            View child = rgQuantity.getChildAt(i);
+            child.setEnabled(enabled);
+            child.setClickable(enabled);
+        }
+    }
+
     private String getSelectedQuantity() {
+        if (!awardPoints) {
+            return null;
+        }
+
         int checkedId = rgQuantity.getCheckedRadioButtonId();
         if (checkedId != -1) {
             RadioButton rb = findViewById(checkedId);

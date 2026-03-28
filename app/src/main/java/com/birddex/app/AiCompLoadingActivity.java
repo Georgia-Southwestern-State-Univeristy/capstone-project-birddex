@@ -76,22 +76,28 @@ public class AiCompLoadingActivity extends AppCompatActivity {
         String identificationLogId = getIntent().getStringExtra("identificationLogId");
         String identificationId = getIntent().getStringExtra("identificationId");
 
-        if (imageUriStr == null || identificationLogId == null) {
-            Toast.makeText(this, "Unable to start AI review.", Toast.LENGTH_LONG).show();
+        if (imageUriStr == null || imageUriStr.trim().isEmpty()) {
+            Toast.makeText(this, "Could not load your bird photo for AI review.", Toast.LENGTH_LONG).show();
+            finish();
+            return;
+        }
+        if (identificationLogId == null || identificationLogId.trim().isEmpty()) {
+            Toast.makeText(this, "Identification log is missing for AI review.", Toast.LENGTH_LONG).show();
             finish();
             return;
         }
 
-        String base64Image = encodeImage(Uri.parse(imageUriStr));
-        if (base64Image == null) {
-            Toast.makeText(this, "Failed to prepare image for AI review.", Toast.LENGTH_LONG).show();
+        Uri imageUri = Uri.parse(imageUriStr);
+        String base64Image = encodeImage(imageUri);
+        if (base64Image == null || base64Image.trim().isEmpty()) {
+            Toast.makeText(this, "Failed to prepare your image for AI review.", Toast.LENGTH_LONG).show();
             finish();
             return;
         }
 
         openAiApi.requestOpenAiReviewCandidates(
                 base64Image,
-                imageUrl != null ? imageUrl : "",
+                imageUrl,
                 identificationLogId,
                 UUID.randomUUID().toString(),
                 new OpenAiApi.BirdChoicesCallback() {
@@ -100,21 +106,21 @@ public class AiCompLoadingActivity extends AppCompatActivity {
                         if (isFinishing() || isDestroyed()) return;
 
                         if (isGore) {
-                            Toast.makeText(AiCompLoadingActivity.this, userMessage != null ? userMessage : "Please take a picture of a non-gore picture of a bird.", Toast.LENGTH_LONG).show();
-                            finish();
-                            return;
-                        }
-
-                        if (candidates == null || candidates.isEmpty()) {
-                            Toast.makeText(AiCompLoadingActivity.this, userMessage != null ? userMessage : "Sorry, AI could not produce two more options.", Toast.LENGTH_LONG).show();
+                            Toast.makeText(AiCompLoadingActivity.this,
+                                    userMessage != null && !userMessage.trim().isEmpty()
+                                            ? userMessage
+                                            : "Please take a picture of a non-gore picture of a bird.",
+                                    Toast.LENGTH_LONG).show();
                             finish();
                             return;
                         }
 
                         Intent intent = new Intent(AiCompLoadingActivity.this, AiCompActivity.class);
                         intent.putExtra("imageUri", imageUriStr);
+                        intent.putExtra("imageUrl", imageUrl);
                         intent.putExtra("identificationLogId", identificationLogId);
                         intent.putExtra("identificationId", identificationId);
+                        intent.putExtra("openAiUserMessage", userMessage);
                         intent.putParcelableArrayListExtra("openAiAlternatives", toCandidateBundles(candidates));
                         aiCompLauncher.launch(intent);
                     }
@@ -122,8 +128,12 @@ public class AiCompLoadingActivity extends AppCompatActivity {
                     @Override
                     public void onFailure(Exception e, String message) {
                         if (isFinishing() || isDestroyed()) return;
-                        Log.e(TAG, "OpenAI review failed", e);
-                        Toast.makeText(AiCompLoadingActivity.this, message, Toast.LENGTH_LONG).show();
+                        Log.e(TAG, "requestOpenAiReviewCandidates failed", e);
+                        Toast.makeText(AiCompLoadingActivity.this,
+                                message != null && !message.trim().isEmpty()
+                                        ? message
+                                        : "AI review failed.",
+                                Toast.LENGTH_LONG).show();
                         finish();
                     }
                 }

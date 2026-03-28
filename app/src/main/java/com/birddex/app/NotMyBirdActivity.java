@@ -17,6 +17,7 @@ import androidx.appcompat.app.AppCompatActivity;
 import com.bumptech.glide.Glide;
 
 import java.util.ArrayList;
+import java.util.Locale;
 
 public class NotMyBirdActivity extends AppCompatActivity {
 
@@ -25,6 +26,9 @@ public class NotMyBirdActivity extends AppCompatActivity {
     private String identificationId;
     private String imageUriStr;
     private String imageUrl;
+    private String currentBirdId;
+    private String currentCommonName;
+    private String currentScientificName;
     private final OpenAiApi openAiApi = new OpenAiApi();
 
     private final ActivityResultLauncher<Intent> aiCompLauncher = registerForActivityResult(
@@ -61,10 +65,13 @@ public class NotMyBirdActivity extends AppCompatActivity {
         identificationId = getIntent().getStringExtra("identificationId");
         imageUriStr = getIntent().getStringExtra("imageUri");
         imageUrl = getIntent().getStringExtra("imageUrl");
+        currentBirdId = getIntent().getStringExtra("birdId");
+        currentCommonName = getIntent().getStringExtra("commonName");
+        currentScientificName = getIntent().getStringExtra("scientificName");
 
         ArrayList<Bundle> incomingAlternatives = getIntent().getParcelableArrayListExtra("modelAlternatives");
         if (incomingAlternatives != null) {
-            modelAlternatives = incomingAlternatives;
+            modelAlternatives = filterOutCurrentBird(incomingAlternatives);
         }
 
         if (imageUriStr != null) {
@@ -177,6 +184,48 @@ public class NotMyBirdActivity extends AppCompatActivity {
         }
         return modelAlternatives.get(index);
     }
+
+    private ArrayList<Bundle> filterOutCurrentBird(@Nullable ArrayList<Bundle> incomingAlternatives) {
+        ArrayList<Bundle> filtered = new ArrayList<>();
+        if (incomingAlternatives == null) {
+            return filtered;
+        }
+
+        for (Bundle candidate : incomingAlternatives) {
+            if (candidate == null || isSameAsCurrentBird(candidate)) {
+                continue;
+            }
+            filtered.add(candidate);
+        }
+        return filtered;
+    }
+
+    private boolean isSameAsCurrentBird(@Nullable Bundle candidate) {
+        if (candidate == null) {
+            return false;
+        }
+
+        String candidateBirdId = normalize(candidate.getString("candidateBirdId"));
+        String candidateCommonName = normalize(candidate.getString("candidateCommonName"));
+        String candidateScientificName = normalize(candidate.getString("candidateScientificName"));
+
+        String normalizedCurrentBirdId = normalize(currentBirdId);
+        String normalizedCurrentCommonName = normalize(currentCommonName);
+        String normalizedCurrentScientificName = normalize(currentScientificName);
+
+        if (!normalizedCurrentBirdId.isEmpty() && normalizedCurrentBirdId.equals(candidateBirdId)) {
+            return true;
+        }
+        if (!normalizedCurrentCommonName.isEmpty() && normalizedCurrentCommonName.equals(candidateCommonName)) {
+            return true;
+        }
+        return !normalizedCurrentScientificName.isEmpty() && normalizedCurrentScientificName.equals(candidateScientificName);
+    }
+
+    private String normalize(@Nullable String value) {
+        return value == null ? "" : value.trim().toLowerCase(Locale.US);
+    }
+
 
     private Intent buildSelectionIntent(Bundle candidate, String source) {
         Intent resultIntent = new Intent();

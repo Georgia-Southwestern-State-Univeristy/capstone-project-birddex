@@ -88,7 +88,7 @@ public final class BirdImageLoader {
             public void onNotFound() {
                 if (progressView != null) progressView.setVisibility(View.VISIBLE);
                 if (statusTextView != null) {
-                    statusTextView.setText("Searching free reference photo...");
+                    statusTextView.setText(context.getString(R.string.searching_reference_photo));
                     statusTextView.setVisibility(View.VISIBLE);
                 }
                 requestFetchedIdentificationImage(context, imageView, progressView, statusTextView,

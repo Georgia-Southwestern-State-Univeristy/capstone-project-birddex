@@ -16,6 +16,7 @@ import android.provider.MediaStore;
 import android.util.Base64;
 import android.util.Log;
 import android.widget.ImageView;
+import android.widget.TextView;
 import android.widget.Toast;
 
 import androidx.activity.result.ActivityResultLauncher;
@@ -72,6 +73,9 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
     // and permission result both fire near-simultaneously.
     private final AtomicBoolean identificationStarted = new AtomicBoolean(false);
     private final String requestId = UUID.randomUUID().toString(); // Persistent ID for this specific attempt
+    private final ArrayList<String> pendingFeedbackNotes = new ArrayList<>();
+    @Nullable private String currentIdentificationLogId;
+    @Nullable private String currentIdentificationId;
 
     /**
      * Android calls this when the Activity is first created. This is where the screen usually
@@ -324,6 +328,10 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
             @Override
             public void onSuccess(OpenAiApi.IdentifyBirdResult result) {
                 if (identificationCompleted.get() || isFinishing() || isDestroyed()) return;
+                currentIdentificationLogId = result.identificationLogId;
+                currentIdentificationId = result.identificationId;
+                flushPendingFeedbackIfPossible();
+
                 Log.d(TAG, "identifyBird onSuccess: isVerified=" + result.isVerified
                         + ", isGore=" + result.isGore
                         + ", isInDatabase=" + result.isInDatabase
@@ -362,6 +370,42 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
      * Main logic block for this part of the feature.
      * It also packages extras into an Intent when this flow needs to open another Activity.
      */
+    private void flushPendingFeedbackIfPossible() {
+        if (currentIdentificationLogId == null || currentIdentificationLogId.trim().isEmpty() || pendingFeedbackNotes.isEmpty()) {
+            return;
+        }
+        for (String pendingFeedback : new ArrayList<>(pendingFeedbackNotes)) {
+            if (pendingFeedback == null || pendingFeedback.trim().isEmpty()) {
+                continue;
+            }
+            openAiApi.submitIdentificationFeedback(
+                    currentIdentificationLogId,
+                    currentIdentificationId,
+                    "identifying_loading",
+                    pendingFeedback,
+                    new OpenAiApi.FeedbackSyncCallback() {
+                        @Override
+                        public void onSuccess(String userMessage) {
+                            if (isFinishing() || isDestroyed()) return;
+                            String finalMessage = (userMessage != null && !userMessage.trim().isEmpty())
+                                    ? userMessage
+                                    : getString(R.string.submit_feedback_pending_sent);
+                            Toast.makeText(IdentifyingActivity.this, finalMessage, Toast.LENGTH_SHORT).show();
+                        }
+
+                        @Override
+                        public void onFailure(Exception e, String message) {
+                            if (isFinishing() || isDestroyed()) return;
+                            Toast.makeText(IdentifyingActivity.this, message != null && !message.trim().isEmpty()
+                                    ? message
+                                    : getString(R.string.submit_feedback_pending_failed), Toast.LENGTH_LONG).show();
+                        }
+                    }
+            );
+        }
+        pendingFeedbackNotes.clear();
+    }
+
     private void proceedToInfoActivity(OpenAiApi.IdentifyBirdResult result, @Nullable String downloadUrl, @Nullable Double latitude, @Nullable Double longitude, @Nullable String localityName, @Nullable String state, @Nullable String country) {
         if (identificationCompleted.compareAndSet(false, true)) {
             timeoutHandler.removeCallbacks(timeoutRunnable);

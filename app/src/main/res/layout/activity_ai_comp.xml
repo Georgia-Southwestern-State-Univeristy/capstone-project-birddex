@@ -9,6 +9,21 @@
     tools:context=".AiCompActivity">
 
     <TextView
+        android:id="@+id/tvSubmitFeedback"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:layout_marginEnd="8dp"
+        android:clickable="true"
+        android:focusable="true"
+        android:text="@string/submit_feedback"
+        android:textColor="@color/nav_brown"
+        android:textSize="12sp"
+        android:textStyle="bold"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintTop_toTopOf="parent" />
+
+    <TextView
         android:id="@+id/tvUserImageLabel"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
@@ -207,6 +222,22 @@
             android:textColorLink="@color/nav_brown"
             android:visibility="gone" />
     </LinearLayout>
+
+
+    <Button
+        android:id="@+id/btnCouldntFindYourBird"
+        style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginHorizontal="24dp"
+        android:layout_marginBottom="12dp"
+        android:text="@string/couldnt_find_your_bird"
+        android:textAllCaps="false"
+        android:textSize="16sp"
+        app:cornerRadius="32dp"
+        app:layout_constraintBottom_toTopOf="@id/btnRetake"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent" />
 
     <Button
         android:id="@+id/btnRetake"

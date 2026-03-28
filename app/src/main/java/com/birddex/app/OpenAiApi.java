@@ -61,6 +61,11 @@ public class OpenAiApi {
         void onFailure(Exception e, String message);
     }
 
+    public interface FeedbackSyncCallback {
+        void onSuccess(@Nullable String userMessage);
+        void onFailure(@Nullable Exception e, @NonNull String message);
+    }
+
     public void identifyBirdFromImage(String base64Image,
                                       String imageUrl,
                                       @Nullable Double latitude,
@@ -142,6 +147,33 @@ public class OpenAiApi {
                 });
     }
 
+    public void submitIdentificationFeedback(@Nullable String identificationLogId,
+                                             @Nullable String identificationId,
+                                             @NonNull String stage,
+                                             @NonNull String note) {
+        submitIdentificationFeedback(identificationLogId, identificationId, stage, note, null);
+    }
+
+    public void submitIdentificationFeedback(@Nullable String identificationLogId,
+                                             @Nullable String identificationId,
+                                             @NonNull String stage,
+                                             @NonNull String note,
+                                             @Nullable FeedbackSyncCallback callback) {
+        syncIdentificationFeedback(
+                identificationLogId,
+                identificationId,
+                "submit_feedback",
+                null,
+                stage,
+                note,
+                null,
+                null,
+                null,
+                null,
+                callback
+        );
+    }
+
     public void syncIdentificationFeedback(@Nullable String identificationLogId,
                                            @Nullable String identificationId,
                                            @NonNull String action,
@@ -155,6 +187,7 @@ public class OpenAiApi {
                 selectedBirdId,
                 selectionSource,
                 note,
+                null,
                 null,
                 null,
                 null,
@@ -172,7 +205,36 @@ public class OpenAiApi {
                                            @Nullable String selectedScientificName,
                                            @Nullable String selectedSpecies,
                                            @Nullable String selectedFamily) {
+        syncIdentificationFeedback(
+                identificationLogId,
+                identificationId,
+                action,
+                selectedBirdId,
+                selectionSource,
+                note,
+                selectedCommonName,
+                selectedScientificName,
+                selectedSpecies,
+                selectedFamily,
+                null
+        );
+    }
+
+    public void syncIdentificationFeedback(@Nullable String identificationLogId,
+                                           @Nullable String identificationId,
+                                           @NonNull String action,
+                                           @Nullable String selectedBirdId,
+                                           @Nullable String selectionSource,
+                                           @Nullable String note,
+                                           @Nullable String selectedCommonName,
+                                           @Nullable String selectedScientificName,
+                                           @Nullable String selectedSpecies,
+                                           @Nullable String selectedFamily,
+                                           @Nullable FeedbackSyncCallback callback) {
         if (identificationLogId == null || identificationLogId.trim().isEmpty()) {
+            if (callback != null) {
+                callback.onFailure(null, "Identification log was not ready yet.");
+            }
             return;
         }
 
@@ -191,7 +253,38 @@ public class OpenAiApi {
         FirebaseFunctions.getInstance()
                 .getHttpsCallable("syncIdentificationFeedback")
                 .call(data)
-                .addOnFailureListener(e -> Log.e(TAG, "syncIdentificationFeedback failed", e));
+                .addOnSuccessListener(result -> {
+                    Map<String, Object> resMap = castMap(result.getData());
+                    String userMessage = getString(resMap, "userMessage");
+                    if (callback != null) {
+                        callback.onSuccess(userMessage);
+                    }
+                })
+                .addOnFailureListener(e -> {
+                    Log.e(TAG, "syncIdentificationFeedback failed", e);
+                    String message = getFeedbackErrorMessage(e);
+                    if (callback != null) {
+                        callback.onFailure(new Exception(e), message);
+                    }
+                });
+    }
+
+    @NonNull
+    private String getFeedbackErrorMessage(@NonNull Exception exception) {
+        if (exception instanceof com.google.firebase.functions.FirebaseFunctionsException) {
+            String message = exception.getMessage();
+            if (message != null && !message.trim().isEmpty()) {
+                int colonIndex = message.indexOf(": ");
+                if (colonIndex >= 0 && colonIndex + 2 < message.length()) {
+                    return message.substring(colonIndex + 2).trim();
+                }
+                return message.trim();
+            }
+        }
+        String message = exception.getMessage();
+        return (message != null && !message.trim().isEmpty())
+                ? message.trim()
+                : "Could not submit feedback right now.";
     }
 
     @SuppressWarnings("unchecked")

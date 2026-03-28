@@ -65,6 +65,13 @@ const HYBRID_ID_CONFIG = {
     NOT_MY_BIRD_LOCK_MARGIN_THRESHOLD: 0.12,
     REVIEW_LOCATION_PLAUSIBILITY_THRESHOLD: 0.60,
 };
+
+const IDENTIFICATION_FEEDBACK_CONFIG = {
+    SUBMIT_FEEDBACK_COOLDOWN_MS: 15 * 1000,
+    SUBMIT_FEEDBACK_MAX_PER_LOG: 8,
+    COULDNT_FIND_BIRD_COOLDOWN_MS: 30 * 1000,
+    COULDNT_FIND_BIRD_MAX_PER_LOG: 1,
+};
 // ======================================================
 // HELPER: Input Sanitization
 // ======================================================
@@ -171,7 +178,7 @@ exports.logFilteredContentAttempt = onCall(async (request) => {
         },
     });
 
-    return { success: true };
+    return syncResponse;
 });
 
 // ======================================================
@@ -2339,6 +2346,109 @@ exports.reviewBirdAlternatives = onCall({ secrets: [OPENAI_API_KEY], timeoutSeco
     }
 });
 
+function timestampLikeToMillis(value) {
+    if (!value) return 0;
+    if (typeof value.toMillis === "function") {
+        return value.toMillis();
+    }
+    if (value instanceof admin.firestore.Timestamp) {
+        return value.toMillis();
+    }
+    if (typeof value._seconds === "number") {
+        const nanos = typeof value._nanoseconds === "number" ? value._nanoseconds : 0;
+        return (value._seconds * 1000) + Math.floor(nanos / 1000000);
+    }
+    if (typeof value.seconds === "number") {
+        const nanos = typeof value.nanoseconds === "number" ? value.nanoseconds : 0;
+        return (value.seconds * 1000) + Math.floor(nanos / 1000000);
+    }
+    if (typeof value === "number") {
+        return value;
+    }
+    return 0;
+}
+
+async function writeIdentificationFeedbackEventWithGuards({
+    identificationLogRef,
+    userId,
+    identificationId,
+    action,
+    selectedSource,
+    normalizedNote,
+    updatePayload,
+}) {
+    const isSubmitFeedback = action === "submit_feedback";
+    const isCouldntFindBird = action === "couldnt_find_your_bird";
+    if (!isSubmitFeedback && !isCouldntFindBird) {
+        throw new HttpsError("invalid-argument", "Unsupported guarded feedback action.");
+    }
+
+    const cooldownMs = isSubmitFeedback
+        ? IDENTIFICATION_FEEDBACK_CONFIG.SUBMIT_FEEDBACK_COOLDOWN_MS
+        : IDENTIFICATION_FEEDBACK_CONFIG.COULDNT_FIND_BIRD_COOLDOWN_MS;
+    const maxPerLog = isSubmitFeedback
+        ? IDENTIFICATION_FEEDBACK_CONFIG.SUBMIT_FEEDBACK_MAX_PER_LOG
+        : IDENTIFICATION_FEEDBACK_CONFIG.COULDNT_FIND_BIRD_MAX_PER_LOG;
+
+    return db.runTransaction(async (transaction) => {
+        const freshLogDoc = await transaction.get(identificationLogRef);
+        if (!freshLogDoc.exists) {
+            throw new HttpsError("not-found", "Identification log not found.");
+        }
+
+        const freshLogData = freshLogDoc.data() || {};
+        if (freshLogData.userId !== userId) {
+            throw new HttpsError("permission-denied", "You do not have access to this identification log.");
+        }
+
+        const userFeedback = freshLogData.userFeedback || {};
+        const countField = isSubmitFeedback ? "feedbackSubmissionCount" : "couldntFindBirdCount";
+        const timestampField = isSubmitFeedback ? "lastSubmittedFeedbackAt" : "couldntFindBirdLastPressedAt";
+        const currentCount = Number(userFeedback[countField]) || 0;
+        if (currentCount >= maxPerLog) {
+            throw new HttpsError(
+                "resource-exhausted",
+                isSubmitFeedback
+                    ? "Feedback limit reached for this identification."
+                    : "You already reported that we could not find your bird for this identification."
+            );
+        }
+
+        const lastEventAtMs = timestampLikeToMillis(userFeedback[timestampField]);
+        const nowMs = Date.now();
+        if (lastEventAtMs > 0 && (nowMs - lastEventAtMs) < cooldownMs) {
+            const secondsRemaining = Math.max(1, Math.ceil((cooldownMs - (nowMs - lastEventAtMs)) / 1000));
+            throw new HttpsError(
+                "resource-exhausted",
+                isSubmitFeedback
+                    ? `Please wait ${secondsRemaining} more second${secondsRemaining === 1 ? "" : "s"} before submitting more feedback.`
+                    : `Please wait ${secondsRemaining} more second${secondsRemaining === 1 ? "" : "s"} before sending that report again.`
+            );
+        }
+
+        const feedbackEntryRef = identificationLogRef.collection("feedbackEntries").doc();
+        transaction.set(identificationLogRef, updatePayload, { merge: true });
+        transaction.set(feedbackEntryRef, {
+            entryType: action,
+            stage: selectedSource || null,
+            message: normalizedNote,
+            userId,
+            identificationId: identificationId || null,
+            submittedAt: admin.firestore.FieldValue.serverTimestamp(),
+            submittedAtMs: nowMs,
+            storageMode: "subcollection_v1",
+        });
+
+        return {
+            success: true,
+            userMessage: isSubmitFeedback
+                ? "Thanks, feedback submitted."
+                : "Thanks. We logged that BirdDex could not find your bird.",
+            feedbackEntryId: feedbackEntryRef.id,
+        };
+    });
+}
+
 exports.syncIdentificationFeedback = onCall(async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
 
@@ -2382,11 +2492,15 @@ exports.syncIdentificationFeedback = onCall(async (request) => {
         }
     }
 
+    const normalizedNote = typeof note === "string"
+        ? sanitizeText(note, 2000).trim() || null
+        : null;
+
     const updatePayload = {
         userFeedback: {
             feedbackTimestamp: admin.firestore.FieldValue.serverTimestamp(),
             lastAction: action,
-            note: typeof note === "string" ? note : null,
+            note: normalizedNote,
         },
     };
 
@@ -2398,6 +2512,10 @@ exports.syncIdentificationFeedback = onCall(async (request) => {
     const normalizedSelectedSpecies = sanitizeText(selectedSpecies || "", 200).trim() || null;
     const normalizedSelectedFamily = sanitizeText(selectedFamily || "", 200).trim() || null;
     const isUnsupportedOpenAiSelection = !selectedBirdId && selectedSource && selectedSource.startsWith("openai_review");
+
+    if (action === "submit_feedback" && !normalizedNote) {
+        throw new HttpsError("invalid-argument", "Feedback note is required.");
+    }
 
     if (selectionActions.includes(action)) {
         if (selectedBirdId) {
@@ -2453,6 +2571,19 @@ exports.syncIdentificationFeedback = onCall(async (request) => {
         updatePayload.userFeedback.status = "openai_review_requested";
         updatePayload.userFeedback.modelAlternativesRejectedAt = admin.firestore.FieldValue.serverTimestamp();
         break;
+    case "submit_feedback":
+        updatePayload.userFeedback.feedbackSubmissionCount = admin.firestore.FieldValue.increment(1);
+        updatePayload.userFeedback.lastSubmittedFeedback = normalizedNote;
+        updatePayload.userFeedback.lastSubmittedFeedbackStage = selectedSource || null;
+        updatePayload.userFeedback.lastSubmittedFeedbackAt = admin.firestore.FieldValue.serverTimestamp();
+        updatePayload.userFeedback.feedbackStorageMode = "subcollection_v1";
+        break;
+    case "couldnt_find_your_bird":
+        updatePayload.userFeedback.couldntFindBirdCount = admin.firestore.FieldValue.increment(1);
+        updatePayload.userFeedback.couldntFindBirdLastPressedAt = admin.firestore.FieldValue.serverTimestamp();
+        updatePayload.userFeedback.couldntFindBirdLastStage = selectedSource || "not_my_bird";
+        updatePayload.userFeedback.feedbackStorageMode = "subcollection_v1";
+        break;
     case "select_model_alternative":
         updatePayload.userFeedback.status = "model_alternative_selected";
         updatePayload.userFeedback.confirmedCorrect = false;
@@ -2487,7 +2618,20 @@ exports.syncIdentificationFeedback = onCall(async (request) => {
         throw new HttpsError("invalid-argument", "Unsupported feedback action.");
     }
 
-    await identificationLogRef.set(updatePayload, { merge: true });
+    let syncResponse = { success: true, userMessage: null };
+    if (action === "submit_feedback" || action === "couldnt_find_your_bird") {
+        syncResponse = await writeIdentificationFeedbackEventWithGuards({
+            identificationLogRef,
+            userId,
+            identificationId,
+            action,
+            selectedSource,
+            normalizedNote,
+            updatePayload,
+        });
+    } else {
+        await identificationLogRef.set(updatePayload, { merge: true });
+    }
 
     if (!identificationRef && action === "confirm_final_choice") {
         identificationRef = db.collection("identifications").doc();
@@ -2528,7 +2672,7 @@ exports.syncIdentificationFeedback = onCall(async (request) => {
         }, { merge: true });
     }
 
-    return { success: true };
+    return syncResponse;
 });
 
 // ======================================================
@@ -4170,7 +4314,7 @@ exports.toggleFollow = onCall(async (request) => {
         }
     });
 
-    return { success: true };
+    return syncResponse;
 });
 
 // ======================================================

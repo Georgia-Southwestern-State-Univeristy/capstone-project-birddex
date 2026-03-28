@@ -81,6 +81,26 @@
     <string name="open_ai">Open AI</string>
     <string name="retake_image">Retake Image</string>
     <string name="user_image">User Image</string>
+    <string name="submit_feedback">Submit feedback?</string>
+    <string name="submit_feedback_title">Submit feedback</string>
+    <string name="submit_feedback_message">Tell us what felt wrong during identification.</string>
+    <string name="submit_feedback_hint">What went wrong?</string>
+    <string name="submit_feedback_send">Submit</string>
+    <string name="submit_feedback_required">Please enter feedback before submitting.</string>
+    <string name="submit_feedback_thanks">Thanks, feedback submitted.</string>
+    <string name="submit_feedback_pending">Thanks. Your feedback will be attached once this identification finishes.</string>
+    <string name="feedback_not_available_yet">BirdDex could not attach feedback because the identification did not finish.</string>
+    <string name="couldnt_find_your_bird">Couldn\'t find your bird</string>
+    <string name="couldnt_find_your_bird_thanks">Thanks. We logged that BirdDex could not find your bird.</string>
+    <string name="couldnt_find_your_bird_failed">Failed to log that BirdDex could not find your bird.</string>
+
+    <string name="submit_feedback_debounce">Please wait a moment before submitting again.</string>
+    <string name="submit_feedback_sending">Sending...</string>
+    <string name="submit_feedback_failed">Failed to submit feedback.</string>
+    <string name="submit_feedback_log_not_ready">Feedback cannot be submitted yet. Please wait.</string>
+    <string name="submit_feedback_pending_sent">Feedback submitted successfully.</string>
+    <string name="submit_feedback_pending_failed">Failed to submit feedback. Please try again.</string>
+
 
     <!-- Camera Tip -->
     <string name="camera_tip_title">Camera Tip</string>
@@ -89,6 +109,6 @@
     <string name="ok">OK</string>
 
     <!-- BirdImageLoader Strings -->
-    <string name="searching_reference_photo">Searching free reference photo...</string>
+    <string name="searching_reference_photo">Finding image...</string>
     <string name="reference_photo_unavailable">Reference photo unavailable</string>
 </resources>

@@ -9,6 +9,7 @@ import android.widget.ImageView;
 import android.widget.RadioButton;
 import android.widget.RadioGroup;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
@@ -122,6 +123,7 @@ public class BirdInfoActivity extends AppCompatActivity {
         Button btnDiscard = findViewById(R.id.btnDiscard);
         rgQuantity = findViewById(R.id.rgQuantity);
         layoutQuantity = findViewById(R.id.layoutQuantity);
+        TextView tvSubmitFeedback = findViewById(R.id.tvSubmitFeedback);
 
         currentImageUriStr = getIntent().getStringExtra("imageUri");
         currentImageUrl = getIntent().getStringExtra("imageUrl");
@@ -167,6 +169,19 @@ public class BirdInfoActivity extends AppCompatActivity {
 
         configureQuantityUi();
         applyNotMyBirdButtonState(btnNotMyBird);
+
+        tvSubmitFeedback.setOnClickListener(v -> IdentificationFeedbackHelper.showFeedbackDialog(
+                this,
+                (feedbackText, callback) -> IdentificationFeedbackHelper.submitFeedback(
+                        openAiApi,
+                        this,
+                        identificationLogId,
+                        identificationId,
+                        "bird_info",
+                        feedbackText,
+                        callback
+                )
+        ));
 
         btnStore.setOnClickListener(v -> {
             if (!storeClicked.compareAndSet(false, true)) return;

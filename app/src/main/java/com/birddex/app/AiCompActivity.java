@@ -8,6 +8,7 @@ import android.widget.Button;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatActivity;
@@ -21,6 +22,7 @@ public class AiCompActivity extends AppCompatActivity {
     private ArrayList<Bundle> openAiAlternatives = new ArrayList<>();
     private String identificationLogId;
     private String identificationId;
+    private boolean couldntFindBirdSubmitting = false;
     private final OpenAiApi openAiApi = new OpenAiApi();
 
     @Override
@@ -42,7 +44,10 @@ public class AiCompActivity extends AppCompatActivity {
         TextView tvAiName2 = findViewById(R.id.tvAiName2);
         LinearLayout llAiBird1 = findViewById(R.id.llAiBird1);
         LinearLayout llAiBird2 = findViewById(R.id.llAiBird2);
+        TextView tvInstruction = findViewById(R.id.tvInstruction);
         Button btnRetake = findViewById(R.id.btnRetake);
+        Button btnCouldntFindYourBird = findViewById(R.id.btnCouldntFindYourBird);
+        TextView tvSubmitFeedback = findViewById(R.id.tvSubmitFeedback);
 
         identificationLogId = getIntent().getStringExtra("identificationLogId");
         identificationId = getIntent().getStringExtra("identificationId");
@@ -52,6 +57,7 @@ public class AiCompActivity extends AppCompatActivity {
             openAiAlternatives = incomingAlternatives;
         }
 
+        String reviewUserMessage = getIntent().getStringExtra("openAiUserMessage");
         String imageUriStr = getIntent().getStringExtra("imageUri");
         if (imageUriStr != null) {
             Glide.with(this)
@@ -59,8 +65,77 @@ public class AiCompActivity extends AppCompatActivity {
                     .into(ivMain);
         }
 
+        if (tvInstruction != null) {
+            if (openAiAlternatives == null || openAiAlternatives.isEmpty()) {
+                tvInstruction.setText((reviewUserMessage != null && !reviewUserMessage.trim().isEmpty())
+                        ? reviewUserMessage
+                        : "AI could not find more supported BirdDex matches for this photo. You can retake the image or let us know we couldn't find your bird.");
+            } else if (openAiAlternatives.size() == 1) {
+                tvInstruction.setText("AI found one more supported BirdDex match. Select it if it looks right.");
+            } else if (reviewUserMessage != null && !reviewUserMessage.trim().isEmpty()) {
+                tvInstruction.setText(reviewUserMessage);
+            }
+        }
+
         bindCandidate(llAiBird1, ivAiImage1, progressAiBird1, tvAiStatus1, tvAiAttribution1, tvAiName1, getCandidateAt(0));
         bindCandidate(llAiBird2, ivAiImage2, progressAiBird2, tvAiStatus2, tvAiAttribution2, tvAiName2, getCandidateAt(1));
+
+        tvSubmitFeedback.setOnClickListener(v -> IdentificationFeedbackHelper.showFeedbackDialog(
+                this,
+                (feedbackText, callback) -> IdentificationFeedbackHelper.submitFeedback(
+                        openAiApi,
+                        this,
+                        identificationLogId,
+                        identificationId,
+                        "ai_review_choices",
+                        feedbackText,
+                        callback
+                )
+        ));
+
+
+        btnCouldntFindYourBird.setOnClickListener(v -> {
+            if (couldntFindBirdSubmitting) {
+                return;
+            }
+            couldntFindBirdSubmitting = true;
+            btnCouldntFindYourBird.setEnabled(false);
+            btnCouldntFindYourBird.setAlpha(0.6f);
+            openAiApi.syncIdentificationFeedback(
+                    identificationLogId,
+                    identificationId,
+                    "couldnt_find_your_bird",
+                    null,
+                    "ai_review_choices",
+                    "User reported BirdDex and AI review could not find the correct bird from the AI comparison screen.",
+                    null,
+                    null,
+                    null,
+                    null,
+                    new OpenAiApi.FeedbackSyncCallback() {
+                        @Override
+                        public void onSuccess(String userMessage) {
+                            couldntFindBirdSubmitting = false;
+                            String finalMessage = (userMessage != null && !userMessage.trim().isEmpty())
+                                    ? userMessage
+                                    : getString(R.string.couldnt_find_your_bird_thanks);
+                            Toast.makeText(AiCompActivity.this, finalMessage, Toast.LENGTH_SHORT).show();
+                        }
+
+                        @Override
+                        public void onFailure(Exception e, String message) {
+                            couldntFindBirdSubmitting = false;
+                            btnCouldntFindYourBird.setEnabled(true);
+                            btnCouldntFindYourBird.setAlpha(1f);
+                            Toast.makeText(AiCompActivity.this,
+                                    (message != null && !message.trim().isEmpty())
+                                            ? message
+                                            : getString(R.string.couldnt_find_your_bird_failed),
+                                    Toast.LENGTH_LONG).show();
+                        }
+                    }
+            );
+        });
 
         btnRetake.setOnClickListener(v -> {
             openAiApi.syncIdentificationFeedback(

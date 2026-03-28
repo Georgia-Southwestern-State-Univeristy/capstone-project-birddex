@@ -6256,6 +6256,34 @@ async function evaluateForumPostImageModeration({ userId, postId, imageUrl }) {
     }
 }
 
+function buildForumImageModerationNotice(penaltySummary) {
+    const penaltyType = penaltySummary?.penaltyType || null;
+    const restriction = penaltySummary?.appliedRestriction || null;
+
+    let moderationNoticeType = "moderation_notice";
+    let coreMessage = "A moderation action was applied to your account.";
+
+    if (penaltyType === "warning") {
+        moderationNoticeType = "warning";
+        coreMessage = "You have been issued a warning.";
+    } else if (penaltyType === "strike") {
+        moderationNoticeType = restriction ? "strike_with_restriction" : "strike";
+        coreMessage = "You have been issued a strike.";
+    }
+
+    let restrictionSentence = "";
+    if (restriction) {
+        restrictionSentence = " Your forum access is currently restricted.";
+    }
+
+    const userMessage = `This image could not be posted because it was flagged as explicit. ${coreMessage}${restrictionSentence} Check your Moderation History in the settings.`;
+
+    return {
+        moderationNoticeType,
+        userMessage,
+    };
+}
+
 async function applyAutomaticPenaltyForUser({
     transaction,
     userRef,
@@ -6627,7 +6655,7 @@ exports.createForumPost = onCall(async (request) => {
 
     if (imageModeration.blocked) {
         const moderationState = await assertUserCanUseForumOrThrow(userId, "create a forum post");
-        await db.runTransaction(async (t) => {
+        const penaltySummary = await db.runTransaction(async (t) => {
             const ownerSnap = await t.get(moderationState.userRef);
             const penaltySummary = await applyAutomaticPenaltyForUser({
                 transaction: t,
@@ -6663,11 +6691,24 @@ exports.createForumPost = onCall(async (request) => {
                 },
                 evidenceText: message,
             }));
+
+            return penaltySummary;
         });
+
+        const moderationNotice = buildForumImageModerationNotice(penaltySummary);
 
         throw new HttpsError(
             "failed-precondition",
-            "This image could not be posted because it was flagged as explicit. You can appeal that moderation decision in-app once the moderation screen is wired up."
+            moderationNotice.userMessage,
+            {
+                message: moderationNotice.userMessage,
+                userMessage: moderationNotice.userMessage,
+                moderationNoticeType: moderationNotice.moderationNoticeType,
+                penaltyType: penaltySummary.penaltyType || null,
+                appliedRestriction: penaltySummary.appliedRestriction || null,
+                appealable: true,
+                reasonCode: "nsfw_image",
+            }
         );
     }
 

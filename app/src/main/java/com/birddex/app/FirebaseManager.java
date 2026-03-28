@@ -960,12 +960,27 @@ public class FirebaseManager {
      * Returns a user-friendly error message from a callable Cloud Function task.
      */
     private String getCallableErrorMessage(Task<HttpsCallableResult> task, String fallbackMessage) {
-        if (task.getException() instanceof FirebaseFunctionsException) {
-            String message = task.getException().getMessage();
+        Exception exception = task.getException();
+        if (exception instanceof FirebaseFunctionsException) {
+            FirebaseFunctionsException ffe = (FirebaseFunctionsException) exception;
+            Object details = ffe.getDetails();
+            if (details instanceof Map) {
+                Object userMessage = ((Map<?, ?>) details).get("userMessage");
+                if (userMessage instanceof String && !((String) userMessage).trim().isEmpty()) {
+                    return (String) userMessage;
+                }
+
+                Object message = ((Map<?, ?>) details).get("message");
+                if (message instanceof String && !((String) message).trim().isEmpty()) {
+                    return (String) message;
+                }
+            }
+
+            String message = ffe.getMessage();
             if (message != null && !message.trim().isEmpty()) return message;
         }
-        if (task.getException() != null && task.getException().getMessage() != null) {
-            return task.getException().getMessage();
+        if (exception != null && exception.getMessage() != null) {
+            return exception.getMessage();
         }
         return fallbackMessage;
     }

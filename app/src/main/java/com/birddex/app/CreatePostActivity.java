@@ -616,7 +616,7 @@ public class CreatePostActivity extends AppCompatActivity {
                 setPostingUi(false);
 
                 if (hasAttachedImage(url) && isForumImageExplicitModerationError(errorMessage)) {
-                    showForumImageModerationPopup();
+                    showForumImageModerationPopup(errorMessage);
                     return;
                 }
 
@@ -647,6 +647,8 @@ public class CreatePostActivity extends AppCompatActivity {
                 || lower.contains("flagged as explicit")
                 || lower.contains("image could not be posted")
                 || lower.contains("appeal that moderation decision")
+                || lower.contains("you have been issued a warning")
+                || lower.contains("you have been issued a strike")
                 || (lower.contains("explicit") && lower.contains("image"));
     }
 
@@ -661,10 +663,14 @@ public class CreatePostActivity extends AppCompatActivity {
                 || (lower.contains("restricted") && lower.contains("cannot post"));
     }
 
-    private void showForumImageModerationPopup() {
+    private void showForumImageModerationPopup(String errorMessage) {
+        String message = errorMessage != null && !errorMessage.trim().isEmpty()
+                ? errorMessage
+                : "This image could not be posted because it was flagged as explicit. Check your Moderation History in the settings.";
+
         new AlertDialog.Builder(this)
                 .setTitle("Moderation Notice")
-                .setMessage("You have been issued a strike and/or warning. Check your Moderation History in the settings.")
+                .setMessage(message)
                 .setPositiveButton("OK", null)
                 .show();
     }

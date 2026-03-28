@@ -12,6 +12,7 @@ import android.widget.TextView;
 
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
+import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
@@ -48,11 +49,21 @@ public class BirdInfoActivity extends AppCompatActivity {
     private TextView commonNameTextView, scientificNameTextView, speciesTextView, familyTextView;
     private TextView referenceImageStatusTextView;
     private TextView referenceAttributionTextView;
+    private TextView notMyBirdLockedHintTextView;
     private View referenceImageProgressBar;
     private ImageView birdImageView;
     private ImageView referenceBirdImageView;
     private boolean awardPoints = true;
     private boolean useReferenceNameLookupOnly = false;
+    private boolean notMyBirdAllowed = true;
+    @Nullable
+    private Double modelTop1Confidence;
+    @Nullable
+    private Double modelTop2Confidence;
+    @Nullable
+    private Double modelConfidenceMargin;
+    @Nullable
+    private String notMyBirdBlockMessage;
     private final OpenAiApi openAiApi = new OpenAiApi();
 
     private final AtomicBoolean storeClicked = new AtomicBoolean(false);
@@ -100,6 +111,7 @@ public class BirdInfoActivity extends AppCompatActivity {
         referenceBirdImageView = findViewById(R.id.referenceBirdImageView);
         referenceImageStatusTextView = findViewById(R.id.referenceImageStatusTextView);
         referenceAttributionTextView = findViewById(R.id.referenceAttributionTextView);
+        notMyBirdLockedHintTextView = findViewById(R.id.tvNotMyBirdLockedHint);
         referenceImageProgressBar = findViewById(R.id.referenceImageProgressBar);
         commonNameTextView = findViewById(R.id.commonNameTextView);
         scientificNameTextView = findViewById(R.id.scientificNameTextView);
@@ -128,6 +140,11 @@ public class BirdInfoActivity extends AppCompatActivity {
         currentLocalityName = getIntent().getStringExtra("localityName");
         currentState = getIntent().getStringExtra("state");
         currentCountry = getIntent().getStringExtra("country");
+        notMyBirdAllowed = getIntent().getBooleanExtra("notMyBirdAllowed", true);
+        notMyBirdBlockMessage = getIntent().getStringExtra("notMyBirdBlockMessage");
+        modelTop1Confidence = getIntent().hasExtra("modelTop1Confidence") ? getIntent().getDoubleExtra("modelTop1Confidence", 0.0) : null;
+        modelTop2Confidence = getIntent().hasExtra("modelTop2Confidence") ? getIntent().getDoubleExtra("modelTop2Confidence", 0.0) : null;
+        modelConfidenceMargin = getIntent().hasExtra("modelConfidenceMargin") ? getIntent().getDoubleExtra("modelConfidenceMargin", 0.0) : null;
 
         ArrayList<Bundle> incomingAlternatives = getIntent().getParcelableArrayListExtra("modelAlternatives");
         if (incomingAlternatives != null) {
@@ -149,6 +166,7 @@ public class BirdInfoActivity extends AppCompatActivity {
         });
 
         configureQuantityUi();
+        applyNotMyBirdButtonState(btnNotMyBird);
 
         btnStore.setOnClickListener(v -> {
             if (!storeClicked.compareAndSet(false, true)) return;
@@ -191,6 +209,23 @@ public class BirdInfoActivity extends AppCompatActivity {
         });
 
         btnNotMyBird.setOnClickListener(v -> {
+            if (!notMyBirdAllowed) {
+                openAiApi.syncIdentificationFeedback(
+                        identificationLogId,
+                        identificationId,
+                        "blocked_not_my_bird_press",
+                        currentBirdId,
+                        currentSelectionSource,
+                        buildBlockedNotMyBirdNote(),
+                        currentCommonName,
+                        currentScientificName,
+                        currentSpecies,
+                        currentFamily
+                );
+                showNotMyBirdLockedPopup();
+                return;
+            }
+
             openAiApi.syncIdentificationFeedback(
                     identificationLogId,
                     identificationId,
@@ -295,6 +330,46 @@ public class BirdInfoActivity extends AppCompatActivity {
                 .setMessage("You have successfully updated the identification to: " + birdName)
                 .setPositiveButton("OK", null)
                 .show();
+    }
+
+
+    private void applyNotMyBirdButtonState(Button btnNotMyBird) {
+        if (btnNotMyBird == null) {
+            return;
+        }
+        btnNotMyBird.setAlpha(notMyBirdAllowed ? 1f : 0.45f);
+        if (notMyBirdLockedHintTextView != null) {
+            notMyBirdLockedHintTextView.setVisibility(notMyBirdAllowed ? View.GONE : View.VISIBLE);
+            notMyBirdLockedHintTextView.setText("BirdDex confidence is high on this result");
+        }
+    }
+
+    private void showNotMyBirdLockedPopup() {
+        new AlertDialog.Builder(this)
+                .setTitle("BirdDex Result Locked")
+                .setMessage(notMyBirdBlockMessage != null && !notMyBirdBlockMessage.trim().isEmpty()
+                        ? notMyBirdBlockMessage
+                        : "were more than confident on the current result")
+                .setPositiveButton("OK", null)
+                .show();
+    }
+
+    @NonNull
+    private String buildBlockedNotMyBirdNote() {
+        StringBuilder sb = new StringBuilder("not_my_bird_locked_press");
+        if (modelTop1Confidence != null) {
+            sb.append(" | top1Confidence=").append(String.format(java.util.Locale.US, "%.4f", modelTop1Confidence));
+        }
+        if (modelTop2Confidence != null) {
+            sb.append(" | top2Confidence=").append(String.format(java.util.Locale.US, "%.4f", modelTop2Confidence));
+        }
+        if (modelConfidenceMargin != null) {
+            sb.append(" | margin=").append(String.format(java.util.Locale.US, "%.4f", modelConfidenceMargin));
+        }
+        if (currentBirdId != null && !currentBirdId.trim().isEmpty()) {
+            sb.append(" | currentBirdId=").append(currentBirdId.trim());
+        }
+        return sb.toString();
     }
 
     @Override

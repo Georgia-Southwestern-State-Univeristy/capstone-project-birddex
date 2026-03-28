@@ -27,6 +27,10 @@ public class OpenAiApi {
         @Nullable public String family;
         @Nullable public String source;
         public boolean isSupportedInDatabase = true;
+        public boolean locationPlausible = true;
+        @Nullable public Double locationPlausibilityScore;
+        @Nullable public Double distanceMilesFromUser;
+        @Nullable public Double daysSinceLastSeenGeorgia;
     }
 
     public static class IdentifyBirdResult {
@@ -35,10 +39,16 @@ public class OpenAiApi {
         public boolean isGore;
         public boolean isInDatabase = true;
         @Nullable public String reasonCode;
+        @Nullable public String userMessage;
         @Nullable public String identificationLogId;
         @Nullable public String identificationId;
         @Nullable public BirdChoice primaryBird;
         public ArrayList<BirdChoice> modelAlternatives = new ArrayList<>();
+        public boolean notMyBirdAllowed = true;
+        @Nullable public String notMyBirdBlockMessage;
+        @Nullable public Double modelTop1Confidence;
+        @Nullable public Double modelTop2Confidence;
+        @Nullable public Double modelConfidenceMargin;
     }
 
     public interface IdentifyBirdCallback {
@@ -78,10 +88,16 @@ public class OpenAiApi {
                         parsed.isGore = Boolean.TRUE.equals(resMap.get("isGore"));
                         parsed.isInDatabase = !resMap.containsKey("isInDatabase") || Boolean.TRUE.equals(resMap.get("isInDatabase"));
                         parsed.reasonCode = getString(resMap, "reasonCode");
+                        parsed.userMessage = getString(resMap, "userMessage");
                         parsed.identificationLogId = getString(resMap, "identificationLogId");
                         parsed.identificationId = getString(resMap, "identificationId");
                         parsed.primaryBird = parseBirdChoice(resMap.get("primaryBird"));
                         parsed.modelAlternatives = parseBirdChoices(resMap.get("modelAlternatives"));
+                        parsed.notMyBirdAllowed = !resMap.containsKey("notMyBirdAllowed") || Boolean.TRUE.equals(resMap.get("notMyBirdAllowed"));
+                        parsed.notMyBirdBlockMessage = getString(resMap, "notMyBirdBlockMessage");
+                        parsed.modelTop1Confidence = getDouble(resMap, "modelTop1Confidence");
+                        parsed.modelTop2Confidence = getDouble(resMap, "modelTop2Confidence");
+                        parsed.modelConfidenceMargin = getDouble(resMap, "modelConfidenceMargin");
                         callback.onSuccess(parsed);
                     } catch (Exception e) {
                         Log.e(TAG, "Error parsing identifyBird response", e);
@@ -190,6 +206,12 @@ public class OpenAiApi {
     }
 
     @Nullable
+    private Double getDouble(Map<String, Object> map, String key) {
+        Object value = map.get(key);
+        return value instanceof Number ? ((Number) value).doubleValue() : null;
+    }
+
+    @Nullable
     @SuppressWarnings("unchecked")
     private BirdChoice parseBirdChoice(Object raw) {
         if (!(raw instanceof Map)) {
@@ -204,6 +226,10 @@ public class OpenAiApi {
         choice.family = getString(map, "family");
         choice.source = getString(map, "source");
         choice.isSupportedInDatabase = !map.containsKey("isSupportedInDatabase") || Boolean.TRUE.equals(map.get("isSupportedInDatabase"));
+        choice.locationPlausible = !map.containsKey("locationPlausible") || Boolean.TRUE.equals(map.get("locationPlausible"));
+        choice.locationPlausibilityScore = getDouble(map, "locationPlausibilityScore");
+        choice.distanceMilesFromUser = getDouble(map, "distanceMilesFromUser");
+        choice.daysSinceLastSeenGeorgia = getDouble(map, "daysSinceLastSeenGeorgia");
         return choice;
     }
 

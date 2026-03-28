@@ -340,7 +340,9 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
                 }
 
                 if (!result.isVerified || result.primaryBird == null || result.primaryBird.birdId == null || result.primaryBird.birdId.trim().isEmpty()) {
-                    finishActivityWithToast("Identification could not be verified.");
+                    finishActivityWithToast(result.userMessage != null && !result.userMessage.trim().isEmpty()
+                            ? result.userMessage
+                            : "Identification could not be verified.");
                     return;
                 }
 
@@ -377,6 +379,11 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
             intent.putExtra("identificationId", result.identificationId);
             intent.putExtra("selectionSource", primary.source != null ? primary.source : "initial_result");
             intent.putParcelableArrayListExtra("modelAlternatives", toCandidateBundles(result.modelAlternatives));
+            intent.putExtra("notMyBirdAllowed", result.notMyBirdAllowed);
+            intent.putExtra("notMyBirdBlockMessage", result.notMyBirdBlockMessage);
+            if (result.modelTop1Confidence != null) intent.putExtra("modelTop1Confidence", result.modelTop1Confidence);
+            if (result.modelTop2Confidence != null) intent.putExtra("modelTop2Confidence", result.modelTop2Confidence);
+            if (result.modelConfidenceMargin != null) intent.putExtra("modelConfidenceMargin", result.modelConfidenceMargin);
 
             boolean awardPoints = getIntent().getBooleanExtra("awardPoints", true);
             intent.putExtra("awardPoints", awardPoints);

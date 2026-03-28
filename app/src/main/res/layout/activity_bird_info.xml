@@ -315,6 +315,21 @@
                 app:layout_constraintStart_toStartOf="parent"
                 app:layout_constraintTop_toBottomOf="@id/btnStore" />
 
+            <TextView
+                android:id="@+id/tvNotMyBirdLockedHint"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginHorizontal="24dp"
+                android:layout_marginTop="6dp"
+                android:gravity="center"
+                android:text="BirdDex confidence is high on this result"
+                android:textColor="?attr/colorOnSurface"
+                android:textSize="12sp"
+                android:visibility="gone"
+                app:layout_constraintEnd_toEndOf="parent"
+                app:layout_constraintStart_toStartOf="parent"
+                app:layout_constraintTop_toBottomOf="@id/btnNotMyBird" />
+
             <Button
                 android:id="@+id/btnDiscard"
                 style="@style/Widget.MaterialComponents.Button.OutlinedButton"
@@ -325,7 +340,7 @@
                 android:text="Discard image"
                 app:layout_constraintEnd_toEndOf="parent"
                 app:layout_constraintStart_toStartOf="parent"
-                app:layout_constraintTop_toBottomOf="@id/btnNotMyBird" />
+                app:layout_constraintTop_toBottomOf="@id/tvNotMyBirdLockedHint" />
 
         </androidx.constraintlayout.widget.ConstraintLayout>
     </ScrollView>

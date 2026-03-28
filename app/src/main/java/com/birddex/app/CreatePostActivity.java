@@ -99,6 +99,7 @@ public class CreatePostActivity extends AppCompatActivity {
     private View loadingOverlay;
 
     private Uri selectedImageUri;
+    private Uri originalImageUri;
     private String currentUsername;
     private String currentUserProfilePicUrl;
 
@@ -179,15 +180,13 @@ public class CreatePostActivity extends AppCompatActivity {
         binding.toolbar.setNavigationOnClickListener(v -> finish());
         // Attach the user interaction that should run when this control is tapped.
         binding.btnSelectImage.setOnClickListener(v -> checkPermissionsAndPickImage());
-
-        binding.fabRemoveImage.setOnClickListener(v -> {
-            selectedImageUri = null;
-            viewModel.setUploadedImageUrl(null);
-            binding.imagePreviewContainer.setVisibility(View.GONE);
-            binding.ivBirdImagePreview.setVisibility(View.GONE);
-            binding.fabRemoveImage.setVisibility(View.GONE);
-            binding.tvImagePlaceholder.setVisibility(View.VISIBLE);
+        binding.btnCropImage.setOnClickListener(v -> {
+            if (originalImageUri != null) {
+                startImageCropper(originalImageUri);
+            }
         });
+
+        binding.fabRemoveImage.setOnClickListener(v -> clearSelectedImage());
 
         binding.swShowLocation.setOnCheckedChangeListener((b, isChecked) -> {
             if (isChecked && !hasLocationPermission()) requestLocationPermission();
@@ -335,7 +334,7 @@ public class CreatePostActivity extends AppCompatActivity {
                 new ActivityResultContracts.StartActivityForResult(), r -> {
                     if (r.getResultCode() == Activity.RESULT_OK && r.getData() != null) {
                         Uri uri = r.getData().getData();
-                        if (uri != null) startImageCropper(uri);
+                        if (uri != null) onImageSelected(uri);
                     }
                 });
 
@@ -343,11 +342,8 @@ public class CreatePostActivity extends AppCompatActivity {
             if (isFinishing() || isDestroyed()) return;
             if (r.isSuccessful() && r.getUriContent() != null) {
                 selectedImageUri = r.getUriContent();
-                binding.imagePreviewContainer.setVisibility(View.VISIBLE);
-                binding.ivBirdImagePreview.setVisibility(View.VISIBLE);
-                binding.fabRemoveImage.setVisibility(View.VISIBLE);
-                binding.tvImagePlaceholder.setVisibility(View.GONE);
-                Glide.with(this).load(selectedImageUri).into(binding.ivBirdImagePreview);
+                viewModel.setUploadedImageUrl(null);
+                updateSelectedImagePreview();
             }
         });
     }
@@ -384,10 +380,39 @@ public class CreatePostActivity extends AppCompatActivity {
      */
     private void startImageCropper(Uri uri) {
         CropImageOptions opt = new CropImageOptions();
-        opt.fixAspectRatio = true;
-        opt.aspectRatioX   = 4;
-        opt.aspectRatioY   = 3;
+        opt.fixAspectRatio = false;
         cropImageLauncher.launch(new CropImageContractOptions(uri, opt));
+    }
+
+    private void onImageSelected(Uri uri) {
+        originalImageUri = uri;
+        selectedImageUri = uri;
+        viewModel.setUploadedImageUrl(null);
+        updateSelectedImagePreview();
+    }
+
+    private void updateSelectedImagePreview() {
+        boolean hasImage = selectedImageUri != null;
+
+        binding.imagePreviewContainer.setVisibility(hasImage ? View.VISIBLE : View.GONE);
+        binding.ivBirdImagePreview.setVisibility(hasImage ? View.VISIBLE : View.GONE);
+        binding.fabRemoveImage.setVisibility(hasImage ? View.VISIBLE : View.GONE);
+        binding.btnCropImage.setVisibility(hasImage ? View.VISIBLE : View.GONE);
+        binding.tvImagePlaceholder.setVisibility(hasImage ? View.GONE : View.VISIBLE);
+        binding.btnSelectImage.setText(hasImage ? "Change Image" : "Add Image");
+
+        if (hasImage) {
+            Glide.with(this).load(selectedImageUri).into(binding.ivBirdImagePreview);
+        } else {
+            binding.ivBirdImagePreview.setImageDrawable(null);
+        }
+    }
+
+    private void clearSelectedImage() {
+        originalImageUri = null;
+        selectedImageUri = null;
+        viewModel.setUploadedImageUrl(null);
+        updateSelectedImagePreview();
     }
 
     // -------------------------------------------------------------------------
@@ -497,6 +522,11 @@ public class CreatePostActivity extends AppCompatActivity {
                 viewModel.isPostInProgress.set(false);
                 setPostingUi(false);
 
+                if (isForumRestrictionError(errorMessage)) {
+                    showForumRestrictionPopup();
+                    return;
+                }
+
                 Toast.makeText(
                         CreatePostActivity.this,
                         errorMessage != null && !errorMessage.trim().isEmpty()
@@ -590,7 +620,16 @@ public class CreatePostActivity extends AppCompatActivity {
                     return;
                 }
 
-                Toast.makeText(CreatePostActivity.this, errorMessage != null ? errorMessage : "Failed to share post", Toast.LENGTH_SHORT).show();
+                if (isForumRestrictionError(errorMessage)) {
+                    showForumRestrictionPopup();
+                    return;
+                }
+
+                Toast.makeText(
+                        CreatePostActivity.this,
+                        errorMessage != null ? errorMessage : "Failed to share post",
+                        Toast.LENGTH_SHORT
+                ).show();
             }
         });
     }
@@ -608,9 +647,18 @@ public class CreatePostActivity extends AppCompatActivity {
                 || lower.contains("flagged as explicit")
                 || lower.contains("image could not be posted")
                 || lower.contains("appeal that moderation decision")
-                || lower.contains("nsfw_image")
-                || lower.contains("vision_safesearch")
                 || (lower.contains("explicit") && lower.contains("image"));
+    }
+
+    private boolean isForumRestrictionError(String errorMessage) {
+        if (errorMessage == null) return false;
+
+        String lower = errorMessage.toLowerCase();
+        return lower.contains("forum access is permanently restricted")
+                || lower.contains("forum access is temporarily restricted")
+                || lower.contains("forum access is currently restricted")
+                || lower.contains("you cannot post because your forum access is currently restricted")
+                || (lower.contains("restricted") && lower.contains("cannot post"));
     }
 
     private void showForumImageModerationPopup() {
@@ -621,6 +669,13 @@ public class CreatePostActivity extends AppCompatActivity {
                 .show();
     }
 
+    private void showForumRestrictionPopup() {
+        new AlertDialog.Builder(this)
+                .setTitle("Forum Access Restricted")
+                .setMessage("Your forum access is currently restricted. Check your Moderation History in the settings.")
+                .setPositiveButton("OK", null)
+                .show();
+    }
 
     private Intent buildCreatedPostResultIntent(ForumPost post) {
         Intent data = new Intent();

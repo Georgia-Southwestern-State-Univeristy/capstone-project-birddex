@@ -72,6 +72,192 @@ const IDENTIFICATION_FEEDBACK_CONFIG = {
     COULDNT_FIND_BIRD_COOLDOWN_MS: 30 * 1000,
     COULDNT_FIND_BIRD_MAX_PER_LOG: 1,
 };
+
+const CAPTURE_GUARD_CONFIG = {
+    REQUIRED_CAPTURE_SOURCE: "camera_burst",
+    MIN_BURST_FRAME_COUNT: 3,
+    SUSPICION_BLOCK_THRESHOLD: 0.58,
+    HIGH_SIMILARITY_BLOCK_THRESHOLD: 0.95,
+    ALIASING_BLOCK_THRESHOLD: 0.06,
+    SCREEN_ARTIFACT_BLOCK_THRESHOLD: 0.11,
+    HIGH_SCREEN_ARTIFACT_THRESHOLD: 0.15,
+    BORDER_BLOCK_THRESHOLD: 0.22,
+    METADATA_SUPPORT_SCORE_THRESHOLD: 0.45,
+    MODERATE_ALIASING_THRESHOLD: 0.05,
+    MODERATE_SCREEN_ARTIFACT_THRESHOLD: 0.10,
+    MODERATE_BORDER_THRESHOLD: 0.18,
+    MODERATE_SIMILARITY_THRESHOLD: 0.93,
+};
+
+/**
+ * Helper: Utility that clamps a numeric score into the safe 0..1 range used by moderation/capture
+ * scoring.
+ */
+function clamp01(value) {
+    const num = Number(value);
+    if (!Number.isFinite(num)) return 0;
+    if (num < 0) return 0;
+    if (num > 1) return 1;
+    return num;
+}
+
+/**
+ * Helper: Normalizes the client-provided capture source so point-award logic compares a trusted value.
+ */
+function sanitizeCaptureSource(source) {
+    if (typeof source !== "string") return "unknown";
+    const trimmed = source.trim().toLowerCase();
+    return trimmed || "unknown";
+}
+
+/**
+ * Helper: Normalizes the client capture-guard payload and strips anything the backend should not trust
+ * as-is.
+ */
+function sanitizeCaptureGuardPayload(raw) {
+    const data = raw && typeof raw === "object" ? raw : {};
+    const reasons = Array.isArray(data.reasons)
+        ? data.reasons
+            .filter(reason => typeof reason === "string")
+            .map(reason => sanitizeText(reason, 80))
+            .filter(Boolean)
+            .slice(0, 8)
+        : [];
+
+    return {
+        analyzerVersion: sanitizeText(String(data.analyzerVersion || "capture_guard_unknown"), 80),
+        suspicionScore: clamp01(data.suspicionScore),
+        suspicious: data.suspicious === true,
+        burstFrameCount: Math.max(0, Math.min(10, Number(data.burstFrameCount || 0))),
+        burstSpanMs: Math.max(0, Math.min(10_000, Number(data.burstSpanMs || 0))),
+        selectedFrameIndex: Math.max(0, Math.min(10, Number(data.selectedFrameIndex || 0))),
+        frameSimilarity: clamp01(data.frameSimilarity),
+        aliasingScore: clamp01(data.aliasingScore),
+        screenArtifactScore: clamp01(data.screenArtifactScore),
+        borderScore: clamp01(data.borderScore),
+        glareScore: clamp01(data.glareScore),
+        selectedFrameSharpness: Math.max(0, Number(data.selectedFrameSharpness || 0)),
+        metadataScore: clamp01(data.metadataScore),
+        metadataSuspicious: data.metadataSuspicious === true,
+        editedSoftwareTagPresent: data.editedSoftwareTagPresent === true,
+        cameraMakeModelMissing: data.cameraMakeModelMissing === true,
+        dateTimeOriginalMissing: data.dateTimeOriginalMissing === true,
+        reasons,
+    };
+}
+
+/**
+ * Helper: Turns capture source + burst/suspicion scores into the final backend point-award decision.
+ */
+function buildPointAwardDecision({ captureSource, captureGuard }) {
+    const normalizedSource = sanitizeCaptureSource(captureSource);
+    const safeGuard = sanitizeCaptureGuardPayload(captureGuard);
+
+    let allowPointAward = false;
+    let reason = "points_require_camera_burst";
+    let userMessage = "Identification completed, but points were disabled because BirdDex could not verify this as a live in-app camera capture.";
+
+    const strongSecondarySignal =
+        (safeGuard.frameSimilarity >= CAPTURE_GUARD_CONFIG.HIGH_SIMILARITY_BLOCK_THRESHOLD &&
+            (safeGuard.aliasingScore >= CAPTURE_GUARD_CONFIG.ALIASING_BLOCK_THRESHOLD
+                || safeGuard.borderScore >= CAPTURE_GUARD_CONFIG.BORDER_BLOCK_THRESHOLD
+                || safeGuard.screenArtifactScore >= CAPTURE_GUARD_CONFIG.SCREEN_ARTIFACT_BLOCK_THRESHOLD))
+        || (safeGuard.screenArtifactScore >= CAPTURE_GUARD_CONFIG.HIGH_SCREEN_ARTIFACT_THRESHOLD &&
+            (safeGuard.aliasingScore >= CAPTURE_GUARD_CONFIG.MODERATE_ALIASING_THRESHOLD
+                || safeGuard.borderScore >= CAPTURE_GUARD_CONFIG.MODERATE_BORDER_THRESHOLD
+                || safeGuard.frameSimilarity >= CAPTURE_GUARD_CONFIG.MODERATE_SIMILARITY_THRESHOLD));
+
+    if (normalizedSource !== CAPTURE_GUARD_CONFIG.REQUIRED_CAPTURE_SOURCE) {
+        allowPointAward = false;
+        reason = "points_require_camera_burst";
+    } else if (safeGuard.burstFrameCount < CAPTURE_GUARD_CONFIG.MIN_BURST_FRAME_COUNT) {
+        allowPointAward = false;
+        reason = "camera_burst_incomplete";
+        userMessage = "Identification completed, but points were disabled because BirdDex did not receive a full live burst from the in-app camera.";
+    } else if (safeGuard.suspicionScore >= CAPTURE_GUARD_CONFIG.SUSPICION_BLOCK_THRESHOLD || strongSecondarySignal) {
+        allowPointAward = false;
+        reason = "screen_photo_suspected";
+        userMessage = "Identification completed, but points were disabled because this capture looked like a photo of a screen.";
+    } else {
+        allowPointAward = true;
+        reason = "eligible_live_camera_capture";
+        userMessage = null;
+    }
+
+    return {
+        allowPointAward,
+        reason,
+        userMessage,
+        captureSource: normalizedSource,
+        suspicionScore: safeGuard.suspicionScore,
+        burstFrameCount: safeGuard.burstFrameCount,
+        frameSimilarity: safeGuard.frameSimilarity,
+        aliasingScore: safeGuard.aliasingScore,
+        screenArtifactScore: safeGuard.screenArtifactScore,
+        borderScore: safeGuard.borderScore,
+        glareScore: safeGuard.glareScore,
+        analyzerVersion: safeGuard.analyzerVersion,
+        strongSecondarySignal,
+        suspicionThreshold: CAPTURE_GUARD_CONFIG.SUSPICION_BLOCK_THRESHOLD,
+    };
+}
+
+/**
+ * Helper: Loads the stored identification decision/log and returns the authoritative point-award
+ * eligibility for a saved bird.
+ */
+async function resolvePointAwardEligibility({ identificationId, identificationLogId }) {
+    let snapshot = null;
+
+    if (identificationId) {
+        snapshot = await db.collection("identifications").doc(String(identificationId)).get();
+        if (snapshot.exists) {
+            const data = snapshot.data() || {};
+            const decision = data.pointAwardDecision && typeof data.pointAwardDecision === "object"
+                ? data.pointAwardDecision
+                : null;
+            const captureGuard = data.captureGuard && typeof data.captureGuard === "object"
+                ? data.captureGuard
+                : null;
+            if (decision && typeof decision.allowPointAward === "boolean") {
+                return {
+                    allowPointAward: decision.allowPointAward,
+                    reason: sanitizeText(String(decision.reason || "missing_point_award_decision"), 80),
+                    captureSource: sanitizeCaptureSource(captureGuard?.captureSource || decision.captureSource),
+                    suspicionScore: clamp01(captureGuard?.suspicionScore),
+                };
+            }
+        }
+    }
+
+    if (identificationLogId) {
+        snapshot = await db.collection("identificationLogs").doc(String(identificationLogId)).get();
+        if (snapshot.exists) {
+            const data = snapshot.data() || {};
+            const decision = data.pointAwardDecision && typeof data.pointAwardDecision === "object"
+                ? data.pointAwardDecision
+                : null;
+            const captureGuard = data.captureGuard && typeof data.captureGuard === "object"
+                ? data.captureGuard
+                : null;
+            if (decision && typeof decision.allowPointAward === "boolean") {
+                return {
+                    allowPointAward: decision.allowPointAward,
+                    reason: sanitizeText(String(decision.reason || "missing_point_award_decision"), 80),
+                    captureSource: sanitizeCaptureSource(captureGuard?.captureSource || decision.captureSource),
+                    suspicionScore: clamp01(captureGuard?.suspicionScore),
+                };
+            }
+        }
+    }
+
+    return {
+        allowPointAward: false,
+        reason: "missing_identification_capture_guard",
+        captureSource: "unknown",
+        suspicionScore: 0,
+    };
+}
 // ======================================================
 // HELPER: Input Sanitization
 // ======================================================
@@ -98,6 +284,9 @@ function assertForumTextAllowed(text, fieldName = "Text") {
  * Input/permission checks happen here first so invalid requests fail before any expensive
  * backend work starts.
  */
+/**
+ * Helper: Validates and normalizes usernames before they are stored.
+ */
 function sanitizeUsername(username) {
     if (!username || typeof username !== "string") {
         throw new HttpsError("invalid-argument", "Username must be a non-empty string.");
@@ -116,6 +305,9 @@ function sanitizeUsername(username) {
 
 /**
  * Validates/cleans incoming text before the backend trusts it or writes it to Firestore.
+ */
+/**
+ * Helper: General text sanitizer used all over the backend before writes/comparisons.
  */
 function sanitizeText(text, maxLength = 5000) {
     if (!text || typeof text !== "string") return "";
@@ -235,6 +427,9 @@ const SPAM_REPETITION_PATTERN = /(.)\1{4,}/;
 const CREDIT_CARD_PATTERN = /\b(?:\d[ -]*?){13,16}\b/;
 const ZALGO_PATTERN = /[\u0300-\u036F\u1DC0-\u1DFF\u20D0-\u20FF\uFE20-\uFE2F]{3,}/;
 
+/**
+ * Helper: Normalizes text into a form that is easier to scan for blocked words/bypass attempts.
+ */
 function normalizeContentFilterText(text) {
     if (text == null) return "";
     return String(text).toLowerCase()
@@ -251,16 +446,25 @@ function normalizeContentFilterText(text) {
         .replace(/(.)\1+/g, "$1");
 }
 
+/**
+ * Helper: Escapes dynamic text before it is used to build a regular expression safely.
+ */
 function escapeRegex(value) {
     return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\$&");
 }
 
+/**
+ * Helper: Checks whether a blocked term appears in normalized text.
+ */
 function checkBlockedWordMatch(input, target) {
     if (!target || target.length < 3) return false;
     const regex = new RegExp(`\b${escapeRegex(target)}\b`, "i");
     return regex.test(input);
 }
 
+/**
+ * Helper: Checks blocked terms while also looking for simple bypass attempts/spaced variants.
+ */
 function checkBlockedWordWithBypass(input, word) {
     let regexString = "\b";
     for (let i = 0; i < word.length; i += 1) {
@@ -273,6 +477,9 @@ function checkBlockedWordWithBypass(input, word) {
     return new RegExp(regexString, "i").test(input);
 }
 
+/**
+ * Helper: Adds reviewer identity/source metadata so moderation actions show who performed them.
+ */
 function buildModeratorTaggedSource(baseSource, moderatorMeta = {}) {
     const base = sanitizeText(baseSource || "", 120).trim() || "moderator_action";
 
@@ -287,11 +494,18 @@ function buildModeratorTaggedSource(baseSource, moderatorMeta = {}) {
     return who ? `${base} (${who})` : base;
 }
 
+/**
+ * Helper: Checks whether a bird/species should bypass a broader text/content block because it is
+ * explicitly allowed.
+ */
 function isBirdWhitelistMatch(rawInput, blockedWord) {
     const input = String(rawInput || "").toLowerCase();
     return SERVER_BIRD_WHITELIST.some((white) => input.includes(white) && white.includes(blockedWord));
 }
 
+/**
+ * Helper: Builds the user/admin reason payload for blocked-content detections.
+ */
 function getBlockedContentReason(text) {
     if (text == null || String(text).trim() === "") return null;
 
@@ -320,6 +534,9 @@ function getBlockedContentReason(text) {
     return null;
 }
 
+/**
+ * Helper: Writes blocked-content attempts to Firestore so moderators/admins can review them later.
+ */
 async function logFilteredContent({
     userId = null,
     submissionType,
@@ -346,6 +563,9 @@ async function logFilteredContent({
     }
 }
 
+/**
+ * Helper: Runs content filtering and throws before the request can proceed if blocked content is found.
+ */
 async function assertNoBlockedContentOrThrow({
     userId = null,
     submissionType,
@@ -404,6 +624,9 @@ async function getOrCreateLocation(latitude, longitude, localityName, db) {
 // ======================================================
 /**
  * Main backend logic block for this Firebase Functions file.
+ */
+/**
+ * Helper: Small async sleep helper used between retries/backoff attempts.
  */
 function delay(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
@@ -668,6 +891,10 @@ async function getOrCreateAndSaveBirdFacts(birdId, commonName) {
  * Input/permission checks happen here first so invalid requests fail before any expensive
  * backend work starts.
  */
+/**
+ * Export: Callable used during sign-up/profile setup to check whether a username/email is available
+ * before account creation continues.
+ */
 exports.checkUsernameAndEmailAvailability = onCall(async (request) => {
     const { username, email } = request.data;
     const sanitizedUsername = sanitizeUsername(username);
@@ -702,6 +929,10 @@ exports.checkUsernameAndEmailAvailability = onCall(async (request) => {
  * for the app.
  * Input/permission checks happen here first so invalid requests fail before any expensive
  * backend work starts.
+ */
+/**
+ * Export: Callable used during first-time setup to sanitize profile fields and create the initial BirdDex
+ * user document.
  */
 exports.initializeUser = onCall(async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Authentication required.");
@@ -805,6 +1036,10 @@ exports.initializeUser = onCall(async (request) => {
  * This code reads/writes Firestore documents, so it is part of the persistent backend state
  * for the app.
  */
+/**
+ * Export: Auth trigger that creates the matching Firestore user profile and default moderation fields
+ * when a Firebase Auth user is created.
+ */
 exports.createUserDocument = auth.user().onCreate(async (user) => {
     const { uid, email } = user;
     if (!email) {
@@ -854,6 +1089,10 @@ exports.createUserDocument = auth.user().onCreate(async (user) => {
  * for the app.
  * Input/permission checks happen here first so invalid requests fail before any expensive
  * backend work starts.
+ */
+/**
+ * Export: Callable that archives key user data and then deletes the user account/documents as part of
+ * account removal.
  */
 exports.archiveAndDeleteUser = onCall(async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "The function must be called while authenticated.");
@@ -916,6 +1155,9 @@ function parseBirdIdentificationText(identificationText) {
     };
 }
 
+/**
+ * Helper: Builds a structured payload/default/response object used by later logic.
+ */
 function buildBirdIdentificationText(birdId, birdData) {
     return `ID: ${birdId}
 Common Name: ${birdData.commonName || "Unknown"}
@@ -924,6 +1166,9 @@ Species: ${birdData.species || "Unknown"}
 Family: ${birdData.family || "Unknown"}`;
 }
 
+/**
+ * Helper: Looks up a supported bird document by common name.
+ */
 async function findBirdByCommonName(commonName) {
     if (!commonName || typeof commonName !== "string") return null;
     const snapshot = await db.collection("birds")
@@ -936,6 +1181,9 @@ async function findBirdByCommonName(commonName) {
     return normalizeBirdData(doc.data(), doc.id);
 }
 
+/**
+ * Helper: Calls the BirdDex model service running on Cloud Run.
+ */
 async function callBirdModelApi(base64Image) {
     const headers = { "Content-Type": "application/json" };
     const internalKey = BIRDDEX_MODEL_API_KEY.value();
@@ -969,6 +1217,9 @@ async function callBirdModelApi(base64Image) {
     }));
 }
 
+/**
+ * Helper: Uses OpenAI only as a tiebreaker when model candidates are close/confusing.
+ */
 async function callOpenAiBirdTieBreak(base64Image, candidateA, candidateB) {
     const aiResponse = await axios.post(
         "https://api.openai.com/v1/chat/completions",
@@ -1031,6 +1282,9 @@ Family: ${candidateB.family}`
     return identification;
 }
 
+/**
+ * Helper: Uses OpenAI as the broader fallback when the model is not confident enough.
+ */
 async function callOpenAiBirdFullFallback(base64Image) {
     const aiResponse = await axios.post(
         "https://api.openai.com/v1/chat/completions",
@@ -1077,6 +1331,9 @@ Family: [name]`
     return identification;
 }
 
+/**
+ * Helper: Enforces the OpenAI request cap before making another model-assisted request.
+ */
 async function reserveOpenAiQuota(userRef, eventLogRef, userId) {
     await db.runTransaction(async (transaction) => {
         const eventDoc = await transaction.get(eventLogRef);
@@ -1119,6 +1376,9 @@ async function reserveOpenAiQuota(userRef, eventLogRef, userId) {
     });
 }
 
+/**
+ * Helper: Converts values into one consistent shape so downstream logic can compare/store them safely.
+ */
 function normalizeBirdData(birdData, explicitId = null) {
     if (!birdData || typeof birdData !== "object") return null;
     const resolvedId = explicitId || birdData.id || null;
@@ -1131,6 +1391,9 @@ function normalizeBirdData(birdData, explicitId = null) {
     };
 }
 
+/**
+ * Helper: Loads a bird document by id with normalization/safety checks.
+ */
 async function getBirdById(birdId) {
     if (!birdId || typeof birdId !== "string") return null;
     const doc = await db.collection("birds").doc(birdId.trim()).get();
@@ -1138,6 +1401,9 @@ async function getBirdById(birdId) {
     return normalizeBirdData(doc.data(), doc.id);
 }
 
+/**
+ * Helper: Builds a structured payload/default/response object used by later logic.
+ */
 function buildBirdChoicePayload(birdData, source, extra = {}) {
     const normalized = normalizeBirdData(birdData, birdData?.id || birdData?.birdId || null);
     if (!normalized && !extra?.commonName && !extra?.scientificName) return null;
@@ -1153,6 +1419,9 @@ function buildBirdChoicePayload(birdData, source, extra = {}) {
     };
 }
 
+/**
+ * Helper: Builds a structured payload/default/response object used by later logic.
+ */
 function buildOpenAiLooseChoicePayload(choice, source, extra = {}) {
     if (!choice) return null;
     const commonName = sanitizeText(choice.commonName || choice.name || "", 200).trim() || null;
@@ -1173,6 +1442,9 @@ function buildOpenAiLooseChoicePayload(choice, source, extra = {}) {
     };
 }
 
+/**
+ * Helper: Builds a structured payload/default/response object used by later logic.
+ */
 function buildModelAlternativeChoices(topBirdMatches) {
     return (topBirdMatches || [])
         .slice(1, 3)
@@ -1186,10 +1458,16 @@ function buildModelAlternativeChoices(topBirdMatches) {
         .filter(Boolean);
 }
 
+/**
+ * Helper: Safety wrapper that returns a normalized primitive instead of a risky raw value.
+ */
 function safeFiniteNumber(value) {
     return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
+/**
+ * Helper: Simple conversion helper.
+ */
 function toMillis(value) {
     if (value === null || value === undefined) return null;
     if (typeof value === "number" && Number.isFinite(value)) return value;
@@ -1199,6 +1477,9 @@ function toMillis(value) {
     return null;
 }
 
+/**
+ * Helper: Builds lightweight location context used during identification/review prompts.
+ */
 async function getLocationContext(locationId) {
     if (!locationId || typeof locationId !== "string") {
         return {
@@ -1223,6 +1504,9 @@ async function getLocationContext(locationId) {
     };
 }
 
+/**
+ * Helper: Builds a structured payload/default/response object used by later logic.
+ */
 function buildNotMyBirdGate(top1Confidence, top2Confidence) {
     const safeTop1 = safeFiniteNumber(top1Confidence) ?? 0;
     const safeTop2 = safeFiniteNumber(top2Confidence) ?? 0;
@@ -1239,6 +1523,9 @@ function buildNotMyBirdGate(top1Confidence, top2Confidence) {
     };
 }
 
+/**
+ * Helper: Builds a structured payload/default/response object used by later logic.
+ */
 function buildBirdLocationPlausibility(birdData, userLocation) {
     const userLat = safeFiniteNumber(userLocation?.latitude);
     const userLng = safeFiniteNumber(userLocation?.longitude);
@@ -1297,6 +1584,9 @@ function buildBirdLocationPlausibility(birdData, userLocation) {
     };
 }
 
+/**
+ * Helper: Builds the list of review candidates that make sense for the user to pick from.
+ */
 async function buildPlausibleReviewChoices(rawChoices, userLocation, excludedTokens = new Set(), limit = 2) {
     const responseChoices = [];
     const seenChoiceTokens = new Set();
@@ -1349,6 +1639,9 @@ async function buildPlausibleReviewChoices(rawChoices, userLocation, excludedTok
     return responseChoices;
 }
 
+/**
+ * Helper: Cleans raw text into a safer format for parsing/storage.
+ */
 function cleanJsonResponseText(rawText) {
     if (!rawText || typeof rawText !== "string") return "";
     return rawText
@@ -1359,6 +1652,9 @@ function cleanJsonResponseText(rawText) {
         .trim();
 }
 
+/**
+ * Helper: Parses raw text/JSON into a structured value the backend can use.
+ */
 function parseRankedBirdChoicesJson(rawText) {
     const cleaned = cleanJsonResponseText(rawText);
     if (!cleaned) return [];
@@ -1388,6 +1684,9 @@ function parseRankedBirdChoicesJson(rawText) {
     })).filter((choice) => choice.birdId || choice.commonName);
 }
 
+/**
+ * Helper: Best-effort parser that returns a safe result instead of throwing when parsing fails.
+ */
 function tryParseRankedBirdChoicesJson(rawText) {
     try {
         return {
@@ -1404,6 +1703,9 @@ function tryParseRankedBirdChoicesJson(rawText) {
     }
 }
 
+/**
+ * Helper: Maps a user/review bird choice back to a supported BirdDex bird record.
+ */
 async function resolveBirdChoiceToSupportedBird(choice) {
     if (!choice) return null;
 
@@ -1416,10 +1718,16 @@ async function resolveBirdChoiceToSupportedBird(choice) {
     return null;
 }
 
+/**
+ * Helper: Converts values into one consistent shape so downstream logic can compare/store them safely.
+ */
 function normalizeBirdChoiceToken(value) {
     return sanitizeText(String(value || ""), 200).trim().toLowerCase();
 }
 
+/**
+ * Helper: Builds a structured payload/default/response object used by later logic.
+ */
 function buildExcludedBirdChoiceTokens(birds) {
     const excluded = new Set();
     for (const bird of (birds || [])) {
@@ -1437,6 +1745,9 @@ function buildExcludedBirdChoiceTokens(birds) {
     return excluded;
 }
 
+/**
+ * Helper: Uses OpenAI to help rank reasonable alternative bird choices for review.
+ */
 async function callOpenAiBirdReviewCandidates(base64Image, candidateA, candidateB, excludedBirds = [], options = {}) {
     const strictJsonOnly = options?.strictJsonOnly === true;
     const locationContextBlock = options?.locationContextBlock
@@ -1534,6 +1845,9 @@ ${excludedBirdsBlock}`
     return identification;
 }
 
+/**
+ * Helper: Retry wrapper for the review-candidate OpenAI call.
+ */
 async function callOpenAiBirdReviewCandidatesWithRetry(base64Image, candidateA, candidateB, excludedBirds = [], options = {}) {
     const firstResponse = await callOpenAiBirdReviewCandidates(base64Image, candidateA, candidateB, excludedBirds, {
         strictJsonOnly: false,
@@ -1609,6 +1923,9 @@ async function callOpenAiBirdReviewCandidatesWithRetry(base64Image, candidateA, 
     };
 }
 
+/**
+ * Helper: Loads prior identification candidates from the stored identification log.
+ */
 async function loadSupportedReviewCandidatesFromLog(identificationLogData) {
     const orderedIds = [];
     const seenIds = new Set();
@@ -1646,6 +1963,9 @@ async function loadSupportedReviewCandidatesFromLog(identificationLogData) {
 }
 
 
+/**
+ * Helper: Builds a structured payload/default/response object used by later logic.
+ */
 function buildReviewExcludedBirds(identificationLogData, supportedReviewCandidates = []) {
     const excludedBirds = [];
     const seenTokens = new Set();
@@ -1682,6 +2002,10 @@ function buildReviewExcludedBirds(identificationLogData, supportedReviewCandidat
     return excludedBirds;
 }
 
+/**
+ * Helper: Writes the full hybrid identification result/log to Firestore for later save/review/audit
+ * flows.
+ */
 async function persistHybridIdentification({
     userId,
     imageUrl,
@@ -1698,6 +2022,9 @@ async function persistHybridIdentification({
     finalBirdId,
     finalSource,
     isVerified,
+    captureSource,
+    captureGuard,
+    pointAwardDecision,
 }) {
     const identificationLogRef = db.collection("identificationLogs").doc();
 
@@ -1753,6 +2080,32 @@ async function persistHybridIdentification({
             reviewResponseText: null,
         },
         modelAlternatives: modelAlternativeChoices,
+        captureGuard: {
+            captureSource: sanitizeCaptureSource(captureSource),
+            analyzerVersion: captureGuard?.analyzerVersion || null,
+            suspicionScore: captureGuard?.suspicionScore ?? null,
+            suspicious: captureGuard?.suspicious === true,
+            burstFrameCount: captureGuard?.burstFrameCount ?? 0,
+            burstSpanMs: captureGuard?.burstSpanMs ?? 0,
+            selectedFrameIndex: captureGuard?.selectedFrameIndex ?? 0,
+            frameSimilarity: captureGuard?.frameSimilarity ?? null,
+            aliasingScore: captureGuard?.aliasingScore ?? null,
+            screenArtifactScore: captureGuard?.screenArtifactScore ?? null,
+            borderScore: captureGuard?.borderScore ?? null,
+            glareScore: captureGuard?.glareScore ?? null,
+            selectedFrameSharpness: captureGuard?.selectedFrameSharpness ?? null,
+            reasons: Array.isArray(captureGuard?.reasons) ? captureGuard.reasons : [],
+        },
+        pointAwardDecision: {
+            allowPointAward: pointAwardDecision?.allowPointAward === true,
+            reason: pointAwardDecision?.reason || null,
+            userMessage: pointAwardDecision?.userMessage || null,
+            captureSource: pointAwardDecision?.captureSource || sanitizeCaptureSource(captureSource),
+            suspicionScore: pointAwardDecision?.suspicionScore ?? null,
+            screenArtifactScore: pointAwardDecision?.screenArtifactScore ?? null,
+            suspicionThreshold: pointAwardDecision?.suspicionThreshold ?? null,
+            strongSecondarySignal: pointAwardDecision?.strongSecondarySignal === true,
+        },
         finalResult: {
             birdId: finalBirdId || null,
             commonName: finalBirdData?.commonName || null,
@@ -1805,6 +2158,32 @@ async function persistHybridIdentification({
             modelVersion,
             usedOpenAi,
             pipelineVersion: "hybrid_v1",
+            captureGuard: {
+                captureSource: sanitizeCaptureSource(captureSource),
+                analyzerVersion: captureGuard?.analyzerVersion || null,
+                suspicionScore: captureGuard?.suspicionScore ?? null,
+                suspicious: captureGuard?.suspicious === true,
+                burstFrameCount: captureGuard?.burstFrameCount ?? 0,
+                burstSpanMs: captureGuard?.burstSpanMs ?? 0,
+                selectedFrameIndex: captureGuard?.selectedFrameIndex ?? 0,
+                frameSimilarity: captureGuard?.frameSimilarity ?? null,
+                aliasingScore: captureGuard?.aliasingScore ?? null,
+                screenArtifactScore: captureGuard?.screenArtifactScore ?? null,
+                borderScore: captureGuard?.borderScore ?? null,
+                glareScore: captureGuard?.glareScore ?? null,
+                selectedFrameSharpness: captureGuard?.selectedFrameSharpness ?? null,
+                reasons: Array.isArray(captureGuard?.reasons) ? captureGuard.reasons : [],
+            },
+            pointAwardDecision: {
+                allowPointAward: pointAwardDecision?.allowPointAward === true,
+                reason: pointAwardDecision?.reason || null,
+                userMessage: pointAwardDecision?.userMessage || null,
+                captureSource: pointAwardDecision?.captureSource || sanitizeCaptureSource(captureSource),
+                suspicionScore: pointAwardDecision?.suspicionScore ?? null,
+                screenArtifactScore: pointAwardDecision?.screenArtifactScore ?? null,
+                suspicionThreshold: pointAwardDecision?.suspicionThreshold ?? null,
+                strongSecondarySignal: pointAwardDecision?.strongSecondarySignal === true,
+            },
             predictedBirdId: finalBirdId,
             predictedCommonName: finalBirdData.commonName || null,
             predictedScientificName: finalBirdData.scientificName || null,
@@ -1829,6 +2208,9 @@ async function persistHybridIdentification({
     };
 }
 
+/**
+ * Helper: Builds a structured payload/default/response object used by later logic.
+ */
 function buildIdentifyBirdResponse({
     finalIdentification,
     finalBirdData,
@@ -1841,6 +2223,7 @@ function buildIdentifyBirdResponse({
     modelAlternativeChoices,
     modelTop1Confidence,
     modelTop2Confidence,
+    pointAwardDecision,
     userMessage = null,
 }) {
     const notMyBirdGate = buildNotMyBirdGate(modelTop1Confidence, modelTop2Confidence);
@@ -1858,6 +2241,9 @@ function buildIdentifyBirdResponse({
         modelConfidenceMargin: notMyBirdGate.confidenceMargin,
         notMyBirdAllowed: notMyBirdGate.allowed,
         notMyBirdBlockMessage: notMyBirdGate.blockMessage,
+        allowPointAward: pointAwardDecision?.allowPointAward === true,
+        pointAwardBlockReason: pointAwardDecision?.reason || null,
+        pointAwardUserMessage: pointAwardDecision?.userMessage || null,
         primaryBird: isVerified && finalBirdData
             ? buildBirdChoicePayload(normalizeBirdData(finalBirdData, finalBirdData.id || null), finalSource || "initial_result")
             : null,
@@ -1878,12 +2264,25 @@ function buildIdentifyBirdResponse({
  * Input/permission checks happen here first so invalid requests fail before any expensive
  * backend work starts.
  */
+/**
+ * Export: Main bird-identification callable. Runs the hybrid model/OpenAI flow, stores identification
+ * logs, and returns point-award eligibility details.
+ */
 exports.identifyBird = onCall({ secrets: [OPENAI_API_KEY, BIRDDEX_MODEL_API_KEY], timeoutSeconds: 60 }, async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
 
     const userId = request.auth.uid;
     const userRef = db.collection("users").doc(userId);
-    const { image, imageUrl, latitude, longitude, localityName, requestId } = request.data;
+    const {
+        image,
+        imageUrl,
+        latitude,
+        longitude,
+        localityName,
+        requestId,
+        captureSource,
+        captureGuard,
+    } = request.data || {};
 
     const idempotencyKey = requestId || `IDEN_${admin.firestore.Timestamp.now().toMillis()}`;
     const eventLogRef = db.collection("processedAIEvents").doc(idempotencyKey);
@@ -1894,6 +2293,13 @@ exports.identifyBird = onCall({ secrets: [OPENAI_API_KEY, BIRDDEX_MODEL_API_KEY]
     if (typeof latitude !== "number" || typeof longitude !== "number") {
         throw new HttpsError("invalid-argument", "Latitude and longitude are required numbers.");
     }
+
+    const normalizedCaptureSource = sanitizeCaptureSource(captureSource);
+    const normalizedCaptureGuard = sanitizeCaptureGuardPayload(captureGuard);
+    const pointAwardDecision = buildPointAwardDecision({
+        captureSource: normalizedCaptureSource,
+        captureGuard: normalizedCaptureGuard,
+    });
 
     try {
         const existingEvent = await eventLogRef.get();
@@ -1985,6 +2391,11 @@ exports.identifyBird = onCall({ secrets: [OPENAI_API_KEY, BIRDDEX_MODEL_API_KEY]
                         mode: openAiMode,
                         responseText: openAiRawResponse,
                     },
+                    captureGuard: {
+                        captureSource: normalizedCaptureSource,
+                        ...normalizedCaptureGuard,
+                    },
+                    pointAwardDecision,
                     finalResult: {
                         birdId: null,
                         commonName: null,
@@ -2009,6 +2420,9 @@ exports.identifyBird = onCall({ secrets: [OPENAI_API_KEY, BIRDDEX_MODEL_API_KEY]
                     identificationLogId: goreLogRef.id,
                     identificationId: null,
                     imageUrl: imageUrl || "",
+                    allowPointAward: false,
+                    pointAwardBlockReason: pointAwardDecision.reason,
+                    pointAwardUserMessage: pointAwardDecision.userMessage,
                     primaryBird: null,
                     modelAlternatives: [],
                     openAiAlternatives: [],
@@ -2068,6 +2482,9 @@ exports.identifyBird = onCall({ secrets: [OPENAI_API_KEY, BIRDDEX_MODEL_API_KEY]
             finalBirdId,
             finalSource,
             isVerified,
+            captureSource: normalizedCaptureSource,
+            captureGuard: normalizedCaptureGuard,
+            pointAwardDecision,
         });
 
         const finalResult = isVerified
@@ -2083,6 +2500,7 @@ exports.identifyBird = onCall({ secrets: [OPENAI_API_KEY, BIRDDEX_MODEL_API_KEY]
                 modelAlternativeChoices: persisted.modelAlternativeChoices,
                 modelTop1Confidence: top1Confidence,
                 modelTop2Confidence: top2Confidence,
+                pointAwardDecision,
             })
             : {
                 result: null,
@@ -2103,6 +2521,9 @@ exports.identifyBird = onCall({ secrets: [OPENAI_API_KEY, BIRDDEX_MODEL_API_KEY]
                 modelConfidenceMargin: top1Confidence - top2Confidence,
                 notMyBirdAllowed: true,
                 notMyBirdBlockMessage: null,
+                allowPointAward: false,
+                pointAwardBlockReason: pointAwardDecision.reason,
+                pointAwardUserMessage: pointAwardDecision.userMessage,
                 primaryBird: null,
                 modelAlternatives: persisted.modelAlternativeChoices || [],
                 openAiAlternatives: [],
@@ -2123,6 +2544,10 @@ exports.identifyBird = onCall({ secrets: [OPENAI_API_KEY, BIRDDEX_MODEL_API_KEY]
     }
 });
 
+/**
+ * Export: Callable used by the “not my bird” / review flow to build safer alternative bird choices from
+ * the prior identification log.
+ */
 exports.reviewBirdAlternatives = onCall({ secrets: [OPENAI_API_KEY], timeoutSeconds: 60 }, async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
 
@@ -2346,6 +2771,9 @@ exports.reviewBirdAlternatives = onCall({ secrets: [OPENAI_API_KEY], timeoutSeco
     }
 });
 
+/**
+ * Helper: Timestamp/date conversion helper used to keep time comparisons consistent.
+ */
 function timestampLikeToMillis(value) {
     if (!value) return 0;
     if (typeof value.toMillis === "function") {
@@ -2368,6 +2796,9 @@ function timestampLikeToMillis(value) {
     return 0;
 }
 
+/**
+ * Helper: Stores feedback events while enforcing per-log cooldowns and limits.
+ */
 async function writeIdentificationFeedbackEventWithGuards({
     identificationLogRef,
     userId,
@@ -2449,6 +2880,10 @@ async function writeIdentificationFeedbackEventWithGuards({
     });
 }
 
+/**
+ * Export: Callable that records user feedback about an identification result so later tuning/auditing can
+ * use it.
+ */
 exports.syncIdentificationFeedback = onCall(async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
 
@@ -2685,6 +3120,10 @@ exports.syncIdentificationFeedback = onCall(async (request) => {
  * Input/permission checks happen here first so invalid requests fail before any expensive
  * backend work starts.
  */
+/**
+ * Export: Callable that rate-limits profile-photo changes and records when the user changed their
+ * picture.
+ */
 exports.recordPfpChange = onCall({ timeoutSeconds: 15 }, async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Authentication required.");
 
@@ -2912,6 +3351,9 @@ async function _syncGeorgiaBirdsCore() {
  * Input/permission checks happen here first so invalid requests fail before any expensive
  * backend work starts.
  */
+/**
+ * Export: Callable that returns the cached Georgia bird list, fetching/refreshing data when needed.
+ */
 exports.getGeorgiaBirds = onCall({ secrets: [EBIRD_API_KEY], timeoutSeconds: 60 }, async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Authentication required.");
 
@@ -2940,6 +3382,9 @@ exports.getGeorgiaBirds = onCall({ secrets: [EBIRD_API_KEY], timeoutSeconds: 60 
 /**
  * Main backend logic block for this Firebase Functions file.
  */
+/**
+ * Export: Scheduled refresh that keeps the Georgia bird list cache warm without needing a user request.
+ */
 exports.scheduledGetGeorgiaBirds = onSchedule({
     schedule: "every 72 hours",
     secrets: [EBIRD_API_KEY],
@@ -2963,6 +3408,10 @@ exports.scheduledGetGeorgiaBirds = onSchedule({
  * for the app.
  * Input/permission checks happen here first so invalid requests fail before any expensive
  * backend work starts.
+ */
+/**
+ * Export: Callable that loads bird metadata/facts and generates fresh facts only when cache is missing or
+ * stale.
  */
 exports.getBirdDetailsAndFacts = onCall({ secrets: [OPENAI_API_KEY], timeoutSeconds: 60 }, async (request) => {
     const { birdId } = request.data;
@@ -2999,6 +3448,9 @@ exports.getBirdDetailsAndFacts = onCall({ secrets: [OPENAI_API_KEY], timeoutSeco
  * Main backend logic block for this Firebase Functions file.
  * This code reads/writes Firestore documents, so it is part of the persistent backend state
  * for the app.
+ */
+/**
+ * Export: Scheduled/v1 cleanup job for old user-related temporary data.
  */
 exports.cleanupUserData = functions.runWith({
     timeoutSeconds: 300,
@@ -3140,6 +3592,10 @@ exports.cleanupUserData = functions.runWith({
  * This code reads/writes Firestore documents, so it is part of the persistent backend state
  * for the app.
  */
+/**
+ * Export: Firestore trigger that reacts when a collection slot image reference changes and cleans up old
+ * image usage/deletion state.
+ */
 exports.onCollectionSlotUpdatedForImageDeletion = onDocumentUpdated("users/{userId}/collectionSlot/{slotId}", async (event) => {
     const beforeData = event.data.before.data();
     const afterData = event.data.after.data();
@@ -3231,6 +3687,10 @@ async function _updateUserTotals(userId, eventId, totalBirdsChange, duplicateBir
  * This code reads/writes Firestore documents, so it is part of the persistent backend state
  * for the app.
  */
+/**
+ * Export: Firestore trigger that runs after a bird save. This is the final server-side points/totals gate
+ * for saved captures.
+ */
 exports.onUserBirdCreated = onDocumentCreated("userBirds/{uploadId}", async (event) => {
     // Read the new userBird document that was just created.
     const userBirdData = event.data.data();
@@ -3239,7 +3699,13 @@ exports.onUserBirdCreated = onDocumentCreated("userBirds/{uploadId}", async (eve
     // birdSpeciesId = which species this bird is
     // awardPoints = whether this save is even allowed to earn points
     // (for example, your gallery-upload flow can set this to false)
-    const { userId, birdSpeciesId, awardPoints = true } = userBirdData;
+    const {
+        userId,
+        birdSpeciesId,
+        awardPoints = true,
+        identificationId = null,
+        identificationLogId = null,
+    } = userBirdData;
 
     // Safety check: if there is no userId, we cannot update totals correctly.
     if (!userId) {
@@ -3253,12 +3719,21 @@ exports.onUserBirdCreated = onDocumentCreated("userBirds/{uploadId}", async (eve
 
     // Current server timestamp.
     const nowTs = admin.firestore.Timestamp.now();
+    const pointEligibility = awardPoints
+        ? await resolvePointAwardEligibility({ identificationId, identificationLogId })
+        : {
+            allowPointAward: false,
+            reason: "client_award_points_disabled",
+            captureSource: "unknown",
+            suspicionScore: 0,
+        };
 
     // Default values before we inspect this user's history for this species.
     let isDuplicate = false;          // true if this user already had this species before
     let pointsEarned = 0;             // how many points THIS identification gives
     let pointAwardedAt = null;        // when this identification actually gave a point
     let pointCooldownBlocked = false; // true if it was blocked by the 5-minute cooldown
+    let pointAwardBlockedReason = awardPoints ? (pointEligibility.reason || null) : "client_award_points_disabled";
 
     // Only do species-based logic if the document has a birdSpeciesId.
     if (birdSpeciesId) {
@@ -3303,7 +3778,7 @@ exports.onUserBirdCreated = onDocumentCreated("userBirds/{uploadId}", async (eve
         }
 
         // Only attempt to give points if this identification is allowed to award points.
-        if (awardPoints) {
+        if (awardPoints && pointEligibility.allowPointAward) {
             // If the same species earned a point less than 5 minutes ago,
             // block the new point.
             const isWithinCooldown =
@@ -3315,12 +3790,14 @@ exports.onUserBirdCreated = onDocumentCreated("userBirds/{uploadId}", async (eve
                 pointsEarned = 0;
                 pointCooldownBlocked = true;
                 pointAwardedAt = null;
+                pointAwardBlockedReason = "species_point_cooldown";
             } else {
                 // Cooldown has passed (or no previous point-award exists),
                 // so give exactly 1 point for this identification.
                 pointsEarned = 1;
                 pointCooldownBlocked = false;
                 pointAwardedAt = nowTs;
+                pointAwardBlockedReason = null;
             }
         }
     }
@@ -3335,7 +3812,12 @@ exports.onUserBirdCreated = onDocumentCreated("userBirds/{uploadId}", async (eve
         isDuplicate,
         pointsEarned,
         pointAwardedAt,
-        pointCooldownBlocked
+        pointCooldownBlocked,
+        pointAwardCaptureEligible: pointEligibility.allowPointAward === true,
+        pointAwardBlockedReason: pointAwardBlockedReason || null,
+        captureSource: pointEligibility.captureSource || null,
+        captureGuardSuspicionScore: pointEligibility.suspicionScore ?? null,
+        captureGuardScreenArtifactScore: pointEligibility.screenArtifactScore ?? null,
     }).catch(e =>
         logger.warn(
             `onUserBirdCreated: Failed to patch computed fields on ${event.params.uploadId}:`,
@@ -3363,6 +3845,9 @@ exports.onUserBirdCreated = onDocumentCreated("userBirds/{uploadId}", async (eve
 // ======================================================
 /**
  * Main backend logic block for this Firebase Functions file.
+ */
+/**
+ * Export: Firestore trigger that reverses totals/counters and cleanup when a saved user bird is deleted.
  */
 exports.onUserBirdDeleted = onDocumentDeleted("userBirds/{uploadId}", async (event) => {
     const userBirdData = event.data.data();
@@ -3439,6 +3924,9 @@ async function _fetchAndStoreEBirdDataCore() {
 /**
  * Retrieves data from Firestore or an external service and normalizes it for the caller.
  */
+/**
+ * Export: Scheduled job that pulls fresh eBird sighting data into Firestore.
+ */
 exports.fetchAndStoreEBirdData = onSchedule({
     schedule: "every 72 hours",
     secrets: [EBIRD_API_KEY],
@@ -3459,6 +3947,9 @@ exports.fetchAndStoreEBirdData = onSchedule({
 /**
  * Main backend logic block for this Firebase Functions file.
  */
+/**
+ * Export: Callable admin/manual trigger that runs the eBird fetch logic on demand.
+ */
 exports.triggerEbirdDataFetch = onCall({ secrets: [EBIRD_API_KEY], timeoutSeconds: 60 }, async (request) => {
     logger.info("Callable eBird data fetch triggered.");
     try {
@@ -3474,6 +3965,9 @@ exports.triggerEbirdDataFetch = onCall({ secrets: [EBIRD_API_KEY], timeoutSecond
 // ======================================================
 /**
  * Main backend logic block for this Firebase Functions file.
+ */
+/**
+ * Export: Scheduled cleanup for unverified accounts that aged past the configured TTL.
  */
 exports.cleanupUnverifiedUsers = onSchedule({
     schedule: "every 24 hours",
@@ -3512,6 +4006,9 @@ exports.cleanupUnverifiedUsers = onSchedule({
  * Main backend logic block for this Firebase Functions file.
  * This code reads/writes Firestore documents, so it is part of the persistent backend state
  * for the app.
+ */
+/**
+ * Export: Storage/Firestore cleanup trigger for deleted user bird images.
  */
 exports.onDeleteUserBirdImage = onDocumentDeleted("users/{userId}/userBirdImage/{userBirdImageId}", async (event) => {
     const deletedImage = event.data.data();
@@ -3618,6 +4115,9 @@ exports.onDeleteUserBirdImage = onDocumentDeleted("users/{userId}/userBirdImage/
  * Input/permission checks happen here first so invalid requests fail before any expensive
  * backend work starts.
  */
+/**
+ * Export: Callable that moderates a profile picture and stores the moderation outcome.
+ */
 exports.moderatePfpImage = onCall({ secrets: [OPENAI_API_KEY], timeoutSeconds: 30 }, async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
 
@@ -3690,6 +4190,9 @@ Respond STRICTLY in JSON format with two keys:
  * Forum posts now stay visible indefinitely in the social feed.
  * This scheduled function is intentionally a no-op so older posts are not removed from forumThreads.
  */
+/**
+ * Export: Scheduled cleanup that archives forum posts after the archive threshold passes.
+ */
 exports.archiveOldForumPosts = onSchedule({
     schedule: "every 24 hours",
     timeZone: "America/New_York",
@@ -3705,6 +4208,10 @@ exports.archiveOldForumPosts = onSchedule({
 /**
  * Clears forum post map visibility after 48 hours so older location pins stop cluttering the heat map
  * while the post itself stays visible in the forum feed.
+ */
+/**
+ * Export: Scheduled cleanup that hides forum-map pins after the heatmap TTL while leaving the post itself
+ * intact.
  */
 exports.expireForumHeatmapPins = onSchedule({
     schedule: "every 1 hours",
@@ -3778,6 +4285,9 @@ exports.expireForumHeatmapPins = onSchedule({
  * Hidden posts keep their stored coordinates so the heat map pin can come back if the post is
  * restored to visible later. Truly removed posts clear their saved location data.
  */
+/**
+ * Export: Scheduled cleanup that clears coordinates only for posts that were removed/permanently hidden.
+ */
 exports.clearRemovedForumPostCoordinates = onDocumentUpdated("forumThreads/{postId}", async (event) => {
     const beforeData = event.data.before.data() || {};
     const afterData = event.data.after.data() || {};
@@ -3810,6 +4320,10 @@ exports.clearRemovedForumPostCoordinates = onDocumentUpdated("forumThreads/{post
 /**
  * Main backend logic block for this Firebase Functions file.
  */
+/**
+ * Export: Firestore trigger that maintains thread engagement counters/derived fields after likes/comments
+ * change.
+ */
 exports.onForumThreadEngagementUpdated = onDocumentUpdated("forumThreads/{threadId}", async (event) => {
     const beforeData = event.data.before.data();
     const afterData = event.data.after.data();
@@ -3838,6 +4352,10 @@ exports.onForumThreadEngagementUpdated = onDocumentUpdated("forumThreads/{thread
 /**
  * Main backend logic block for this Firebase Functions file.
  */
+/**
+ * Export: Firestore trigger that maintains comment engagement counters/derived fields after likes/replies
+ * change.
+ */
 exports.onCommentEngagementUpdated = onDocumentUpdated("forumThreads/{threadId}/comments/{commentId}", async (event) => {
     const afterData = event.data.after.data();
     if (!afterData) {
@@ -3861,6 +4379,9 @@ exports.onCommentEngagementUpdated = onDocumentUpdated("forumThreads/{threadId}/
  * Main backend logic block for this Firebase Functions file.
  * This code reads/writes Firestore documents, so it is part of the persistent backend state
  * for the app.
+ */
+/**
+ * Export: Firestore trigger that updates counts/metadata when a forum comment is created.
  */
 exports.onCommentCreated = onDocumentCreated("forumThreads/{threadId}/comments/{commentId}", async (event) => {
     const commentData = event.data.data();
@@ -3960,6 +4481,9 @@ exports.onCommentCreated = onDocumentCreated("forumThreads/{threadId}/comments/{
  * This code reads/writes Firestore documents, so it is part of the persistent backend state
  * for the app.
  */
+/**
+ * Export: Firestore trigger that updates counts/metadata when a forum comment is deleted.
+ */
 exports.onCommentDeleted = onDocumentDeleted("forumThreads/{threadId}/comments/{commentId}", async (event) => {
     const threadId = event.params.threadId;
     const commentId = event.params.commentId;
@@ -3992,6 +4516,9 @@ exports.onCommentDeleted = onDocumentDeleted("forumThreads/{threadId}/comments/{
  * Main backend logic block for this Firebase Functions file.
  * This code reads/writes Firestore documents, so it is part of the persistent backend state
  * for the app.
+ */
+/**
+ * Export: Firestore trigger that updates post like counts when a like document is created/deleted.
  */
 exports.onPostLiked = onDocumentUpdated("forumThreads/{threadId}", async (event) => {
     const beforeData = event.data.before.data();
@@ -4054,6 +4581,9 @@ exports.onPostLiked = onDocumentUpdated("forumThreads/{threadId}", async (event)
  * This code reads/writes Firestore documents, so it is part of the persistent backend state
  * for the app.
  */
+/**
+ * Export: Firestore trigger that updates comment like counts when a like document is created/deleted.
+ */
 exports.onCommentLiked = onDocumentUpdated("forumThreads/{threadId}/comments/{commentId}", async (event) => {
     const beforeData = event.data.before.data();
     const afterData = event.data.after.data();
@@ -4111,6 +4641,10 @@ exports.onCommentLiked = onDocumentUpdated("forumThreads/{threadId}/comments/{co
  * Main backend logic block for this Firebase Functions file.
  * This code reads/writes Firestore documents, so it is part of the persistent backend state
  * for the app.
+ */
+/**
+ * Export: Firestore trigger that propagates profile changes (such as username/photo) to places that cache
+ * user display data.
  */
 exports.onUserProfileUpdated = onDocumentUpdated({
     document: "users/{userId}",
@@ -4233,6 +4767,9 @@ exports.onUserProfileUpdated = onDocumentUpdated({
  * This code reads/writes Firestore documents, so it is part of the persistent backend state
  * for the app.
  */
+/**
+ * Export: Auth cleanup trigger that removes/archives associated app data when the auth record is deleted.
+ */
 exports.onUserAuthDeleted = auth.user().onDelete(async (user) => {
     const uid = user.uid;
     // This is where the function touches Firestore documents/collections for the requested action.
@@ -4275,6 +4812,10 @@ exports.onUserAuthDeleted = auth.user().onDelete(async (user) => {
  * for the app.
  * Input/permission checks happen here first so invalid requests fail before any expensive
  * backend work starts.
+ */
+/**
+ * Export: Callable that follows or unfollows another user and keeps follower/following counters
+ * consistent.
  */
 exports.toggleFollow = onCall(async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Auth required.");
@@ -4326,6 +4867,10 @@ exports.toggleFollow = onCall(async (request) => {
  * for the app.
  * Input/permission checks happen here first so invalid requests fail before any expensive
  * backend work starts.
+ */
+/**
+ * Export: Callable that lets users report posts/comments/profiles and creates a pending moderator report
+ * record.
  */
 exports.submitReport = onCall(async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Auth required.");
@@ -5247,6 +5792,9 @@ exports.decayModerationState = onSchedule("every 60 minutes", async () => {
  * Input/permission checks happen here first so invalid requests fail before any expensive
  * backend work starts.
  */
+/**
+ * Export: Callable that returns leaderboard data derived from user totals.
+ */
 exports.getLeaderboard = onCall(async (request) => {
     try {
         // This is where the function touches Firestore documents/collections for the requested action.
@@ -5367,6 +5915,9 @@ async function _archiveStaleEBirdSightingsCore() {
 /**
  * Main backend logic block for this Firebase Functions file.
  */
+/**
+ * Export: Scheduled cleanup that archives old eBird sightings so only fresh map data stays active.
+ */
 exports.archiveStaleEBirdSightings = onSchedule({
     schedule: "every 6 hours",
     timeZone: "America/New_York",
@@ -5382,6 +5933,9 @@ exports.archiveStaleEBirdSightings = onSchedule({
  * Main backend logic block for this Firebase Functions file.
  * Input/permission checks happen here first so invalid requests fail before any expensive
  * backend work starts.
+ */
+/**
+ * Export: Callable/manual trigger for the stale eBird sighting archival job.
  */
 exports.triggerArchiveStaleEBirdSightings = onCall(async (request) => {
     logger.info("Callable archiveStaleEBirdSightings triggered.");
@@ -5461,6 +6015,9 @@ async function _archiveStaleUserBirdSightingsCore() {
 /**
  * Main backend logic block for this Firebase Functions file.
  */
+/**
+ * Export: Scheduled cleanup that archives old user-submitted sighting pins.
+ */
 exports.archiveStaleUserBirdSightings = onSchedule({
     schedule: "every 6 hours",
     timeZone: "America/New_York",
@@ -5476,6 +6033,9 @@ exports.archiveStaleUserBirdSightings = onSchedule({
  * Main backend logic block for this Firebase Functions file.
  * Input/permission checks happen here first so invalid requests fail before any expensive
  * backend work starts.
+ */
+/**
+ * Export: Callable/manual trigger for the stale user sighting archival job.
  */
 exports.triggerArchiveStaleUserBirdSightings = onCall(async (request) => {
     logger.info("Callable archiveStaleUserBirdSightings triggered.");
@@ -5507,6 +6067,9 @@ exports.triggerArchiveStaleUserBirdSightings = onCall(async (request) => {
  * for the app.
  * Input/permission checks happen here first so invalid requests fail before any expensive
  * backend work starts.
+ */
+/**
+ * Export: Callable that records a user bird sighting/map pin with normalized location data.
  */
 exports.recordBirdSighting = onCall(async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
@@ -5736,6 +6299,9 @@ const MODERATION_SUSPEND_STAGE_ONE_MS = 24 * 60 * 60 * 1000;
 const MODERATION_SUSPEND_STAGE_TWO_MS = 7 * 24 * 60 * 60 * 1000;
 const REPORT_RATE_LIMIT_KEY = "forumReportRateLimit";
 
+/**
+ * Helper: Builds a structured payload/default/response object used by later logic.
+ */
 function buildInitialReportReasonCounts() {
     return {
         language: 0,
@@ -5746,6 +6312,9 @@ function buildInitialReportReasonCounts() {
     };
 }
 
+/**
+ * Helper: Builds a structured payload/default/response object used by later logic.
+ */
 function buildInitialModerationFields() {
     return {
         moderationStatus: MODERATION_STATUS_VISIBLE,
@@ -5760,6 +6329,9 @@ function buildInitialModerationFields() {
     };
 }
 
+/**
+ * Helper: Builds a structured payload/default/response object used by later logic.
+ */
 function buildInitialUserModerationFields() {
     return {
         warningCount: 0,
@@ -5770,6 +6342,9 @@ function buildInitialUserModerationFields() {
     };
 }
 
+/**
+ * Helper: Converts values into one consistent shape so downstream logic can compare/store them safely.
+ */
 function normalizeModerationStatus(status) {
     const normalized = typeof status === "string" ? status.trim().toLowerCase() : "";
     if (!normalized) return MODERATION_STATUS_VISIBLE;
@@ -5784,11 +6359,17 @@ function normalizeModerationStatus(status) {
     return MODERATION_STATUS_VISIBLE;
 }
 
+/**
+ * Helper: Predicate helper that answers a yes/no question used by policy/business logic.
+ */
 function isPublicForumStatus(status) {
     const normalized = normalizeModerationStatus(status);
     return normalized === MODERATION_STATUS_VISIBLE || normalized === MODERATION_STATUS_UNDER_REVIEW;
 }
 
+/**
+ * Helper: Timestamp/date conversion helper used to keep time comparisons consistent.
+ */
 function timestampToMillis(value) {
     if (!value) return null;
     try {
@@ -5805,15 +6386,24 @@ function timestampToMillis(value) {
     return null;
 }
 
+/**
+ * Helper: Timestamp/date conversion helper used to keep time comparisons consistent.
+ */
 function timestampToDate(value) {
     const millis = timestampToMillis(value);
     return millis == null ? null : new Date(millis);
 }
 
+/**
+ * Helper: Builds a structured payload/default/response object used by later logic.
+ */
 function buildModerationRateLimitRef(userId, key = REPORT_RATE_LIMIT_KEY) {
     return db.collection("users").doc(userId).collection("settings").doc(key);
 }
 
+/**
+ * Helper: Blocks a request when the caller exceeded an hourly backend rate limit.
+ */
 async function assertHourlyRateLimitOrThrow(transaction, userId, key, limit, actionLabel) {
     const rateRef = buildModerationRateLimitRef(userId, key);
     const bucket = new Date().toISOString().slice(0, 13); // YYYY-MM-DDTHH (UTC hour)
@@ -5841,6 +6431,9 @@ async function assertHourlyRateLimitOrThrow(transaction, userId, key, limit, act
     }, { merge: true });
 }
 
+/**
+ * Helper: Checks whether the user is currently allowed to post/comment in the forum.
+ */
 async function assertUserCanUseForumOrThrow(userId, actionLabel = "perform this forum action") {
     const userRef = db.collection("users").doc(userId);
     const userSnap = await userRef.get();
@@ -5872,6 +6465,9 @@ async function assertUserCanUseForumOrThrow(userId, actionLabel = "perform this 
     };
 }
 
+/**
+ * Helper: Converts values into one consistent shape so downstream logic can compare/store them safely.
+ */
 function normalizeReportReason(reason) {
     const raw = sanitizeText(reason || "", 200).trim().toLowerCase();
 
@@ -5886,6 +6482,9 @@ function normalizeReportReason(reason) {
     return "other";
 }
 
+/**
+ * Helper: Internal helper `extractModerationTargetText` used by the surrounding backend flow.
+ */
 function extractModerationTargetText(data, maxLength = 1000) {
     if (!data || typeof data !== "object") return null;
 
@@ -5900,6 +6499,9 @@ function extractModerationTargetText(data, maxLength = 1000) {
     return null;
 }
 
+/**
+ * Helper: Loads and validates the moderation target (post/comment/user/etc.) for callable flows.
+ */
 async function resolveModerationTargetOrThrow(targetType, targetId, threadId = null) {
     const normalizedType = sanitizeText(targetType || "", 50).trim().toLowerCase();
     const normalizedTargetId = sanitizeText(targetId || "", 200).trim();
@@ -5957,14 +6559,23 @@ async function resolveModerationTargetOrThrow(targetType, targetId, threadId = n
     throw new HttpsError("invalid-argument", "Unsupported report target type.");
 }
 
+/**
+ * Helper: Creates a reference/payload helper used by write operations.
+ */
 function createModerationEventRef() {
     return db.collection("moderationEvents").doc();
 }
 
+/**
+ * Helper: Creates a reference/payload helper used by write operations.
+ */
 function createModerationAppealRef(userId, moderationEventId) {
     return db.collection("moderationAppeals").doc(`${userId}_${moderationEventId}`);
 }
 
+/**
+ * Helper: Builds a structured payload/default/response object used by later logic.
+ */
 function buildModerationEventPayload({
     eventId,
     userId,
@@ -6004,6 +6615,9 @@ function buildModerationEventPayload({
     };
 }
 
+/**
+ * Helper: Builds a structured payload/default/response object used by later logic.
+ */
 function buildUserModerationDefaults(userData = {}) {
     return {
         warningCount: typeof userData.warningCount === "number" ? userData.warningCount : 0,
@@ -6012,6 +6626,9 @@ function buildUserModerationDefaults(userData = {}) {
     };
 }
 
+/**
+ * Helper: Builds a structured payload/default/response object used by later logic.
+ */
 function buildContentModerationUpdate(status, source, reasonText, nowTimestamp) {
     const update = {
         moderationStatus: status,
@@ -6027,10 +6644,16 @@ function buildContentModerationUpdate(status, source, reasonText, nowTimestamp) 
     return update;
 }
 
+/**
+ * Helper: Builds a structured payload/default/response object used by later logic.
+ */
 function buildForumRestrictionCopy(actionLabel) {
     return `You cannot ${actionLabel} because your forum access is currently restricted.`;
 }
 
+/**
+ * Helper: Loads or returns the requested value/entity in a backend-safe format.
+ */
 function getModerationReviewerIdentityOrThrow(request) {
     if (!request.auth) {
         throw new HttpsError("unauthenticated", "Auth required.");
@@ -6056,6 +6679,9 @@ function getModerationReviewerIdentityOrThrow(request) {
     };
 }
 
+/**
+ * Helper: Predicate helper that answers a yes/no question used by policy/business logic.
+ */
 function isModerationEventCurrentlyActive(eventData, nowMs = Date.now()) {
     if (!eventData || eventData.status !== "active") return false;
 
@@ -6067,6 +6693,9 @@ function isModerationEventCurrentlyActive(eventData, nowMs = Date.now()) {
     return true;
 }
 
+/**
+ * Helper: Transaction-safe version of moderation target resolution used inside Firestore transactions.
+ */
 async function resolveModerationTargetForTransaction(transaction, targetType, targetId, threadId = null) {
     const normalizedType = sanitizeText(targetType || "", 50).trim().toLowerCase();
     const normalizedTargetId = sanitizeText(targetId || "", 200).trim();
@@ -6099,6 +6728,9 @@ async function resolveModerationTargetForTransaction(transaction, targetType, ta
     return null;
 }
 
+/**
+ * Helper: Converts values into one consistent shape so downstream logic can compare/store them safely.
+ */
 function normalizeReportSourceContext(value) {
     const normalized = sanitizeText(value || "", 80).trim().toLowerCase();
     if (!normalized) return null;
@@ -6111,10 +6743,16 @@ function normalizeReportSourceContext(value) {
     return normalized;
 }
 
+/**
+ * Helper: Builds a structured payload/default/response object used by later logic.
+ */
 function buildVisionAccessTokenProjectId() {
     return process.env.GCLOUD_PROJECT || process.env.GCP_PROJECT || null;
 }
 
+/**
+ * Helper: Fetches a Google access token from metadata server for Vision/API calls.
+ */
 async function fetchMetadataServerAccessToken() {
     const response = await axios.get(
         "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token",
@@ -6131,6 +6769,9 @@ async function fetchMetadataServerAccessToken() {
     return token;
 }
 
+/**
+ * Helper: Calls Google Vision SafeSearch on a Cloud Storage image URL.
+ */
 async function runVisionSafeSearchOnStorageUrl(imageUrl) {
     const storagePath = getStoragePathFromDownloadUrl(imageUrl);
     if (!storagePath) {
@@ -6179,6 +6820,9 @@ async function runVisionSafeSearchOnStorageUrl(imageUrl) {
     };
 }
 
+/**
+ * Helper: Decision helper that returns whether a rule/policy should trigger.
+ */
 function shouldRejectForumImageFromSafeSearch(annotation) {
     if (!annotation || typeof annotation !== "object") return false;
 
@@ -6188,6 +6832,9 @@ function shouldRejectForumImageFromSafeSearch(annotation) {
     return adult === "VERY_LIKELY" || adult === "LIKELY" || racy === "VERY_LIKELY";
 }
 
+/**
+ * Helper: Formats a human-readable description from a machine-generated result.
+ */
 function describeSafeSearchAnnotation(annotation) {
     if (!annotation || typeof annotation !== "object") {
         return "SafeSearch returned no annotation.";
@@ -6202,6 +6849,9 @@ function describeSafeSearchAnnotation(annotation) {
     ].join(", ");
 }
 
+/**
+ * Helper: Combines SafeSearch results and policy thresholds into a forum-image moderation decision.
+ */
 async function evaluateForumPostImageModeration({ userId, postId, imageUrl }) {
     if (typeof imageUrl !== "string" || !imageUrl.trim()) {
         return {
@@ -6256,6 +6906,9 @@ async function evaluateForumPostImageModeration({ userId, postId, imageUrl }) {
     }
 }
 
+/**
+ * Helper: Builds a structured payload/default/response object used by later logic.
+ */
 function buildForumImageModerationNotice(penaltySummary) {
     const penaltyType = penaltySummary?.penaltyType || null;
     const restriction = penaltySummary?.appliedRestriction || null;
@@ -6284,6 +6937,9 @@ function buildForumImageModerationNotice(penaltySummary) {
     };
 }
 
+/**
+ * Helper: Writes warning/strike/restriction changes after an automatic moderation event.
+ */
 async function applyAutomaticPenaltyForUser({
     transaction,
     userRef,
@@ -6413,6 +7069,9 @@ async function applyAutomaticPenaltyForUser({
 /**
  * Reads the caller's canonical forum identity from users/{uid} so the client cannot spoof it.
  */
+/**
+ * Helper: Loads the author profile needed for forum writes/notifications.
+ */
 async function getForumAuthorProfileOrThrow(userId) {
     const userSnap = await db.collection("users").doc(userId).get();
     if (!userSnap.exists) {
@@ -6435,6 +7094,9 @@ async function getForumAuthorProfileOrThrow(userId) {
 /**
  * Normalizes a numeric coordinate and throws when the caller provides an invalid value.
  */
+/**
+ * Helper: Converts values into one consistent shape so downstream logic can compare/store them safely.
+ */
 function normalizeCoordinate(value, fieldName) {
     const num = typeof value === "number" ? value : Number(value);
     if (!Number.isFinite(num)) {
@@ -6445,6 +7107,9 @@ function normalizeCoordinate(value, fieldName) {
 
 /**
  * Returns a sanitized forum message and enforces the configured max length.
+ */
+/**
+ * Helper: Converts values into one consistent shape so downstream logic can compare/store them safely.
  */
 function normalizeForumText(text, maxLength, emptyMessage) {
     if (text == null) return "";
@@ -6463,6 +7128,9 @@ function normalizeForumText(text, maxLength, emptyMessage) {
 
 /**
  * Ensures the resource is still inside the client-visible 5 minute edit window.
+ */
+/**
+ * Helper: Validates required conditions and throws an error when the request should not continue.
  */
 function assertWithinForumEditWindow(timestamp, typeLabel) {
     const createdAt = timestamp && typeof timestamp.toDate === "function"
@@ -6483,6 +7151,9 @@ function assertWithinForumEditWindow(timestamp, typeLabel) {
 /**
  * Returns the user-scoped forum cooldown document ref.
  */
+/**
+ * Helper: Loads or returns the requested value/entity in a backend-safe format.
+ */
 function getForumSubmissionCooldownRef(userId) {
     return db.collection("users").doc(userId).collection("settings").doc("forumSubmissionCooldown");
 }
@@ -6490,6 +7161,9 @@ function getForumSubmissionCooldownRef(userId) {
 
 /**
  * Throws a user-facing cooldown error when the previous forum submission is still too recent.
+ */
+/**
+ * Helper: Conditional helper that only throws/writes when the triggering condition is met.
  */
 function maybeThrowForumSubmissionCooldownError(lastSubmissionAt, submissionType) {
     const lastSubmissionMs = lastSubmissionAt && typeof lastSubmissionAt.toMillis === "function"
@@ -6514,6 +7188,9 @@ function maybeThrowForumSubmissionCooldownError(lastSubmissionAt, submissionType
 /**
  * Checks whether the user is still inside the forum submission cooldown without consuming it.
  */
+/**
+ * Helper: Checks whether the user is still on cooldown before a forum submission.
+ */
 async function assertForumSubmissionCooldownAllowed(transaction, userId, submissionType) {
     const cooldownSnap = await transaction.get(getForumSubmissionCooldownRef(userId));
     if (!cooldownSnap.exists) {
@@ -6524,6 +7201,9 @@ async function assertForumSubmissionCooldownAllowed(transaction, userId, submiss
 
 /**
  * Enforces the forum submission cooldown and records the new submit timestamp inside the same transaction.
+ */
+/**
+ * Helper: Atomically verifies and records forum submission cooldown usage.
  */
 async function assertAndConsumeForumSubmissionCooldown(transaction, userId, submissionType) {
     const cooldownRef = getForumSubmissionCooldownRef(userId);
@@ -6539,6 +7219,9 @@ async function assertAndConsumeForumSubmissionCooldown(transaction, userId, subm
 
 /**
  * Converts a Firebase Storage download URL back into the storage object path.
+ */
+/**
+ * Helper: Loads or returns the requested value/entity in a backend-safe format.
  */
 function getStoragePathFromDownloadUrl(downloadUrl) {
     if (typeof downloadUrl !== "string" || !downloadUrl.includes("/o/")) {
@@ -6559,6 +7242,9 @@ function getStoragePathFromDownloadUrl(downloadUrl) {
 
 /**
  * Archives a post image into the same folder structure the Android app previously used.
+ */
+/**
+ * Helper: Moves/archives a forum image when a post is removed or hidden.
  */
 async function archiveForumPostImageIfNeeded(userId, postId, imageUrl) {
     if (typeof imageUrl !== "string" || !imageUrl.trim()) {
@@ -6610,6 +7296,9 @@ async function archiveForumPostImageIfNeeded(userId, postId, imageUrl) {
 
 /**
  * Creates a forum post through the backend so ownership, timestamps, and author fields cannot be spoofed.
+ */
+/**
+ * Export: Main callable that validates, moderates, and writes a new forum thread.
  */
 exports.createForumPost = onCall(async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
@@ -6774,6 +7463,9 @@ exports.createForumPost = onCall(async (request) => {
 /**
  * Creates a forum comment/reply through the backend so the app cannot spoof the author.
  */
+/**
+ * Export: Main callable that validates, moderates, and writes a new forum comment/reply.
+ */
 exports.createForumComment = onCall(async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
 
@@ -6879,6 +7571,9 @@ exports.createForumComment = onCall(async (request) => {
 /**
  * Updates a post's editable content fields through the backend.
  */
+/**
+ * Export: Callable that edits an existing forum post while rechecking edit window/moderation rules.
+ */
 exports.updateForumPostContent = onCall(async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
 
@@ -6945,6 +7640,9 @@ exports.updateForumPostContent = onCall(async (request) => {
 /**
  * Updates a comment's text through the backend.
  */
+/**
+ * Export: Callable that edits an existing forum comment while rechecking edit window/moderation rules.
+ */
 exports.updateForumCommentContent = onCall(async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
 
@@ -7010,6 +7708,9 @@ exports.updateForumCommentContent = onCall(async (request) => {
 
 /**
  * Deletes a forum post through the backend so ownership and archival cannot be bypassed.
+ */
+/**
+ * Export: Callable that deletes/soft-deletes a forum thread and updates related counters/state.
  */
 exports.deleteForumPost = onCall(async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
@@ -7079,6 +7780,9 @@ exports.deleteForumPost = onCall(async (request) => {
 
 /**
  * Deletes a forum comment or reply through the backend so ownership and archival cannot be bypassed.
+ */
+/**
+ * Export: Callable that deletes/soft-deletes a forum comment and updates related counters/state.
  */
 exports.deleteForumComment = onCall(async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
@@ -7165,6 +7869,9 @@ exports.deleteForumComment = onCall(async (request) => {
  * Saves a forum post for the current user so it can be viewed later from the profile screen.
  * The saved post document ID matches the thread ID so duplicate entries cannot be created.
  */
+/**
+ * Export: Callable that saves a forum thread to the user’s saved-posts collection.
+ */
 exports.saveForumPost = onCall(async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
 
@@ -7216,6 +7923,9 @@ exports.saveForumPost = onCall(async (request) => {
  * Returns whether the current user has saved a given forum post.
  * This lets the app resolve Save/Unsave labels without depending on client Firestore read rules.
  */
+/**
+ * Export: Callable that returns whether the current user has already saved a given forum post.
+ */
 exports.getForumPostSaveState = onCall(async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
 
@@ -7245,6 +7955,9 @@ exports.getForumPostSaveState = onCall(async (request) => {
 
 /**
  * Removes a saved forum post entry for the current user.
+ */
+/**
+ * Export: Callable that removes a forum thread from the user’s saved-posts collection.
  */
 exports.unsaveForumPost = onCall(async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
@@ -7279,6 +7992,9 @@ exports.unsaveForumPost = onCall(async (request) => {
  * Input/permission checks happen here first so invalid requests fail before any expensive
  * backend work starts.
  */
+/**
+ * Helper: Converts values into one consistent shape so downstream logic can compare/store them safely.
+ */
 function normalizeCardRarity(rarity) {
     const value = String(rarity || "").trim().toLowerCase();
     switch (value) {
@@ -7299,6 +8015,9 @@ function normalizeCardRarity(rarity) {
     }
 }
 
+/**
+ * Helper: Loads or returns the requested value/entity in a backend-safe format.
+ */
 function getCardUpgradeCost(currentRarity, targetRarity) {
     const rarityOrder = ["Common", "Uncommon", "Rare", "Epic", "Legendary", "Mythic"];
     const upgradeCosts = {
@@ -7337,6 +8056,9 @@ function getCardUpgradeCost(currentRarity, targetRarity) {
     return totalCost;
 }
 
+/**
+ * Export: Callable that spends points to upgrade a collection card rarity tier.
+ */
 exports.upgradeCollectionSlotRarity = onCall(async (request) => {
     if (!request.auth) {
         throw new HttpsError("unauthenticated", "Login required.");

@@ -65,6 +65,11 @@ public class BirdInfoActivity extends AppCompatActivity {
     private Double modelConfidenceMargin;
     @Nullable
     private String notMyBirdBlockMessage;
+    @Nullable
+    private String pointAwardBlockReason;
+    @Nullable
+    private String pointAwardUserMessage;
+    private boolean pointAwardStatusPopupShown = false;
     private final OpenAiApi openAiApi = new OpenAiApi();
 
     private final AtomicBoolean storeClicked = new AtomicBoolean(false);
@@ -136,6 +141,11 @@ public class BirdInfoActivity extends AppCompatActivity {
         identificationId = getIntent().getStringExtra("identificationId");
         currentSelectionSource = getIntent().getStringExtra("selectionSource");
         awardPoints = getIntent().getBooleanExtra("awardPoints", true);
+        pointAwardBlockReason = getIntent().getStringExtra("pointAwardBlockReason");
+        pointAwardUserMessage = getIntent().getStringExtra("pointAwardUserMessage");
+        if (savedInstanceState != null) {
+            pointAwardStatusPopupShown = savedInstanceState.getBoolean("pointAwardStatusPopupShown", false);
+        }
 
         currentLatitude = getIntent().hasExtra("latitude") ? getIntent().getDoubleExtra("latitude", 0.0) : null;
         currentLongitude = getIntent().hasExtra("longitude") ? getIntent().getDoubleExtra("longitude", 0.0) : null;
@@ -169,6 +179,7 @@ public class BirdInfoActivity extends AppCompatActivity {
 
         configureQuantityUi();
         applyNotMyBirdButtonState(btnNotMyBird);
+        showPointAwardStatusPopupIfNeeded();
 
         tvSubmitFeedback.setOnClickListener(v -> IdentificationFeedbackHelper.showFeedbackDialog(
                 this,
@@ -217,6 +228,10 @@ public class BirdInfoActivity extends AppCompatActivity {
             i.putExtra(CardMakerActivity.EXTRA_QUANTITY, quantity);
             i.putExtra(CardMakerActivity.EXTRA_RECORD_SIGHTING, true);
             i.putExtra(CardMakerActivity.EXTRA_AWARD_POINTS, awardPoints);
+            i.putExtra(CardMakerActivity.EXTRA_POINT_AWARD_BLOCK_REASON, pointAwardBlockReason);
+            i.putExtra(CardMakerActivity.EXTRA_POINT_AWARD_USER_MESSAGE, pointAwardUserMessage);
+            i.putExtra(CardMakerActivity.EXTRA_IDENTIFICATION_LOG_ID, identificationLogId);
+            i.putExtra(CardMakerActivity.EXTRA_IDENTIFICATION_ID, identificationId);
             if (currentLatitude != null) i.putExtra(CardMakerActivity.EXTRA_LATITUDE, currentLatitude);
             if (currentLongitude != null) i.putExtra(CardMakerActivity.EXTRA_LONGITUDE, currentLongitude);
             i.putExtra(CardMakerActivity.EXTRA_COUNTRY, currentCountry);
@@ -385,6 +400,50 @@ public class BirdInfoActivity extends AppCompatActivity {
             sb.append(" | currentBirdId=").append(currentBirdId.trim());
         }
         return sb.toString();
+    }
+
+    private void showPointAwardStatusPopupIfNeeded() {
+        if (awardPoints || pointAwardStatusPopupShown || isFinishing() || isDestroyed()) {
+            return;
+        }
+
+        pointAwardStatusPopupShown = true;
+
+        new AlertDialog.Builder(this)
+                .setTitle("Points disabled for this save")
+                .setMessage(buildPointAwardBlockedMessage())
+                .setPositiveButton("OK", null)
+                .show();
+    }
+
+    private String buildPointAwardBlockedMessage() {
+        if (pointAwardUserMessage != null && !pointAwardUserMessage.trim().isEmpty()) {
+            return pointAwardUserMessage.trim();
+        }
+
+        if ("camera_burst_incomplete".equals(pointAwardBlockReason)) {
+            return "This identification can still be saved, but it will not earn points because BirdDex did not receive a full live burst from the in-app camera.";
+        }
+        if ("screen_photo_suspected".equals(pointAwardBlockReason)) {
+            return "This identification can still be saved, but it will not earn points because the capture looked too much like a photo of a phone or computer screen.";
+        }
+        if ("points_require_camera_burst".equals(pointAwardBlockReason)) {
+            return "This identification can still be saved, but it will not earn points because only trusted in-app camera burst captures can earn points.";
+        }
+        if ("species_point_cooldown".equals(pointAwardBlockReason)) {
+            return "This identification can still be saved, but it will not earn points because this species already earned points recently.";
+        }
+        if ("client_award_points_disabled".equals(pointAwardBlockReason)) {
+            return "This identification can still be saved, but points are disabled for this save.";
+        }
+
+        return "This identification can still be saved, but no points will be awarded for it.";
+    }
+
+    @Override
+    protected void onSaveInstanceState(@NonNull Bundle outState) {
+        super.onSaveInstanceState(outState);
+        outState.putBoolean("pointAwardStatusPopupShown", pointAwardStatusPopupShown);
     }
 
     @Override

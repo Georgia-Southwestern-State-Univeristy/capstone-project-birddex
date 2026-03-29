@@ -49,6 +49,9 @@ public class OpenAiApi {
         @Nullable public Double modelTop1Confidence;
         @Nullable public Double modelTop2Confidence;
         @Nullable public Double modelConfidenceMargin;
+        public boolean allowPointAward = true;
+        @Nullable public String pointAwardBlockReason;
+        @Nullable public String pointAwardUserMessage;
     }
 
     public interface IdentifyBirdCallback {
@@ -72,11 +75,39 @@ public class OpenAiApi {
                                       @Nullable Double longitude,
                                       @Nullable String localityName,
                                       String requestId,
+                                      @Nullable CaptureGuardHelper.GuardReport captureGuardReport,
                                       IdentifyBirdCallback callback) {
         Map<String, Object> data = new HashMap<>();
         data.put("image", base64Image);
         data.put("imageUrl", imageUrl);
         data.put("requestId", requestId);
+
+        CaptureGuardHelper.GuardReport safeReport = captureGuardReport != null
+                ? captureGuardReport
+                : CaptureGuardHelper.buildFallbackReport(CaptureGuardHelper.CAPTURE_SOURCE_UNKNOWN, 0);
+
+        data.put("captureSource", safeReport.captureSource);
+        Map<String, Object> captureGuard = new HashMap<>();
+        captureGuard.put("analyzerVersion", safeReport.analyzerVersion);
+        captureGuard.put("suspicionScore", safeReport.suspicionScore);
+        captureGuard.put("suspicious", safeReport.suspicious);
+        captureGuard.put("burstFrameCount", safeReport.burstFrameCount);
+        captureGuard.put("burstSpanMs", safeReport.burstSpanMs);
+        captureGuard.put("selectedFrameIndex", safeReport.selectedFrameIndex);
+        captureGuard.put("frameSimilarity", safeReport.frameSimilarity);
+        captureGuard.put("aliasingScore", safeReport.aliasingScore);
+        captureGuard.put("screenArtifactScore", safeReport.screenArtifactScore);
+        captureGuard.put("borderScore", safeReport.borderScore);
+        captureGuard.put("glareScore", safeReport.glareScore);
+        captureGuard.put("selectedFrameSharpness", safeReport.selectedFrameSharpness);
+        captureGuard.put("metadataScore", safeReport.metadataScore);
+        captureGuard.put("metadataSuspicious", safeReport.metadataSuspicious);
+        captureGuard.put("editedSoftwareTagPresent", safeReport.editedSoftwareTagPresent);
+        captureGuard.put("cameraMakeModelMissing", safeReport.cameraMakeModelMissing);
+        captureGuard.put("dateTimeOriginalMissing", safeReport.dateTimeOriginalMissing);
+        captureGuard.put("reasons", new ArrayList<>(safeReport.reasons));
+        data.put("captureGuard", captureGuard);
+
         if (latitude != null) data.put("latitude", latitude);
         if (longitude != null) data.put("longitude", longitude);
         if (localityName != null) data.put("localityName", localityName);
@@ -103,6 +134,9 @@ public class OpenAiApi {
                         parsed.modelTop1Confidence = getDouble(resMap, "modelTop1Confidence");
                         parsed.modelTop2Confidence = getDouble(resMap, "modelTop2Confidence");
                         parsed.modelConfidenceMargin = getDouble(resMap, "modelConfidenceMargin");
+                        parsed.allowPointAward = !resMap.containsKey("allowPointAward") || Boolean.TRUE.equals(resMap.get("allowPointAward"));
+                        parsed.pointAwardBlockReason = getString(resMap, "pointAwardBlockReason");
+                        parsed.pointAwardUserMessage = getString(resMap, "pointAwardUserMessage");
                         callback.onSuccess(parsed);
                     } catch (Exception e) {
                         Log.e(TAG, "Error parsing identifyBird response", e);

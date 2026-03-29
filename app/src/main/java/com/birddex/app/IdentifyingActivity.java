@@ -323,8 +323,11 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
             return;
         }
 
+        boolean awardPointsRequested = getIntent().getBooleanExtra("awardPoints", true);
+        CaptureGuardHelper.GuardReport captureGuardReport = CaptureGuardHelper.readReportFromIntent(getIntent(), awardPointsRequested);
+
         // We pass the base64 for analysis AND the storage URL for logging AND requestId for idempotency
-        openAiApi.identifyBirdFromImage(base64Image, downloadUrl, latitude, longitude, localityName, requestId, new OpenAiApi.IdentifyBirdCallback() {
+        openAiApi.identifyBirdFromImage(base64Image, downloadUrl, latitude, longitude, localityName, requestId, captureGuardReport, new OpenAiApi.IdentifyBirdCallback() {
             @Override
             public void onSuccess(OpenAiApi.IdentifyBirdResult result) {
                 if (identificationCompleted.get() || isFinishing() || isDestroyed()) return;
@@ -429,8 +432,10 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
             if (result.modelTop2Confidence != null) intent.putExtra("modelTop2Confidence", result.modelTop2Confidence);
             if (result.modelConfidenceMargin != null) intent.putExtra("modelConfidenceMargin", result.modelConfidenceMargin);
 
-            boolean awardPoints = getIntent().getBooleanExtra("awardPoints", true);
+            boolean awardPoints = getIntent().getBooleanExtra("awardPoints", true) && result.allowPointAward;
             intent.putExtra("awardPoints", awardPoints);
+            if (result.pointAwardBlockReason != null) intent.putExtra("pointAwardBlockReason", result.pointAwardBlockReason);
+            if (result.pointAwardUserMessage != null) intent.putExtra("pointAwardUserMessage", result.pointAwardUserMessage);
 
             if (latitude != null) {
                 intent.putExtra("latitude", latitude);

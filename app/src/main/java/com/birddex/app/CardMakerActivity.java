@@ -3,6 +3,8 @@ package com.birddex.app;
 import android.content.Intent;
 import android.net.Uri;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.util.Log;
 import android.view.View;
 import android.widget.Button;
@@ -11,7 +13,9 @@ import android.widget.ImageView;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
+import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.lifecycle.ViewModelProvider;
 
@@ -76,6 +80,10 @@ public class CardMakerActivity extends AppCompatActivity {
     public static final String EXTRA_LATITUDE        = "latitude";
     public static final String EXTRA_LONGITUDE       = "longitude";
     public static final String EXTRA_COUNTRY         = "country";
+    public static final String EXTRA_IDENTIFICATION_LOG_ID = "identificationLogId";
+    public static final String EXTRA_IDENTIFICATION_ID     = "identificationId";
+    public static final String EXTRA_POINT_AWARD_BLOCK_REASON = "pointAwardBlockReason";
+    public static final String EXTRA_POINT_AWARD_USER_MESSAGE = "pointAwardUserMessage";
 
     private CardMakerViewModel viewModel;
     private FirebaseManager firebaseManager;
@@ -99,8 +107,13 @@ public class CardMakerActivity extends AppCompatActivity {
     private Double currentLatitude;
     private Double currentLongitude;
     private String currentCountry;
+    @Nullable private String currentIdentificationLogId;
+    @Nullable private String currentIdentificationId;
+    @Nullable private String currentPointAwardBlockReason;
+    @Nullable private String currentPointAwardUserMessage;
     public static final String EXTRA_AWARD_POINTS = "awardPoints";
     private boolean shouldAwardPoints;
+    private final Handler pointAwardStatusHandler = new Handler(Looper.getMainLooper());
 
     /**
      * Android calls this when the Activity is first created. This is where the screen usually
@@ -153,6 +166,10 @@ public class CardMakerActivity extends AppCompatActivity {
         currentLongitude      = getIntent().hasExtra(EXTRA_LONGITUDE)
                 ? getIntent().getDoubleExtra(EXTRA_LONGITUDE, 0.0) : null;
         currentCountry        = getIntent().getStringExtra(EXTRA_COUNTRY);
+        currentIdentificationLogId = getIntent().getStringExtra(EXTRA_IDENTIFICATION_LOG_ID);
+        currentIdentificationId    = getIntent().getStringExtra(EXTRA_IDENTIFICATION_ID);
+        currentPointAwardBlockReason = getIntent().getStringExtra(EXTRA_POINT_AWARD_BLOCK_REASON);
+        currentPointAwardUserMessage = getIntent().getStringExtra(EXTRA_POINT_AWARD_USER_MESSAGE);
 
         shouldAwardPoints = getIntent().getBooleanExtra(EXTRA_AWARD_POINTS, true);
 
@@ -302,6 +319,12 @@ public class CardMakerActivity extends AppCompatActivity {
             ubData.put("imageUrl", originalImageUrl);
             ubData.put("imageCount", 1);
             ubData.put("awardPoints", shouldAwardPoints);
+            if (currentIdentificationLogId != null && !currentIdentificationLogId.trim().isEmpty()) {
+                ubData.put("identificationLogId", currentIdentificationLogId);
+            }
+            if (currentIdentificationId != null && !currentIdentificationId.trim().isEmpty()) {
+                ubData.put("identificationId", currentIdentificationId);
+            }
             transaction.set(userBirdRef, ubData);
 
             // --- UserBirdImage ---
@@ -349,7 +372,7 @@ public class CardMakerActivity extends AppCompatActivity {
             if (shouldRecordSighting) {
                 recordSightingViaCloudFunction(capturedUserBirdId, capturedNow);
             } else {
-                handleSaveSuccess();
+                handleSaveSuccess(capturedUserBirdId);
             }
         }).addOnFailureListener(e -> handleSaveFailure("Error saving discovery. Please try again.", e));
     }
@@ -390,18 +413,18 @@ public class CardMakerActivity extends AppCompatActivity {
                 new FirebaseManager.BirdSightingListener() {
                     @Override public void onRecorded() {
                         if (isFinishing() || isDestroyed()) return;
-                        handleSaveSuccess();
+                        handleSaveSuccess(userBirdId);
                     }
                     @Override public void onCooldown() {
                         // Silent — bird still saved to collection, heatmap skipped
                         if (isFinishing() || isDestroyed()) return;
-                        handleSaveSuccess();
+                        handleSaveSuccess(userBirdId);
                     }
                     @Override public void onFailure(String errorMessage) {
                         // Non-fatal: collection save already succeeded
                         Log.w(TAG, "recordBirdSighting failed (non-fatal): " + errorMessage);
                         if (isFinishing() || isDestroyed()) return;
-                        handleSaveSuccess();
+                        handleSaveSuccess(userBirdId);
                     }
                 }
         );
@@ -420,15 +443,151 @@ public class CardMakerActivity extends AppCompatActivity {
      * become permanent.
      * It also packages extras into an Intent when this flow needs to open another Activity.
      */
-    private void handleSaveSuccess() {
+    private void handleSaveSuccess(@Nullable String userBirdId) {
         // Kick off an asynchronous one-time read; the callbacks below decide how the UI should react.
         if (viewModel.isSaveFinished.get() || isFinishing() || isDestroyed()) return;
-        // Persist the new state so the action is saved outside the current screen.
+
+        if (!shouldAwardPoints) {
+            completeSaveWithoutPointOutcomeDialog();
+            return;
+        }
+
+        if (userBirdId == null || userBirdId.trim().isEmpty()) {
+            completeSaveAndShowOutcomeDialog("Saved to your collection", buildFallbackPointAwardMessage());
+            return;
+        }
+
+        waitForPointAwardStatus(userBirdId, 0);
+    }
+
+    private void waitForPointAwardStatus(@NonNull String userBirdId, int attempt) {
+        FirebaseFirestore.getInstance()
+                .collection("userBirds")
+                .document(userBirdId)
+                .get()
+                .addOnSuccessListener(snapshot -> {
+                    if (isFinishing() || isDestroyed()) return;
+
+                    boolean hasComputedPointFields = snapshot.exists() && (
+                            snapshot.contains("pointsEarned")
+                                    || snapshot.contains("pointAwardBlockedReason")
+                                    || snapshot.contains("pointAwardCaptureEligible")
+                                    || snapshot.contains("pointCooldownBlocked")
+                    );
+
+                    if (hasComputedPointFields || attempt >= 7) {
+                        completeSaveAndShowOutcomeDialog(
+                                "Saved to your collection",
+                                buildPointAwardOutcomeMessage(snapshot)
+                        );
+                        return;
+                    }
+
+                    pointAwardStatusHandler.postDelayed(
+                            () -> waitForPointAwardStatus(userBirdId, attempt + 1),
+                            400L
+                    );
+                })
+                .addOnFailureListener(e -> {
+                    if (isFinishing() || isDestroyed()) return;
+                    Log.w(TAG, "Failed to read point-award outcome after save", e);
+
+                    if (attempt >= 7) {
+                        completeSaveAndShowOutcomeDialog("Saved to your collection", buildFallbackPointAwardMessage());
+                        return;
+                    }
+
+                    pointAwardStatusHandler.postDelayed(
+                            () -> waitForPointAwardStatus(userBirdId, attempt + 1),
+                            400L
+                    );
+                });
+    }
+
+    private String buildPointAwardOutcomeMessage(@Nullable DocumentSnapshot snapshot) {
+        if (snapshot == null || !snapshot.exists()) {
+            return buildFallbackPointAwardMessage();
+        }
+
+        Long pointsEarnedValue = snapshot.getLong("pointsEarned");
+        long pointsEarned = pointsEarnedValue != null ? pointsEarnedValue : 0L;
+        boolean pointCooldownBlocked = Boolean.TRUE.equals(snapshot.getBoolean("pointCooldownBlocked"));
+        boolean pointAwardCaptureEligible = Boolean.TRUE.equals(snapshot.getBoolean("pointAwardCaptureEligible"));
+        String pointAwardBlockedReason = snapshot.getString("pointAwardBlockedReason");
+
+        if (pointsEarned > 0) {
+            return "Your bird was saved to your collection.\n\nYou earned " + pointsEarned + " point" + (pointsEarned == 1 ? "" : "s") + " for this save.";
+        }
+
+        if (pointCooldownBlocked || "species_point_cooldown".equals(pointAwardBlockedReason)) {
+            return "Your bird was saved to your collection.\n\nNo points were awarded because this species already earned points within the last 5 minutes.";
+        }
+
+        if (!pointAwardCaptureEligible || !shouldAwardPoints) {
+            return "Your bird was saved to your collection.\n\n" + buildBlockedPointReasonMessage(pointAwardBlockedReason);
+        }
+
+        return "Your bird was saved to your collection.\n\nNo points were awarded for this save.";
+    }
+
+    private String buildFallbackPointAwardMessage() {
+        if (shouldAwardPoints) {
+            return "Your bird was saved to your collection.\n\nBirdDex is still processing whether this save earned points.";
+        }
+        return "Your bird was saved to your collection.\n\n" + buildBlockedPointReasonMessage(currentPointAwardBlockReason);
+    }
+
+    private String buildBlockedPointReasonMessage(@Nullable String pointAwardBlockedReason) {
+        if (currentPointAwardUserMessage != null && !currentPointAwardUserMessage.trim().isEmpty()) {
+            return currentPointAwardUserMessage.trim();
+        }
+
+        if ("camera_burst_incomplete".equals(pointAwardBlockedReason)) {
+            return "No points were awarded because BirdDex did not receive a full live burst from the in-app camera.";
+        }
+        if ("screen_photo_suspected".equals(pointAwardBlockedReason)) {
+            return "No points were awarded because the capture looked too much like a photo of a phone or computer screen.";
+        }
+        if ("points_require_camera_burst".equals(pointAwardBlockedReason)) {
+            return "No points were awarded because only trusted in-app camera burst captures can earn points.";
+        }
+        if ("species_point_cooldown".equals(pointAwardBlockedReason)) {
+            return "No points were awarded because this species already earned points recently.";
+        }
+        if ("client_award_points_disabled".equals(pointAwardBlockedReason)) {
+            return "No points were awarded because points were disabled for this save.";
+        }
+
+        return "No points were awarded for this save.";
+    }
+
+    private void completeSaveAndShowOutcomeDialog(@NonNull String title, @NonNull String message) {
+        if (viewModel.isSaveFinished.get() || isFinishing() || isDestroyed()) return;
+
         viewModel.isSaveFinished.set(true);
         viewModel.isSaveInProgress.set(false);
         setSavingUi(false);
-        // Give the user immediate feedback about the result of this action.
+
+        new AlertDialog.Builder(this)
+                .setTitle(title)
+                .setMessage(message)
+                .setCancelable(false)
+                .setPositiveButton("OK", (dialog, which) -> navigateHomeAfterSave())
+                .show();
+    }
+
+    private void completeSaveWithoutPointOutcomeDialog() {
+        if (viewModel.isSaveFinished.get() || isFinishing() || isDestroyed()) return;
+
+        viewModel.isSaveFinished.set(true);
+        viewModel.isSaveInProgress.set(false);
+        setSavingUi(false);
         Toast.makeText(this, "Saved to your collection!", Toast.LENGTH_SHORT).show();
+        navigateHomeAfterSave();
+    }
+
+    private void navigateHomeAfterSave() {
+        if (isFinishing() || isDestroyed()) return;
         Intent home = new Intent(CardMakerActivity.this, HomeActivity.class);
         home.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
         home.putExtra("openTab", "collection");

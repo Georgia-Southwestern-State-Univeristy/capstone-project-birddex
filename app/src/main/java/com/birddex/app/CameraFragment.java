@@ -1,14 +1,14 @@
 package com.birddex.app;
 
 import android.Manifest;
-import android.content.ContentValues;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.net.Uri;
 import android.os.Bundle;
-import android.provider.MediaStore;
+import android.os.Handler;
+import android.os.Looper;
 import android.util.Log;
 import android.view.LayoutInflater;
 import android.view.ScaleGestureDetector;
@@ -37,9 +37,8 @@ import androidx.fragment.app.Fragment;
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 import com.google.common.util.concurrent.ListenableFuture;
 
-import java.text.SimpleDateFormat;
-import java.util.Date;
-import java.util.Locale;
+import java.io.File;
+import java.util.ArrayList;
 import java.util.concurrent.ExecutionException;
 
 /**
@@ -53,7 +52,9 @@ public class CameraFragment extends Fragment {
     private static final String TAG = "BirdDexCam";
     private static final String PREFS_NAME = "BirdDexPrefs";
     private static final String KEY_SHOW_CAMERA_TIP = "show_camera_tip";
-    
+    private static final int BURST_FRAME_COUNT = 3;
+    private static final long BURST_FRAME_DELAY_MS = 90L;
+
     private PreviewView previewView;
     private ImageButton btnFlip, btnCapture, btnFlash;
     private ProcessCameraProvider cameraProvider;
@@ -62,6 +63,7 @@ public class CameraFragment extends Fragment {
     private ScaleGestureDetector scaleGestureDetector;
     private int lensFacing = CameraSelector.LENS_FACING_BACK;
     private ActivityResultLauncher<String> cameraPermissionLauncher;
+    private final Handler burstHandler = new Handler(Looper.getMainLooper());
 
     private enum FlashState { OFF, ON, AUTO }
     private FlashState flashState = FlashState.OFF;
@@ -104,7 +106,7 @@ public class CameraFragment extends Fragment {
 
         cameraPermissionLauncher = registerForActivityResult(new ActivityResultContracts.RequestPermission(), granted -> {
             if (granted) startCamera();
-            // Give the user immediate feedback about the result of this action.
+                // Give the user immediate feedback about the result of this action.
             else Toast.makeText(requireContext(), "Camera permission denied.", Toast.LENGTH_LONG).show();
         });
 
@@ -144,11 +146,11 @@ public class CameraFragment extends Fragment {
     private void showCameraTipIfNeeded() {
         SharedPreferences prefs = requireContext().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
         boolean showTip = prefs.getBoolean(KEY_SHOW_CAMERA_TIP, true);
-        
+
         if (showTip) {
             View dialogView = LayoutInflater.from(requireContext()).inflate(R.layout.dialog_camera_tip, null);
             CheckBox checkBox = dialogView.findViewById(R.id.checkBoxDontShow);
-            
+
             new MaterialAlertDialogBuilder(requireContext())
                     .setView(dialogView)
                     .setPositiveButton(R.string.ok, (dialog, which) -> {
@@ -213,34 +215,108 @@ public class CameraFragment extends Fragment {
      * or needs attention.
      */
     private void takePhoto() {
-        if (imageCapture == null) { btnCapture.setEnabled(true); btnCapture.setAlpha(1f); return; }
-        ContentValues values = new ContentValues();
-        values.put(MediaStore.MediaColumns.DISPLAY_NAME, "BIRDDEX_" + new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(new Date()));
-        values.put(MediaStore.MediaColumns.MIME_TYPE, "image/jpeg");
-        values.put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/BirdDex");
+        if (imageCapture == null) {
+            restoreCaptureButton();
+            return;
+        }
 
-        ImageCapture.OutputFileOptions options = new ImageCapture.OutputFileOptions.Builder(requireContext().getContentResolver(), MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values).build();
+        captureBurstFrame(new ArrayList<>(), new ArrayList<>(), 0);
+    }
+
+    private void captureBurstFrame(@NonNull ArrayList<Uri> frameUris,
+                                   @NonNull ArrayList<Long> captureTimesMs,
+                                   int frameIndex) {
+        if (!isAdded() || imageCapture == null) {
+            restoreCaptureButton();
+            return;
+        }
+
+        File outputFile = createBurstFrameFile(frameIndex);
+        if (outputFile == null) {
+            restoreCaptureButton();
+            Toast.makeText(requireContext(), "Capture failed.", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        ImageCapture.OutputFileOptions options = new ImageCapture.OutputFileOptions.Builder(outputFile).build();
+        final Uri outputUri = Uri.fromFile(outputFile);
+
         imageCapture.takePicture(options, ContextCompat.getMainExecutor(requireContext()), new ImageCapture.OnImageSavedCallback() {
             @Override
             public void onImageSaved(@NonNull ImageCapture.OutputFileResults output) {
-                Uri savedUri = output.getSavedUri();
-                if (savedUri == null) { btnCapture.setEnabled(true); btnCapture.setAlpha(1f); return; }
-                // Move into the next screen and pass the identifiers/data that screen needs.
-                startActivity(new Intent(requireContext(), CropActivity.class)
-                        .putExtra(CropActivity.EXTRA_IMAGE_URI, savedUri.toString())
-                        .putExtra(CropActivity.EXTRA_AWARD_POINTS, true));
-                // Re-enable button in case user returns to this fragment
-                btnCapture.setEnabled(true);
-                btnCapture.setAlpha(1f);
+                frameUris.add(outputUri);
+                captureTimesMs.add(System.currentTimeMillis());
+
+                if (frameUris.size() < BURST_FRAME_COUNT) {
+                    burstHandler.postDelayed(() -> captureBurstFrame(frameUris, captureTimesMs, frameIndex + 1), BURST_FRAME_DELAY_MS);
+                } else {
+                    finalizeBurstCapture(frameUris, captureTimesMs);
+                }
             }
 
             @Override
             public void onError(@NonNull ImageCaptureException exc) {
-                btnCapture.setEnabled(true);
-                btnCapture.setAlpha(1f);
-                // Give the user immediate feedback about the result of this action.
-                Toast.makeText(requireContext(), "Capture failed.", Toast.LENGTH_SHORT).show();
+                Log.w(TAG, "Burst frame capture failed at index " + frameIndex, exc);
+                if (!frameUris.isEmpty()) {
+                    finalizeBurstCapture(frameUris, captureTimesMs);
+                } else {
+                    restoreCaptureButton();
+                    Toast.makeText(requireContext(), "Capture failed.", Toast.LENGTH_SHORT).show();
+                }
             }
         });
+    }
+
+    @Nullable
+    private File createBurstFrameFile(int frameIndex) {
+        try {
+            File dir = new File(requireContext().getCacheDir(), "camera_burst_frames");
+            if (!dir.exists() && !dir.mkdirs()) {
+                return null;
+            }
+            return new File(dir, "burst_" + System.currentTimeMillis() + "_" + frameIndex + ".jpg");
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to create burst frame file", e);
+            return null;
+        }
+    }
+
+    private void finalizeBurstCapture(@NonNull ArrayList<Uri> frameUris,
+                                      @NonNull ArrayList<Long> captureTimesMs) {
+        if (!isAdded() || frameUris.isEmpty()) {
+            restoreCaptureButton();
+            return;
+        }
+
+        Context appContext = requireContext().getApplicationContext();
+        new Thread(() -> {
+            CaptureGuardHelper.GuardReport guardReport = frameUris.size() >= 2
+                    ? CaptureGuardHelper.analyzeBurst(appContext, frameUris, captureTimesMs)
+                    : CaptureGuardHelper.buildFallbackReport(CaptureGuardHelper.CAPTURE_SOURCE_CAMERA_BURST, frameUris.size());
+
+            int selectedIndex = Math.max(0, Math.min(guardReport.selectedFrameIndex, frameUris.size() - 1));
+            Uri selectedFrameUri = frameUris.get(selectedIndex);
+
+            if (!isAdded()) return;
+
+            requireActivity().runOnUiThread(() -> {
+                Intent cropIntent = new Intent(requireContext(), CropActivity.class)
+                        .putExtra(CropActivity.EXTRA_IMAGE_URI, selectedFrameUri.toString())
+                        .putExtra(CropActivity.EXTRA_AWARD_POINTS, true)
+                        .putExtra(CaptureGuardHelper.EXTRA_CAPTURE_SOURCE, CaptureGuardHelper.CAPTURE_SOURCE_CAMERA_BURST);
+                CaptureGuardHelper.putGuardExtras(cropIntent, guardReport);
+                // Move into the next screen and pass the identifiers/data that screen needs.
+                startActivity(cropIntent);
+                restoreCaptureButton();
+            });
+        }).start();
+    }
+
+    private void restoreCaptureButton() {
+        if (!isAdded()) return;
+        if (btnCapture != null) {
+            btnCapture.setEnabled(true);
+            btnCapture.setAlpha(1f);
+        }
     }
 }

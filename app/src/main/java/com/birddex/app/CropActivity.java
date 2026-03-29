@@ -96,10 +96,14 @@ public class CropActivity extends AppCompatActivity {
 
             if (croppedImageUri != null) {
                 boolean awardPoints = getIntent().getBooleanExtra(EXTRA_AWARD_POINTS, true);
+                CaptureGuardHelper.GuardReport guardReport = CaptureGuardHelper.readReportFromIntent(getIntent(), awardPoints);
+                guardReport = CaptureGuardHelper.augmentWithMetadataIfNeeded(this, inputUri, guardReport);
 
                 Intent intent = new Intent(this, IdentifyingActivity.class);
                 intent.putExtra("imageUri", croppedImageUri.toString());
                 intent.putExtra("awardPoints", awardPoints);
+                CaptureGuardHelper.putGuardExtras(intent, guardReport);
+                intent.putExtra(CaptureGuardHelper.EXTRA_CAPTURE_SOURCE, guardReport.captureSource);
                 // Move into the next screen and pass the identifiers/data that screen needs.
                 startActivity(intent);
                 finish();

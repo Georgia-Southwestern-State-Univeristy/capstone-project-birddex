@@ -1311,6 +1311,9 @@ exports.updateUserProfile = onCall(async (request) => {
     const hasBio = Object.prototype.hasOwnProperty.call(data, "bio");
     const hasProfilePictureUrl = Object.prototype.hasOwnProperty.call(data, "profilePictureUrl");
     const hasEmail = Object.prototype.hasOwnProperty.call(data, "email");
+    const pfpChangeId = typeof data.pfpChangeId === "string" && data.pfpChangeId.trim()
+        ? data.pfpChangeId.trim()
+        : null;
 
     const sanitizedUsername = hasUsername ? sanitizeUsername(data.username) : null;
     let sanitizedBio = undefined;
@@ -1341,7 +1344,13 @@ exports.updateUserProfile = onCall(async (request) => {
 
     const existingUserData = existingUserSnap.data() || {};
     const currentUsername = sanitizeText(existingUserData.username || "", 80).trim() || null;
+    const currentProfilePictureUrl = sanitizeText(existingUserData.profilePictureUrl || "", 2000).trim() || "";
     const usernameChanged = !!(hasUsername && sanitizedUsername && sanitizedUsername !== currentUsername);
+    const profilePictureChanged = hasProfilePictureUrl && (sanitizedProfilePictureUrl || "") !== currentProfilePictureUrl;
+
+    if (profilePictureChanged && !pfpChangeId) {
+        throw new HttpsError("failed-precondition", "Profile picture changes must be reserved before updating the profile.");
+    }
 
     if (usernameChanged) {
         await assertNoBlockedContentOrThrow({
@@ -1376,6 +1385,23 @@ exports.updateUserProfile = onCall(async (request) => {
                 usernameDoc = await t.get(usernameRef);
                 if (usernameDoc.exists && usernameDoc.data().uid !== uid) {
                     throw new HttpsError("already-exists", "Username is already taken.");
+                }
+            }
+
+            let pfpChangeRef = null;
+            let pfpChangeDoc = null;
+            if (pfpChangeId) {
+                pfpChangeRef = db.collection("processedEvents").doc(pfpChangeId);
+                pfpChangeDoc = await t.get(pfpChangeRef);
+                if (!pfpChangeDoc.exists) {
+                    throw new HttpsError("failed-precondition", "The reserved profile picture change could not be found.");
+                }
+                const pfpChangeData = pfpChangeDoc.data() || {};
+                if (pfpChangeData.userId !== uid) {
+                    throw new HttpsError("permission-denied", "That profile picture change does not belong to you.");
+                }
+                if (pfpChangeData.status === "rolled_back") {
+                    throw new HttpsError("failed-precondition", "This profile picture change was already rolled back.");
                 }
             }
 
@@ -1414,6 +1440,13 @@ exports.updateUserProfile = onCall(async (request) => {
             if (hasProfilePictureUrl) profileUpdate.profilePictureUrl = sanitizedProfilePictureUrl || "";
             if (hasEmail) profileUpdate.email = sanitizedEmail || request.auth.token.email || existingUserData.email || "";
 
+            if (pfpChangeRef && pfpChangeDoc && (pfpChangeDoc.data() || {}).status !== "committed") {
+                t.set(pfpChangeRef, {
+                    status: "committed",
+                    committedAt: admin.firestore.FieldValue.serverTimestamp(),
+                }, { merge: true });
+            }
+
             t.set(userRef, profileUpdate, { merge: true });
             queuePrivateAuditLog(t, {
                 action: "update_user_profile",
@@ -1427,6 +1460,7 @@ exports.updateUserProfile = onCall(async (request) => {
                     hasBio,
                     hasProfilePictureUrl,
                     hasEmail,
+                    usedPfpReservation: !!pfpChangeId,
                 },
             });
         });
@@ -1448,6 +1482,7 @@ exports.updateUserProfile = onCall(async (request) => {
                 hasBio,
                 hasProfilePictureUrl,
                 hasEmail,
+                usedPfpReservation: !!pfpChangeId,
             },
         });
         if (error instanceof HttpsError) throw error;

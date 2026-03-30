@@ -330,6 +330,10 @@ public class FirebaseManager {
      * become permanent.
      */
     public void updateUserProfile(User updatedUser, AuthListener listener) {
+        updateUserProfile(updatedUser, null, listener);
+    }
+
+    public void updateUserProfile(User updatedUser, String pfpChangeId, AuthListener listener) {
         FirebaseUser currentUser = mAuth.getCurrentUser();
         if (currentUser == null) { Log.e(TAG, "Cannot update profile: No user authenticated."); return; }
         Log.d(TAG, "Updating profile for: " + currentUser.getUid());
@@ -338,6 +342,7 @@ public class FirebaseManager {
         if (updatedUser.getProfilePictureUrl() != null) data.put("profilePictureUrl", updatedUser.getProfilePictureUrl());
         if (updatedUser.getBio() != null) data.put("bio", updatedUser.getBio());
         if (updatedUser.getEmail() != null) data.put("email", updatedUser.getEmail());
+        if (pfpChangeId != null && !pfpChangeId.trim().isEmpty()) data.put("pfpChangeId", pfpChangeId.trim());
 
         mFunctions.getHttpsCallable("updateUserProfile").call(data)
                 .addOnCompleteListener(task -> {
@@ -368,7 +373,11 @@ public class FirebaseManager {
      * Applies the latest values to existing UI/data so the screen and backend stay in sync.
      */
     public void updateUserProfileAtomic(User updatedUser, AuthListener listener) {
-        updateUserProfile(updatedUser, listener);
+        updateUserProfile(updatedUser, null, listener);
+    }
+
+    public void updateUserProfileAtomic(User updatedUser, String pfpChangeId, AuthListener listener) {
+        updateUserProfile(updatedUser, pfpChangeId, listener);
     }
 
     /**

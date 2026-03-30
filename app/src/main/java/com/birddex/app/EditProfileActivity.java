@@ -77,6 +77,8 @@ public class EditProfileActivity extends AppCompatActivity implements NetworkMon
     // UI elements
     private ImageView ivPfpPreview;
     private MaterialButton btnChangePhoto;
+    private MaterialButton btnSave;
+    private CharSequence defaultSaveButtonText;
 
     private Uri imageUri;
     private boolean isSaveInProgress = false;
@@ -130,7 +132,8 @@ public class EditProfileActivity extends AppCompatActivity implements NetworkMon
             ivPfpPreview.setImageResource(R.drawable.ic_profile);
         }
 
-        MaterialButton btnSave = findViewById(R.id.btnSave);
+        btnSave = findViewById(R.id.btnSave);
+        defaultSaveButtonText = btnSave.getText();
         TextView tvCancel = findViewById(R.id.tvCancel);
 
         fetchPfpChangesRemaining();
@@ -191,7 +194,8 @@ public class EditProfileActivity extends AppCompatActivity implements NetworkMon
             boolean pfpChanged = (imageUri != null);
 
             isSaveInProgress = true;
-            loadingOverlay.setVisibility(View.VISIBLE);
+            updateSaveUi(true);
+            Toast.makeText(this, imageUri != null ? "Saving profile and profile picture..." : "Saving profile...", Toast.LENGTH_SHORT).show();
 
             if (pfpChanged) {
                 String pfpChangeId = UUID.randomUUID().toString();
@@ -234,7 +238,20 @@ public class EditProfileActivity extends AppCompatActivity implements NetworkMon
      */
     private void resetSaveState() {
         isSaveInProgress = false;
-        loadingOverlay.setVisibility(View.GONE);
+        updateSaveUi(false);
+    }
+
+    private void updateSaveUi(boolean saving) {
+        if (loadingOverlay != null) {
+            loadingOverlay.setVisibility(saving ? View.VISIBLE : View.GONE);
+        }
+        if (btnSave != null) {
+            btnSave.setEnabled(!saving);
+            btnSave.setText(saving ? "Saving..." : defaultSaveButtonText);
+        }
+        if (btnChangePhoto != null) {
+            btnChangePhoto.setEnabled(!saving);
+        }
     }
 
     /**
@@ -425,7 +442,7 @@ public class EditProfileActivity extends AppCompatActivity implements NetworkMon
     }
 
     @Override protected void onPause() { super.onPause(); networkMonitor.unregister(); if (loadingOverlay != null) loadingOverlay.setVisibility(View.GONE); }
-    @Override protected void onResume() { super.onResume(); networkMonitor.register(); if (isSaveInProgress && loadingOverlay != null) loadingOverlay.setVisibility(View.VISIBLE); }
+    @Override protected void onResume() { super.onResume(); networkMonitor.register(); if (isSaveInProgress) updateSaveUi(true); }
     @Override public void onNetworkAvailable() {}
     @Override public void onNetworkLost() { runOnUiThread(() -> { if (loadingOverlay != null && loadingOverlay.getVisibility() == View.VISIBLE) resetSaveState(); }); }
 }

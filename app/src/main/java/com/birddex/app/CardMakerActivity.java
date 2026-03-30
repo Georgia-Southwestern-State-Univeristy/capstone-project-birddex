@@ -90,6 +90,7 @@ public class CardMakerActivity extends AppCompatActivity {
     private FrameLayout loadingOverlay;
     private Button btnSave;
     private Button btnCancel;
+    private CharSequence defaultSaveButtonText;
 
     private Uri originalImageUri;
     private String currentBirdId;
@@ -138,6 +139,7 @@ public class CardMakerActivity extends AppCompatActivity {
         loadingOverlay  = findViewById(R.id.loadingOverlay);
         btnSave         = findViewById(R.id.btnSaveCard);
         btnCancel       = findViewById(R.id.btnCancelCard);
+        defaultSaveButtonText = btnSave.getText();
 
         TextView txtBirdName   = findViewById(R.id.txtBirdName);
         TextView txtScientific = findViewById(R.id.txtScientific);
@@ -240,6 +242,7 @@ public class CardMakerActivity extends AppCompatActivity {
         // Persist the new state so the action is saved outside the current screen.
         viewModel.isSaveInProgress.set(true);
         setSavingUi(true);
+        Toast.makeText(this, "Saving to collection...", Toast.LENGTH_SHORT).show();
 
         String userId   = user.getUid();
         String fileName = "userCollectionImages/" + userId + "/" + UUID.randomUUID() + ".jpg";
@@ -622,7 +625,11 @@ public class CardMakerActivity extends AppCompatActivity {
      */
     private void setSavingUi(boolean saving) {
         if (loadingOverlay != null) loadingOverlay.setVisibility(saving ? View.VISIBLE : View.GONE);
-        if (btnSave   != null) { btnSave.setEnabled(!saving);   btnSave.setClickable(!saving); }
+        if (btnSave   != null) {
+            btnSave.setEnabled(!saving);
+            btnSave.setClickable(!saving);
+            btnSave.setText(saving ? "Saving..." : defaultSaveButtonText);
+        }
         if (btnCancel != null) { btnCancel.setEnabled(!saving); btnCancel.setClickable(!saving); }
     }
 

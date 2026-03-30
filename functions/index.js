@@ -51,6 +51,35 @@ const CONFIG = {
     LOCATION_PRECISION: 4,      // decimal places (~11 meters)
 };
 
+const PRIVATE_AUDIT_LOG_COLLECTION = "privateAuditLogs";
+const USER_RATE_LIMITS = {
+    forumPostLike: {
+        windowMs: 60 * 1000,
+        maxEvents: 60,
+        userMessage: "You're liking posts too quickly. Please slow down.",
+    },
+    forumCommentLike: {
+        windowMs: 60 * 1000,
+        maxEvents: 90,
+        userMessage: "You're liking comments too quickly. Please slow down.",
+    },
+    forumPostView: {
+        windowMs: 60 * 1000,
+        maxEvents: 240,
+        userMessage: "You're opening posts too quickly. Please slow down.",
+    },
+    profileUpdate: {
+        windowMs: 10 * 60 * 1000,
+        maxEvents: 10,
+        userMessage: "Profile updates are happening too quickly. Please wait a moment and try again.",
+    },
+    usernameChange: {
+        windowMs: 24 * 60 * 60 * 1000,
+        maxEvents: 5,
+        userMessage: "You've changed your username too many times today. Please try again later.",
+    },
+};
+
 // ======================================================
 // HYBRID IDENTIFICATION CONFIG
 // ======================================================
@@ -314,6 +343,107 @@ function sanitizeText(text, maxLength = 5000) {
     const trimmed = text.trim();
     if (trimmed.length > maxLength) return trimmed.substring(0, maxLength);
     return trimmed.replace(/<[^>]*>/g, "");
+}
+
+function getUserRateLimitRef(userId, bucket) {
+    return db.collection("users").doc(userId).collection("rateLimits").doc(bucket);
+}
+
+function createPrivateAuditLogRef() {
+    return db.collection(PRIVATE_AUDIT_LOG_COLLECTION).doc();
+}
+
+function sanitizeAuditMetadata(value, depth = 0) {
+    if (depth > 3 || value === undefined) return null;
+    if (value === null) return null;
+    if (typeof value === "string") return sanitizeText(value, 500);
+    if (typeof value === "number") return Number.isFinite(value) ? value : null;
+    if (typeof value === "boolean") return value;
+    if (Array.isArray(value)) {
+        return value.slice(0, 25)
+            .map((item) => sanitizeAuditMetadata(item, depth + 1))
+            .filter((item) => item !== undefined);
+    }
+    if (value instanceof admin.firestore.Timestamp) return value;
+    if (typeof value === "object") {
+        const out = {};
+        Object.entries(value).slice(0, 40).forEach(([key, val]) => {
+            const sanitized = sanitizeAuditMetadata(val, depth + 1);
+            if (sanitized !== undefined) out[sanitizeText(key, 80)] = sanitized;
+        });
+        return out;
+    }
+    return sanitizeText(String(value), 500);
+}
+
+function buildPrivateAuditLogPayload({
+    action,
+    status = "success",
+    userId = null,
+    actorUserId = null,
+    targetType = null,
+    targetId = null,
+    reasonCode = null,
+    message = null,
+    metadata = null,
+}) {
+    return {
+        action: sanitizeText(action || "unknown_action", 120),
+        status: sanitizeText(status || "success", 40),
+        userId: userId ? sanitizeText(userId, 200) : null,
+        actorUserId: actorUserId ? sanitizeText(actorUserId, 200) : (userId ? sanitizeText(userId, 200) : null),
+        targetType: targetType ? sanitizeText(targetType, 80) : null,
+        targetId: targetId ? sanitizeText(targetId, 200) : null,
+        reasonCode: reasonCode ? sanitizeText(reasonCode, 120) : null,
+        message: message ? sanitizeText(message, 1000) : null,
+        metadata: sanitizeAuditMetadata(metadata),
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    };
+}
+
+function queuePrivateAuditLog(transaction, entry) {
+    const auditRef = createPrivateAuditLogRef();
+    transaction.set(auditRef, buildPrivateAuditLogPayload(entry));
+}
+
+async function writePrivateAuditLog(entry) {
+    const auditRef = createPrivateAuditLogRef();
+    await auditRef.set(buildPrivateAuditLogPayload(entry));
+}
+
+async function assertAndConsumeUserRateLimit(transaction, userId, bucket, config, metadata = null) {
+    if (!config || !userId || !bucket) return;
+
+    const rateLimitRef = getUserRateLimitRef(userId, bucket);
+    const rateLimitSnap = await transaction.get(rateLimitRef);
+    const nowMs = Date.now();
+    const minAllowedMs = nowMs - config.windowMs;
+
+    let existingEvents = [];
+    if (rateLimitSnap.exists) {
+        const rawEvents = rateLimitSnap.get("events");
+        if (Array.isArray(rawEvents)) {
+            existingEvents = rawEvents
+                .map((value) => Number(value))
+                .filter((value) => Number.isFinite(value));
+        }
+    }
+
+    const recentEvents = existingEvents
+        .filter((value) => value >= minAllowedMs)
+        .slice(-(Math.max(1, config.maxEvents) - 1));
+
+    if (recentEvents.length >= config.maxEvents) {
+        throw new HttpsError("resource-exhausted", config.userMessage || "Too many requests.");
+    }
+
+    recentEvents.push(nowMs);
+    transaction.set(rateLimitRef, {
+        events: recentEvents,
+        lastActionAt: admin.firestore.Timestamp.fromMillis(nowMs),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        metadata: sanitizeAuditMetadata(metadata),
+    }, { merge: true });
 }
 // ======================================================
 // logfilteredContentAttempt
@@ -1017,14 +1147,189 @@ exports.initializeUser = onCall(async (request) => {
             });
 
             t.set(userRef, profileUpdate, { merge: true });
+            queuePrivateAuditLog(t, {
+                action: "initialize_user",
+                status: "success",
+                userId: uid,
+                targetType: "user_profile",
+                targetId: uid,
+                metadata: {
+                    username: sanitizedUsername,
+                    updatedFields: Object.keys(profileUpdate),
+                },
+            });
         });
 
         logger.info(`Successfully initialized user ${uid} with username ${sanitizedUsername}`);
         return { success: true };
     } catch (error) {
         logger.error(`Error initializing user ${uid}:`, error);
+        await writePrivateAuditLog({
+            action: "initialize_user",
+            status: "failure",
+            userId: uid,
+            targetType: "user_profile",
+            targetId: uid,
+            reasonCode: error instanceof HttpsError ? error.code : "internal",
+            message: error.message || "Failed to initialize user.",
+            metadata: { username: sanitizedUsername },
+        });
         if (error instanceof HttpsError) throw error;
         throw new HttpsError("internal", "Failed to initialize user.");
+    }
+});
+
+
+
+// ======================================================
+// updateUserProfile
+// ======================================================
+/**
+ * Updates an existing user profile through a dedicated callable so profile edits do not reuse
+ * initializeUser.
+ */
+exports.updateUserProfile = onCall(async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Authentication required.");
+
+    const uid = request.auth.uid;
+    const data = request.data || {};
+    const hasUsername = Object.prototype.hasOwnProperty.call(data, "username");
+    const hasBio = Object.prototype.hasOwnProperty.call(data, "bio");
+    const hasProfilePictureUrl = Object.prototype.hasOwnProperty.call(data, "profilePictureUrl");
+    const hasEmail = Object.prototype.hasOwnProperty.call(data, "email");
+
+    const sanitizedUsername = hasUsername ? sanitizeUsername(data.username) : null;
+    let sanitizedBio = undefined;
+    if (hasBio) {
+        if (data.bio !== null && data.bio !== undefined && typeof data.bio !== "string") {
+            throw new HttpsError("invalid-argument", "Bio must be a string.");
+        }
+        const rawBio = data.bio == null ? "" : data.bio;
+        if (typeof rawBio === "string" && rawBio.trim().length > 90) {
+            throw new HttpsError("invalid-argument", "Bio must be 90 characters or fewer.");
+        }
+        sanitizedBio = sanitizeText(rawBio, 90);
+        assertForumTextAllowed(sanitizedBio, "Bio");
+    }
+
+    const sanitizedProfilePictureUrl = hasProfilePictureUrl
+        ? sanitizeText(typeof data.profilePictureUrl === "string" ? data.profilePictureUrl : "", 2000)
+        : undefined;
+    const sanitizedEmail = hasEmail
+        ? sanitizeText(typeof data.email === "string" ? data.email : "", 320)
+        : undefined;
+
+    const userRef = db.collection("users").doc(uid);
+    const existingUserSnap = await userRef.get();
+    if (!existingUserSnap.exists) {
+        throw new HttpsError("not-found", "User profile not found.");
+    }
+
+    const existingUserData = existingUserSnap.data() || {};
+    const currentUsername = sanitizeText(existingUserData.username || "", 80).trim() || null;
+    const usernameChanged = !!(hasUsername && sanitizedUsername && sanitizedUsername !== currentUsername);
+
+    if (usernameChanged) {
+        await assertNoBlockedContentOrThrow({
+            userId: uid,
+            submissionType: "username_update",
+            fieldName: "username",
+            text: sanitizedUsername,
+            extra: { email: sanitizedEmail || existingUserData.email || request.auth.token.email || null },
+        });
+    }
+    if (hasBio) {
+        await assertNoBlockedContentOrThrow({
+            userId: uid,
+            submissionType: "bio_update",
+            fieldName: "bio",
+            text: sanitizedBio,
+            extra: { email: sanitizedEmail || existingUserData.email || request.auth.token.email || null },
+        });
+    }
+
+    try {
+        await db.runTransaction(async (t) => {
+            const userSnap = await t.get(userRef);
+            if (!userSnap.exists) {
+                throw new HttpsError("not-found", "User profile not found.");
+            }
+
+            await assertAndConsumeUserRateLimit(t, uid, "profileUpdate", USER_RATE_LIMITS.profileUpdate, {
+                hasUsername,
+                hasBio,
+                hasProfilePictureUrl,
+                hasEmail,
+            });
+            if (usernameChanged) {
+                await assertAndConsumeUserRateLimit(t, uid, "usernameChange", USER_RATE_LIMITS.usernameChange, {
+                    username: sanitizedUsername,
+                });
+            }
+
+            const profileUpdate = {
+                updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            };
+
+            if (usernameChanged) {
+                const usernameRef = db.collection("usernames").doc(sanitizedUsername);
+                const usernameDoc = await t.get(usernameRef);
+                if (usernameDoc.exists && usernameDoc.data().uid !== uid) {
+                    throw new HttpsError("already-exists", "Username is already taken.");
+                }
+                if (currentUsername && currentUsername !== sanitizedUsername) {
+                    t.delete(db.collection("usernames").doc(currentUsername));
+                }
+                t.set(usernameRef, {
+                    uid,
+                    claimedAt: admin.firestore.FieldValue.serverTimestamp(),
+                    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+                }, { merge: true });
+                profileUpdate.username = sanitizedUsername;
+            }
+
+            if (hasBio) profileUpdate.bio = sanitizedBio;
+            if (hasProfilePictureUrl) profileUpdate.profilePictureUrl = sanitizedProfilePictureUrl || "";
+            if (hasEmail) profileUpdate.email = sanitizedEmail || request.auth.token.email || existingUserData.email || "";
+
+            t.set(userRef, profileUpdate, { merge: true });
+            queuePrivateAuditLog(t, {
+                action: "update_user_profile",
+                status: "success",
+                userId: uid,
+                targetType: "user_profile",
+                targetId: uid,
+                metadata: {
+                    updatedFields: Object.keys(profileUpdate).filter((key) => key !== "updatedAt"),
+                    usernameChanged,
+                    hasBio,
+                    hasProfilePictureUrl,
+                    hasEmail,
+                },
+            });
+        });
+
+        logger.info(`Successfully updated user profile ${uid}`);
+        return { success: true };
+    } catch (error) {
+        logger.error(`Error updating user profile ${uid}:`, error);
+        await writePrivateAuditLog({
+            action: "update_user_profile",
+            status: "failure",
+            userId: uid,
+            targetType: "user_profile",
+            targetId: uid,
+            reasonCode: error instanceof HttpsError ? error.code : "internal",
+            message: error.message || "Failed to update user profile.",
+            metadata: {
+                hasUsername,
+                hasBio,
+                hasProfilePictureUrl,
+                hasEmail,
+            },
+        });
+        if (error instanceof HttpsError) throw error;
+        throw new HttpsError("internal", "Failed to update user profile.");
     }
 });
 
@@ -4311,6 +4616,213 @@ exports.clearRemovedForumPostCoordinates = onDocumentUpdated("forumThreads/{post
     }, { merge: true });
 
     return null;
+});
+
+
+
+// ======================================================
+// Forum engagement callables — optimistic UI on the client, authoritative writes on the backend
+// ======================================================
+exports.toggleForumPostLike = onCall(async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Authentication required.");
+
+    const userId = request.auth.uid;
+    const postId = sanitizeText(request.data?.postId || "", 200).trim();
+    const shouldLike = request.data?.liked === true;
+    if (!postId) throw new HttpsError("invalid-argument", "postId is required.");
+
+    const postRef = db.collection("forumThreads").doc(postId);
+
+    try {
+        const result = await db.runTransaction(async (t) => {
+            await assertAndConsumeUserRateLimit(t, userId, "forumPostLike", USER_RATE_LIMITS.forumPostLike, {
+                postId,
+                liked: shouldLike,
+            });
+
+            const postSnap = await t.get(postRef);
+            if (!postSnap.exists) {
+                throw new HttpsError("not-found", "Forum post not found.");
+            }
+
+            const postData = postSnap.data() || {};
+            const moderationStatus = normalizeModerationStatus(postData.moderationStatus);
+            if (!isPublicForumStatus(moderationStatus)) {
+                throw new HttpsError("failed-precondition", "This post is not available for engagement.");
+            }
+
+            const likedBy = postData.likedBy || {};
+            const alreadyLiked = likedBy[userId] === true;
+            let changed = false;
+
+            if (shouldLike && !alreadyLiked) {
+                t.set(postRef, { likedBy: { [userId]: true } }, { merge: true });
+                changed = true;
+            } else if (!shouldLike && alreadyLiked) {
+                t.update(postRef, { [`likedBy.${userId}`]: admin.firestore.FieldValue.delete() });
+                changed = true;
+            }
+
+            queuePrivateAuditLog(t, {
+                action: "toggle_forum_post_like",
+                status: "success",
+                userId,
+                targetType: "forum_post",
+                targetId: postId,
+                metadata: { liked: shouldLike, changed },
+            });
+
+            return { changed };
+        });
+
+        return { success: true, liked: shouldLike, changed: result.changed === true };
+    } catch (error) {
+        await writePrivateAuditLog({
+            action: "toggle_forum_post_like",
+            status: "failure",
+            userId,
+            targetType: "forum_post",
+            targetId: postId,
+            reasonCode: error instanceof HttpsError ? error.code : "internal",
+            message: error.message || "Failed to update post like.",
+            metadata: { liked: shouldLike },
+        });
+        if (error instanceof HttpsError) throw error;
+        throw new HttpsError("internal", "Failed to update post like.");
+    }
+});
+
+exports.toggleForumCommentLike = onCall(async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Authentication required.");
+
+    const userId = request.auth.uid;
+    const threadId = sanitizeText(request.data?.threadId || "", 200).trim();
+    const commentId = sanitizeText(request.data?.commentId || "", 200).trim();
+    const shouldLike = request.data?.liked === true;
+    if (!threadId || !commentId) {
+        throw new HttpsError("invalid-argument", "threadId and commentId are required.");
+    }
+
+    const commentRef = db.collection("forumThreads").doc(threadId).collection("comments").doc(commentId);
+
+    try {
+        const result = await db.runTransaction(async (t) => {
+            await assertAndConsumeUserRateLimit(t, userId, "forumCommentLike", USER_RATE_LIMITS.forumCommentLike, {
+                threadId,
+                commentId,
+                liked: shouldLike,
+            });
+
+            const commentSnap = await t.get(commentRef);
+            if (!commentSnap.exists) {
+                throw new HttpsError("not-found", "Comment not found.");
+            }
+
+            const commentData = commentSnap.data() || {};
+            const moderationStatus = normalizeModerationStatus(commentData.moderationStatus);
+            if (!isPublicForumStatus(moderationStatus)) {
+                throw new HttpsError("failed-precondition", "This comment is not available for engagement.");
+            }
+
+            const likedBy = commentData.likedBy || {};
+            const alreadyLiked = likedBy[userId] === true;
+            let changed = false;
+
+            if (shouldLike && !alreadyLiked) {
+                t.set(commentRef, { likedBy: { [userId]: true } }, { merge: true });
+                changed = true;
+            } else if (!shouldLike && alreadyLiked) {
+                t.update(commentRef, { [`likedBy.${userId}`]: admin.firestore.FieldValue.delete() });
+                changed = true;
+            }
+
+            queuePrivateAuditLog(t, {
+                action: "toggle_forum_comment_like",
+                status: "success",
+                userId,
+                targetType: "forum_comment",
+                targetId: commentId,
+                metadata: { threadId, liked: shouldLike, changed },
+            });
+
+            return { changed };
+        });
+
+        return { success: true, liked: shouldLike, changed: result.changed === true };
+    } catch (error) {
+        await writePrivateAuditLog({
+            action: "toggle_forum_comment_like",
+            status: "failure",
+            userId,
+            targetType: "forum_comment",
+            targetId: commentId,
+            reasonCode: error instanceof HttpsError ? error.code : "internal",
+            message: error.message || "Failed to update comment like.",
+            metadata: { threadId, liked: shouldLike },
+        });
+        if (error instanceof HttpsError) throw error;
+        throw new HttpsError("internal", "Failed to update comment like.");
+    }
+});
+
+exports.recordForumPostView = onCall(async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Authentication required.");
+
+    const userId = request.auth.uid;
+    const postId = sanitizeText(request.data?.postId || "", 200).trim();
+    if (!postId) throw new HttpsError("invalid-argument", "postId is required.");
+
+    const postRef = db.collection("forumThreads").doc(postId);
+
+    try {
+        const result = await db.runTransaction(async (t) => {
+            await assertAndConsumeUserRateLimit(t, userId, "forumPostView", USER_RATE_LIMITS.forumPostView, {
+                postId,
+            });
+
+            const postSnap = await t.get(postRef);
+            if (!postSnap.exists) {
+                throw new HttpsError("not-found", "Forum post not found.");
+            }
+
+            const postData = postSnap.data() || {};
+            const moderationStatus = normalizeModerationStatus(postData.moderationStatus);
+            if (!isPublicForumStatus(moderationStatus)) {
+                return { alreadyViewed: true, changed: false };
+            }
+
+            const viewedBy = postData.viewedBy || {};
+            const alreadyViewed = viewedBy[userId] === true;
+            if (!alreadyViewed) {
+                t.set(postRef, { viewedBy: { [userId]: true } }, { merge: true });
+            }
+
+            queuePrivateAuditLog(t, {
+                action: "record_forum_post_view",
+                status: "success",
+                userId,
+                targetType: "forum_post",
+                targetId: postId,
+                metadata: { alreadyViewed, changed: !alreadyViewed },
+            });
+
+            return { alreadyViewed, changed: !alreadyViewed };
+        });
+
+        return { success: true, alreadyViewed: result.alreadyViewed === true, changed: result.changed === true };
+    } catch (error) {
+        await writePrivateAuditLog({
+            action: "record_forum_post_view",
+            status: "failure",
+            userId,
+            targetType: "forum_post",
+            targetId: postId,
+            reasonCode: error instanceof HttpsError ? error.code : "internal",
+            message: error.message || "Failed to record post view.",
+        });
+        if (error instanceof HttpsError) throw error;
+        throw new HttpsError("internal", "Failed to record post view.");
+    }
 });
 
 // ======================================================

@@ -570,19 +570,22 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
         else { p.setLikeCount(count + 1); if (p.getLikedBy() == null) p.setLikedBy(new HashMap<>()); p.getLikedBy().put(uid, true); }
         adapter.notifyDataSetChanged();
 
-        // Set up or query the Firebase layer that supplies/stores this feature's data.
-        db.collection("forumThreads").document(p.getId()).update("likedBy." + uid, liked ? FieldValue.delete() : true)
-                .addOnCompleteListener(t -> {
-                    // FIX: Ensure interaction is re-enabled only after UI is definitely back in sync.
-                    postLikeInFlight.remove(p.getId());
-                    if (!t.isSuccessful()) {
-                        // Revert on failure
-                        p.setLikeCount(count); if (liked) p.getLikedBy().put(uid, true); else p.getLikedBy().remove(uid);
-                        adapter.notifyDataSetChanged();
-                        // Give the user immediate feedback about the result of this action.
-                        if (isAdded()) Toast.makeText(getContext(), "Failed to update like status.", Toast.LENGTH_SHORT).show();
-                    }
-                });
+        firebaseManager.toggleForumPostLike(p.getId(), !liked, new FirebaseManager.ActionListener() {
+            @Override
+            public void onSuccess() {
+                postLikeInFlight.remove(p.getId());
+            }
+
+            @Override
+            public void onFailure(String errorMessage) {
+                postLikeInFlight.remove(p.getId());
+                p.setLikeCount(count); if (liked) p.getLikedBy().put(uid, true); else p.getLikedBy().remove(uid);
+                adapter.notifyDataSetChanged();
+                if (isAdded()) {
+                    Toast.makeText(getContext(), (errorMessage != null && !errorMessage.trim().isEmpty()) ? errorMessage : "Failed to update like status.", Toast.LENGTH_SHORT).show();
+                }
+            }
+        });
     }
 
     @Override public void onCommentClick(ForumPost p) { onPostClick(p); }

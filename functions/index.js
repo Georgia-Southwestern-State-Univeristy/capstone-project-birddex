@@ -48,7 +48,7 @@ const CONFIG = {
     FORUM_ARCHIVE_DAYS_MS: 7 * 24 * 60 * 60 * 1000,   // 7 days
     UNVERIFIED_USER_TTL_MS: 72 * 60 * 60 * 1000,      // 72 hours
     FIRESTORE_BATCH_SIZE: 400,  // Firestore max is 500; using 400 for safety
-    LOCATION_PRECISION: 4,      // decimal places (~11 meters)
+    LOCATION_PRECISION: 3,      // decimal places (~110 meters)
 };
 
 const PRIVATE_AUDIT_LOG_COLLECTION = "privateAuditLogs";
@@ -67,6 +67,21 @@ const USER_RATE_LIMITS = {
         windowMs: 60 * 1000,
         maxEvents: 240,
         userMessage: "You're opening posts too quickly. Please slow down.",
+    },
+    followToggle: {
+        windowMs: 60 * 1000,
+        maxEvents: 40,
+        userMessage: "You're following and unfollowing too quickly. Please slow down.",
+    },
+    identifyBird: {
+        windowMs: 60 * 1000,
+        maxEvents: 25,
+        userMessage: "You're identifying birds too quickly. Please wait a moment and try again.",
+    },
+    bugReport: {
+        windowMs: 60 * 60 * 1000,
+        maxEvents: 5,
+        userMessage: "You've submitted too many bug reports recently. Please try again later.",
     },
     profileUpdate: {
         windowMs: 10 * 60 * 1000,
@@ -728,25 +743,78 @@ async function assertNoBlockedContentOrThrow({
 }
 
 // ======================================================
-// HELPER: Location (FIXED race condition — always uses merge)
+// HELPER: Location (backend-owned + privacy-rounded)
 // ======================================================
-async function getOrCreateLocation(latitude, longitude, localityName, db) {
-    const fixedLat = latitude.toFixed(CONFIG.LOCATION_PRECISION);
-    const fixedLng = longitude.toFixed(CONFIG.LOCATION_PRECISION);
-    const locationId = `LOC_${fixedLat}_${fixedLng}`;
-    const locationRef = db.collection("locations").doc(locationId);
+function roundCoordinateForStorage(value, precision = CONFIG.LOCATION_PRECISION) {
+    const num = Number(value);
+    if (!Number.isFinite(num)) return null;
+    return Number(num.toFixed(precision));
+}
 
-    const newLocationData = {
-        latitude: latitude,
-        longitude: longitude,
-        country: "US",
-        state: "GA",
-        locality: localityName || `Lat: ${fixedLat}, Lng: ${fixedLng}`
-    };
+function buildRoundedLocationId(latitude, longitude) {
+    const fixedLat = Number(latitude).toFixed(CONFIG.LOCATION_PRECISION);
+    const fixedLng = Number(longitude).toFixed(CONFIG.LOCATION_PRECISION);
+    return `LOC_${fixedLat}_${fixedLng}`;
+}
 
-    // FIXED: Always use set({ merge: true }) to prevent race condition duplicates
-    await locationRef.set(newLocationData, { merge: true });
+async function getOrCreateLocation(latitude, longitude, localityName, db, extra = {}) {
+    const roundedLat = roundCoordinateForStorage(latitude);
+    const roundedLng = roundCoordinateForStorage(longitude);
+    const safeCountry = typeof extra.country === "string" && extra.country.trim() ? sanitizeText(extra.country, 80) : "US";
+    const safeState = typeof extra.state === "string" && extra.state.trim() ? sanitizeText(extra.state, 80) : "GA";
+    const safeLocality = typeof localityName === "string" && localityName.trim()
+        ? sanitizeText(localityName, 120)
+        : null;
+
+    let locationId;
+    let locationData;
+
+    if (roundedLat !== null && roundedLng !== null) {
+        locationId = buildRoundedLocationId(roundedLat, roundedLng);
+        const fixedLat = roundedLat.toFixed(CONFIG.LOCATION_PRECISION);
+        const fixedLng = roundedLng.toFixed(CONFIG.LOCATION_PRECISION);
+        locationData = {
+            id: locationId,
+            latitude: roundedLat,
+            longitude: roundedLng,
+            country: safeCountry,
+            state: safeState,
+            locality: safeLocality || `Lat: ${fixedLat}, Lng: ${fixedLng}`,
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            createdBy: extra.userId ? sanitizeText(extra.userId, 200) : null,
+        };
+    } else {
+        const textKey = crypto.createHash("sha1")
+            .update(`${safeCountry}|${safeState}|${safeLocality || "unknown"}`)
+            .digest("hex")
+            .slice(0, 24);
+        locationId = `LOC_TEXT_${textKey}`;
+        locationData = {
+            id: locationId,
+            latitude: null,
+            longitude: null,
+            country: safeCountry,
+            state: safeState,
+            locality: safeLocality || "Unknown locality",
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            createdBy: extra.userId ? sanitizeText(extra.userId, 200) : null,
+        };
+    }
+
+    await db.collection("locations").doc(locationId).set(locationData, { merge: true });
     return locationId;
+}
+
+async function commitBatchOperations(operations, chunkSize = CONFIG.FIRESTORE_BATCH_SIZE) {
+    if (!Array.isArray(operations) || operations.length === 0) return;
+
+    for (let i = 0; i < operations.length; i += chunkSize) {
+        const batch = db.batch();
+        for (const op of operations.slice(i, i + chunkSize)) {
+            op(batch);
+        }
+        await batch.commit();
+    }
 }
 
 // ======================================================
@@ -1332,6 +1400,31 @@ exports.updateUserProfile = onCall(async (request) => {
         throw new HttpsError("internal", "Failed to update user profile.");
     }
 });
+
+/**
+ * Export: Backend-owned location creation/lookup so clients cannot write arbitrary location docs.
+ */
+exports.createOrGetLocation = onCall(async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
+
+    const userId = request.auth.uid;
+    const rawLatitude = request.data?.latitude;
+    const rawLongitude = request.data?.longitude;
+    const latitude = rawLatitude === null || rawLatitude === undefined || rawLatitude === "" ? null : Number(rawLatitude);
+    const longitude = rawLongitude === null || rawLongitude === undefined || rawLongitude === "" ? null : Number(rawLongitude);
+    const localityName = typeof request.data?.localityName === "string" ? request.data.localityName : "";
+    const state = typeof request.data?.state === "string" ? request.data.state : "";
+    const country = typeof request.data?.country === "string" ? request.data.country : "";
+
+    const locationId = await getOrCreateLocation(latitude, longitude, localityName, db, {
+        state,
+        country,
+        userId,
+    });
+
+    return { success: true, locationId };
+});
+
 
 // ======================================================
 // createUserDocument — on Auth signup
@@ -2617,7 +2710,13 @@ exports.identifyBird = onCall({ secrets: [OPENAI_API_KEY, BIRDDEX_MODEL_API_KEY]
             throw new HttpsError("aborted", "Identification in progress. Please retry in a moment.");
         }
 
-        const locationId = await getOrCreateLocation(latitude, longitude, localityName, db);
+        await db.runTransaction(async (t) => {
+            await assertAndConsumeUserRateLimit(t, userId, "identifyBird", USER_RATE_LIMITS.identifyBird, {
+                idempotencyKey,
+            });
+        });
+
+        const locationId = await getOrCreateLocation(latitude, longitude, localityName, db, { userId });
         const userLocationContext = await getLocationContext(locationId);
         const modelPredictions = await callBirdModelApi(image);
         const topBirdMatches = await Promise.all(
@@ -3746,144 +3845,168 @@ exports.getBirdDetailsAndFacts = onCall({ secrets: [OPENAI_API_KEY], timeoutSeco
 
 
 // ======================================================
-// cleanupUserData — on Auth delete (v1)
-// FIXED: Parallel processing of forum threads to prevent timeout
+// performDeletedUserCleanup — unified auth delete cleanup pipeline
 // ======================================================
-/**
- * Main backend logic block for this Firebase Functions file.
- * This code reads/writes Firestore documents, so it is part of the persistent backend state
- * for the app.
- */
-/**
- * Export: Scheduled/v1 cleanup job for old user-related temporary data.
- */
-exports.cleanupUserData = functions.runWith({
-    timeoutSeconds: 300,
-    memory: "512MB",
-}).auth.user().onDelete(async (user) => {
+async function performDeletedUserCleanup(user) {
     const uid = user.uid;
-    logger.info(`Starting cleanup for user: ${uid}`);
+    logger.info(`Starting unified deletion cleanup for user: ${uid}`);
 
-    try {
-        // This is where the function touches Firestore documents/collections for the requested action.
-        const userRef = admin.firestore().collection("users").doc(uid);
-        const userDoc = await userRef.get();
+    const userRef = db.collection("users").doc(uid);
+    const archiveRef = db.collection("usersdeletedAccounts").doc(uid);
+    const processedRef = db.collection("processedEvents").doc(`AUTH_DELETE_${uid}`);
 
-        const threadsSnap = await admin.firestore().collection("forumThreads").where("userId", "==", uid).get();
-        logger.info(`Found ${threadsSnap.size} forum threads to archive for user ${uid}`);
+    let userDocData = null;
 
-        // FIXED: Process threads in parallel with Promise.all() instead of sequentially
-        await Promise.all(threadsSnap.docs.map(async (threadDoc) => {
-            const threadData = threadDoc.data();
-            const threadId = threadDoc.id;
+    await db.runTransaction(async (t) => {
+        const [processedSnap, archiveSnap, userSnap] = await Promise.all([
+            t.get(processedRef),
+            t.get(archiveRef),
+            t.get(userRef),
+        ]);
 
-            const commentsSnap = await threadDoc.ref.collection("comments").get();
-            const comments = commentsSnap.docs.map(c => ({ id: c.id, ...c.data() }));
-
-            await admin.firestore().collection("deletedforum_backlog").doc(threadId).set({
-                ...threadData,
-                archivedAt: admin.firestore.FieldValue.serverTimestamp(),
-                originalThreadId: threadId,
-                archivedComments: comments
-            });
-
-            const postImageUrl = threadData.birdImageUrl || threadData.imageUrl;
-            if (postImageUrl && postImageUrl.includes("forum_post_images")) {
-                try {
-                    const decodedUrl = decodeURIComponent(postImageUrl);
-                    const pathStart = decodedUrl.indexOf("/o/") + 3;
-                    const pathEnd = decodedUrl.indexOf("?");
-                    const oldPath = decodedUrl.substring(pathStart, pathEnd !== -1 ? pathEnd : decodedUrl.length);
-                    const newPath = `archive/forum_post_images/${oldPath.split("/").pop()}`;
-
-                    const bucket = admin.storage().bucket();
-                    const file = bucket.file(oldPath);
-                    const [exists] = await file.exists();
-                    if (exists) {
-                        await file.copy(bucket.file(newPath));
-                        await file.delete();
-                    }
-                } catch (e) {
-                    logger.error(`Image archive failed for post ${threadId}:`, e);
-                }
-            }
-
-            const threadBatch = admin.firestore().batch();
-            commentsSnap.forEach(c => threadBatch.delete(c.ref));
-            threadBatch.delete(threadDoc.ref);
-            await threadBatch.commit();
-        }));
-
-        if (userDoc.exists) {
-            const userData = userDoc.data();
-            const pfpUrl = userData.profilePictureUrl;
-
-            if (pfpUrl && pfpUrl.includes("firebasestorage.googleapis.com")) {
-                try {
-                    const decodedUrl = decodeURIComponent(pfpUrl);
-                    const filePath = decodedUrl.substring(decodedUrl.indexOf("/o/") + 3, decodedUrl.indexOf("?"));
-                    await admin.storage().bucket().file(filePath).delete();
-                } catch (e) { logger.error("PFP storage deletion failed", e); }
-            }
-
-            await userRef.update({
-                username: "Deleted User",
-                email: "deleted@user.com",
-                profilePictureUrl: "",
-                isDeleted: true,
-                followerCount: 0,
-                followingCount: 0,
-                deletedAt: admin.firestore.FieldValue.serverTimestamp()
-            });
+        if (processedSnap.exists || archiveSnap.get("cleanupStatus") === "complete") {
+            userDocData = userSnap.exists ? (userSnap.data() || null) : null;
+            return;
         }
 
-        // Parallel following/follower cleanup
+        userDocData = userSnap.exists ? (userSnap.data() || {}) : null;
+
+        t.set(processedRef, {
+            uid,
+            processedAt: admin.firestore.FieldValue.serverTimestamp(),
+            type: "auth_delete_cleanup_started",
+        });
+
+        t.set(archiveRef, {
+            ...(userDocData || {}),
+            archivedAt: admin.firestore.FieldValue.serverTimestamp(),
+            deletionType: "Automatic Auth Trigger",
+            cleanupStatus: "running",
+        }, { merge: true });
+    });
+
+    const bulkWriter = db.bulkWriter();
+    bulkWriter.onWriteError((error) => {
+        logger.error("performDeletedUserCleanup bulkWriter error", error);
+        return false;
+    });
+
+    try {
+        if (userDocData && userDocData.username) {
+            await db.collection("usernames").doc(userDocData.username).delete().catch(() => null);
+        }
+
+        const threadsSnap = await db.collection("forumThreads").where("userId", "==", uid).get();
+        for (const threadDoc of threadsSnap.docs) {
+            const threadData = threadDoc.data() || {};
+            const threadId = threadDoc.id;
+            const commentsSnap = await threadDoc.ref.collection("comments").get();
+            const archivedImageUrl = await archiveForumPostImageIfNeeded(
+                uid,
+                threadId,
+                typeof threadData.birdImageUrl === "string" ? threadData.birdImageUrl : ""
+            );
+
+            bulkWriter.set(db.collection("deletedforum_backlog").doc(`USERDEL_POST_${threadId}`), {
+                type: "post",
+                originalId: threadId,
+                data: {
+                    ...threadData,
+                    birdImageUrl: archivedImageUrl,
+                },
+                archivedComments: commentsSnap.docs.map(c => ({ id: c.id, ...c.data() })),
+                deletedBy: uid,
+                deletedAt: admin.firestore.FieldValue.serverTimestamp(),
+                deletionReason: "auth_delete",
+            });
+
+            commentsSnap.docs.forEach(commentDoc => bulkWriter.delete(commentDoc.ref));
+            bulkWriter.delete(threadDoc.ref);
+        }
+
+        const userSubcollections = [
+            "collectionSlot",
+            "userBirdImage",
+            "collectionMeta",
+            "savedPosts",
+            "trackedBirds",
+            "settings",
+            "following",
+            "followers",
+        ];
+
+        for (const subcollection of userSubcollections) {
+            const snap = await userRef.collection(subcollection).get();
+            snap.docs.forEach(docSnap => bulkWriter.delete(docSnap.ref));
+        }
+
         const [followingSnap, followersSnap] = await Promise.all([
             userRef.collection("following").get(),
-            userRef.collection("followers").get()
+            userRef.collection("followers").get(),
         ]);
 
-        await Promise.all([
-            ...followingSnap.docs.map(async (doc) => {
-                const targetId = doc.id;
-                const batch = admin.firestore().batch();
-                batch.delete(admin.firestore().collection("users").doc(targetId).collection("followers").doc(uid));
-                batch.update(admin.firestore().collection("users").doc(targetId), { followerCount: admin.firestore.FieldValue.increment(-1) });
-                batch.delete(doc.ref);
-                return batch.commit();
-            }),
-            ...followersSnap.docs.map(async (doc) => {
-                const followerId = doc.id;
-                const batch = admin.firestore().batch();
-                batch.delete(admin.firestore().collection("users").doc(followerId).collection("following").doc(uid));
-                batch.update(admin.firestore().collection("users").doc(followerId), { followingCount: admin.firestore.FieldValue.increment(-1) });
-                batch.delete(doc.ref);
-                return batch.commit();
-            })
-        ]);
+        for (const docSnap of followingSnap.docs) {
+            const targetId = docSnap.id;
+            const targetRef = db.collection("users").doc(targetId);
+            bulkWriter.delete(targetRef.collection("followers").doc(uid));
+            bulkWriter.set(targetRef, { followerCount: admin.firestore.FieldValue.increment(-1) }, { merge: true });
+        }
 
-        const personalCols = ["userBirds", "media", "birdCards"];
-        await Promise.all(personalCols.map(async (col) => {
-            const snap = await admin.firestore().collection(col).where("userId", "==", uid).get();
-            await Promise.all(snap.docs.map(doc => doc.ref.delete()));
-        }));
+        for (const docSnap of followersSnap.docs) {
+            const followerId = docSnap.id;
+            const followerRef = db.collection("users").doc(followerId);
+            bulkWriter.delete(followerRef.collection("following").doc(uid));
+            bulkWriter.set(followerRef, { followingCount: admin.firestore.FieldValue.increment(-1) }, { merge: true });
+        }
 
-        try {
-            await admin.storage().bucket().deleteFiles({ prefix: `userCollectionImages/${uid}/` });
-        } catch (e) { logger.error(`Storage wipe failed for ${uid}`, e); }
+        const personalRootCollections = ["userBirds", "media", "birdCards"];
+        for (const col of personalRootCollections) {
+            const snap = await db.collection(col).where("userId", "==", uid).get();
+            snap.docs.forEach(docSnap => bulkWriter.delete(docSnap.ref));
+        }
 
-        const sightingsSnap = await admin.firestore().collection("userBirdSightings").where("userId", "==", uid).get();
-        await Promise.all(sightingsSnap.docs.map(doc => doc.ref.update({
+        const sightingsSnap = await db.collection("userBirdSightings").where("userId", "==", uid).get();
+        sightingsSnap.docs.forEach(docSnap => bulkWriter.set(docSnap.ref, {
             username: "Deleted User",
             imageUrl: "",
-            isAnonymized: true
-        })));
+            isAnonymized: true,
+        }, { merge: true }));
 
-        logger.info(`Successfully archived and cleaned up deleted user ${uid}`);
-    } catch (err) {
-        logger.error(`Cleanup failed for user ${uid}:`, err);
+        if (userDocData && typeof userDocData.profilePictureUrl === "string" && userDocData.profilePictureUrl.includes("firebasestorage.googleapis.com")) {
+            try {
+                const decodedUrl = decodeURIComponent(userDocData.profilePictureUrl);
+                const filePath = decodedUrl.substring(decodedUrl.indexOf("/o/") + 3, decodedUrl.indexOf("?"));
+                await admin.storage().bucket().file(filePath).delete().catch(() => null);
+            } catch (e) {
+                logger.error("PFP storage deletion failed", e);
+            }
+        }
+
+        await Promise.all([
+            admin.storage().bucket().deleteFiles({ prefix: `userCollectionImages/${uid}/` }).catch(() => null),
+            admin.storage().bucket().deleteFiles({ prefix: `identificationImages/${uid}/` }).catch(() => null),
+            admin.storage().bucket().deleteFiles({ prefix: `user_images/${uid}/` }).catch(() => null),
+        ]);
+
+        bulkWriter.delete(userRef);
+        await bulkWriter.close();
+
+        await archiveRef.set({
+            cleanupStatus: "complete",
+            cleanupCompletedAt: admin.firestore.FieldValue.serverTimestamp(),
+        }, { merge: true });
+
+        logger.info(`Successfully cleaned up deleted user ${uid}`);
+    } catch (error) {
+        logger.error(`Unified cleanup failed for user ${uid}:`, error);
+        await archiveRef.set({
+            cleanupStatus: "failed",
+            cleanupError: sanitizeText(error?.message || "cleanup_failed", 500),
+            cleanupFailedAt: admin.firestore.FieldValue.serverTimestamp(),
+        }, { merge: true }).catch(() => null);
+        throw error;
     }
-});
+}
 
 // ======================================================
 // onCollectionSlotUpdatedForImageDeletion
@@ -4825,6 +4948,49 @@ exports.recordForumPostView = onCall(async (request) => {
     }
 });
 
+/**
+ * Export: Backend-owned bug report intake with server-side rate limiting.
+ */
+exports.submitBugReport = onCall(async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
+
+    const userId = request.auth.uid;
+    const subject = sanitizeText(String(request.data?.subject || ""), 160).trim();
+    const description = sanitizeText(String(request.data?.description || ""), 4000).trim();
+    const contactEmail = sanitizeText(String(request.data?.contactEmail || ""), 200).trim() || null;
+
+    if (!subject || !description) {
+        throw new HttpsError("invalid-argument", "Subject and description are required.");
+    }
+
+    const reportRef = db.collection("bug_reports").doc();
+
+    try {
+        await db.runTransaction(async (t) => {
+            await assertAndConsumeUserRateLimit(t, userId, "bugReport", USER_RATE_LIMITS.bugReport, {
+                subject,
+            });
+
+            t.set(reportRef, {
+                subject,
+                description,
+                contactEmail,
+                deviceModel: sanitizeText(String(request.data?.deviceModel || ""), 120) || null,
+                androidVersion: sanitizeText(String(request.data?.androidVersion || ""), 80) || null,
+                userId,
+                timestamp: admin.firestore.FieldValue.serverTimestamp(),
+                source: "callable",
+            });
+        });
+
+        return { success: true, reportId: reportRef.id };
+    } catch (error) {
+        if (error instanceof HttpsError) throw error;
+        throw new HttpsError("internal", "Failed to submit bug report.");
+    }
+});
+
+
 // ======================================================
 // IDEMPOTENT Forum Aggregates (Recalculation triggers)
 // ======================================================
@@ -5269,10 +5435,9 @@ exports.onUserProfileUpdated = onDocumentUpdated({
 
 // ======================================================
 // onUserAuthDeleted — automatic auth trigger
-// FIX #8: Both cleanupUserData (v1) and onUserAuthDeleted (v2) fire on auth.user().onDelete
-// concurrently.  They both race to archive + delete the same users/{uid} doc.
-// Fix: (a) Use a WriteBatch so archive-set and user-delete are atomic.
-//      (b) Check usersdeletedAccounts first — if already archived, skip silently.
+// Unified delete pipeline: this is now the single auth-delete entry point.
+// All cleanup, archival, subcollection deletion, and storage cleanup run through
+// performDeletedUserCleanup(...) so account removal is idempotent and easier to audit.
 // ======================================================
 /**
  * Main backend logic block for this Firebase Functions file.
@@ -5283,33 +5448,8 @@ exports.onUserProfileUpdated = onDocumentUpdated({
  * Export: Auth cleanup trigger that removes/archives associated app data when the auth record is deleted.
  */
 exports.onUserAuthDeleted = auth.user().onDelete(async (user) => {
-    const uid = user.uid;
-    // This is where the function touches Firestore documents/collections for the requested action.
-    const userRef = db.collection("users").doc(uid);
-    const archiveRef = db.collection("usersdeletedAccounts").doc(uid);
     try {
-        // Idempotency: if already archived (by cleanupUserData or a prior retry), skip.
-        const [userDoc, archiveDoc] = await Promise.all([userRef.get(), archiveRef.get()]);
-        if (archiveDoc.exists) {
-            logger.info(`onUserAuthDeleted: UID ${uid} already archived. Skipping.`);
-            return;
-        }
-        if (userDoc.exists) {
-            // Atomic: write archive record AND delete source doc in one batch.
-            const batch = db.batch();
-            batch.set(archiveRef, {
-                ...userDoc.data(),
-                archivedAt: admin.firestore.FieldValue.serverTimestamp(),
-                deletionType: "Automatic Auth Trigger (Manual or App Deletion)"
-            });
-            batch.delete(userRef);
-            const deletedUsername = userDoc.data().username;
-                if (deletedUsername) {
-                batch.delete(db.collection("usernames").doc(deletedUsername));
-                }
-            await batch.commit();
-            logger.info(`Automatically archived and cleaned up Firestore for UID: ${uid}`);
-        }
+        await performDeletedUserCleanup(user);
     } catch (error) {
         logger.error("Error in onUserAuthDeleted trigger:", error);
     }
@@ -5333,7 +5473,7 @@ exports.toggleFollow = onCall(async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Auth required.");
 
     const followerId = request.auth.uid;
-    const { targetUserId, action } = request.data;
+    const { targetUserId, action } = request.data || {};
 
     if (!targetUserId || typeof targetUserId !== "string") {
         throw new HttpsError("invalid-argument", "targetUserId is required.");
@@ -5345,29 +5485,46 @@ exports.toggleFollow = onCall(async (request) => {
         throw new HttpsError("invalid-argument", "Cannot follow yourself.");
     }
 
-    // This is where the function touches Firestore documents/collections for the requested action.
     const followerRef = db.collection("users").doc(followerId);
     const targetRef = db.collection("users").doc(targetUserId);
     const followingDocRef = followerRef.collection("following").doc(targetUserId);
     const followerDocRef = targetRef.collection("followers").doc(followerId);
 
-    await db.runTransaction(async (t) => {
-        const followingDoc = await t.get(followingDocRef);
+    const result = await db.runTransaction(async (t) => {
+        await assertAndConsumeUserRateLimit(t, followerId, "followToggle", USER_RATE_LIMITS.followToggle, {
+            targetUserId,
+            action,
+        });
 
+        const [followingDoc, followerSnap, targetSnap] = await Promise.all([
+            t.get(followingDocRef),
+            t.get(followerRef),
+            t.get(targetRef),
+        ]);
+
+        if (!followerSnap.exists || !targetSnap.exists) {
+            throw new HttpsError("not-found", "User profile not found.");
+        }
+
+        let changed = false;
         if (action === "follow" && !followingDoc.exists) {
             t.set(followingDocRef, { timestamp: admin.firestore.FieldValue.serverTimestamp() });
             t.set(followerDocRef, { timestamp: admin.firestore.FieldValue.serverTimestamp() });
             t.update(followerRef, { followingCount: admin.firestore.FieldValue.increment(1) });
             t.update(targetRef, { followerCount: admin.firestore.FieldValue.increment(1) });
+            changed = true;
         } else if (action === "unfollow" && followingDoc.exists) {
             t.delete(followingDocRef);
             t.delete(followerDocRef);
             t.update(followerRef, { followingCount: admin.firestore.FieldValue.increment(-1) });
             t.update(targetRef, { followerCount: admin.firestore.FieldValue.increment(-1) });
+            changed = true;
         }
+
+        return { success: true, action, following: action === "follow", changed };
     });
 
-    return syncResponse;
+    return result;
 });
 
 // ======================================================
@@ -5431,7 +5588,12 @@ exports.submitReport = onCall(async (request) => {
             ]);
 
             if (existingReportSnap.exists) {
-                throw new HttpsError("already-exists", "You already reported this.");
+                return {
+                    contentDecision: null,
+                    uniqueReporterCount: existingReportSnap.get("cachedUniqueReporterCount") || null,
+                    penaltySummary: null,
+                    alreadyReported: true,
+                };
             }
 
             if (!freshTargetSnap.exists) {
@@ -5553,6 +5715,7 @@ exports.submitReport = onCall(async (request) => {
 
         return {
             success: true,
+            alreadyReported: result.alreadyReported === true,
             moderationStatus: result.contentDecision || null,
             uniqueReporterCount: result.uniqueReporterCount || null,
             penaltyType: result.penaltySummary?.penaltyType || null,
@@ -6654,8 +6817,8 @@ exports.recordBirdSighting = onCall(async (request) => {
                 commonName: commonName || "",
                 userBirdId: userBirdId || "",
                 timestamp: new Date(sightingTimestamp),
-                latitude: typeof latitude === "number" ? latitude : 0.0,
-                longitude: typeof longitude === "number" ? longitude : 0.0,
+                latitude: roundCoordinateForStorage(latitude),
+                longitude: roundCoordinateForStorage(longitude),
                 state: state || "",
                 locality: locality || "",
                 country: country || "US",
@@ -7927,6 +8090,10 @@ exports.createForumPost = onCall(async (request) => {
         await db.runTransaction(async (t) => {
             const existing = await t.get(postRef);
             if (existing.exists) {
+                const existingData = existing.data() || {};
+                if (existingData.userId === userId) {
+                    return;
+                }
                 throw new HttpsError("already-exists", "That post already exists.");
             }
 
@@ -8026,6 +8193,10 @@ exports.createForumComment = onCall(async (request) => {
         throw new HttpsError("failed-precondition", "That post is no longer available for comments.");
     }
     if (existingCommentSnap.exists) {
+        const existingCommentData = existingCommentSnap.data() || {};
+        if (existingCommentData.userId === userId) {
+            return;
+        }
         throw new HttpsError("already-exists", "That comment already exists.");
     }
 
@@ -8235,9 +8406,13 @@ exports.deleteForumPost = onCall(async (request) => {
     }
 
     const postRef = db.collection("forumThreads").doc(postId);
+    const eventRef = db.collection("processedEvents").doc(`DELETE_POST_${postId}`);
 
     try {
-        const postSnap = await postRef.get();
+        const [processedSnap, postSnap] = await Promise.all([eventRef.get(), postRef.get()]);
+        if (processedSnap.exists) {
+            return processedSnap.data()?.result || { success: true, postId, deletedCommentCount: 0, alreadyProcessed: true };
+        }
         if (!postSnap.exists) {
             throw new HttpsError("not-found", "Post not found.");
         }
@@ -8254,20 +8429,22 @@ exports.deleteForumPost = onCall(async (request) => {
             typeof postData.birdImageUrl === "string" ? postData.birdImageUrl : ""
         );
 
-        const batch = db.batch();
+        const operations = [];
         for (const commentDoc of commentsSnap.docs) {
-            batch.set(db.collection("deletedforum_backlog").doc(), {
+            const archiveRef = db.collection("deletedforum_backlog").doc(`POSTDEL_COMMENT_${postId}_${commentDoc.id}`);
+            const commentData = commentDoc.data();
+            operations.push((batch) => batch.set(archiveRef, {
                 type: "comment_archived_with_post",
                 originalId: commentDoc.id,
                 postId,
-                data: commentDoc.data(),
+                data: commentData,
                 deletedBy: userId,
                 deletedAt: admin.firestore.FieldValue.serverTimestamp(),
-            });
-            batch.delete(commentDoc.ref);
+            }));
+            operations.push((batch) => batch.delete(commentDoc.ref));
         }
 
-        batch.set(db.collection("deletedforum_backlog").doc(), {
+        operations.push((batch) => batch.set(db.collection("deletedforum_backlog").doc(`POSTDEL_${postId}`), {
             type: "post",
             originalId: postId,
             data: {
@@ -8276,13 +8453,16 @@ exports.deleteForumPost = onCall(async (request) => {
             },
             deletedBy: userId,
             deletedAt: admin.firestore.FieldValue.serverTimestamp(),
-        });
-        batch.delete(postRef);
+        }));
+        operations.push((batch) => batch.delete(postRef));
 
-        await batch.commit();
+        await commitBatchOperations(operations);
+
+        const result = { success: true, postId, deletedCommentCount: commentsSnap.size };
+        await eventRef.set({ result, processedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
 
         logger.info(`deleteForumPost: deleted post ${postId} for user ${userId}`);
-        return { success: true, postId, deletedCommentCount: commentsSnap.size };
+        return result;
     } catch (error) {
         logger.error("deleteForumPost failed:", error);
         if (error instanceof HttpsError) throw error;
@@ -8313,9 +8493,13 @@ exports.deleteForumComment = onCall(async (request) => {
 
     const threadRef = db.collection("forumThreads").doc(threadId);
     const commentRef = threadRef.collection("comments").doc(commentId);
+    const eventRef = db.collection("processedEvents").doc(`DELETE_COMMENT_${threadId}_${commentId}`);
 
     try {
-        const commentSnap = await commentRef.get();
+        const [processedSnap, commentSnap] = await Promise.all([eventRef.get(), commentRef.get()]);
+        if (processedSnap.exists) {
+            return processedSnap.data()?.result || { success: true, commentId, deletedReplyCount: 0, alreadyProcessed: true };
+        }
         if (!commentSnap.exists) {
             throw new HttpsError("not-found", "Comment not found.");
         }
@@ -8326,7 +8510,7 @@ exports.deleteForumComment = onCall(async (request) => {
         }
 
         const isReply = !!commentData.parentCommentId;
-        const batch = db.batch();
+        const operations = [];
         let deletedReplyCount = 0;
 
         if (!isReply) {
@@ -8335,40 +8519,43 @@ exports.deleteForumComment = onCall(async (request) => {
                 .get();
 
             for (const replyDoc of repliesSnap.docs) {
-                batch.set(db.collection("deletedforum_backlog").doc(), {
+                operations.push((batch) => batch.set(db.collection("deletedforum_backlog").doc(`COMMENTDEL_REPLY_${threadId}_${replyDoc.id}`), {
                     type: "comment_reply",
                     originalId: replyDoc.id,
                     data: replyDoc.data(),
                     deletedBy: userId,
                     deletedAt: admin.firestore.FieldValue.serverTimestamp(),
-                });
-                batch.delete(replyDoc.ref);
+                }));
+                operations.push((batch) => batch.delete(replyDoc.ref));
                 deletedReplyCount += 1;
             }
 
-            batch.set(db.collection("deletedforum_backlog").doc(), {
+            operations.push((batch) => batch.set(db.collection("deletedforum_backlog").doc(`COMMENTDEL_${threadId}_${commentId}`), {
                 type: "comment",
                 originalId: commentId,
                 data: commentData,
                 deletedBy: userId,
                 deletedAt: admin.firestore.FieldValue.serverTimestamp(),
-            });
-            batch.delete(commentRef);
+            }));
+            operations.push((batch) => batch.delete(commentRef));
         } else {
-            batch.set(db.collection("deletedforum_backlog").doc(), {
+            operations.push((batch) => batch.set(db.collection("deletedforum_backlog").doc(`REPLYDEL_${threadId}_${commentId}`), {
                 type: "reply",
                 originalId: commentId,
                 data: commentData,
                 deletedBy: userId,
                 deletedAt: admin.firestore.FieldValue.serverTimestamp(),
-            });
-            batch.delete(commentRef);
+            }));
+            operations.push((batch) => batch.delete(commentRef));
         }
 
-        await batch.commit();
+        await commitBatchOperations(operations);
+
+        const result = { success: true, commentId, deletedReplyCount };
+        await eventRef.set({ result, processedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
 
         logger.info(`deleteForumComment: deleted comment ${commentId} in thread ${threadId} for user ${userId}`);
-        return { success: true, commentId, deletedReplyCount };
+        return result;
     } catch (error) {
         logger.error("deleteForumComment failed:", error);
         if (error instanceof HttpsError) throw error;

@@ -225,6 +225,20 @@ public class CardMakerActivity extends AppCompatActivity {
      * User-facing feedback is shown here so the user knows whether the action succeeded, failed,
      * or needs attention.
      */
+    private String getOrCreateSaveOperationId() {
+        if (viewModel.saveOperationId == null || viewModel.saveOperationId.trim().isEmpty()) {
+            viewModel.saveOperationId = UUID.randomUUID().toString();
+        }
+        return viewModel.saveOperationId;
+    }
+
+    private String getOrCreatePendingUploadPath(String userId) {
+        if (viewModel.pendingUploadPath == null || viewModel.pendingUploadPath.trim().isEmpty()) {
+            viewModel.pendingUploadPath = "userCollectionImages/" + userId + "/SAVE_" + getOrCreateSaveOperationId() + ".jpg";
+        }
+        return viewModel.pendingUploadPath;
+    }
+
     private void processAndSaveBirdDiscovery(Uri imageUriToSave) {
         // Kick off an asynchronous one-time read; the callbacks below decide how the UI should react.
         if (viewModel.isSaveInProgress.get() || viewModel.isSaveFinished.get()) {
@@ -245,14 +259,34 @@ public class CardMakerActivity extends AppCompatActivity {
         Toast.makeText(this, "Saving to collection...", Toast.LENGTH_SHORT).show();
 
         String userId   = user.getUid();
-        String fileName = "userCollectionImages/" + userId + "/" + UUID.randomUUID() + ".jpg";
+        String fileName = getOrCreatePendingUploadPath(userId);
         StorageReference storageRef = FirebaseStorage.getInstance().getReference().child(fileName);
 
         storageRef.putFile(imageUriToSave)
                 .addOnSuccessListener(ts -> storageRef.getDownloadUrl()
                         .addOnSuccessListener(uri -> {
                             if (viewModel.isSaveFinished.get()) return;
-                            storeBirdDiscoveryAtomic(uri.toString());
+                            final String resolvedImageUrl = uri.toString();
+                            final Double latitudeForSave = currentLatitude;
+                            final Double longitudeForSave = currentLongitude;
+
+                            firebaseManager.createOrGetLocation(
+                                    latitudeForSave,
+                                    longitudeForSave,
+                                    currentLocality,
+                                    currentState,
+                                    currentCountry,
+                                    new FirebaseManager.LocationIdListener() {
+                                        @Override public void onSuccess(String locationId) {
+                                            if (viewModel.isSaveFinished.get()) return;
+                                            storeBirdDiscoveryAtomic(resolvedImageUrl, locationId);
+                                        }
+
+                                        @Override public void onFailure(String errorMessage) {
+                                            handleSaveFailure(errorMessage, null);
+                                        }
+                                    }
+                            );
                         })
                         .addOnFailureListener(e -> handleSaveFailure("Failed to save collection image link.", e)))
                 .addOnFailureListener(e -> handleSaveFailure("Failed to upload image to your collection.", e));
@@ -271,20 +305,19 @@ public class CardMakerActivity extends AppCompatActivity {
      * Location values are handled here, so this is part of the logic that decides what area/bird
      * sightings the user sees.
      */
-    private void storeBirdDiscoveryAtomic(String originalImageUrl) {
+    private void storeBirdDiscoveryAtomic(String originalImageUrl, @NonNull String locationId) {
         FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
         if (user == null) { handleSaveFailure("Error: No user logged in.", null); return; }
 
         String userId              = user.getUid();
         // Set up or query the Firebase layer that supplies/stores this feature's data.
         FirebaseFirestore db       = FirebaseFirestore.getInstance();
-        String userBirdId          = UUID.randomUUID().toString();
-        String userBirdImageId     = UUID.randomUUID().toString();
-        String locationId          = UUID.randomUUID().toString();
+        String operationId         = getOrCreateSaveOperationId();
+        String userBirdId          = "UB_" + operationId;
+        String userBirdImageId     = "UBI_" + operationId;
         String deterministicSlotId = userId + "_" + currentBirdId;
         Date now = currentCaughtTime > 0 ? new Date(currentCaughtTime) : new Date();
 
-        DocumentReference locRef          = db.collection("locations").document(locationId);
         DocumentReference userBirdRef     = db.collection("userBirds").document(userBirdId);
         DocumentReference userBirdImageRef = db.collection("users").document(userId)
                 .collection("userBirdImage").document(userBirdImageId);
@@ -300,17 +333,6 @@ public class CardMakerActivity extends AppCompatActivity {
         db.runTransaction(transaction -> {
             DocumentSnapshot slotSnap    = transaction.get(slotRef);
             DocumentSnapshot counterSnap = transaction.get(slotCounterRef);
-
-            // --- Location ---
-            Map<String, Object> locationData = new HashMap<>();
-            locationData.put("id", locationId);
-            locationData.put("state", currentState);
-            locationData.put("locality", currentLocality);
-            if (currentLatitude  != null) locationData.put("latitude",  currentLatitude);
-            if (currentLongitude != null) locationData.put("longitude", currentLongitude);
-            if (currentCountry   != null) locationData.put("country",   currentCountry);
-            // Persist the new state so the action is saved outside the current screen.
-            transaction.set(locRef, locationData);
 
             // --- UserBird ---
             Map<String, Object> ubData = new HashMap<>();
@@ -569,6 +591,8 @@ public class CardMakerActivity extends AppCompatActivity {
 
         viewModel.isSaveFinished.set(true);
         viewModel.isSaveInProgress.set(false);
+        viewModel.pendingUploadPath = null;
+        viewModel.saveOperationId = null;
         setSavingUi(false);
 
         new AlertDialog.Builder(this)
@@ -584,6 +608,8 @@ public class CardMakerActivity extends AppCompatActivity {
 
         viewModel.isSaveFinished.set(true);
         viewModel.isSaveInProgress.set(false);
+        viewModel.pendingUploadPath = null;
+        viewModel.saveOperationId = null;
         setSavingUi(false);
         Toast.makeText(this, "Saved to your collection!", Toast.LENGTH_SHORT).show();
         navigateHomeAfterSave();

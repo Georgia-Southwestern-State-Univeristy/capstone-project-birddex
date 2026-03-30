@@ -33,7 +33,6 @@ import com.google.firebase.auth.FirebaseAuth;
 import com.google.firebase.auth.FirebaseUser;
 import com.google.firebase.firestore.DocumentReference;
 import com.google.firebase.firestore.DocumentSnapshot;
-import com.google.firebase.firestore.FieldValue;
 import com.google.firebase.firestore.FirebaseFirestore;
 import com.google.firebase.firestore.MetadataChanges;
 import com.google.firebase.firestore.Query;
@@ -288,16 +287,7 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
         }
         post.getViewedBy().put(userId, true);
 
-        db.collection("forumThreads")
-                .document(postId)
-                .update("viewedBy." + userId, true)
-                .addOnFailureListener(e -> {
-                    Log.e(TAG, "Failed to mark forum post as viewed", e);
-                    hasMarkedAsViewed = false;
-                    if (post.getViewedBy() != null) {
-                        post.getViewedBy().remove(userId);
-                    }
-                });
+        firebaseManager.recordForumPostView(postId);
     }
 
     /**
@@ -606,8 +596,23 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
         if (liked) { originalPost.setLikeCount(Math.max(0, count - 1)); originalPost.getLikedBy().remove(uid); }
         else { originalPost.setLikeCount(count + 1); if (originalPost.getLikedBy() == null) originalPost.setLikedBy(new HashMap<>()); originalPost.getLikedBy().put(uid, true); }
         bindPostToLayout(originalPost);
-        // Set up or query the Firebase layer that supplies/stores this feature's data.
-        db.collection("forumThreads").document(postId).update("likedBy." + uid, liked ? FieldValue.delete() : true).addOnCompleteListener(t -> { postLikeInFlight = false; if (!t.isSuccessful()) { originalPost.setLikeCount(count); if (liked) originalPost.getLikedBy().put(uid, true); else originalPost.getLikedBy().remove(uid); bindPostToLayout(originalPost); } });
+        firebaseManager.toggleForumPostLike(postId, !liked, new FirebaseManager.ActionListener() {
+            @Override
+            public void onSuccess() {
+                postLikeInFlight = false;
+            }
+
+            @Override
+            public void onFailure(String errorMessage) {
+                postLikeInFlight = false;
+                originalPost.setLikeCount(count);
+                if (liked) originalPost.getLikedBy().put(uid, true); else originalPost.getLikedBy().remove(uid);
+                bindPostToLayout(originalPost);
+                if (errorMessage != null && !errorMessage.trim().isEmpty()) {
+                    Toast.makeText(PostDetailActivity.this, errorMessage, Toast.LENGTH_SHORT).show();
+                }
+            }
+        });
     }
 
     /**
@@ -804,14 +809,21 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
         else { comment.setLikeCount(count + 1); comment.getLikedBy().put(uid, true); }
         adapter.notifyDataSetChanged();
 
-        // Set up or query the Firebase layer that supplies/stores this feature's data.
-        db.collection("forumThreads").document(postId).collection("comments").document(comment.getId())
-                // Persist the new state so the action is saved outside the current screen.
-                .update("likedBy." + uid, liked ? FieldValue.delete() : true)
-                .addOnCompleteListener(t -> {
-                    commentLikeInFlight.remove(comment.getId());
-                    if (!t.isSuccessful()) { comment.setLikeCount(count); if (liked) comment.getLikedBy().put(uid, true); else comment.getLikedBy().remove(uid); adapter.notifyDataSetChanged(); }
-                });
+        firebaseManager.toggleForumCommentLike(postId, comment.getId(), !liked, new FirebaseManager.ActionListener() {
+            @Override
+            public void onSuccess() {
+                commentLikeInFlight.remove(comment.getId());
+            }
+
+            @Override
+            public void onFailure(String errorMessage) {
+                commentLikeInFlight.remove(comment.getId());
+                comment.setLikeCount(count); if (liked) comment.getLikedBy().put(uid, true); else comment.getLikedBy().remove(uid); adapter.notifyDataSetChanged();
+                if (errorMessage != null && !errorMessage.trim().isEmpty()) {
+                    Toast.makeText(PostDetailActivity.this, errorMessage, Toast.LENGTH_SHORT).show();
+                }
+            }
+        });
     }
 
     @Override public void onCommentReplyClick(ForumComment c) { replyingToComment = c; binding.etComment.setHint("Replying to " + c.getUsername() + "..."); binding.etComment.requestFocus(); }

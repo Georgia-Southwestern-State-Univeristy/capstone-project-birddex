@@ -32,7 +32,6 @@ import com.google.android.material.tabs.TabLayout;
 import com.google.firebase.auth.FirebaseAuth;
 import com.google.firebase.auth.FirebaseUser;
 import com.google.firebase.firestore.DocumentSnapshot;
-import com.google.firebase.firestore.FieldValue;
 import com.google.firebase.firestore.FirebaseFirestore;
 import com.google.firebase.firestore.ListenerRegistration;
 import com.google.firebase.firestore.Query;
@@ -545,33 +544,27 @@ public class UserSocialProfileActivity extends AppCompatActivity implements
         }
         adapter.notifyDataSetChanged();
 
-        // Source of truth only (likedBy map).
-        // likeCount is handled by server-side recalculation trigger.
-        if (currentlyLiked) {
-            db.collection("forumThreads").document(post.getId())
-                    .update("likedBy." + userId, FieldValue.delete())
-                    .addOnCompleteListener(t -> {
-                        postLikeInFlight.remove(post.getId());
-                        if (!t.isSuccessful()) {
-                            // Revert
-                            post.setLikeCount(currentCount);
-                            post.getLikedBy().put(userId, true);
-                            adapter.notifyDataSetChanged();
-                        }
-                    });
-        } else {
-            db.collection("forumThreads").document(post.getId())
-                    .update("likedBy." + userId, true)
-                    .addOnCompleteListener(t -> {
-                        postLikeInFlight.remove(post.getId());
-                        if (!t.isSuccessful()) {
-                            // Revert
-                            post.setLikeCount(currentCount);
-                            post.getLikedBy().remove(userId);
-                            adapter.notifyDataSetChanged();
-                        }
-                    });
-        }
+        firebaseManager.toggleForumPostLike(post.getId(), !currentlyLiked, new FirebaseManager.ActionListener() {
+            @Override
+            public void onSuccess() {
+                postLikeInFlight.remove(post.getId());
+            }
+
+            @Override
+            public void onFailure(String errorMessage) {
+                postLikeInFlight.remove(post.getId());
+                post.setLikeCount(currentCount);
+                if (currentlyLiked) {
+                    post.getLikedBy().put(userId, true);
+                } else {
+                    post.getLikedBy().remove(userId);
+                }
+                adapter.notifyDataSetChanged();
+                if (errorMessage != null && !errorMessage.trim().isEmpty()) {
+                    Toast.makeText(UserSocialProfileActivity.this, errorMessage, Toast.LENGTH_SHORT).show();
+                }
+            }
+        });
     }
 
     @Override public void onCommentClick(ForumPost post) { onPostClick(post); }

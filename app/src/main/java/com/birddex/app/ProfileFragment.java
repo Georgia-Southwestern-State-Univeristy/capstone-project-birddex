@@ -40,16 +40,18 @@ import com.google.firebase.auth.FirebaseAuth;
 import com.google.firebase.auth.FirebaseUser;
 import com.google.firebase.firestore.DocumentReference;
 import com.google.firebase.firestore.DocumentSnapshot;
-import com.google.firebase.firestore.FieldValue;
 import com.google.firebase.firestore.FirebaseFirestore;
 import com.google.firebase.firestore.ListenerRegistration;
 import com.google.firebase.firestore.Query;
 import com.google.firebase.firestore.Source;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * ProfileFragment: Current-user profile screen that loads profile data, favorite cards, and the user's posts.
@@ -113,6 +115,8 @@ public class ProfileFragment extends Fragment implements
     private int savedFetchGeneration = 0;
     private int favoriteFetchGeneration = 0;
     private int trackedFetchGeneration = 0;
+
+    private final Set<String> postLikeInFlight = Collections.newSetFromMap(new ConcurrentHashMap<>());
 
     public ProfileFragment() {}
 
@@ -942,7 +946,8 @@ public class ProfileFragment extends Fragment implements
     @Override
     public void onLikeClick(ForumPost post) {
         FirebaseUser u = mAuth.getCurrentUser();
-        if (u == null || post.getId() == null) return;
+        if (u == null || post.getId() == null || postLikeInFlight.contains(post.getId())) return;
+        postLikeInFlight.add(post.getId());
         String uid = u.getUid();
         if (post.getLikedBy() == null) post.setLikedBy(new HashMap<>());
         boolean liked = post.getLikedBy().containsKey(uid);
@@ -957,13 +962,24 @@ public class ProfileFragment extends Fragment implements
         }
         postsAdapter.notifyDataSetChanged();
 
-        db.collection("forumThreads").document(post.getId()).update("likedBy." + uid, liked ? FieldValue.delete() : true)
-                .addOnFailureListener(e -> {
-                    post.setLikeCount(count);
-                    if (liked) post.getLikedBy().put(uid, true);
-                    else post.getLikedBy().remove(uid);
-                    postsAdapter.notifyDataSetChanged();
-                });
+        firebaseManager.toggleForumPostLike(post.getId(), !liked, new FirebaseManager.ActionListener() {
+            @Override
+            public void onSuccess() {
+                postLikeInFlight.remove(post.getId());
+            }
+
+            @Override
+            public void onFailure(String errorMessage) {
+                postLikeInFlight.remove(post.getId());
+                post.setLikeCount(count);
+                if (liked) post.getLikedBy().put(uid, true);
+                else post.getLikedBy().remove(uid);
+                postsAdapter.notifyDataSetChanged();
+                if (isAdded() && errorMessage != null && !errorMessage.trim().isEmpty()) {
+                    Toast.makeText(requireContext(), errorMessage, Toast.LENGTH_SHORT).show();
+                }
+            }
+        });
     }
 
     @Override

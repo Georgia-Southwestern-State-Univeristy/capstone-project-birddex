@@ -134,6 +134,11 @@ public class FirebaseManager {
         void onFailure(String errorMessage);
     }
 
+    public interface ActionListener {
+        void onSuccess();
+        void onFailure(String errorMessage);
+    }
+
     public interface ModerationStateListener {
         void onSuccess(Map<String, Object> state);
         void onFailure(String errorMessage);
@@ -315,59 +320,55 @@ public class FirebaseManager {
      * become permanent.
      */
     public void updateUserProfile(User updatedUser, AuthListener listener) {
-        FirebaseUser currentUser = mAuth.getCurrentUser();
-        if (currentUser == null) { Log.e(TAG, "Cannot update profile: No user authenticated."); return; }
-        Log.d(TAG, "Updating profile for: " + currentUser.getUid());
-        Map<String, Object> updates = new HashMap<>();
-        if (updatedUser.getUsername() != null) updates.put("username", updatedUser.getUsername());
-        if (updatedUser.getProfilePictureUrl() != null) updates.put("profilePictureUrl", updatedUser.getProfilePictureUrl());
-        if (updatedUser.getBio() != null) updates.put("bio", updatedUser.getBio());
-        if (updatedUser.getEmail() != null) updates.put("email", updatedUser.getEmail());
-        // Set up or query the Firebase layer that supplies/stores this feature's data.
-        db.collection("users").document(currentUser.getUid()).update(updates).addOnCompleteListener(task -> {
-            if (task.isSuccessful()) {
-                Log.d(TAG, "Profile updated successfully in Firestore.");
-                listener.onSuccess(currentUser);
-            } else {
-                String error = task.getException() != null ? task.getException().getMessage() : "Update failed.";
-                Log.e(TAG, "Profile update failed: " + error);
-                listener.onFailure(error);
-            }
-        });
+        callUpdateUserProfileCallable(updatedUser, listener);
     }
 
     /**
-     * FIX #13: Route profile updates (especially username) through the atomic
-     * initializeUser Cloud Function to ensure username uniqueness.
+     * FIX #13: Route profile updates through a dedicated Cloud Function so profile edits stay
+     * backend-authoritative without reusing initializeUser.
      */
     /**
      * Applies the latest values to existing UI/data so the screen and backend stay in sync.
      */
     public void updateUserProfileAtomic(User updatedUser, AuthListener listener) {
+        callUpdateUserProfileCallable(updatedUser, listener);
+    }
+
+    private void callUpdateUserProfileCallable(User updatedUser, AuthListener listener) {
         FirebaseUser currentUser = mAuth.getCurrentUser();
-        if (currentUser == null) { Log.e(TAG, "Cannot update profile: No user authenticated."); return; }
+        if (currentUser == null) {
+            Log.e(TAG, "Cannot update profile: No user authenticated.");
+            if (listener != null) listener.onFailure("No user authenticated.");
+            return;
+        }
+
         Map<String, Object> data = new HashMap<>();
-        data.put("username", updatedUser.getUsername());
-        data.put("bio", updatedUser.getBio());
-        data.put("profilePictureUrl", updatedUser.getProfilePictureUrl());
-        mFunctions.getHttpsCallable("initializeUser").call(data)
+        if (updatedUser.getUsername() != null) data.put("username", updatedUser.getUsername());
+        if (updatedUser.getBio() != null) data.put("bio", updatedUser.getBio());
+        if (updatedUser.getProfilePictureUrl() != null) data.put("profilePictureUrl", updatedUser.getProfilePictureUrl());
+        if (updatedUser.getEmail() != null) data.put("email", updatedUser.getEmail());
+
+        mFunctions.getHttpsCallable("updateUserProfile")
+                .call(data)
                 .addOnCompleteListener(task -> {
                     if (task.isSuccessful()) {
-                        Log.d(TAG, "Profile updated atomically via initializeUser CF.");
-                        listener.onSuccess(currentUser);
-                    } else {
-                        Exception e = task.getException();
-                        if (e instanceof FirebaseFunctionsException) {
-                            FirebaseFunctionsException ffe = (FirebaseFunctionsException) e;
-                            if (ffe.getCode() == FirebaseFunctionsException.Code.ALREADY_EXISTS) {
-                                listener.onUsernameTaken();
-                                return;
-                            }
-                        }
-                        String error = extractFunctionsErrorMessage(e, "Update failed.");
-                        Log.e(TAG, "Atomic profile update failed: " + error);
-                        listener.onFailure(error);
+                        Log.d(TAG, "Profile updated via updateUserProfile Cloud Function.");
+                        if (listener != null) listener.onSuccess(currentUser);
+                        return;
                     }
+
+                    Exception e = task.getException();
+                    if (e instanceof FirebaseFunctionsException) {
+                        FirebaseFunctionsException ffe = (FirebaseFunctionsException) e;
+                        if (ffe.getCode() == FirebaseFunctionsException.Code.ALREADY_EXISTS) {
+                            if (listener != null) listener.onUsernameTaken();
+                            return;
+                        }
+                    }
+
+                    String error = extractFunctionsErrorMessage(e, "Update failed.");
+                    Log.e(TAG, "Profile update failed: " + error, e);
+                    if (listener != null) listener.onFailure(error);
                 });
     }
 
@@ -1952,6 +1953,45 @@ public class FirebaseManager {
         Log.d(TAG, "Deleting report: " + id);
         // Set up or query the Firebase layer that supplies/stores this feature's data.
         db.collection("reports").document(id).delete().addOnCompleteListener(listener);
+    }
+
+
+    public void toggleForumPostLike(String postId, boolean liked, ActionListener listener) {
+        Map<String, Object> data = new HashMap<>();
+        data.put("postId", postId);
+        data.put("liked", liked);
+        mFunctions.getHttpsCallable("toggleForumPostLike").call(data)
+                .addOnCompleteListener(task -> {
+                    if (task.isSuccessful()) {
+                        if (listener != null) listener.onSuccess();
+                    } else {
+                        String error = extractFunctionsErrorMessage(task.getException(), "Failed to update post like.");
+                        if (listener != null) listener.onFailure(error);
+                    }
+                });
+    }
+
+    public void toggleForumCommentLike(String threadId, String commentId, boolean liked, ActionListener listener) {
+        Map<String, Object> data = new HashMap<>();
+        data.put("threadId", threadId);
+        data.put("commentId", commentId);
+        data.put("liked", liked);
+        mFunctions.getHttpsCallable("toggleForumCommentLike").call(data)
+                .addOnCompleteListener(task -> {
+                    if (task.isSuccessful()) {
+                        if (listener != null) listener.onSuccess();
+                    } else {
+                        String error = extractFunctionsErrorMessage(task.getException(), "Failed to update comment like.");
+                        if (listener != null) listener.onFailure(error);
+                    }
+                });
+    }
+
+    public void recordForumPostView(String postId) {
+        Map<String, Object> data = new HashMap<>();
+        data.put("postId", postId);
+        mFunctions.getHttpsCallable("recordForumPostView").call(data)
+                .addOnFailureListener(e -> Log.w(TAG, "recordForumPostView failed", e));
     }
 
     // -------------------------------------------------------------------------

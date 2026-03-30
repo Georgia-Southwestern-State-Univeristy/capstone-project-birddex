@@ -634,28 +634,7 @@ public class NearbyHeatmapActivity extends AppCompatActivity
         }
 
         post.getViewedBy().put(userId, true);
-        post.setViewCount(post.getViewCount() + 1);
-
-        if (tvViewCount != null) {
-            tvViewCount.setText(post.getViewCount() + " views");
-        }
-
-        db.collection("forumThreads")
-                .document(post.getId())
-                .update("viewedBy." + userId, true)
-                .addOnFailureListener(e -> {
-                    Log.e(TAG, "Failed to mark heatmap post as viewed", e);
-
-                    if (post.getViewedBy() != null) {
-                        post.getViewedBy().remove(userId);
-                    }
-
-                    post.setViewCount(Math.max(0, post.getViewCount() - 1));
-
-                    if (tvViewCount != null) {
-                        tvViewCount.setText(post.getViewCount() + " views");
-                    }
-                });
+        firebaseManager.recordForumPostView(post.getId());
     }
 
     /**
@@ -928,17 +907,25 @@ public class NearbyHeatmapActivity extends AppCompatActivity
             }
             ((TextView) content.findViewById(R.id.tvLikeCount)).setText(String.valueOf(p.getLikeCount()));
 
-            db.collection("forumThreads").document(p.getId()).update("likedBy." + uid, liked ? FieldValue.delete() : true)
-                    .addOnCompleteListener(t -> {
-                        postLikeInFlight.remove(p.getId());
-                        if (!t.isSuccessful()) {
-                            p.setLikeCount(count);
-                            if (liked) p.getLikedBy().put(uid, true);
-                            else p.getLikedBy().remove(uid);
-                            ((TextView) content.findViewById(R.id.tvLikeCount)).setText(String.valueOf(count));
-                            ivLike.setImageResource(liked ? R.drawable.ic_favorite : R.drawable.ic_favorite_border);
-                        }
-                    });
+            firebaseManager.toggleForumPostLike(p.getId(), !liked, new FirebaseManager.ActionListener() {
+                @Override
+                public void onSuccess() {
+                    postLikeInFlight.remove(p.getId());
+                }
+
+                @Override
+                public void onFailure(String errorMessage) {
+                    postLikeInFlight.remove(p.getId());
+                    p.setLikeCount(count);
+                    if (liked) p.getLikedBy().put(uid, true);
+                    else p.getLikedBy().remove(uid);
+                    ((TextView) content.findViewById(R.id.tvLikeCount)).setText(String.valueOf(count));
+                    ivLike.setImageResource(liked ? R.drawable.ic_favorite : R.drawable.ic_favorite_border);
+                    if (errorMessage != null && !errorMessage.trim().isEmpty()) {
+                        Toast.makeText(NearbyHeatmapActivity.this, errorMessage, Toast.LENGTH_SHORT).show();
+                    }
+                }
+            });
         });
 
         content.setOnClickListener(v -> {
@@ -1322,19 +1309,24 @@ public class NearbyHeatmapActivity extends AppCompatActivity
         }
         if (popupCommentAdapter != null) popupCommentAdapter.notifyDataSetChanged();
 
-        // Set up or query the Firebase layer that supplies/stores this feature's data.
-        db.collection("forumThreads").document(activePost.getId()).collection("comments").document(c.getId())
-                // Persist the new state so the action is saved outside the current screen.
-                .update("likedBy." + uid, liked ? FieldValue.delete() : true)
-                .addOnCompleteListener(t -> {
-                    commentLikeInFlight.remove(c.getId());
-                    if (!t.isSuccessful()) {
-                        c.setLikeCount(count);
-                        if (liked) c.getLikedBy().put(uid, true);
-                        else c.getLikedBy().remove(uid);
-                        if (popupCommentAdapter != null) popupCommentAdapter.notifyDataSetChanged();
-                    }
-                });
+        firebaseManager.toggleForumCommentLike(activePost.getId(), c.getId(), !liked, new FirebaseManager.ActionListener() {
+            @Override
+            public void onSuccess() {
+                commentLikeInFlight.remove(c.getId());
+            }
+
+            @Override
+            public void onFailure(String errorMessage) {
+                commentLikeInFlight.remove(c.getId());
+                c.setLikeCount(count);
+                if (liked) c.getLikedBy().put(uid, true);
+                else c.getLikedBy().remove(uid);
+                if (popupCommentAdapter != null) popupCommentAdapter.notifyDataSetChanged();
+                if (errorMessage != null && !errorMessage.trim().isEmpty()) {
+                    Toast.makeText(NearbyHeatmapActivity.this, errorMessage, Toast.LENGTH_SHORT).show();
+                }
+            }
+        });
     }
 
     @Override

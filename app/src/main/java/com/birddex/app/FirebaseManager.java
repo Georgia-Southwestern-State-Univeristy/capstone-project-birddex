@@ -119,6 +119,11 @@ public class FirebaseManager {
         void onFailure(String errorMessage);
     }
 
+    public interface LocationIdListener {
+        void onSuccess(String locationId);
+        void onFailure(String errorMessage);
+    }
+
     /**
      * Callback for recordForumPost CF.
      * onLimitReached() is called when the user has already posted 3 times today.
@@ -1691,6 +1696,45 @@ public class FirebaseManager {
     // -------------------------------------------------------------------------
     // LOCATIONS & BIRD CARDS
     // -------------------------------------------------------------------------
+    /**
+     * Requests the backend-owned location record for the supplied coordinates.
+     */
+    public void createOrGetLocation(Double latitude,
+                                    Double longitude,
+                                    String localityName,
+                                    String state,
+                                    String country,
+                                    LocationIdListener listener) {
+        Map<String, Object> data = new HashMap<>();
+        if (latitude != null) data.put("latitude", latitude);
+        if (longitude != null) data.put("longitude", longitude);
+        data.put("localityName", localityName);
+        data.put("state", state);
+        data.put("country", country);
+
+        mFunctions.getHttpsCallable("createOrGetLocation").call(data)
+                .addOnSuccessListener(result -> {
+                    Object payload = result != null ? result.getData() : null;
+                    String locationId = null;
+                    if (payload instanceof Map) {
+                        Object raw = ((Map<?, ?>) payload).get("locationId");
+                        if (raw instanceof String) locationId = (String) raw;
+                    }
+
+                    if (locationId == null || locationId.trim().isEmpty()) {
+                        if (listener != null) listener.onFailure("Failed to resolve location.");
+                        return;
+                    }
+
+                    if (listener != null) listener.onSuccess(locationId);
+                })
+                .addOnFailureListener(e -> {
+                    String error = extractFunctionsErrorMessage(e, "Failed to resolve location.");
+                    Log.e(TAG, "createOrGetLocation failure: " + error, e);
+                    if (listener != null) listener.onFailure(error);
+                });
+    }
+
 
     /**
      * Main logic block for this part of the feature.
@@ -2151,29 +2195,21 @@ public class FirebaseManager {
      * This allows users to report issues without leaving the app or opening an email client.
      */
     public void submitBugReport(String subject, String description, String contactEmail, OnCompleteListener<Void> listener) {
-        Map<String, Object> report = new HashMap<>();
-        report.put("subject", subject);
-        report.put("description", description);
-        report.put("contactEmail", contactEmail);
-        report.put("deviceModel", android.os.Build.MODEL);
-        report.put("androidVersion", android.os.Build.VERSION.RELEASE);
-        report.put("timestamp", com.google.firebase.Timestamp.now());
+        Map<String, Object> data = new HashMap<>();
+        data.put("subject", subject);
+        data.put("description", description);
+        data.put("contactEmail", contactEmail);
+        data.put("deviceModel", android.os.Build.MODEL);
+        data.put("androidVersion", android.os.Build.VERSION.RELEASE);
 
-        // Optional: add the current User ID if they are logged in
-        FirebaseUser user = mAuth.getCurrentUser();
-        if (user != null) {
-            report.put("userId", user.getUid());
-        }
-
-        db.collection("bug_reports")
-                .add(report)
+        mFunctions.getHttpsCallable("submitBugReport").call(data)
                 .addOnCompleteListener(task -> {
                     if (task.isSuccessful()) {
-                        Log.d(TAG, "Bug report submitted successfully.");
-                        listener.onComplete(Tasks.forResult(null));
+                        Log.d(TAG, "Bug report submitted successfully via CF.");
+                        if (listener != null) listener.onComplete(Tasks.forResult(null));
                     } else {
-                        Log.e(TAG, "Failed to submit bug report.", task.getException());
-                        listener.onComplete(Tasks.forException(task.getException()));
+                        Log.e(TAG, "Failed to submit bug report via CF.", task.getException());
+                        if (listener != null) listener.onComplete(Tasks.forException(task.getException()));
                     }
                 });
     }

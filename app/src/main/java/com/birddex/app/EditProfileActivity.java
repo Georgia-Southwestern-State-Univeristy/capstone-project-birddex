@@ -31,6 +31,7 @@ import com.google.firebase.auth.FirebaseUser;
 import com.google.firebase.firestore.FirebaseFirestore;
 import com.google.firebase.storage.FirebaseStorage;
 import com.google.firebase.storage.StorageReference;
+import com.google.firebase.storage.StorageMetadata;
 import com.bumptech.glide.Glide;
 
 import com.canhub.cropper.CropImageContract;
@@ -40,8 +41,6 @@ import com.canhub.cropper.CropImageView;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
-import java.util.HashMap;
-import java.util.Map;
 import java.util.Date;
 import java.util.UUID;
 
@@ -80,12 +79,16 @@ public class EditProfileActivity extends AppCompatActivity implements NetworkMon
 
     private Uri imageUri;
     private boolean isSaveInProgress = false;
-    private String uploadedProfilePictureDownloadUrl = null;
     private String pendingPfpChangeId = null;
     private StorageReference pendingUploadedPfpRef = null;
 
     private ActivityResultLauncher<Intent> pickImageLauncher;
     private ActivityResultLauncher<CropImageContractOptions> cropImageLauncher;
+
+    private interface PreparedProfileImageListener {
+        void onSuccess(String moderationBase64, byte[] uploadBytes);
+        void onFailure(String errorMessage);
+    }
 
     /**
      * Android calls this when the Activity is first created. This is where the screen usually
@@ -152,7 +155,6 @@ public class EditProfileActivity extends AppCompatActivity implements NetworkMon
                 imageUri = result.getUriContent();
                 if (imageUri != null) {
                     if (!isFinishing() && !isDestroyed()) Glide.with(this).load(imageUri).into(ivPfpPreview);
-                    uploadedProfilePictureDownloadUrl = null;
                 }
             }
         });
@@ -202,31 +204,37 @@ public class EditProfileActivity extends AppCompatActivity implements NetworkMon
                     public void onSuccess(int remaining, Date reset) {
                         if (isFinishing() || isDestroyed()) return;
                         tvPfpChangesRemaining.setText("PFP changes remaining today: " + remaining);
-                        String base64 = encodeImage(imageUri);
-                        if (base64 == null) {
-                            rollbackPendingPfpChange("Could not prepare profile picture for moderation.");
-                            return;
-                        }
-                        firebaseManager.callOpenAiImageModeration(base64, new FirebaseManager.OpenAiModerationListener() {
+                        prepareProfileImageAsync(imageUri, new PreparedProfileImageListener() {
                             @Override
-                            public void onSuccess(boolean appropriate, String reason) {
+                            public void onSuccess(String moderationBase64, byte[] uploadBytes) {
                                 if (isFinishing() || isDestroyed()) return;
-                                if (appropriate) {
-                                    uploadImageToFirebase(imageUri, newUsername, cleanedBio, pendingPfpChangeId);
-                                } else {
-                                    String message = (reason != null && !reason.trim().isEmpty())
-                                            ? "PFP rejected: " + reason
-                                            : "PFP rejected by moderation.";
-                                    rollbackPendingPfpChange(message);
-                                }
+                                firebaseManager.callOpenAiImageModeration(moderationBase64, new FirebaseManager.OpenAiModerationListener() {
+                                    @Override
+                                    public void onSuccess(boolean appropriate, String reason) {
+                                        if (isFinishing() || isDestroyed()) return;
+                                        if (appropriate) {
+                                            uploadPreparedImageToFirebase(uploadBytes, newUsername, cleanedBio, pendingPfpChangeId);
+                                        } else {
+                                            String message = (reason != null && !reason.trim().isEmpty())
+                                                    ? "PFP rejected: " + reason
+                                                    : "PFP rejected by moderation.";
+                                            rollbackPendingPfpChange(message);
+                                        }
+                                    }
+
+                                    @Override
+                                    public void onFailure(String err) {
+                                        String message = (err != null && !err.trim().isEmpty())
+                                                ? err
+                                                : "Moderation check failed.";
+                                        rollbackPendingPfpChange(message);
+                                    }
+                                });
                             }
 
                             @Override
-                            public void onFailure(String err) {
-                                String message = (err != null && !err.trim().isEmpty())
-                                        ? err
-                                        : "Moderation check failed.";
-                                rollbackPendingPfpChange(message);
+                            public void onFailure(String errorMessage) {
+                                rollbackPendingPfpChange(errorMessage);
                             }
                         });
                     }
@@ -426,7 +434,7 @@ public class EditProfileActivity extends AppCompatActivity implements NetworkMon
      * Builds data from the current screen/object state and writes it out to storage, Firebase, or
      * another service.
      */
-    private void uploadImageToFirebase(Uri uri, String user, String bio, String changeId) {
+    private void uploadPreparedImageToFirebase(byte[] uploadBytes, String user, String bio, String changeId) {
         String uid = mAuth.getUid();
         if (uid == null) {
             rollbackPendingPfpChange("Not signed in.");
@@ -434,7 +442,11 @@ public class EditProfileActivity extends AppCompatActivity implements NetworkMon
         }
 
         pendingUploadedPfpRef = storageRef.child("profile_pictures/" + uid + "/profile_" + System.currentTimeMillis() + ".jpg");
-        pendingUploadedPfpRef.putFile(uri)
+        StorageMetadata metadata = new StorageMetadata.Builder()
+                .setContentType("image/jpeg")
+                .build();
+
+        pendingUploadedPfpRef.putBytes(uploadBytes, metadata)
                 .addOnSuccessListener(ts -> pendingUploadedPfpRef.getDownloadUrl()
                         .addOnSuccessListener(dl -> saveProfileChanges(user, bio, dl.toString(), changeId))
                         .addOnFailureListener(e -> cleanupUploadedPfpAndRollback("Failed to get uploaded profile picture URL.")))
@@ -442,25 +454,37 @@ public class EditProfileActivity extends AppCompatActivity implements NetworkMon
     }
 
     /**
-     * Main logic block for this part of the feature.
-     * Bitmap/rendering work happens here, so this block is shaping the final card/image output
-     * rather than just text data.
+     * Prepares both the moderation payload and the smaller upload bytes off the main thread so the
+     * actual upload finishes faster and the UI is not doing bitmap work on the UI thread.
      */
-    private String encodeImage(Uri uri) {
-        try {
-            Bitmap bm = (Build.VERSION.SDK_INT >= 28)
-                    ? ImageDecoder.decodeBitmap(ImageDecoder.createSource(getContentResolver(), uri))
-                    : MediaStore.Images.Media.getBitmap(getContentResolver(), uri);
+    private void prepareProfileImageAsync(Uri uri, PreparedProfileImageListener listener) {
+        new Thread(() -> {
+            try {
+                Bitmap original = (Build.VERSION.SDK_INT >= 28)
+                        ? ImageDecoder.decodeBitmap(ImageDecoder.createSource(getContentResolver(), uri))
+                        : MediaStore.Images.Media.getBitmap(getContentResolver(), uri);
 
-            // Keep more detail for moderation while still limiting payload size
-            bm = scaleBitmap(bm, 768);
+                Bitmap moderationBitmap = scaleBitmap(original, 768);
+                ByteArrayOutputStream moderationStream = new ByteArrayOutputStream();
+                moderationBitmap.compress(Bitmap.CompressFormat.JPEG, 80, moderationStream);
+                String moderationBase64 = Base64.encodeToString(moderationStream.toByteArray(), Base64.NO_WRAP);
 
-            ByteArrayOutputStream baos = new ByteArrayOutputStream();
-            bm.compress(Bitmap.CompressFormat.JPEG, 80, baos);
-            return Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP);
-        } catch (IOException e) {
-            return null;
-        }
+                Bitmap uploadBitmap = scaleBitmap(original, 960);
+                ByteArrayOutputStream uploadStream = new ByteArrayOutputStream();
+                uploadBitmap.compress(Bitmap.CompressFormat.JPEG, 82, uploadStream);
+                byte[] uploadBytes = uploadStream.toByteArray();
+
+                runOnUiThread(() -> {
+                    if (isFinishing() || isDestroyed()) return;
+                    listener.onSuccess(moderationBase64, uploadBytes);
+                });
+            } catch (IOException e) {
+                runOnUiThread(() -> {
+                    if (isFinishing() || isDestroyed()) return;
+                    listener.onFailure("Could not prepare profile picture for upload.");
+                });
+            }
+        }).start();
     }
 
     /**
@@ -490,41 +514,16 @@ public class EditProfileActivity extends AppCompatActivity implements NetworkMon
         user.setBio(cleanedBio);
         user.setProfilePictureUrl(finalPfp);
 
-        firebaseManager.updateUserProfileAtomic(user, new FirebaseManager.AuthListener() {
+        firebaseManager.updateUserProfileAtomic(user, changeId, new FirebaseManager.AuthListener() {
             @Override
             public void onSuccess(com.google.firebase.auth.FirebaseUser u) {
                 if (isFinishing() || isDestroyed()) return;
-
-                if (changeId != null) {
-                    firebaseManager.finalizePfpChange(changeId, new FirebaseManager.SimpleListener() {
-                        @Override
-                        public void onSuccess() {
-                            if (isFinishing() || isDestroyed()) return;
-                            fetchPfpChangesRemaining();
-                            resetSaveState();
-                            setResult(RESULT_OK, new Intent()
-                                    .putExtra("newUsername", newUsername)
-                                    .putExtra("newBio", cleanedBio)
-                                    .putExtra("newProfilePictureUrl", finalPfp));
-                            finish();
-                        }
-
-                        @Override
-                        public void onFailure(String errorMessage) {
-                            if (isFinishing() || isDestroyed()) return;
-                            cleanupUploadedPfpAndRollback(errorMessage != null && !errorMessage.trim().isEmpty()
-                                    ? errorMessage
-                                    : "Failed to finalize profile picture change.");
-                        }
-                    });
-                } else {
-                    resetSaveState();
-                    setResult(RESULT_OK, new Intent()
-                            .putExtra("newUsername", newUsername)
-                            .putExtra("newBio", cleanedBio)
-                            .putExtra("newProfilePictureUrl", finalPfp));
-                    finish();
-                }
+                resetSaveState();
+                setResult(RESULT_OK, new Intent()
+                        .putExtra("newUsername", newUsername)
+                        .putExtra("newBio", cleanedBio)
+                        .putExtra("newProfilePictureUrl", finalPfp));
+                finish();
             }
 
             @Override

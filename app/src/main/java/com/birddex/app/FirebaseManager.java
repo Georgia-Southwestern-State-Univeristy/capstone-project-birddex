@@ -119,11 +119,6 @@ public class FirebaseManager {
         void onFailure(String errorMessage);
     }
 
-    public interface LocationIdListener {
-        void onSuccess(String locationId);
-        void onFailure(String errorMessage);
-    }
-
     /**
      * Callback for recordForumPost CF.
      * onLimitReached() is called when the user has already posted 3 times today.
@@ -139,8 +134,18 @@ public class FirebaseManager {
         void onFailure(String errorMessage);
     }
 
+    public interface SimpleListener {
+        void onSuccess();
+        void onFailure(String errorMessage);
+    }
+
     public interface ActionListener {
         void onSuccess();
+        void onFailure(String errorMessage);
+    }
+
+    public interface LocationIdListener {
+        void onSuccess(String locationId);
         void onFailure(String errorMessage);
     }
 
@@ -325,56 +330,45 @@ public class FirebaseManager {
      * become permanent.
      */
     public void updateUserProfile(User updatedUser, AuthListener listener) {
-        callUpdateUserProfileCallable(updatedUser, listener);
+        FirebaseUser currentUser = mAuth.getCurrentUser();
+        if (currentUser == null) { Log.e(TAG, "Cannot update profile: No user authenticated."); return; }
+        Log.d(TAG, "Updating profile for: " + currentUser.getUid());
+        Map<String, Object> data = new HashMap<>();
+        if (updatedUser.getUsername() != null) data.put("username", updatedUser.getUsername());
+        if (updatedUser.getProfilePictureUrl() != null) data.put("profilePictureUrl", updatedUser.getProfilePictureUrl());
+        if (updatedUser.getBio() != null) data.put("bio", updatedUser.getBio());
+        if (updatedUser.getEmail() != null) data.put("email", updatedUser.getEmail());
+
+        mFunctions.getHttpsCallable("updateUserProfile").call(data)
+                .addOnCompleteListener(task -> {
+                    if (task.isSuccessful()) {
+                        Log.d(TAG, "Profile updated successfully via updateUserProfile CF.");
+                        listener.onSuccess(currentUser);
+                    } else {
+                        Exception e = task.getException();
+                        if (e instanceof FirebaseFunctionsException) {
+                            FirebaseFunctionsException ffe = (FirebaseFunctionsException) e;
+                            if (ffe.getCode() == FirebaseFunctionsException.Code.ALREADY_EXISTS) {
+                                listener.onUsernameTaken();
+                                return;
+                            }
+                        }
+                        String error = extractFunctionsErrorMessage(e, "Update failed.");
+                        Log.e(TAG, "Profile update failed: " + error);
+                        listener.onFailure(error);
+                    }
+                });
     }
 
     /**
-     * FIX #13: Route profile updates through a dedicated Cloud Function so profile edits stay
-     * backend-authoritative without reusing initializeUser.
+     * FIX #13: Route profile updates (especially username) through the atomic
+     * initializeUser Cloud Function to ensure username uniqueness.
      */
     /**
      * Applies the latest values to existing UI/data so the screen and backend stay in sync.
      */
     public void updateUserProfileAtomic(User updatedUser, AuthListener listener) {
-        callUpdateUserProfileCallable(updatedUser, listener);
-    }
-
-    private void callUpdateUserProfileCallable(User updatedUser, AuthListener listener) {
-        FirebaseUser currentUser = mAuth.getCurrentUser();
-        if (currentUser == null) {
-            Log.e(TAG, "Cannot update profile: No user authenticated.");
-            if (listener != null) listener.onFailure("No user authenticated.");
-            return;
-        }
-
-        Map<String, Object> data = new HashMap<>();
-        if (updatedUser.getUsername() != null) data.put("username", updatedUser.getUsername());
-        if (updatedUser.getBio() != null) data.put("bio", updatedUser.getBio());
-        if (updatedUser.getProfilePictureUrl() != null) data.put("profilePictureUrl", updatedUser.getProfilePictureUrl());
-        if (updatedUser.getEmail() != null) data.put("email", updatedUser.getEmail());
-
-        mFunctions.getHttpsCallable("updateUserProfile")
-                .call(data)
-                .addOnCompleteListener(task -> {
-                    if (task.isSuccessful()) {
-                        Log.d(TAG, "Profile updated via updateUserProfile Cloud Function.");
-                        if (listener != null) listener.onSuccess(currentUser);
-                        return;
-                    }
-
-                    Exception e = task.getException();
-                    if (e instanceof FirebaseFunctionsException) {
-                        FirebaseFunctionsException ffe = (FirebaseFunctionsException) e;
-                        if (ffe.getCode() == FirebaseFunctionsException.Code.ALREADY_EXISTS) {
-                            if (listener != null) listener.onUsernameTaken();
-                            return;
-                        }
-                    }
-
-                    String error = extractFunctionsErrorMessage(e, "Update failed.");
-                    Log.e(TAG, "Profile update failed: " + error, e);
-                    if (listener != null) listener.onFailure(error);
-                });
+        updateUserProfile(updatedUser, listener);
     }
 
     /**
@@ -782,6 +776,91 @@ public class FirebaseManager {
             if (task.isSuccessful()) Log.d(TAG, "Unfollow success via CF.");
             else Log.e(TAG, "Unfollow failed via CF.", task.getException());
             if (listener != null) listener.onComplete(task.isSuccessful() ? Tasks.forResult(null) : Tasks.forException(task.getException()));
+        });
+    }
+
+
+    /**
+     * Main logic block for this part of the feature.
+     */
+    public void toggleForumPostLike(String postId, boolean liked, ActionListener listener) {
+        Log.d(TAG, "Calling toggleForumPostLike Cloud Function for post: " + postId + " liked=" + liked);
+        Map<String, Object> data = new HashMap<>();
+        data.put("postId", postId);
+        data.put("liked", liked);
+        mFunctions.getHttpsCallable("toggleForumPostLike").call(data).addOnCompleteListener(task -> {
+            if (task.isSuccessful()) {
+                Log.d(TAG, "toggleForumPostLike success.");
+                if (listener != null) listener.onSuccess();
+            } else {
+                String error = extractFunctionsErrorMessage(task.getException(), "Failed to update like status.");
+                Log.e(TAG, "toggleForumPostLike failed: " + error);
+                if (listener != null) listener.onFailure(error);
+            }
+        });
+    }
+
+    /**
+     * Main logic block for this part of the feature.
+     */
+    public void toggleForumCommentLike(String threadId, String commentId, boolean liked, ActionListener listener) {
+        Log.d(TAG, "Calling toggleForumCommentLike Cloud Function for comment: " + commentId + " liked=" + liked);
+        Map<String, Object> data = new HashMap<>();
+        data.put("threadId", threadId);
+        data.put("commentId", commentId);
+        data.put("liked", liked);
+        mFunctions.getHttpsCallable("toggleForumCommentLike").call(data).addOnCompleteListener(task -> {
+            if (task.isSuccessful()) {
+                Log.d(TAG, "toggleForumCommentLike success.");
+                if (listener != null) listener.onSuccess();
+            } else {
+                String error = extractFunctionsErrorMessage(task.getException(), "Failed to update comment like.");
+                Log.e(TAG, "toggleForumCommentLike failed: " + error);
+                if (listener != null) listener.onFailure(error);
+            }
+        });
+    }
+
+    /**
+     * Records a post view on the backend without blocking the UI.
+     */
+    public void recordForumPostView(String postId) {
+        Log.d(TAG, "Calling recordForumPostView Cloud Function for post: " + postId);
+        Map<String, Object> data = new HashMap<>();
+        data.put("postId", postId);
+        mFunctions.getHttpsCallable("recordForumPostView").call(data).addOnCompleteListener(task -> {
+            if (task.isSuccessful()) Log.d(TAG, "recordForumPostView success.");
+            else Log.w(TAG, "recordForumPostView failed.", task.getException());
+        });
+    }
+
+    /**
+     * Backend-owned location creation/lookup used by card saving.
+     */
+    public void createOrGetLocation(Double latitude, Double longitude, String localityName, String state, String country, LocationIdListener listener) {
+        Log.d(TAG, "Calling createOrGetLocation Cloud Function.");
+        Map<String, Object> data = new HashMap<>();
+        data.put("latitude", latitude);
+        data.put("longitude", longitude);
+        data.put("localityName", localityName);
+        data.put("state", state);
+        data.put("country", country);
+        mFunctions.getHttpsCallable("createOrGetLocation").call(data).addOnCompleteListener(task -> {
+            if (task.isSuccessful() && task.getResult() != null && task.getResult().getData() instanceof Map) {
+                Map<String, Object> result = (Map<String, Object>) task.getResult().getData();
+                Object locationId = result.get("locationId");
+                if (locationId instanceof String && !((String) locationId).trim().isEmpty()) {
+                    if (listener != null) listener.onSuccess((String) locationId);
+                } else {
+                    String error = "Location lookup succeeded but no locationId was returned.";
+                    Log.e(TAG, error);
+                    if (listener != null) listener.onFailure(error);
+                }
+            } else {
+                String error = extractFunctionsErrorMessage(task.getException(), "Failed to create or get location.");
+                Log.e(TAG, "createOrGetLocation failed: " + error);
+                if (listener != null) listener.onFailure(error);
+            }
         });
     }
 
@@ -1696,45 +1775,6 @@ public class FirebaseManager {
     // -------------------------------------------------------------------------
     // LOCATIONS & BIRD CARDS
     // -------------------------------------------------------------------------
-    /**
-     * Requests the backend-owned location record for the supplied coordinates.
-     */
-    public void createOrGetLocation(Double latitude,
-                                    Double longitude,
-                                    String localityName,
-                                    String state,
-                                    String country,
-                                    LocationIdListener listener) {
-        Map<String, Object> data = new HashMap<>();
-        if (latitude != null) data.put("latitude", latitude);
-        if (longitude != null) data.put("longitude", longitude);
-        data.put("localityName", localityName);
-        data.put("state", state);
-        data.put("country", country);
-
-        mFunctions.getHttpsCallable("createOrGetLocation").call(data)
-                .addOnSuccessListener(result -> {
-                    Object payload = result != null ? result.getData() : null;
-                    String locationId = null;
-                    if (payload instanceof Map) {
-                        Object raw = ((Map<?, ?>) payload).get("locationId");
-                        if (raw instanceof String) locationId = (String) raw;
-                    }
-
-                    if (locationId == null || locationId.trim().isEmpty()) {
-                        if (listener != null) listener.onFailure("Failed to resolve location.");
-                        return;
-                    }
-
-                    if (listener != null) listener.onSuccess(locationId);
-                })
-                .addOnFailureListener(e -> {
-                    String error = extractFunctionsErrorMessage(e, "Failed to resolve location.");
-                    Log.e(TAG, "createOrGetLocation failure: " + error, e);
-                    if (listener != null) listener.onFailure(error);
-                });
-    }
-
 
     /**
      * Main logic block for this part of the feature.
@@ -1999,45 +2039,6 @@ public class FirebaseManager {
         db.collection("reports").document(id).delete().addOnCompleteListener(listener);
     }
 
-
-    public void toggleForumPostLike(String postId, boolean liked, ActionListener listener) {
-        Map<String, Object> data = new HashMap<>();
-        data.put("postId", postId);
-        data.put("liked", liked);
-        mFunctions.getHttpsCallable("toggleForumPostLike").call(data)
-                .addOnCompleteListener(task -> {
-                    if (task.isSuccessful()) {
-                        if (listener != null) listener.onSuccess();
-                    } else {
-                        String error = extractFunctionsErrorMessage(task.getException(), "Failed to update post like.");
-                        if (listener != null) listener.onFailure(error);
-                    }
-                });
-    }
-
-    public void toggleForumCommentLike(String threadId, String commentId, boolean liked, ActionListener listener) {
-        Map<String, Object> data = new HashMap<>();
-        data.put("threadId", threadId);
-        data.put("commentId", commentId);
-        data.put("liked", liked);
-        mFunctions.getHttpsCallable("toggleForumCommentLike").call(data)
-                .addOnCompleteListener(task -> {
-                    if (task.isSuccessful()) {
-                        if (listener != null) listener.onSuccess();
-                    } else {
-                        String error = extractFunctionsErrorMessage(task.getException(), "Failed to update comment like.");
-                        if (listener != null) listener.onFailure(error);
-                    }
-                });
-    }
-
-    public void recordForumPostView(String postId) {
-        Map<String, Object> data = new HashMap<>();
-        data.put("postId", postId);
-        mFunctions.getHttpsCallable("recordForumPostView").call(data)
-                .addOnFailureListener(e -> Log.w(TAG, "recordForumPostView failed", e));
-    }
-
     // -------------------------------------------------------------------------
     // SYNC & LIMIT HELPERS
     // -------------------------------------------------------------------------
@@ -2058,6 +2059,46 @@ public class FirebaseManager {
             } else {
                 String error = task.getException() != null ? task.getException().getMessage() : "Record failed.";
                 Log.e(TAG, "recordPfpChange failed: " + error);
+                listener.onFailure(error);
+            }
+        });
+    }
+
+    /**
+     * Finalizes a previously reserved profile picture change so the daily quota stays consumed only
+     * after the whole profile update succeeds.
+     */
+    public void finalizePfpChange(String changeId, SimpleListener listener) {
+        Log.d(TAG, "Calling finalizePfpChange Cloud Function.");
+        Map<String, Object> data = new HashMap<>();
+        data.put("changeId", changeId);
+        mFunctions.getHttpsCallable("finalizePfpChange").call(data).addOnCompleteListener(task -> {
+            if (task.isSuccessful()) {
+                Log.d(TAG, "finalizePfpChange success.");
+                listener.onSuccess();
+            } else {
+                String error = extractFunctionsErrorMessage(task.getException(), "Failed to finalize profile picture change.");
+                Log.e(TAG, "finalizePfpChange failed: " + error);
+                listener.onFailure(error);
+            }
+        });
+    }
+
+    /**
+     * Rolls back a previously reserved profile picture change so rejected or failed attempts do not
+     * consume the user's daily quota.
+     */
+    public void rollbackPfpChange(String changeId, SimpleListener listener) {
+        Log.d(TAG, "Calling rollbackPfpChange Cloud Function.");
+        Map<String, Object> data = new HashMap<>();
+        data.put("changeId", changeId);
+        mFunctions.getHttpsCallable("rollbackPfpChange").call(data).addOnCompleteListener(task -> {
+            if (task.isSuccessful()) {
+                Log.d(TAG, "rollbackPfpChange success.");
+                listener.onSuccess();
+            } else {
+                String error = extractFunctionsErrorMessage(task.getException(), "Failed to roll back profile picture change.");
+                Log.e(TAG, "rollbackPfpChange failed: " + error);
                 listener.onFailure(error);
             }
         });
@@ -2202,13 +2243,14 @@ public class FirebaseManager {
         data.put("deviceModel", android.os.Build.MODEL);
         data.put("androidVersion", android.os.Build.VERSION.RELEASE);
 
-        mFunctions.getHttpsCallable("submitBugReport").call(data)
+        mFunctions.getHttpsCallable("submitBugReport")
+                .call(data)
                 .addOnCompleteListener(task -> {
                     if (task.isSuccessful()) {
-                        Log.d(TAG, "Bug report submitted successfully via CF.");
+                        Log.d(TAG, "Bug report submitted successfully via Cloud Function.");
                         if (listener != null) listener.onComplete(Tasks.forResult(null));
                     } else {
-                        Log.e(TAG, "Failed to submit bug report via CF.", task.getException());
+                        Log.e(TAG, "Failed to submit bug report via Cloud Function.", task.getException());
                         if (listener != null) listener.onComplete(Tasks.forException(task.getException()));
                     }
                 });

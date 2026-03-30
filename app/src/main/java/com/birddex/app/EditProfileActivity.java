@@ -77,12 +77,12 @@ public class EditProfileActivity extends AppCompatActivity implements NetworkMon
     // UI elements
     private ImageView ivPfpPreview;
     private MaterialButton btnChangePhoto;
-    private MaterialButton btnSave;
-    private CharSequence defaultSaveButtonText;
 
     private Uri imageUri;
     private boolean isSaveInProgress = false;
     private String uploadedProfilePictureDownloadUrl = null;
+    private String pendingPfpChangeId = null;
+    private StorageReference pendingUploadedPfpRef = null;
 
     private ActivityResultLauncher<Intent> pickImageLauncher;
     private ActivityResultLauncher<CropImageContractOptions> cropImageLauncher;
@@ -132,8 +132,7 @@ public class EditProfileActivity extends AppCompatActivity implements NetworkMon
             ivPfpPreview.setImageResource(R.drawable.ic_profile);
         }
 
-        btnSave = findViewById(R.id.btnSave);
-        defaultSaveButtonText = btnSave.getText();
+        MaterialButton btnSave = findViewById(R.id.btnSave);
         TextView tvCancel = findViewById(R.id.tvCancel);
 
         fetchPfpChangesRemaining();
@@ -194,39 +193,59 @@ public class EditProfileActivity extends AppCompatActivity implements NetworkMon
             boolean pfpChanged = (imageUri != null);
 
             isSaveInProgress = true;
-            updateSaveUi(true);
-            Toast.makeText(this, imageUri != null ? "Saving profile and profile picture..." : "Saving profile...", Toast.LENGTH_SHORT).show();
+            loadingOverlay.setVisibility(View.VISIBLE);
 
             if (pfpChanged) {
-                String pfpChangeId = UUID.randomUUID().toString();
-                firebaseManager.recordPfpChange(pfpChangeId, new FirebaseManager.PfpChangeLimitListener() {
+                pendingPfpChangeId = UUID.randomUUID().toString();
+                firebaseManager.recordPfpChange(pendingPfpChangeId, new FirebaseManager.PfpChangeLimitListener() {
                     @Override
                     public void onSuccess(int remaining, Date reset) {
                         if (isFinishing() || isDestroyed()) return;
                         tvPfpChangesRemaining.setText("PFP changes remaining today: " + remaining);
                         String base64 = encodeImage(imageUri);
                         if (base64 == null) {
-                            resetSaveState();
+                            rollbackPendingPfpChange("Could not prepare profile picture for moderation.");
                             return;
                         }
                         firebaseManager.callOpenAiImageModeration(base64, new FirebaseManager.OpenAiModerationListener() {
                             @Override
                             public void onSuccess(boolean appropriate, String reason) {
                                 if (isFinishing() || isDestroyed()) return;
-                                if (appropriate) uploadImageToFirebase(imageUri, newUsername, cleanedBio);
-                                else {
-                                    resetSaveState();
-                                    Toast.makeText(EditProfileActivity.this, "PFP rejected: " + reason, Toast.LENGTH_LONG).show();
+                                if (appropriate) {
+                                    uploadImageToFirebase(imageUri, newUsername, cleanedBio, pendingPfpChangeId);
+                                } else {
+                                    String message = (reason != null && !reason.trim().isEmpty())
+                                            ? "PFP rejected: " + reason
+                                            : "PFP rejected by moderation.";
+                                    rollbackPendingPfpChange(message);
                                 }
                             }
-                            @Override public void onFailure(String err) { resetSaveState(); }
+
+                            @Override
+                            public void onFailure(String err) {
+                                String message = (err != null && !err.trim().isEmpty())
+                                        ? err
+                                        : "Moderation check failed.";
+                                rollbackPendingPfpChange(message);
+                            }
                         });
                     }
-                    @Override public void onFailure(String err) { resetSaveState(); }
-                    @Override public void onLimitExceeded() { resetSaveState(); }
+
+                    @Override
+                    public void onFailure(String err) {
+                        resetSaveState();
+                        String message = (err != null && !err.trim().isEmpty()) ? err : "Failed to reserve profile picture change.";
+                        Toast.makeText(EditProfileActivity.this, message, Toast.LENGTH_LONG).show();
+                    }
+
+                    @Override
+                    public void onLimitExceeded() {
+                        resetSaveState();
+                        Toast.makeText(EditProfileActivity.this, "No profile picture changes remaining today.", Toast.LENGTH_LONG).show();
+                    }
                 });
             } else {
-                saveProfileChanges(newUsername, cleanedBio, initialProfilePictureUrl);
+                saveProfileChanges(newUsername, cleanedBio, initialProfilePictureUrl, null);
             }
         });
 
@@ -238,20 +257,65 @@ public class EditProfileActivity extends AppCompatActivity implements NetworkMon
      */
     private void resetSaveState() {
         isSaveInProgress = false;
-        updateSaveUi(false);
+        pendingPfpChangeId = null;
+        pendingUploadedPfpRef = null;
+        if (loadingOverlay != null) loadingOverlay.setVisibility(View.GONE);
     }
 
-    private void updateSaveUi(boolean saving) {
-        if (loadingOverlay != null) {
-            loadingOverlay.setVisibility(saving ? View.VISIBLE : View.GONE);
+    /**
+     * Rolls back the pending profile-picture change reservation so failed or rejected attempts do
+     * not consume the user's daily profile picture quota.
+     */
+    private void rollbackPendingPfpChange(String toastMessage) {
+        String changeId = pendingPfpChangeId;
+        pendingPfpChangeId = null;
+        if (changeId == null) {
+            resetSaveState();
+            if (toastMessage != null && !toastMessage.trim().isEmpty()) {
+                Toast.makeText(this, toastMessage, Toast.LENGTH_LONG).show();
+            }
+            return;
         }
-        if (btnSave != null) {
-            btnSave.setEnabled(!saving);
-            btnSave.setText(saving ? "Saving..." : defaultSaveButtonText);
+
+        firebaseManager.rollbackPfpChange(changeId, new FirebaseManager.SimpleListener() {
+            @Override
+            public void onSuccess() {
+                if (isFinishing() || isDestroyed()) return;
+                fetchPfpChangesRemaining();
+                resetSaveState();
+                if (toastMessage != null && !toastMessage.trim().isEmpty()) {
+                    Toast.makeText(EditProfileActivity.this, toastMessage, Toast.LENGTH_LONG).show();
+                }
+            }
+
+            @Override
+            public void onFailure(String errorMessage) {
+                if (isFinishing() || isDestroyed()) return;
+                Log.e(TAG, "rollbackPfpChange failed: " + errorMessage);
+                fetchPfpChangesRemaining();
+                resetSaveState();
+                String message = (toastMessage != null && !toastMessage.trim().isEmpty())
+                        ? toastMessage
+                        : "Profile picture update failed.";
+                Toast.makeText(EditProfileActivity.this, message, Toast.LENGTH_LONG).show();
+            }
+        });
+    }
+
+    /**
+     * Deletes a just-uploaded profile picture if the later profile update fails so storage does not
+     * keep orphaned files from failed attempts.
+     */
+    private void cleanupUploadedPfpAndRollback(String toastMessage) {
+        StorageReference uploadedRef = pendingUploadedPfpRef;
+        pendingUploadedPfpRef = null;
+        if (uploadedRef == null) {
+            rollbackPendingPfpChange(toastMessage);
+            return;
         }
-        if (btnChangePhoto != null) {
-            btnChangePhoto.setEnabled(!saving);
-        }
+
+        uploadedRef.delete()
+                .addOnCompleteListener(task -> rollbackPendingPfpChange(toastMessage));
     }
 
     /**
@@ -362,11 +426,19 @@ public class EditProfileActivity extends AppCompatActivity implements NetworkMon
      * Builds data from the current screen/object state and writes it out to storage, Firebase, or
      * another service.
      */
-    private void uploadImageToFirebase(Uri uri, String user, String bio) {
+    private void uploadImageToFirebase(Uri uri, String user, String bio, String changeId) {
         String uid = mAuth.getUid();
-        StorageReference ref = storageRef.child("profile_pictures/" + uid + "_" + System.currentTimeMillis() + ".jpg");
-        ref.putFile(uri).addOnSuccessListener(ts -> ref.getDownloadUrl().addOnSuccessListener(dl -> saveProfileChanges(user, bio, dl.toString())))
-                .addOnFailureListener(e -> resetSaveState());
+        if (uid == null) {
+            rollbackPendingPfpChange("Not signed in.");
+            return;
+        }
+
+        pendingUploadedPfpRef = storageRef.child("profile_pictures/" + uid + "/profile_" + System.currentTimeMillis() + ".jpg");
+        pendingUploadedPfpRef.putFile(uri)
+                .addOnSuccessListener(ts -> pendingUploadedPfpRef.getDownloadUrl()
+                        .addOnSuccessListener(dl -> saveProfileChanges(user, bio, dl.toString(), changeId))
+                        .addOnFailureListener(e -> cleanupUploadedPfpAndRollback("Failed to get uploaded profile picture URL.")))
+                .addOnFailureListener(e -> rollbackPendingPfpChange("Profile picture upload failed."));
     }
 
     /**
@@ -413,36 +485,82 @@ public class EditProfileActivity extends AppCompatActivity implements NetworkMon
      * User-facing feedback is shown here so the user knows whether the action succeeded, failed,
      * or needs attention.
      */
-    private void saveProfileChanges(String newUsername, String cleanedBio, String finalPfp) {
-        // FIX #13: use updateUserProfileAtomic to ensure username uniqueness via Cloud Function
+    private void saveProfileChanges(String newUsername, String cleanedBio, String finalPfp, String changeId) {
         User user = new User(mAuth.getUid(), null, newUsername, null, null);
         user.setBio(cleanedBio);
         user.setProfilePictureUrl(finalPfp);
 
-        // Set up or query the Firebase layer that supplies/stores this feature's data.
         firebaseManager.updateUserProfileAtomic(user, new FirebaseManager.AuthListener() {
             @Override
             public void onSuccess(com.google.firebase.auth.FirebaseUser u) {
                 if (isFinishing() || isDestroyed()) return;
-                resetSaveState();
-                setResult(RESULT_OK, new Intent().putExtra("newUsername", newUsername).putExtra("newBio", cleanedBio).putExtra("newProfilePictureUrl", finalPfp));
-                finish();
+
+                if (changeId != null) {
+                    firebaseManager.finalizePfpChange(changeId, new FirebaseManager.SimpleListener() {
+                        @Override
+                        public void onSuccess() {
+                            if (isFinishing() || isDestroyed()) return;
+                            fetchPfpChangesRemaining();
+                            resetSaveState();
+                            setResult(RESULT_OK, new Intent()
+                                    .putExtra("newUsername", newUsername)
+                                    .putExtra("newBio", cleanedBio)
+                                    .putExtra("newProfilePictureUrl", finalPfp));
+                            finish();
+                        }
+
+                        @Override
+                        public void onFailure(String errorMessage) {
+                            if (isFinishing() || isDestroyed()) return;
+                            cleanupUploadedPfpAndRollback(errorMessage != null && !errorMessage.trim().isEmpty()
+                                    ? errorMessage
+                                    : "Failed to finalize profile picture change.");
+                        }
+                    });
+                } else {
+                    resetSaveState();
+                    setResult(RESULT_OK, new Intent()
+                            .putExtra("newUsername", newUsername)
+                            .putExtra("newBio", cleanedBio)
+                            .putExtra("newProfilePictureUrl", finalPfp));
+                    finish();
+                }
             }
+
             @Override
-            // Give the user immediate feedback about the result of this action.
             public void onFailure(String err) {
-                resetSaveState();
-                String message = (err != null && !err.trim().isEmpty()) ? err : "Update failed.";
-                Toast.makeText(EditProfileActivity.this, message, Toast.LENGTH_SHORT).show();
+                if (changeId != null) {
+                    cleanupUploadedPfpAndRollback((err != null && !err.trim().isEmpty()) ? err : "Update failed.");
+                } else {
+                    resetSaveState();
+                    String message = (err != null && !err.trim().isEmpty()) ? err : "Update failed.";
+                    Toast.makeText(EditProfileActivity.this, message, Toast.LENGTH_SHORT).show();
+                }
             }
+
             @Override
-            public void onUsernameTaken() { resetSaveState(); etUsername.setError("Username taken."); }
-            @Override public void onEmailTaken() { resetSaveState(); }
+            public void onUsernameTaken() {
+                if (changeId != null) {
+                    cleanupUploadedPfpAndRollback("Username taken.");
+                } else {
+                    resetSaveState();
+                    etUsername.setError("Username taken.");
+                }
+            }
+
+            @Override
+            public void onEmailTaken() {
+                if (changeId != null) {
+                    cleanupUploadedPfpAndRollback("Email taken.");
+                } else {
+                    resetSaveState();
+                }
+            }
         });
     }
 
     @Override protected void onPause() { super.onPause(); networkMonitor.unregister(); if (loadingOverlay != null) loadingOverlay.setVisibility(View.GONE); }
-    @Override protected void onResume() { super.onResume(); networkMonitor.register(); if (isSaveInProgress) updateSaveUi(true); }
+    @Override protected void onResume() { super.onResume(); networkMonitor.register(); if (isSaveInProgress && loadingOverlay != null) loadingOverlay.setVisibility(View.VISIBLE); }
     @Override public void onNetworkAvailable() {}
     @Override public void onNetworkLost() { runOnUiThread(() -> { if (loadingOverlay != null && loadingOverlay.getVisibility() == View.VISIBLE) resetSaveState(); }); }
 }

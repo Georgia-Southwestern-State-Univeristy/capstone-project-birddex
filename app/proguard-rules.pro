@@ -36,7 +36,7 @@
 # -----------------------------
 # Firestore model classes
 # -----------------------------
-# Your app uses doc.toObject(...) heavily.
+# App uses doc.toObject(...) heavily.
 # These are the biggest runtime-risk classes when minify is turned on.
 
 -keep class com.birddex.app.User {

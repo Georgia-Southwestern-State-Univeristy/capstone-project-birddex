@@ -864,7 +864,7 @@ public class NearbyHeatmapActivity extends AppCompatActivity
 
         // Keep the existing owner notification reset behavior as-is.
         if (user != null && user.getUid().equals(p.getUserId()) && p.isNotificationSent()) {
-            db.collection("forumThreads").document(p.getId()).update("notificationSent", false);
+            p.setNotificationSent(false);
         }
         View content = view.findViewById(R.id.postContent);
         ((TextView) content.findViewById(R.id.tvPostUsername)).setText(p.getUsername());

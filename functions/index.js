@@ -460,6 +460,52 @@ async function assertAndConsumeUserRateLimit(transaction, userId, bucket, config
         metadata: sanitizeAuditMetadata(metadata),
     }, { merge: true });
 }
+
+async function readUserRateLimitState(transaction, userId, bucket, config, metadata = null) {
+    if (!config || !userId || !bucket) return null;
+
+    const rateLimitRef = getUserRateLimitRef(userId, bucket);
+    const rateLimitSnap = await transaction.get(rateLimitRef);
+    const nowMs = Date.now();
+    const minAllowedMs = nowMs - config.windowMs;
+
+    let existingEvents = [];
+    if (rateLimitSnap.exists) {
+        const rawEvents = rateLimitSnap.get("events");
+        if (Array.isArray(rawEvents)) {
+            existingEvents = rawEvents
+                .map((value) => Number(value))
+                .filter((value) => Number.isFinite(value));
+        }
+    }
+
+    const recentEvents = existingEvents
+        .filter((value) => value >= minAllowedMs)
+        .slice(-(Math.max(1, config.maxEvents) - 1));
+
+    if (recentEvents.length >= config.maxEvents) {
+        throw new HttpsError("resource-exhausted", config.userMessage || "Too many requests.");
+    }
+
+    return {
+        rateLimitRef,
+        events: recentEvents,
+        nowMs,
+        metadata: sanitizeAuditMetadata(metadata),
+    };
+}
+
+function commitUserRateLimitState(transaction, state) {
+    if (!state || !state.rateLimitRef) return;
+
+    const nextEvents = Array.isArray(state.events) ? [...state.events, state.nowMs] : [state.nowMs];
+    transaction.set(state.rateLimitRef, {
+        events: nextEvents,
+        lastActionAt: admin.firestore.Timestamp.fromMillis(state.nowMs),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        metadata: state.metadata || null,
+    }, { merge: true });
+}
 // ======================================================
 // logfilteredContentAttempt
 // ======================================================
@@ -515,7 +561,7 @@ exports.logFilteredContentAttempt = onCall(async (request) => {
         },
     });
 
-    return syncResponse;
+    return { success: true };
 });
 
 // ======================================================
@@ -1323,28 +1369,36 @@ exports.updateUserProfile = onCall(async (request) => {
                 throw new HttpsError("not-found", "User profile not found.");
             }
 
-            await assertAndConsumeUserRateLimit(t, uid, "profileUpdate", USER_RATE_LIMITS.profileUpdate, {
+            let usernameRef = null;
+            let usernameDoc = null;
+            if (usernameChanged) {
+                usernameRef = db.collection("usernames").doc(sanitizedUsername);
+                usernameDoc = await t.get(usernameRef);
+                if (usernameDoc.exists && usernameDoc.data().uid !== uid) {
+                    throw new HttpsError("already-exists", "Username is already taken.");
+                }
+            }
+
+            const profileRateLimitState = await readUserRateLimitState(t, uid, "profileUpdate", USER_RATE_LIMITS.profileUpdate, {
                 hasUsername,
                 hasBio,
                 hasProfilePictureUrl,
                 hasEmail,
             });
-            if (usernameChanged) {
-                await assertAndConsumeUserRateLimit(t, uid, "usernameChange", USER_RATE_LIMITS.usernameChange, {
+            const usernameRateLimitState = usernameChanged
+                ? await readUserRateLimitState(t, uid, "usernameChange", USER_RATE_LIMITS.usernameChange, {
                     username: sanitizedUsername,
-                });
-            }
+                })
+                : null;
 
             const profileUpdate = {
                 updatedAt: admin.firestore.FieldValue.serverTimestamp(),
             };
 
+            commitUserRateLimitState(t, profileRateLimitState);
+            if (usernameRateLimitState) commitUserRateLimitState(t, usernameRateLimitState);
+
             if (usernameChanged) {
-                const usernameRef = db.collection("usernames").doc(sanitizedUsername);
-                const usernameDoc = await t.get(usernameRef);
-                if (usernameDoc.exists && usernameDoc.data().uid !== uid) {
-                    throw new HttpsError("already-exists", "Username is already taken.");
-                }
                 if (currentUsername && currentUsername !== sanitizedUsername) {
                     t.delete(db.collection("usernames").doc(currentUsername));
                 }
@@ -3515,7 +3569,7 @@ exports.syncIdentificationFeedback = onCall(async (request) => {
 });
 
 // ======================================================
-// recordPfpChange - FIXED: Idempotent version
+// recordPfpChange - reservation/rollback/finalize flow
 // ======================================================
 /**
  * Main backend logic block for this Firebase Functions file.
@@ -3524,36 +3578,28 @@ exports.syncIdentificationFeedback = onCall(async (request) => {
  * Input/permission checks happen here first so invalid requests fail before any expensive
  * backend work starts.
  */
-/**
- * Export: Callable that rate-limits profile-photo changes and records when the user changed their
- * picture.
- */
 exports.recordPfpChange = onCall({ timeoutSeconds: 15 }, async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Authentication required.");
 
     const userId = request.auth.uid;
-    // This is where the function touches Firestore documents/collections for the requested action.
     const userRef = db.collection("users").doc(userId);
-    const { changeId } = request.data;
+    const { changeId } = request.data || {};
 
-    // Use changeId for idempotency
-    const idempotencyKey = changeId || `PFP_${userId}_${admin.firestore.Timestamp.now().toMillis()}`;
+    const idempotencyKey = typeof changeId === "string" && changeId.trim()
+        ? changeId.trim()
+        : `PFP_${userId}_${admin.firestore.Timestamp.now().toMillis()}`;
     const eventLogRef = db.collection("processedEvents").doc(idempotencyKey);
 
     try {
         let finalRemaining = 0;
         await db.runTransaction(async (transaction) => {
-            const eventDoc = await transaction.get(eventLogRef);
-            const userDoc = await transaction.get(userRef);
+            const [eventDoc, userDoc] = await Promise.all([
+                transaction.get(eventLogRef),
+                transaction.get(userRef)
+            ]);
 
             if (!userDoc.exists) throw new HttpsError("not-found", "User document not found.");
-            const userData = userDoc.data();
-
-            if (eventDoc.exists) {
-                logger.info(`recordPfpChange: Change ${idempotencyKey} already processed.`);
-                finalRemaining = userData.pfpChangesToday;
-                return;
-            }
+            const userData = userDoc.data() || {};
 
             let pfpChangesToday = userData.pfpChangesToday || 0;
             const pfpCooldownResetTimestamp = userData.pfpCooldownResetTimestamp?.toDate() || null;
@@ -3561,6 +3607,21 @@ exports.recordPfpChange = onCall({ timeoutSeconds: 15 }, async (request) => {
 
             if (pfpCooldownResetTimestamp && (currentTime.getTime() - pfpCooldownResetTimestamp.getTime()) >= CONFIG.COOLDOWN_PERIOD_MS) {
                 pfpChangesToday = CONFIG.MAX_PFP_CHANGES;
+            }
+
+            if (eventDoc.exists) {
+                const eventData = eventDoc.data() || {};
+                if (eventData.userId !== userId) {
+                    throw new HttpsError("permission-denied", "That profile picture change does not belong to you.");
+                }
+
+                if (eventData.status === "rolled_back") {
+                    finalRemaining = Math.min(CONFIG.MAX_PFP_CHANGES, pfpChangesToday);
+                    return;
+                }
+
+                finalRemaining = pfpChangesToday;
+                return;
             }
 
             if (pfpChangesToday <= 0) {
@@ -3579,14 +3640,126 @@ exports.recordPfpChange = onCall({ timeoutSeconds: 15 }, async (request) => {
                 pfpCooldownResetTimestamp: newPfpCooldownResetTimestamp,
             });
 
-            transaction.set(eventLogRef, { userId, processedAt: admin.firestore.FieldValue.serverTimestamp() });
+            transaction.set(eventLogRef, {
+                userId,
+                type: "pfp_change",
+                status: "reserved",
+                reservedAt: admin.firestore.FieldValue.serverTimestamp(),
+            }, { merge: true });
         });
 
-        return { success: true, pfpChangesToday: finalRemaining };
+        return { success: true, changeId: idempotencyKey, pfpChangesToday: finalRemaining };
     } catch (error) {
         logger.error(`Error recording PFP change for user ${userId}:`, error);
         if (error instanceof HttpsError) throw error;
         throw new HttpsError("internal", "Failed to record profile picture change.");
+    }
+});
+
+exports.rollbackPfpChange = onCall({ timeoutSeconds: 15 }, async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Authentication required.");
+
+    const userId = request.auth.uid;
+    const { changeId } = request.data || {};
+    if (typeof changeId !== "string" || !changeId.trim()) {
+        throw new HttpsError("invalid-argument", "changeId is required.");
+    }
+
+    const idempotencyKey = changeId.trim();
+    const eventLogRef = db.collection("processedEvents").doc(idempotencyKey);
+    const userRef = db.collection("users").doc(userId);
+
+    try {
+        let finalRemaining = 0;
+        let rolledBack = false;
+        let alreadyCommitted = false;
+
+        await db.runTransaction(async (transaction) => {
+            const [eventDoc, userDoc] = await Promise.all([
+                transaction.get(eventLogRef),
+                transaction.get(userRef)
+            ]);
+
+            if (!userDoc.exists) throw new HttpsError("not-found", "User document not found.");
+            const userData = userDoc.data() || {};
+            let pfpChangesToday = userData.pfpChangesToday || 0;
+
+            if (!eventDoc.exists) {
+                finalRemaining = pfpChangesToday;
+                return;
+            }
+
+            const eventData = eventDoc.data() || {};
+            if (eventData.userId !== userId) {
+                throw new HttpsError("permission-denied", "That profile picture change does not belong to you.");
+            }
+
+            if (eventData.status === "rolled_back") {
+                finalRemaining = pfpChangesToday;
+                return;
+            }
+
+            if (eventData.status === "committed") {
+                alreadyCommitted = true;
+                finalRemaining = pfpChangesToday;
+                return;
+            }
+
+            finalRemaining = Math.min(CONFIG.MAX_PFP_CHANGES, pfpChangesToday + 1);
+            transaction.update(userRef, { pfpChangesToday: finalRemaining });
+            transaction.set(eventLogRef, {
+                status: "rolled_back",
+                rolledBackAt: admin.firestore.FieldValue.serverTimestamp(),
+            }, { merge: true });
+            rolledBack = true;
+        });
+
+        return { success: true, rolledBack, alreadyCommitted, pfpChangesToday: finalRemaining };
+    } catch (error) {
+        logger.error(`Error rolling back PFP change for user ${userId}:`, error);
+        if (error instanceof HttpsError) throw error;
+        throw new HttpsError("internal", "Failed to roll back profile picture change.");
+    }
+});
+
+exports.finalizePfpChange = onCall({ timeoutSeconds: 15 }, async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Authentication required.");
+
+    const userId = request.auth.uid;
+    const { changeId } = request.data || {};
+    if (typeof changeId !== "string" || !changeId.trim()) {
+        throw new HttpsError("invalid-argument", "changeId is required.");
+    }
+
+    const idempotencyKey = changeId.trim();
+    const eventLogRef = db.collection("processedEvents").doc(idempotencyKey);
+
+    try {
+        await db.runTransaction(async (transaction) => {
+            const eventDoc = await transaction.get(eventLogRef);
+            if (!eventDoc.exists) return;
+
+            const eventData = eventDoc.data() || {};
+            if (eventData.userId !== userId) {
+                throw new HttpsError("permission-denied", "That profile picture change does not belong to you.");
+            }
+
+            if (eventData.status === "committed") return;
+            if (eventData.status === "rolled_back") {
+                throw new HttpsError("failed-precondition", "This profile picture change was already rolled back.");
+            }
+
+            transaction.set(eventLogRef, {
+                status: "committed",
+                committedAt: admin.firestore.FieldValue.serverTimestamp(),
+            }, { merge: true });
+        });
+
+        return { success: true };
+    } catch (error) {
+        logger.error(`Error finalizing PFP change for user ${userId}:`, error);
+        if (error instanceof HttpsError) throw error;
+        throw new HttpsError("internal", "Failed to finalize profile picture change.");
     }
 });
 
@@ -4758,17 +4931,19 @@ exports.toggleForumPostLike = onCall(async (request) => {
 
     try {
         const result = await db.runTransaction(async (t) => {
-            await assertAndConsumeUserRateLimit(t, userId, "forumPostLike", USER_RATE_LIMITS.forumPostLike, {
+            const postSnap = await t.get(postRef);
+            const postRateLimitState = await readUserRateLimitState(t, userId, "forumPostLike", USER_RATE_LIMITS.forumPostLike, {
                 postId,
                 liked: shouldLike,
             });
 
-            const postSnap = await t.get(postRef);
+            commitUserRateLimitState(t, postRateLimitState);
+
+            const postData = postSnap.data() || {};
             if (!postSnap.exists) {
                 throw new HttpsError("not-found", "Forum post not found.");
             }
 
-            const postData = postSnap.data() || {};
             const moderationStatus = normalizeModerationStatus(postData.moderationStatus);
             if (!isPublicForumStatus(moderationStatus)) {
                 throw new HttpsError("failed-precondition", "This post is not available for engagement.");
@@ -4830,18 +5005,20 @@ exports.toggleForumCommentLike = onCall(async (request) => {
 
     try {
         const result = await db.runTransaction(async (t) => {
-            await assertAndConsumeUserRateLimit(t, userId, "forumCommentLike", USER_RATE_LIMITS.forumCommentLike, {
+            const commentSnap = await t.get(commentRef);
+            const commentRateLimitState = await readUserRateLimitState(t, userId, "forumCommentLike", USER_RATE_LIMITS.forumCommentLike, {
                 threadId,
                 commentId,
                 liked: shouldLike,
             });
 
-            const commentSnap = await t.get(commentRef);
+            commitUserRateLimitState(t, commentRateLimitState);
+
+            const commentData = commentSnap.data() || {};
             if (!commentSnap.exists) {
                 throw new HttpsError("not-found", "Comment not found.");
             }
 
-            const commentData = commentSnap.data() || {};
             const moderationStatus = normalizeModerationStatus(commentData.moderationStatus);
             if (!isPublicForumStatus(moderationStatus)) {
                 throw new HttpsError("failed-precondition", "This comment is not available for engagement.");
@@ -4899,16 +5076,18 @@ exports.recordForumPostView = onCall(async (request) => {
 
     try {
         const result = await db.runTransaction(async (t) => {
-            await assertAndConsumeUserRateLimit(t, userId, "forumPostView", USER_RATE_LIMITS.forumPostView, {
+            const postSnap = await t.get(postRef);
+            const postViewRateLimitState = await readUserRateLimitState(t, userId, "forumPostView", USER_RATE_LIMITS.forumPostView, {
                 postId,
             });
 
-            const postSnap = await t.get(postRef);
+            commitUserRateLimitState(t, postViewRateLimitState);
+
+            const postData = postSnap.data() || {};
             if (!postSnap.exists) {
                 throw new HttpsError("not-found", "Forum post not found.");
             }
 
-            const postData = postSnap.data() || {};
             const moderationStatus = normalizeModerationStatus(postData.moderationStatus);
             if (!isPublicForumStatus(moderationStatus)) {
                 return { alreadyViewed: true, changed: false };
@@ -5491,16 +5670,17 @@ exports.toggleFollow = onCall(async (request) => {
     const followerDocRef = targetRef.collection("followers").doc(followerId);
 
     const result = await db.runTransaction(async (t) => {
-        await assertAndConsumeUserRateLimit(t, followerId, "followToggle", USER_RATE_LIMITS.followToggle, {
-            targetUserId,
-            action,
-        });
-
-        const [followingDoc, followerSnap, targetSnap] = await Promise.all([
+        const [followingDoc, followerSnap, targetSnap, followRateLimitState] = await Promise.all([
             t.get(followingDocRef),
             t.get(followerRef),
             t.get(targetRef),
+            readUserRateLimitState(t, followerId, "followToggle", USER_RATE_LIMITS.followToggle, {
+                targetUserId,
+                action,
+            }),
         ]);
+
+        commitUserRateLimitState(t, followRateLimitState);
 
         if (!followerSnap.exists || !targetSnap.exists) {
             throw new HttpsError("not-found", "User profile not found.");

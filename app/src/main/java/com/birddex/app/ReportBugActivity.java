@@ -15,7 +15,7 @@ import com.google.android.material.checkbox.MaterialCheckBox;
 
 /**
  * ReportBugActivity: Provides a form for users to submit bug reports or feedback.
- * 
+ *
  * Collected reports include device information and optional user contact details
  * to assist in debugging and follow-up.
  */

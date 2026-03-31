@@ -56,7 +56,7 @@ public class CameraFragment extends Fragment {
     private static final long BURST_FRAME_DELAY_MS = 90L;
 
     private PreviewView previewView;
-    private ImageButton btnFlip, btnCapture, btnFlash;
+    private ImageButton btnFlip, btnCapture, btnFlash, btnBack;
     private ProcessCameraProvider cameraProvider;
     private Camera camera;
     private ImageCapture imageCapture;
@@ -89,6 +89,7 @@ public class CameraFragment extends Fragment {
         btnFlip = v.findViewById(R.id.btnFlip);
         btnCapture = v.findViewById(R.id.btnCapture);
         btnFlash = v.findViewById(R.id.btnFlash);
+        btnBack = v.findViewById(R.id.btnBack);
 
         scaleGestureDetector = new ScaleGestureDetector(requireContext(), new ScaleGestureDetector.SimpleOnScaleGestureListener() {
             @Override
@@ -135,6 +136,14 @@ public class CameraFragment extends Fragment {
                 btnCapture.setEnabled(false);
                 btnCapture.setAlpha(0.4f);
                 takePhoto();
+            });
+        }
+
+        if (btnBack != null) {
+            btnBack.setOnClickListener(view -> {
+                if (getActivity() != null) {
+                    getActivity().onBackPressed();
+                }
             });
         }
 

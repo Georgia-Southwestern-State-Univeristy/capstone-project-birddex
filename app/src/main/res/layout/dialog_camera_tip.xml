@@ -4,35 +4,58 @@
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:orientation="vertical"
-    android:padding="24dp"
+    android:paddingTop="24dp"
+    android:paddingBottom="8dp"
+    android:paddingStart="20dp"
+    android:paddingEnd="20dp"
     android:gravity="center_horizontal">
 
     <ImageView
-        android:layout_width="80dp"
-        android:layout_height="80dp"
+        android:layout_width="60dp"
+        android:layout_height="60dp"
         android:src="@drawable/ic_camera"
-        android:layout_marginBottom="20dp"
+        android:layout_marginBottom="12dp"
         android:contentDescription="@string/camera_tip_title"
-        app:tint="?attr/colorPrimary"/>
+        app:tint="@color/nav_brown"/>
+
+    <TextView
+        android:id="@+id/textViewTitle"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="@string/camera_tip_title"
+        android:textSize="18sp"
+        android:textStyle="bold"
+        android:textColor="@color/nav_brown"
+        android:layout_marginBottom="16dp"/>
 
     <TextView
         android:id="@+id/textViewMessage"
-        android:layout_width="wrap_content"
+        android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:text="@string/camera_tip_message"
-        android:textSize="20sp"
+        android:textSize="14sp"
         android:textStyle="bold"
-        android:textColor="@android:color/black"
-        android:gravity="center"
-        android:layout_marginBottom="24dp"/>
+        android:textColor="@color/on_page"
+        android:gravity="start"
+        android:lineSpacingExtra="4dp"
+        android:layout_marginBottom="16dp"
+        android:paddingHorizontal="4dp"/>
+
+    <com.google.android.material.divider.MaterialDivider
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="8dp"
+        android:alpha="0.1" />
 
     <CheckBox
         android:id="@+id/checkBoxDontShow"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
+        android:layout_gravity="center_horizontal"
         android:text="@string/dont_show_again"
-        android:textSize="16sp"
-        android:textColor="#616161"
-        android:layout_gravity="center_horizontal"/>
+        android:textColor="@color/nav_brown"
+        android:buttonTint="@color/nav_brown"
+        android:minHeight="40dp"
+        android:textSize="14sp"/>
 
 </LinearLayout>

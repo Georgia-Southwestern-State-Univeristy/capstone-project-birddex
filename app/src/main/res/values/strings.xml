@@ -103,8 +103,8 @@
 
 
     <!-- Camera Tip -->
-    <string name="camera_tip_title">Camera Tip</string>
-    <string name="camera_tip_message">Make Sure To Only Include One Bird When Cropping</string>
+    <string name="camera_tip_title">Camera Tips</string>
+    <string name="camera_tip_message">\u2022 Center Bird In Box\n\n\u2022 Make Sure To Only Include One Bird When Cropping\n\n\u2022 Keep Camera Still When Taking Pictures\n\n\u2022 You Can Find How Many Identifications You Have Left For The Day In The Settings</string>
     <string name="dont_show_again">Don\'t show again</string>
     <string name="ok">OK</string>
 

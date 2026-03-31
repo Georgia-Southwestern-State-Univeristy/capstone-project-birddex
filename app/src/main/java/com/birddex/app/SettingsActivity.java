@@ -35,7 +35,7 @@ import java.util.Map;
  */
 public class SettingsActivity extends AppCompatActivity {
 
-    private TextView tvUserEmail, tvUserName;
+    private TextView tvUserEmail, tvUserName, tvIdentificationsRemaining;
     private Button btnLogout, btnUpdateEmail, btnChangePassword, btnNotifications, btnDeleteAccount, btnReportBug, btnModerationHistory, btnModeratorDashboard;
     private MaterialSwitch switchGraphicContent;
     private ImageView btnBack;
@@ -70,6 +70,7 @@ public class SettingsActivity extends AppCompatActivity {
         btnBack = findViewById(R.id.btnBack);
         tvUserEmail = findViewById(R.id.tvUserEmail);
         tvUserName = findViewById(R.id.tvUserName);
+        tvIdentificationsRemaining = findViewById(R.id.tvIdentificationsRemaining);
         btnNotifications = findViewById(R.id.btnNotifications);
         btnReportBug = findViewById(R.id.btnReportBug);
         btnModerationHistory = findViewById(R.id.btnModerationHistory);
@@ -96,6 +97,7 @@ public class SettingsActivity extends AppCompatActivity {
         // Reload user to ensure state is fresh (e.g. email verification status).
         user.reload().addOnCompleteListener(task -> {
             loadUserProfile(user);
+            fetchIdentificationsRemaining();
             checkModeratorRole(user);
         });
 
@@ -167,9 +169,9 @@ public class SettingsActivity extends AppCompatActivity {
         user.getIdToken(false).addOnSuccessListener(result -> {
             Map<String, Object> claims = result.getClaims();
             boolean isStaff = Boolean.TRUE.equals(claims.get("admin")) ||
-                              Boolean.TRUE.equals(claims.get("moderator")) ||
-                              Boolean.TRUE.equals(claims.get("staff"));
-            
+                    Boolean.TRUE.equals(claims.get("moderator")) ||
+                    Boolean.TRUE.equals(claims.get("staff"));
+
             if (isStaff) {
                 btnModeratorDashboard.setVisibility(View.VISIBLE);
             }
@@ -184,6 +186,29 @@ public class SettingsActivity extends AppCompatActivity {
     protected void onResume() {
         super.onResume();
         isNavigating = false;
+
+        FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
+        if (user != null) {
+            loadUserProfile(user);
+            fetchIdentificationsRemaining();
+        }
+    }
+
+    /**
+     * Pulls the remaining identification quota from Firestore and shows it on the Settings screen.
+     */
+    private void fetchIdentificationsRemaining() {
+        firebaseManager.getOpenAiRequestsRemaining(new FirebaseManager.OpenAiRequestLimitListener() {
+            @Override
+            public void onCheckComplete(boolean hasRequestsRemaining, int remaining, java.util.Date openAiCooldownResetTimestamp) {
+                tvIdentificationsRemaining.setText("Identifications left: " + remaining);
+            }
+
+            @Override
+            public void onFailure(String errorMessage) {
+                tvIdentificationsRemaining.setText("Identifications left: --");
+            }
+        });
     }
 
     /**

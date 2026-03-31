@@ -18,7 +18,6 @@ import androidx.annotation.Nullable;
 public class CameraOverlayView extends View {
 
     private final Paint boxPaint = new Paint();
-    private final Paint textPaint = new Paint();
     private RectF box;
 
     /**
@@ -47,10 +46,6 @@ public class CameraOverlayView extends View {
         boxPaint.setStrokeWidth(6f);
         boxPaint.setAntiAlias(true);
         boxPaint.setColor(0xFFFFFFFF);
-
-        textPaint.setAntiAlias(true);
-        textPaint.setTextSize(42f);
-        textPaint.setColor(0xFFFFFFFF);
     }
 
     /**
@@ -78,7 +73,6 @@ public class CameraOverlayView extends View {
 
         if (box != null) {
             canvas.drawRect(box, boxPaint);
-            canvas.drawText("Center bird in box", box.left, box.top - 18f, textPaint);
         }
     }
 }

@@ -319,8 +319,19 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
         Glide.with(this).load(post.getUserProfilePictureUrl()).placeholder(R.drawable.ic_profile).into((ImageView) v.findViewById(R.id.ivPostUserProfilePicture));
 
         View cv = v.findViewById(R.id.cvPostImage);
-        if (post.getBirdImageUrl() != null && !post.getBirdImageUrl().isEmpty()) { cv.setVisibility(View.VISIBLE); Glide.with(this).load(post.getBirdImageUrl()).into((ImageView) v.findViewById(R.id.ivPostBirdImage)); }
-        else cv.setVisibility(View.GONE);
+        ImageView postImageView = v.findViewById(R.id.ivPostBirdImage);
+        if (post.getBirdImageUrl() != null && !post.getBirdImageUrl().isEmpty()) {
+            cv.setVisibility(View.VISIBLE);
+            Glide.with(this).load(post.getBirdImageUrl()).into(postImageView);
+
+            View.OnClickListener forumImageClickListener = view -> openForumImageViewer(post.getBirdImageUrl());
+            cv.setOnClickListener(forumImageClickListener);
+            postImageView.setOnClickListener(forumImageClickListener);
+        } else {
+            cv.setVisibility(View.GONE);
+            cv.setOnClickListener(null);
+            postImageView.setOnClickListener(null);
+        }
 
         View mapBtn = v.findViewById(R.id.btnViewOnMap);
         if (mapBtn != null) {
@@ -354,6 +365,13 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
         isNavigating = true;
         // Move into the next screen and pass the identifiers/data that screen needs.
         startActivity(new Intent(this, UserSocialProfileActivity.class).putExtra(UserSocialProfileActivity.EXTRA_USER_ID, uid));
+    }
+
+    private void openForumImageViewer(String imageUrl) {
+        if (imageUrl == null || imageUrl.trim().isEmpty()) {
+            return;
+        }
+        startActivity(ForumImageViewerActivity.createIntent(this, imageUrl));
     }
 
     /**

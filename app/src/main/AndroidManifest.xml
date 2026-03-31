@@ -198,6 +198,10 @@
             android:name=".UpgradeActivity"
             android:exported="false"
             android:screenOrientation="portrait" />
+        <activity
+            android:name=".ForumImageViewerActivity"
+            android:exported="false"
+            android:screenOrientation="portrait" />
     </application>
 
 </manifest>

@@ -233,8 +233,17 @@ public class ForumPostAdapter extends RecyclerView.Adapter<ForumPostAdapter.Post
                 Glide.with(itemView.getContext())
                         .load(post.getBirdImageUrl())
                         .into(ivBirdImage);
+
+                View.OnClickListener forumImageClickListener = v ->
+                        itemView.getContext().startActivity(
+                                ForumImageViewerActivity.createIntent(itemView.getContext(), post.getBirdImageUrl())
+                        );
+                cvPostImage.setOnClickListener(forumImageClickListener);
+                ivBirdImage.setOnClickListener(forumImageClickListener);
             } else {
                 cvPostImage.setVisibility(View.GONE);
+                cvPostImage.setOnClickListener(null);
+                ivBirdImage.setOnClickListener(null);
             }
 
             // Like status

@@ -28,6 +28,8 @@ public class ImageUploadActivity extends AppCompatActivity {
         super.onCreate(savedInstanceState);
         SystemBarHelper.applyStandardNavBar(this);
 
+        BirdDexApiWarmupHelper.maybeWarmup(this, "camera_entry");
+
         // Dynamically create a layout container for the fragment.
         FrameLayout frameLayout = new FrameLayout(this);
         frameLayout.setId(View.generateViewId());

@@ -330,6 +330,8 @@ public class HomeActivity extends AppCompatActivity implements NetworkMonitor.Ne
             bottomNav.setSelectedItemId(lastNonCameraTabId);
         }
 
+        BirdDexApiWarmupHelper.maybeWarmup(this, "app_open");
+
         if (!welcomeCheckedThisResume) {
             checkWelcomeMessage();
             welcomeCheckedThisResume = true;

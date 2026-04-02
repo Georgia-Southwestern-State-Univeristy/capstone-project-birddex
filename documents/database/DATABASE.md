@@ -1,418 +1,327 @@
-1.users (UserID\_{uid})
+🐦 BirdDex Database Architecture
+📑 Table of Contents
+Overview
+Core Collections
+Identification Pipeline
+Location & Sightings
+Forum & Community
+Moderation System
+Archive & Recovery
+External Data & Images
+Event Processing
+Storage Structure
+Architecture Notes
+System Flow
+📖 Overview
+
+BirdDex uses Firebase Cloud Firestore (NoSQL) to store application data.
+
+The database supports:
+
+AI-powered bird identification
+User collections and profiles
+Forum and social interaction
+Location-based bird sightings
+Moderation and audit systems
+External API integrations (eBird, OpenAI, Nuthatch)
+🧩 Core Collections
+users (users/{uid})
+
+Stores user profiles, stats, and moderation data.
+
+Fields
+email
+username
+displayName
+bio
+profilePictureUrl
+createdAt
+totalBirds
+duplicateBirds
+totalPoints
+openAiRequestsRemaining
+pfpChangesToday
+warningCount
+strikeCount
+forumSuspendedUntil
+permanentForumBan
+lastViolationAt
+Subcollections
+collectionSlot   → BirdDex display grid
+settings         → user preferences
+following        → users followed
+followers        → users following
+savedPosts       → bookmarked posts
+trackedBirds     → tracked species
+rateLimits       → request limits
+feedbackEntries  → AI feedback
+usernames
+
+Ensures unique usernames.
+
+username (PK)
+uid → users
+birds
+
+Master bird taxonomy (synced with eBird).
+
+birdId (PK)
+commonName
+scientificName
+family
+species
+isEndangered
+canHunt
+birdFacts
+
+AI-generated bird info.
+
+birdId → birds
+lastGenerated
+generalFacts (Map)
+Subcollection: hunterFacts
+legalStatusGeorgia
+season
+relevantRegulations
+userBirds
+
+Birds captured by users.
+
+userBirdId (PK)
+userId → users
+birdId → birds
+captureDate
+locationId → locations
+imageUrl
+pointsEarned
+isDuplicate
+🤖 Identification Pipeline
+identifications
+
+Stores the entire AI decision pipeline.
 
-  Core user profiles, points, and settings.
+Core Fields
+identificationId (PK)
+userId
+timestamp
+imageUrl
+locationId
+pipelineVersion
+modelVersion
+Nested Structures
+localModel
 
-  Sub-collection: collectionSlot (slotId) – The 40-slot display grid.
+Top 3 AI predictions.
 
+decision
 
+Confidence thresholds + logic.
 
-2\. birds (BirdID\_{ebirdCode})
+openAi
 
-  Master taxonomy list of every bird in Georgia (synced via ebird\_ga\_cache).
+OpenAI candidates + responses.
 
+captureGuard
 
+Anti-cheat + image validation.
 
-3\. userBirds (UserBirdID\_{uuid})
+pointAwardDecision
 
-  Primary records of birds a user has actually "captured" (linked to their specific image and date).
+Controls point rewards.
 
+finalResult
+birdId
+commonName
+scientificName
+verified
+userFeedback
 
+User corrections + confirmations.
 
-4\. birdFacts (BirdFactID\_{birdId})
+training
 
-  AI-generated general knowledge (size, diet, behavior).
+AI training eligibility.
 
-  Sub-collection: hunterFacts (birdId) – Legal status, seasons, and GA DNR info.
+identificationLogs
 
+Tracks identification pipeline steps.
 
+images_fetched_identifications
 
-5\. identifications (IdentID\_{uuid})
+Stores reference images used during AI processing.
 
-  Raw "training data" collection. Stores every attempt the AI makes to identify a bird, used for verification history.
+🌍 Location & Sightings
+locations
 
+Central location registry.
 
+locationId (PK)
+latitude
+longitude
+country
+state
+locality
+metadata
+userBirdSightings
 
-6\. forumThreads (ThreadID\_{uuid})
+Used for Near Me / heatmap.
 
-  Top-level forum posts (captions, user info, likes, view counts).
+sightingId (PK)
+userId
+birdId
+locationId
+isSpotted
+isHunted
+imageUrl
+timestamp
+userBirdSightings_backlog
 
-  Sub-collection: comments (commentId) – UserID, text, and nested parentCommentId for replies.
+Archived sightings.
 
+eBirdApiSightings
 
+External sightings (not user-generated).
 
-7\. userBirdSightings (SightingID\_{uuid})
+ebird_ga_cache
 
-  Data source for the Heatmap. Stores the "when" and "where" for every bird spotted in the wild.
+Caches bird data to reduce API calls.
 
+💬 Forum & Community
+forumThreads
 
+Top-level posts.
 
-8\. locations (LocationID\_LOC\_{lat}\_{lng})
+postId (PK)
+userId
+username
+title
+message
+imageUrl
+timestamp
+likeCount
+commentCount
+hunted
+spotted
+Subcollection: comments
+commentId
+userId
+username
+text
+timestamp
+parentCommentId
+🛡 Moderation System
+reports
 
-  Global coordinate registry. Prevents duplicate location strings and groups sightings by locality.
+User reports on posts/comments.
 
+moderationEvents
 
+Tracks:
 
-9\. reports (ReportID\_{uuid})
+warnings
+strikes
+bans
+moderationAppeals
 
-  Moderation queue for flagged forum posts or comments.
+User appeals.
 
+filteredContentLogs
 
+Automated filtering logs.
 
-10\. ebird\_ga\_cache (data)
+privateAuditLogs
 
-  Internal utility. Stores the last time the eBird API was called and the list of IDs to prevent hitting eBird's rate limits too often.
+Admin/internal logs.
 
+🗂 Archive & Recovery
+deletedforum_backlog
 
+Stores deleted forum content.
 
-11\. eBirdApiSightings ({ebird\_subId})
+usersdeletedAccounts
 
-  Stores "Notable Sightings" pulled directly from the eBird API (not user-generated) to show "Nearby" birds that haven't been caught by users yet.
+Stores deleted user data.
 
+eBirdApiSightings_backlog
 
+Archived external sightings.
 
-12\. deletedforum\_backlog (BacklogID\_{uuid})
+🖼 External Data & Images
+nuthatch_images
 
-  Safety Archive: When a user deletes a post, the Cloud Function moves the data here before wiping it from forumThreads. This allows for recovery or legal moderation if needed.
+Bird images from Nuthatch API.
 
+inaturalist_images
 
+Bird images from iNaturalist.
 
-13\. usersdeletedAccounts (DeletedUID\_{uid})
+missing_hybrid_birds
 
-  Stores basic profile data of users who deleted their accounts (archived before cleanupUserData runs).
+Unsupported hybrid species.
 
+still_missing_birds
 
+Missing species tracking.
 
-14\. upgradeCardData (UpgradeID\_{birdId})
+⚙️ Event Processing
+processedEvents
 
-  Contains the metadata for the Bird Cards game logic (rarity tiers, point values, and leveling requirements for specific species).
+General backend events.
 
+processedAIEvents
 
+AI-specific processing logs.
 
+📦 Storage Structure
+identificationImages/{uid}/{uuid}.jpg
+user_images/{uid}/...
+userCollectionImages/{uid}/...
+profile_pictures/{uid}/...
+forum_post_images/{imageId}.jpg
+archive/forum_post_images/{uid}/...
+🧠 Architecture Notes
+Scalability
 
+Firestore collections are separated by feature for performance.
 
+Data Integrity
+birds = single source of truth
+locations = prevents duplicates
+AI Pipeline
 
+identifications stores full decision logic, not just results.
 
+Moderation
 
+Dedicated collections allow:
 
+audit trails
+safe community management
+Archival Strategy
 
+Backlog collections prevent permanent data loss.
 
+🔄 System Flow
+Capture Image
+   ↓
+AI Identification (OpenAI + Local Model)
+   ↓
+eBird Verification
+   ↓
+Store in Firestore
+   ↓
+Add to userBirds
+   ↓
+Add to userBirdSightings
+   ↓
+(Optional) Forum Post
+✅ Summary
 
+BirdDex’s database supports:
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-1. users (UserID\_{firebase\_uid})
-
-  email: string
-
-  displayName: string (synchronized with username)
-
-  createdAt: timestamp
-
-  profilePictureUrl: string
-
-  bio: string
-
-  locationId: string (FK → locations)
-
-  totalBirds: number (Total unique birds)
-
-  duplicateBirds: number (Total sightings that were already in collection)
-
-  totalPoints: number (Game points)
-
-  openAiRequestsRemaining: number
-
-  pfpChangesToday: number
-
-  Sub-collection: collectionSlot (SlotID\_{index\_or\_uuid})
-
-    userBirdId: string (FK → userBirds)
-
-    birdId: string (FK → birds)
-
-    imageUrl: string
-
-
-
-2\. birds (BirdID\_{ebird\_species\_code} – e.g., BirdID\_bkcchi)
-
-  commonName: string
-
-  scientificName: string
-
-  family: string
-
-  species: string
-
-  isEndangered: boolean
-
-  canHunt: boolean
-
-  lastSeenLocationIdGeorgia: string (FK → locations)
-
-  lastSeenTimestampGeorgia: timestamp
-
-
-
-3\. userBirds (UserBirdID\_{unique\_upload\_id})
-
-  userId: string (FK → users)
-
-  birdId: string (FK → birds)
-
-  captureDate: timestamp
-
-  locationId: string (FK → locations)
-
-  imageUrl: string
-
-  pointsEarned: number
-
-  isDuplicate: boolean
-
-
-
-4\. birdFacts (BirdFactID\_{birdId})
-
-  birdId: string (FK → birds)
-
-  lastGenerated: timestamp
-
-  generalFacts: Map (sizeAppearance, diet, etc.)
-
-  Sub-collection: hunterFacts (HunterFactID\_{birdId})
-
-    legalStatusGeorgia: string
-
-    season: string
-
-    relevantRegulations: string
-
-
-
-5\. identifications (IdentID\_{unique\_id})
-
-  userId: string
-
-  birdId: string (or "Unknown")
-
-  commonName: string
-
-  scientificName: string
-
-  family: string
-
-  species: string
-
-  locationId: string (FK → locations)
-
-  verified: boolean
-
-  imageUrl: string
-
-  timestamp: timestamp
-
-
-
-6\. forumThreads (ThreadID\_{unique\_id})
-
-  userId: string (FK → users)
-
-  username: string
-
-  userProfilePictureUrl: string
-
-  title: string
-
-  message: string
-
-  imageUrl: string (The photo shared)
-
-  timestamp: timestamp
-
-  likeCount: number
-
-  commentCount: number
-
-  hunted: boolean
-
-  spotted: boolean
-
-  Sub-collection: comments (CommentID\_{unique\_id})
-
-    userId: string
-
-    username: string
-
-    text: string
-
-    timestamp: timestamp
-
-    parentCommentId: string (for nested replies)
-
-
-
-7\. userBirdSightings (SightingID\_{unique\_id})
-
-  userId: string
-
-  birdId: string (FK → birds)
-
-  locationId: string (FK → locations)
-
-  isSpotted: boolean
-
-  isHunted: boolean
-
-  imageUrl: string
-
-  timestamp: timestamp
-
-
-
-
-
-8\. locations (LocationID\_LOC\_{lat}\_{lng} – e.g., LocationID\_LOC\_33.7490\_-84.3880)
-
-  latitude: number
-
-  longitude: number
-
-  country: string
-
-  state: string
-
-  locality: string (City/Area name)
-
-  metadata: Map (device sensors, accuracy)
-
-
-
-
-
-
-
-
-
-9\. reports (ReportID\_{unique\_id})
-
-  targetId: string (ThreadID or CommentID)
-
-  targetType: string ("post" or "comment")
-
-  reporterId: string (UserID)
-
-  reason: string
-
-  timestamp: timestamp
-
-  status: string ("pending", "reviewed", "dismissed")
-
-
-
-10\. eBirdApiSightings ({ebird\_subId} – e.g., S12345678)
-
-  Source: Automated sync from the eBird API.
-
-  speciesCode: string (e.g., "bkcchi")
-
-  commonName: string
-
-  scientificName: string
-
-  observationDate: timestamp
-
-  howMany: number (Default: 1)
-
-  isReviewed: boolean (Whether eBird experts verified the sighting)
-
-  location: Map
-
-    latitude: number
-
-    longitude: number
-
-    localityName: string
-
-
-
-11\. deletedforum\_backlog (BacklogID\_{uuid})
-
-  Source: Triggered when a user or admin deletes a post or comment.
-
-  type: string ("post" or "comment\_archived\_with\_post")
-
-  originalId: string (The ID the document had in the forum)
-
-  deletedBy: string (UserID of the person who deleted it)
-
-  deletedAt: timestamp
-
-  archivedAt: timestamp (Used by Cloud Functions)
-
-  data: Map/Object (Full snapshot of the original post/comment content)
-
-  archivedComments: Array<Map> (Only present for "post" types if comments were also archived)
-
-  postId: string (Only present for "comment" types to link back to the parent)
-
-
-
-12\. usersdeletedAccounts (DeletedUID\_{uid})
-
-  Source: Triggered via the archiveAndDeleteUser function or onUserAuthDeleted trigger.
-
-  originalUid: string
-
-  email: string
-
-  username: string
-
-  profilePictureUrl: string
-
-  totalPoints: number
-
-  totalBirds: number
-
-  archivedAt: timestamp
-
-  deletionReason: string (e.g., "User requested account deletion")
-
-  deletionType: string (e.g., "Automatic Auth Trigger")
-
-  (Plus all other fields from the original user document at the time of deletion)
-
-
-13\. ebird_ga_cache
- 
-birdIds: Array<String>
- 
-lastUpdated: Number (Timestamp) The time when the cache was last refreshed (ms).
+📸 Bird capture & identification
+🧠 AI-driven validation pipeline
+🗺 Location-based discovery
+💬 Community interaction
+🛡 Moderation & safety
+📦 Scalable, real-time data storage

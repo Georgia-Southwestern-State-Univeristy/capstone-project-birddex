@@ -6,12 +6,14 @@ import android.content.pm.PackageManager;
 import android.location.Address;
 import android.location.Geocoder;
 import android.location.Location;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Looper;
 import android.text.Editable;
 import android.text.TextWatcher;
 import android.util.Log;
 import android.view.LayoutInflater;
+import android.view.Window;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.EditText;
@@ -25,6 +27,8 @@ import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.core.content.ContextCompat;
+import androidx.core.view.WindowCompat;
+import androidx.core.view.WindowInsetsControllerCompat;
 import androidx.fragment.app.Fragment;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
@@ -35,8 +39,9 @@ import com.google.android.gms.location.LocationRequest;
 import com.google.android.gms.location.LocationResult;
 import com.google.android.gms.location.LocationServices;
 import com.google.android.gms.location.Priority;
-import com.google.firebase.Timestamp;
+import com.google.android.material.bottomsheet.BottomSheetBehavior;
 import com.google.android.material.bottomsheet.BottomSheetDialog;
+import com.google.firebase.Timestamp;
 import com.google.firebase.firestore.DocumentSnapshot;
 import com.google.firebase.firestore.FirebaseFirestore;
 import com.google.firebase.firestore.Source;
@@ -101,6 +106,21 @@ public class NearbyFragment extends Fragment {
 
     private boolean isNavigating = false;
 
+    // NearbyFragment search state preservation
+    private boolean reopenBirdSearchOnResume = false;
+    private boolean isRestoringBirdSearchState = false;
+
+    private BottomSheetDialog birdSearchDialog;
+    private EditText birdSearchEditText;
+    private RecyclerView birdSearchRecyclerView;
+    private TextView birdSearchEmptyText;
+    private NearbyBirdSearchAdapter birdSearchAdapter;
+    private LinearLayoutManager birdSearchLayoutManager;
+
+    private String savedBirdSearchQuery = "";
+    private int savedBirdSearchScrollPosition = 0;
+    private int savedBirdSearchScrollOffset = 0;
+
     private static final long LOCATION_UPDATE_INTERVAL_MS = 3 * 60 * 1000;
     private static final double SEARCH_RADIUS_METERS = 50000;
     private static final long SIGHTING_RECENCY_MS = 72L * 60 * 60 * 1000;
@@ -146,16 +166,27 @@ public class NearbyFragment extends Fragment {
         cacheManager = new BirdCacheManager(requireContext());
         fusedLocationClient = LocationServices.getFusedLocationProviderClient(requireActivity());
 
-        locationRequest = new LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, LOCATION_UPDATE_INTERVAL_MS).setMinUpdateIntervalMillis(LOCATION_UPDATE_INTERVAL_MS / 2).build();
+        locationRequest = new LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, LOCATION_UPDATE_INTERVAL_MS)
+                .setMinUpdateIntervalMillis(LOCATION_UPDATE_INTERVAL_MS / 2)
+                .build();
+
         locationCallback = new LocationCallback() {
-            @Override public void onLocationResult(@NonNull LocationResult lr) {
-                Location l = lr.getLastLocation(); if (l != null) handleNewLocation(l, false);
+            @Override
+            public void onLocationResult(@NonNull LocationResult lr) {
+                Location l = lr.getLastLocation();
+                if (l != null) handleNewLocation(l, false);
             }
         };
 
-        locationPermissionLauncher = registerForActivityResult(new ActivityResultContracts.RequestMultiplePermissions(), res -> {
-            if (Boolean.TRUE.equals(res.get(Manifest.permission.ACCESS_FINE_LOCATION)) || Boolean.TRUE.equals(res.get(Manifest.permission.ACCESS_COARSE_LOCATION))) startLocationUpdates();
-        });
+        locationPermissionLauncher = registerForActivityResult(
+                new ActivityResultContracts.RequestMultiplePermissions(),
+                res -> {
+                    if (Boolean.TRUE.equals(res.get(Manifest.permission.ACCESS_FINE_LOCATION))
+                            || Boolean.TRUE.equals(res.get(Manifest.permission.ACCESS_COARSE_LOCATION))) {
+                        startLocationUpdates();
+                    }
+                }
+        );
 
         // Attach the user interaction that should run when this control is tapped.
         btnRefresh.setOnClickListener(view -> requestLocationOrLoad(true));
@@ -180,10 +211,26 @@ public class NearbyFragment extends Fragment {
         if (geoExecutor == null || geoExecutor.isShutdown()) geoExecutor = Executors.newSingleThreadExecutor();
         requestLocationOrLoad(false);
         primeSearchableBirds();
+
+        if (reopenBirdSearchOnResume) {
+            reopenBirdSearchOnResume = false;
+            rvNearby.post(this::openBirdSearchDialog);
+        }
     }
 
-    @Override public void onPause() { super.onPause(); stopLocationUpdates(); }
-    @Override public void onDestroyView() { super.onDestroyView(); if (geoExecutor != null) geoExecutor.shutdownNow(); }
+    @Override
+    public void onPause() {
+        super.onPause();
+        stopLocationUpdates();
+        saveBirdSearchUiState();
+    }
+
+    @Override
+    public void onDestroyView() {
+        super.onDestroyView();
+        if (geoExecutor != null) geoExecutor.shutdownNow();
+        cleanupBirdSearchDialogRefs();
+    }
 
     /**
      * Pulls data from a local source, Firebase, or an external API and prepares it for the UI or
@@ -233,7 +280,11 @@ public class NearbyFragment extends Fragment {
         if (geoExecutor != null && !geoExecutor.isShutdown()) {
             geoExecutor.execute(() -> {
                 String p = getCityStateFromLocation(l);
-                if (isAdded()) getActivity().runOnUiThread(() -> { if (isAdded()) txtLocation.setText("Location: " + p); });
+                if (isAdded()) {
+                    requireActivity().runOnUiThread(() -> {
+                        if (isAdded()) txtLocation.setText("Location: " + p);
+                    });
+                }
             });
         }
     }
@@ -289,20 +340,44 @@ public class NearbyFragment extends Fragment {
                         Log.e(TAG, "Failed to save tracked-bird notification location.", e)
                 );
     }
+
     /**
      * Main logic block for this part of the feature.
      * Location values are handled here, so this is part of the logic that decides what area/bird
      * sightings the user sees.
      */
     private void requestLocationOrLoad(boolean force) {
-        if (ContextCompat.checkSelfPermission(requireContext(), Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
-            fusedLocationClient.getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, null).addOnSuccessListener(l -> { if (l != null) handleNewLocation(l, force); });
+        if (ContextCompat.checkSelfPermission(requireContext(), Manifest.permission.ACCESS_FINE_LOCATION)
+                == PackageManager.PERMISSION_GRANTED) {
+            fusedLocationClient.getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, null)
+                    .addOnSuccessListener(l -> {
+                        if (l != null) handleNewLocation(l, force);
+                    });
             startLocationUpdates();
-        } else locationPermissionLauncher.launch(new String[]{Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION});
+        } else {
+            locationPermissionLauncher.launch(new String[]{
+                    Manifest.permission.ACCESS_FINE_LOCATION,
+                    Manifest.permission.ACCESS_COARSE_LOCATION
+            });
+        }
     }
 
-    private void startLocationUpdates() { if (!isUpdating) { try { fusedLocationClient.requestLocationUpdates(locationRequest, locationCallback, Looper.getMainLooper()); isUpdating = true; } catch (SecurityException ignored) {} } }
-    private void stopLocationUpdates() { if (isUpdating) { fusedLocationClient.removeLocationUpdates(locationCallback); isUpdating = false; } }
+    private void startLocationUpdates() {
+        if (!isUpdating) {
+            try {
+                fusedLocationClient.requestLocationUpdates(locationRequest, locationCallback, Looper.getMainLooper());
+                isUpdating = true;
+            } catch (SecurityException ignored) {
+            }
+        }
+    }
+
+    private void stopLocationUpdates() {
+        if (isUpdating) {
+            fusedLocationClient.removeLocationUpdates(locationCallback);
+            isUpdating = false;
+        }
+    }
 
     /**
      * Returns the current value/state this class needs somewhere else in the app.
@@ -342,7 +417,15 @@ public class NearbyFragment extends Fragment {
         latestFirestoreResults.clear();
         latestEbirdResults.clear();
         Log.d(TAG, "Starting dual-fetch (gen=" + myGen + ", force=" + forceRefresh + ")");
-        if (isAdded()) getActivity().runOnUiThread(() -> { if (isAdded()) { pbLoading.setVisibility(View.VISIBLE); rvNearby.setVisibility(View.GONE); tvNoBirds.setVisibility(View.GONE); } });
+        if (isAdded()) {
+            requireActivity().runOnUiThread(() -> {
+                if (isAdded()) {
+                    pbLoading.setVisibility(View.VISIBLE);
+                    rvNearby.setVisibility(View.GONE);
+                    tvNoBirds.setVisibility(View.GONE);
+                }
+            });
+        }
         loadUserSightingsNearby(myGen);
         loadEbirdNearby(myGen, forceRefresh);
     }
@@ -357,22 +440,26 @@ public class NearbyFragment extends Fragment {
      */
     private void loadUserSightingsNearby(final int gen) {
         // Set up or query the Firebase layer that supplies/stores this feature's data.
-        db.collection("userBirdSightings").limit(MAX_USER_SIGHTINGS).get(Source.CACHE).addOnSuccessListener(querySnapshot -> {
-            if (gen != fetchGeneration) return;
-            if (querySnapshot != null && !querySnapshot.isEmpty()) {
-                for (DocumentSnapshot d : querySnapshot.getDocuments()) {
-                    Bird b = mapUserSightingToBird(d);
-                    if (isValidSighting(b)) {
-                        latestFirestoreResults.add(b);
-                        cacheSearchBird(b);
+        db.collection("userBirdSightings")
+                .limit(MAX_USER_SIGHTINGS)
+                .get(Source.CACHE)
+                .addOnSuccessListener(querySnapshot -> {
+                    if (gen != fetchGeneration) return;
+                    if (querySnapshot != null && !querySnapshot.isEmpty()) {
+                        for (DocumentSnapshot d : querySnapshot.getDocuments()) {
+                            Bird b = mapUserSightingToBird(d);
+                            if (isValidSighting(b)) {
+                                latestFirestoreResults.add(b);
+                                cacheSearchBird(b);
+                            }
+                        }
                     }
-                }
-            }
-            fetchUserSightingsFromServer(gen);
-        }).addOnFailureListener(e -> {
-            if (gen != fetchGeneration) return;
-            fetchUserSightingsFromServer(gen);
-        });
+                    fetchUserSightingsFromServer(gen);
+                })
+                .addOnFailureListener(e -> {
+                    if (gen != fetchGeneration) return;
+                    fetchUserSightingsFromServer(gen);
+                });
     }
 
     /**
@@ -384,20 +471,24 @@ public class NearbyFragment extends Fragment {
      * for the final UI state.
      */
     private void fetchUserSightingsFromServer(final int gen) {
-        db.collection("userBirdSightings").limit(MAX_USER_SIGHTINGS).get(Source.SERVER).addOnSuccessListener(querySnapshot -> {
-            if (gen != fetchGeneration) return;
-            latestFirestoreResults.clear();
-            for (DocumentSnapshot d : querySnapshot.getDocuments()) {
-                Bird b = mapUserSightingToBird(d);
-                if (isValidSighting(b)) {
-                    latestFirestoreResults.add(b);
-                    cacheSearchBird(b);
-                }
-            }
-            checkIfAllFetched(gen);
-        }).addOnFailureListener(e -> {
-            if (gen == fetchGeneration) checkIfAllFetched(gen);
-        });
+        db.collection("userBirdSightings")
+                .limit(MAX_USER_SIGHTINGS)
+                .get(Source.SERVER)
+                .addOnSuccessListener(querySnapshot -> {
+                    if (gen != fetchGeneration) return;
+                    latestFirestoreResults.clear();
+                    for (DocumentSnapshot d : querySnapshot.getDocuments()) {
+                        Bird b = mapUserSightingToBird(d);
+                        if (isValidSighting(b)) {
+                            latestFirestoreResults.add(b);
+                            cacheSearchBird(b);
+                        }
+                    }
+                    checkIfAllFetched(gen);
+                })
+                .addOnFailureListener(e -> {
+                    if (gen == fetchGeneration) checkIfAllFetched(gen);
+                });
     }
 
     /**
@@ -406,7 +497,8 @@ public class NearbyFragment extends Fragment {
      */
     private void loadEbirdNearby(final int gen, boolean forceRefresh) {
         ebirdApi.fetchCoreGeorgiaBirdList(forceRefresh, new EbirdApi.EbirdCoreBirdListCallback() {
-            @Override public void onSuccess(List<JSONObject> birdsJson) {
+            @Override
+            public void onSuccess(List<JSONObject> birdsJson) {
                 if (gen != fetchGeneration) return;
                 latestEbirdResults.clear();
                 for (JSONObject j : birdsJson) {
@@ -416,26 +508,52 @@ public class NearbyFragment extends Fragment {
                 checkIfAllFetched(gen);
             }
 
-            @Override public void onFailure(Exception e) {
+            @Override
+            public void onFailure(Exception e) {
                 if (gen == fetchGeneration) checkIfAllFetched(gen);
             }
         });
     }
 
-    private void checkIfAllFetched(int gen) { if (gen == fetchGeneration && fetchCount.incrementAndGet() >= 2) processFinalList(); }
+    private void checkIfAllFetched(int gen) {
+        if (gen == fetchGeneration && fetchCount.incrementAndGet() >= 2) processFinalList();
+    }
 
     /**
      * Main logic block for this part of the feature.
      */
     private void processFinalList() {
-        List<Bird> combined = new ArrayList<>(latestFirestoreResults); combined.addAll(latestEbirdResults);
+        List<Bird> combined = new ArrayList<>(latestFirestoreResults);
+        combined.addAll(latestEbirdResults);
         combined.sort((b1, b2) -> {
             Long t1 = b1.getLastSeenTimestampGeorgia(), t2 = b2.getLastSeenTimestampGeorgia();
-            if (t1 == null && t2 == null) return 0; if (t1 == null) return 1; if (t2 == null) return -1;
+            if (t1 == null && t2 == null) return 0;
+            if (t1 == null) return 1;
+            if (t2 == null) return -1;
             return t2.compareTo(t1);
         });
-        cacheManager.saveNearbyBirds(combined, currentLocation != null ? currentLocation.getLatitude() : null, currentLocation != null ? currentLocation.getLongitude() : null);
-        if (isAdded()) getActivity().runOnUiThread(() -> { if (isAdded()) { pbLoading.setVisibility(View.GONE); if (combined.isEmpty()) { rvNearby.setVisibility(View.GONE); tvNoBirds.setVisibility(View.VISIBLE); } else { adapter.updateList(combined); tvNoBirds.setVisibility(View.GONE); rvNearby.setVisibility(View.VISIBLE); } } });
+
+        cacheManager.saveNearbyBirds(
+                combined,
+                currentLocation != null ? currentLocation.getLatitude() : null,
+                currentLocation != null ? currentLocation.getLongitude() : null
+        );
+
+        if (isAdded()) {
+            requireActivity().runOnUiThread(() -> {
+                if (isAdded()) {
+                    pbLoading.setVisibility(View.GONE);
+                    if (combined.isEmpty()) {
+                        rvNearby.setVisibility(View.GONE);
+                        tvNoBirds.setVisibility(View.VISIBLE);
+                    } else {
+                        adapter.updateList(combined);
+                        tvNoBirds.setVisibility(View.GONE);
+                        rvNearby.setVisibility(View.VISIBLE);
+                    }
+                }
+            });
+        }
     }
 
     /**
@@ -444,8 +562,11 @@ public class NearbyFragment extends Fragment {
      * sightings the user sees.
      */
     private Bird mapUserSightingToBird(DocumentSnapshot d) {
-        Bird b = new Bird(); String bid = getStringValue(d, "birdId"); b.setId(bid != null ? bid : d.getId());
-        b.setCommonName(getStringValue(d, "commonName")); b.setScientificName(getStringValue(d, "scientificName"));
+        Bird b = new Bird();
+        String bid = getStringValue(d, "birdId");
+        b.setId(bid != null ? bid : d.getId());
+        b.setCommonName(getStringValue(d, "commonName"));
+        b.setScientificName(getStringValue(d, "scientificName"));
         b.setLastSeenLatitudeGeorgia(getDoubleValue(d, "location.latitude", "latitude", "lat", "lastSeenLatitudeGeorgia"));
         b.setLastSeenLongitudeGeorgia(getDoubleValue(d, "location.longitude", "longitude", "lng", "lastSeenLongitudeGeorgia"));
         b.setLastSeenTimestampGeorgia(getTimeMillisValue(d, "timestamp", "observationDate", "lastSeenTimestampGeorgia"));
@@ -458,9 +579,18 @@ public class NearbyFragment extends Fragment {
      * sightings the user sees.
      */
     private boolean isValidSighting(Bird b) {
-        if (b == null || b.getLastSeenLatitudeGeorgia() == null || b.getLastSeenTimestampGeorgia() == null || currentLocation == null) return false;
+        if (b == null || b.getLastSeenLatitudeGeorgia() == null || b.getLastSeenTimestampGeorgia() == null || currentLocation == null) {
+            return false;
+        }
         if (b.getLastSeenTimestampGeorgia() < System.currentTimeMillis() - SIGHTING_RECENCY_MS) return false;
-        float[] res = new float[1]; Location.distanceBetween(currentLocation.getLatitude(), currentLocation.getLongitude(), b.getLastSeenLatitudeGeorgia(), b.getLastSeenLongitudeGeorgia(), res);
+        float[] res = new float[1];
+        Location.distanceBetween(
+                currentLocation.getLatitude(),
+                currentLocation.getLongitude(),
+                b.getLastSeenLatitudeGeorgia(),
+                b.getLastSeenLongitudeGeorgia(),
+                res
+        );
         return res[0] <= SEARCH_RADIUS_METERS;
     }
 
@@ -468,7 +598,10 @@ public class NearbyFragment extends Fragment {
      * Main logic block for this part of the feature.
      */
     private Bird parseBirdJson(JSONObject json) {
-        Bird b = new Bird(); b.setId(json.optString("id")); b.setCommonName(json.optString("commonName")); b.setScientificName(json.optString("scientificName"));
+        Bird b = new Bird();
+        b.setId(json.optString("id"));
+        b.setCommonName(json.optString("commonName"));
+        b.setScientificName(json.optString("scientificName"));
         if (!json.isNull("lastSeenLatitudeGeorgia")) b.setLastSeenLatitudeGeorgia(json.optDouble("lastSeenLatitudeGeorgia"));
         if (!json.isNull("lastSeenLongitudeGeorgia")) b.setLastSeenLongitudeGeorgia(json.optDouble("lastSeenLongitudeGeorgia"));
         if (!json.isNull("lastSeenTimestampGeorgia")) b.setLastSeenTimestampGeorgia(json.optLong("lastSeenTimestampGeorgia"));
@@ -481,15 +614,26 @@ public class NearbyFragment extends Fragment {
     private void primeSearchableBirds() {
         if (isSearchDataLoading || !searchableBirds.isEmpty()) return;
         isSearchDataLoading = true;
+
         firebaseManager.getAllBirds(task -> {
             try {
                 if (task.isSuccessful() && task.getResult() != null) {
                     List<Bird> loaded = new ArrayList<>();
-                    for (DocumentSnapshot d : task.getResult().getDocuments()) { Bird b = d.toObject(Bird.class); if (b != null) { if (isBlank(b.getId())) b.setId(d.getId()); loaded.add(b); } }
+                    for (DocumentSnapshot d : task.getResult().getDocuments()) {
+                        Bird b = d.toObject(Bird.class);
+                        if (b != null) {
+                            if (isBlank(b.getId())) b.setId(d.getId());
+                            loaded.add(b);
+                        }
+                    }
+
                     loaded.sort((b1, b2) -> b1.getCommonName().compareToIgnoreCase(b2.getCommonName()));
-                    searchableBirds.clear(); searchableBirds.addAll(loaded);
+                    searchableBirds.clear();
+                    searchableBirds.addAll(loaded);
                 }
-            } finally { isSearchDataLoading = false; }
+            } finally {
+                isSearchDataLoading = false;
+            }
         });
     }
 
@@ -498,7 +642,12 @@ public class NearbyFragment extends Fragment {
      */
     private void cacheSearchBird(Bird bird) {
         if (bird == null || isBlank(bird.getId())) return;
-        synchronized (searchableBirds) { for (Bird b : searchableBirds) if (bird.getId().equals(b.getId())) return; searchableBirds.add(bird); }
+        synchronized (searchableBirds) {
+            for (Bird b : searchableBirds) {
+                if (bird.getId().equals(b.getId())) return;
+            }
+            searchableBirds.add(bird);
+        }
     }
 
     /**
@@ -512,6 +661,11 @@ public class NearbyFragment extends Fragment {
      */
     private void openBirdSearchDialog() {
         if (!isAdded()) return;
+
+        if (birdSearchDialog != null && birdSearchDialog.isShowing()) {
+            return;
+        }
+
         // Give the user immediate feedback about the result of this action.
         if (searchableBirds.isEmpty()) {
             primeSearchableBirds();
@@ -523,31 +677,77 @@ public class NearbyFragment extends Fragment {
         if (birds.isEmpty()) return;
 
         View content = LayoutInflater.from(requireContext()).inflate(R.layout.bottom_sheet_nearby_bird_search, null, false);
-        EditText etSearch = content.findViewById(R.id.etBirdSearch);
-        RecyclerView rvBirdSearch = content.findViewById(R.id.rvBirdSearch);
-        TextView tvEmpty = content.findViewById(R.id.tvBirdSearchEmpty);
+        birdSearchEditText = content.findViewById(R.id.etBirdSearch);
+        birdSearchRecyclerView = content.findViewById(R.id.rvBirdSearch);
+        birdSearchEmptyText = content.findViewById(R.id.tvBirdSearchEmpty);
 
-        BottomSheetDialog dialog = new BottomSheetDialog(requireContext());
-        dialog.setContentView(content);
+        birdSearchDialog = new BottomSheetDialog(requireContext());
+        birdSearchDialog.setContentView(content);
 
-        NearbyBirdSearchAdapter searchAdapter = new NearbyBirdSearchAdapter(birds, bird -> {
-            dialog.dismiss();
+        birdSearchDialog.setOnShowListener(d -> {
+            View bottomSheet = birdSearchDialog.findViewById(com.google.android.material.R.id.design_bottom_sheet);
+            if (bottomSheet != null) {
+                bottomSheet.setBackgroundResource(android.R.color.transparent);
+                BottomSheetBehavior.from(bottomSheet).setState(BottomSheetBehavior.STATE_EXPANDED);
+            }
+
+            Window window = birdSearchDialog.getWindow();
+            if (window != null) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    window.setNavigationBarContrastEnforced(false);
+                }
+
+                WindowInsetsControllerCompat controller =
+                        WindowCompat.getInsetsController(window, window.getDecorView());
+
+                window.setNavigationBarColor(
+                        ContextCompat.getColor(requireContext(), R.color.nav_brown)
+                );
+
+                if (controller != null) {
+                    controller.setAppearanceLightNavigationBars(false);
+                }
+            }
+        });
+
+        birdSearchLayoutManager = new LinearLayoutManager(requireContext());
+        birdSearchRecyclerView.setLayoutManager(birdSearchLayoutManager);
+
+        birdSearchAdapter = new NearbyBirdSearchAdapter(birds, bird -> {
+            saveBirdSearchUiState();
+            reopenBirdSearchOnResume = true;
+            birdSearchDialog.dismiss();
             openBirdWikiPage(bird.getId());
         });
 
-        rvBirdSearch.setLayoutManager(new LinearLayoutManager(requireContext()));
-        rvBirdSearch.setAdapter(searchAdapter);
-        tvEmpty.setVisibility(searchAdapter.getItemCount() == 0 ? View.VISIBLE : View.GONE);
+        birdSearchRecyclerView.setAdapter(birdSearchAdapter);
+        updateBirdSearchEmptyState();
 
-        etSearch.addTextChangedListener(new TextWatcher() {
+        // Hide until the previous scroll position has been restored,
+        // so the user does not see the list jump from top to saved position.
+        birdSearchRecyclerView.setAlpha(0f);
+
+        birdSearchEditText.addTextChangedListener(new TextWatcher() {
             @Override
             public void beforeTextChanged(CharSequence s, int start, int count, int after) {
             }
 
             @Override
             public void onTextChanged(CharSequence s, int start, int before, int count) {
-                searchAdapter.filter(s == null ? "" : s.toString());
-                tvEmpty.setVisibility(searchAdapter.getItemCount() == 0 ? View.VISIBLE : View.GONE);
+                savedBirdSearchQuery = s == null ? "" : s.toString();
+
+                if (birdSearchAdapter != null) {
+                    birdSearchAdapter.filter(savedBirdSearchQuery);
+                }
+
+                updateBirdSearchEmptyState();
+
+                // Only reset scroll when the user is typing.
+                // Do not reset while restoring prior search state.
+                if (!isRestoringBirdSearchState) {
+                    savedBirdSearchScrollPosition = 0;
+                    savedBirdSearchScrollOffset = 0;
+                }
             }
 
             @Override
@@ -555,7 +755,110 @@ public class NearbyFragment extends Fragment {
             }
         });
 
-        dialog.show();
+        birdSearchDialog.setOnDismissListener(dialog -> {
+            boolean reopeningAfterBirdWiki = reopenBirdSearchOnResume;
+            cleanupBirdSearchDialogRefs();
+
+            if (!reopeningAfterBirdWiki) {
+                clearBirdSearchUiState();
+            }
+        });
+
+        birdSearchDialog.show();
+        restoreBirdSearchUiState();
+    }
+
+    private void updateBirdSearchEmptyState() {
+        if (birdSearchEmptyText != null && birdSearchAdapter != null) {
+            birdSearchEmptyText.setVisibility(birdSearchAdapter.getItemCount() == 0 ? View.VISIBLE : View.GONE);
+        }
+    }
+
+    private void saveBirdSearchUiState() {
+        if (birdSearchEditText != null) {
+            savedBirdSearchQuery = birdSearchEditText.getText() == null
+                    ? ""
+                    : birdSearchEditText.getText().toString();
+        }
+
+        if (birdSearchLayoutManager != null && birdSearchRecyclerView != null) {
+            int firstVisible = birdSearchLayoutManager.findFirstVisibleItemPosition();
+            if (firstVisible != RecyclerView.NO_POSITION) {
+                View firstVisibleView = birdSearchLayoutManager.findViewByPosition(firstVisible);
+                savedBirdSearchScrollPosition = firstVisible;
+                savedBirdSearchScrollOffset = firstVisibleView == null
+                        ? 0
+                        : firstVisibleView.getTop() - birdSearchRecyclerView.getPaddingTop();
+            }
+        }
+    }
+
+    private void restoreBirdSearchUiState() {
+        if (birdSearchEditText == null || birdSearchAdapter == null || birdSearchRecyclerView == null) {
+            return;
+        }
+
+        isRestoringBirdSearchState = true;
+
+        birdSearchEditText.setText(savedBirdSearchQuery);
+        birdSearchEditText.setSelection(birdSearchEditText.getText().length());
+
+        if (birdSearchAdapter != null) {
+            birdSearchAdapter.filter(savedBirdSearchQuery);
+        }
+
+        updateBirdSearchEmptyState();
+
+        final int restorePosition = savedBirdSearchScrollPosition;
+        final int restoreOffset = savedBirdSearchScrollOffset;
+
+        birdSearchRecyclerView.post(() -> {
+            if (birdSearchLayoutManager != null && birdSearchAdapter != null) {
+                int itemCount = birdSearchAdapter.getItemCount();
+                if (itemCount > 0) {
+                    int safePosition = Math.min(
+                            Math.max(restorePosition, 0),
+                            itemCount - 1
+                    );
+                    birdSearchLayoutManager.scrollToPositionWithOffset(safePosition, restoreOffset);
+                }
+            }
+
+            // Run one more frame later so the layout finishes at the restored spot
+            // before we reveal it to the user.
+            birdSearchRecyclerView.post(() -> {
+                if (birdSearchRecyclerView != null) {
+                    birdSearchRecyclerView.setAlpha(1f);
+                }
+                isRestoringBirdSearchState = false;
+            });
+        });
+    }
+
+    private void clearBirdSearchUiState() {
+        reopenBirdSearchOnResume = false;
+        savedBirdSearchQuery = "";
+        savedBirdSearchScrollPosition = 0;
+        savedBirdSearchScrollOffset = 0;
+
+        if (birdSearchRecyclerView != null) {
+            birdSearchRecyclerView.setAlpha(1f);
+        }
+    }
+
+    private void cleanupBirdSearchDialogRefs() {
+        isRestoringBirdSearchState = false;
+
+        if (birdSearchRecyclerView != null) {
+            birdSearchRecyclerView.setAlpha(1f);
+        }
+
+        birdSearchDialog = null;
+        birdSearchEditText = null;
+        birdSearchRecyclerView = null;
+        birdSearchEmptyText = null;
+        birdSearchAdapter = null;
+        birdSearchLayoutManager = null;
     }
 
     /**
@@ -570,8 +873,12 @@ public class NearbyFragment extends Fragment {
             if (existing == null) {
                 deduped.put(key, bird);
             } else {
-                if (isBlank(existing.getCommonName()) && !isBlank(bird.getCommonName())) existing.setCommonName(bird.getCommonName());
-                if (isBlank(existing.getScientificName()) && !isBlank(bird.getScientificName())) existing.setScientificName(bird.getScientificName());
+                if (isBlank(existing.getCommonName()) && !isBlank(bird.getCommonName())) {
+                    existing.setCommonName(bird.getCommonName());
+                }
+                if (isBlank(existing.getScientificName()) && !isBlank(bird.getScientificName())) {
+                    existing.setScientificName(bird.getScientificName());
+                }
             }
         }
 
@@ -595,7 +902,8 @@ public class NearbyFragment extends Fragment {
         if (!isAdded() || isBlank(id) || isNavigating) return;
         isNavigating = true;
         // Move into the next screen and pass the identifiers/data that screen needs.
-        startActivity(new Intent(requireContext(), BirdWikiActivity.class).putExtra(BirdWikiActivity.EXTRA_BIRD_ID, id));
+        startActivity(new Intent(requireContext(), BirdWikiActivity.class)
+                .putExtra(BirdWikiActivity.EXTRA_BIRD_ID, id));
     }
 
     /**
@@ -608,14 +916,53 @@ public class NearbyFragment extends Fragment {
         if (!isAdded() || isNavigating) return;
         isNavigating = true;
         Intent i = new Intent(requireContext(), NearbyHeatmapActivity.class);
-        if (currentLocation != null) { i.putExtra(NearbyHeatmapActivity.EXTRA_CENTER_LAT, currentLocation.getLatitude()); i.putExtra(NearbyHeatmapActivity.EXTRA_CENTER_LNG, currentLocation.getLongitude()); }
+        if (currentLocation != null) {
+            i.putExtra(NearbyHeatmapActivity.EXTRA_CENTER_LAT, currentLocation.getLatitude());
+            i.putExtra(NearbyHeatmapActivity.EXTRA_CENTER_LNG, currentLocation.getLongitude());
+        }
         // Move into the next screen and pass the identifiers/data that screen needs.
         startActivity(i);
     }
 
-    private boolean isBlank(String v) { return v == null || v.trim().isEmpty(); }
-    private String getStringValue(DocumentSnapshot d, String... paths) { for (String p : paths) { Object v = getNestedValue(d, p); if (v != null && !String.valueOf(v).trim().isEmpty()) return String.valueOf(v).trim(); } return null; }
-    private Double getDoubleValue(DocumentSnapshot d, String... paths) { for (String p : paths) { Object v = getNestedValue(d, p); if (v instanceof Number) return ((Number) v).doubleValue(); } return null; }
-    private Long getTimeMillisValue(DocumentSnapshot d, String... paths) { for (String p : paths) { Object v = getNestedValue(d, p); if (v instanceof Timestamp) return ((Timestamp) v).toDate().getTime(); if (v instanceof Date) return ((Date) v).getTime(); if (v instanceof Number) return ((Number) v).longValue(); } return null; }
-    private Object getNestedValue(DocumentSnapshot d, String p) { if (p == null || p.isEmpty()) return null; if (!p.contains(".")) return d.get(p); String[] pts = p.split("\\."); Object cur = d.get(pts[0]); for (int i = 1; i < pts.length; i++) { if (!(cur instanceof Map)) return null; cur = ((Map<?, ?>) cur).get(pts[i]); } return cur; }
+    private boolean isBlank(String v) {
+        return v == null || v.trim().isEmpty();
+    }
+
+    private String getStringValue(DocumentSnapshot d, String... paths) {
+        for (String p : paths) {
+            Object v = getNestedValue(d, p);
+            if (v != null && !String.valueOf(v).trim().isEmpty()) return String.valueOf(v).trim();
+        }
+        return null;
+    }
+
+    private Double getDoubleValue(DocumentSnapshot d, String... paths) {
+        for (String p : paths) {
+            Object v = getNestedValue(d, p);
+            if (v instanceof Number) return ((Number) v).doubleValue();
+        }
+        return null;
+    }
+
+    private Long getTimeMillisValue(DocumentSnapshot d, String... paths) {
+        for (String p : paths) {
+            Object v = getNestedValue(d, p);
+            if (v instanceof Timestamp) return ((Timestamp) v).toDate().getTime();
+            if (v instanceof Date) return ((Date) v).getTime();
+            if (v instanceof Number) return ((Number) v).longValue();
+        }
+        return null;
+    }
+
+    private Object getNestedValue(DocumentSnapshot d, String p) {
+        if (p == null || p.isEmpty()) return null;
+        if (!p.contains(".")) return d.get(p);
+        String[] pts = p.split("\\.");
+        Object cur = d.get(pts[0]);
+        for (int i = 1; i < pts.length; i++) {
+            if (!(cur instanceof Map)) return null;
+            cur = ((Map<?, ?>) cur).get(pts[i]);
+        }
+        return cur;
+    }
 }

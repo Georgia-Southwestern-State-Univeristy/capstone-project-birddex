@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<bitmap xmlns:android="http://schemas.android.com/apk/res/android"
+    android:src="@drawable/birddexlogo"
+    android:tint="@color/nav_brown"
+    android:tintMode="multiply" />

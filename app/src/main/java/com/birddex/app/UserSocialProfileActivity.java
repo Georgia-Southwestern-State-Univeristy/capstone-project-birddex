@@ -748,6 +748,7 @@ public class UserSocialProfileActivity extends AppCompatActivity implements
             if (isNavigating) return;
             isNavigating = true;
             Log.d(TAG, "Favorite card clicked: " + slot.getCommonName());
+
             Intent intent = new Intent(this, ViewBirdCardActivity.class);
             intent.putExtra(CollectionCardAdapter.EXTRA_IMAGE_URL, slot.getImageUrl());
             intent.putExtra(CollectionCardAdapter.EXTRA_COMMON_NAME, slot.getCommonName());
@@ -755,11 +756,13 @@ public class UserSocialProfileActivity extends AppCompatActivity implements
             intent.putExtra(CollectionCardAdapter.EXTRA_STATE, slot.getState());
             intent.putExtra(CollectionCardAdapter.EXTRA_LOCALITY, slot.getLocality());
             intent.putExtra(CollectionCardAdapter.EXTRA_BIRD_ID, slot.getBirdId());
+            intent.putExtra(CollectionCardAdapter.EXTRA_RARITY, slot.getRarity());
             intent.putExtra(ViewBirdCardActivity.EXTRA_ALLOW_IMAGE_CHANGE, false);
+
             if (slot.getTimestamp() != null) {
                 intent.putExtra(CollectionCardAdapter.EXTRA_CAUGHT_TIME, slot.getTimestamp().getTime());
             }
-            // Move into the next screen and pass the identifiers/data that screen needs.
+
             startActivity(intent);
         }
     }

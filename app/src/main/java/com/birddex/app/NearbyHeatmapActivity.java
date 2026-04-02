@@ -8,6 +8,7 @@ import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
+import android.os.Build;
 import android.os.Bundle;
 import android.text.Editable;
 import android.text.InputFilter;
@@ -17,6 +18,7 @@ import android.text.format.DateUtils;
 import android.util.Log;
 import android.util.TypedValue;
 import android.view.LayoutInflater;
+import android.view.Window;
 import androidx.annotation.Nullable;
 import android.view.View;
 import android.view.ViewGroup;
@@ -34,6 +36,8 @@ import androidx.annotation.NonNull;
 import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.content.ContextCompat;
+import androidx.core.view.WindowCompat;
+import androidx.core.view.WindowInsetsControllerCompat;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
@@ -427,6 +431,32 @@ public class NearbyHeatmapActivity extends AppCompatActivity
 
         BottomSheetDialog dialog = new BottomSheetDialog(this);
         dialog.setContentView(content);
+
+        dialog.setOnShowListener(d -> {
+            View bottomSheet = dialog.findViewById(com.google.android.material.R.id.design_bottom_sheet);
+            if (bottomSheet != null) {
+                bottomSheet.setBackgroundResource(android.R.color.transparent);
+                BottomSheetBehavior.from(bottomSheet).setState(BottomSheetBehavior.STATE_EXPANDED);
+            }
+
+            Window window = dialog.getWindow();
+            if (window != null) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    window.setNavigationBarContrastEnforced(false);
+                }
+
+                WindowInsetsControllerCompat controller =
+                        WindowCompat.getInsetsController(window, window.getDecorView());
+
+                window.setNavigationBarColor(
+                        ContextCompat.getColor(this, R.color.nav_brown)
+                );
+
+                if (controller != null) {
+                    controller.setAppearanceLightNavigationBars(false);
+                }
+            }
+        });
 
         NearbyBirdSearchAdapter searchAdapter = new NearbyBirdSearchAdapter(birds, bird -> {
             dialog.dismiss();

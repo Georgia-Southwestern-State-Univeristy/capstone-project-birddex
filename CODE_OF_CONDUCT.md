@@ -1,128 +1,215 @@
-# Contributor Covenant Code of Conduct
+# 🐦 BirdDex Code of Conduct
 
-## Our Pledge
+## 📜 Our Pledge
 
-We as members, contributors, and leaders pledge to make participation in our
-community a harassment-free experience for everyone, regardless of age, body
-size, visible or invisible disability, ethnicity, sex characteristics, gender
-identity and expression, level of experience, education, socio-economic status,
-nationality, personal appearance, race, religion, or sexual identity
-and orientation.
+We as members, contributors, and users of BirdDex pledge to make participation in our community a safe, respectful, and harassment-free experience for everyone.
 
-We pledge to act and interact in ways that contribute to an open, welcoming,
-diverse, inclusive, and healthy community.
+BirdDex is an open-topic platform. Users are free to discuss a wide range of topics, but all interactions must remain:
 
-## Our Standards
+- Safe for work (SFW)
+- Respectful
+- Non-harmful to others
 
-Examples of behavior that contributes to a positive environment for our
-community include:
+We are committed to fostering a welcoming, inclusive, and community-driven environment.
 
-* Demonstrating empathy and kindness toward other people
-* Being respectful of differing opinions, viewpoints, and experiences
-* Giving and gracefully accepting constructive feedback
-* Accepting responsibility and apologizing to those affected by our mistakes,
-  and learning from the experience
-* Focusing on what is best not just for us as individuals, but for the
-  overall community
+---
 
-Examples of unacceptable behavior include:
+## ✅ Acceptable Behavior
 
-* The use of sexualized language or imagery, and sexual attention or
-  advances of any kind
-* Trolling, insulting or derogatory comments, and personal or political attacks
-* Public or private harassment
-* Publishing others' private information, such as a physical or email
-  address, without their explicit permission
-* Other conduct which could reasonably be considered inappropriate in a
-  professional setting
+Examples of behavior that contribute to a positive community:
 
-## Enforcement Responsibilities
+- Treating others with respect and kindness
+- Constructive discussion and feedback
+- Respecting differing opinions
+- Sharing content that is safe and appropriate
+- Using the platform in good faith
 
-Community leaders are responsible for clarifying and enforcing our standards of
-acceptable behavior and will take appropriate and fair corrective action in
-response to any behavior that they deem inappropriate, threatening, offensive,
-or harmful.
+---
 
-Community leaders have the right and responsibility to remove, edit, or reject
-comments, commits, code, wiki edits, issues, and other contributions that are
-not aligned to this Code of Conduct, and will communicate reasons for moderation
-decisions when appropriate.
+## ❌ Unacceptable Behavior
 
-## Scope
+The following behaviors are not allowed:
 
-This Code of Conduct applies within all community spaces, and also applies when
-an individual is officially representing the community in public spaces.
-Examples of representing our community include using an official e-mail address,
-posting via an official social media account, or acting as an appointed
-representative at an online or offline event.
+- Harassment, bullying, or threats
+- Hate speech or discrimination
+- Sexual or explicit content (NSFW)
+- Posting harmful, abusive, or offensive content
+- Spamming or malicious activity
+- Attempting to bypass moderation systems
+- Posting inappropriate or unsafe images
 
-## Enforcement
+All content (text and images) is subject to moderation.
 
-Instances of abusive, harassing, or otherwise unacceptable behavior may be
-reported to the community leaders responsible for enforcement at
-birddexhelpdesk@gmail.com.
-All complaints will be reviewed and investigated promptly and fairly.
+---
 
-All community leaders are obligated to respect the privacy and security of the
-reporter of any incident.
+## 🛡 Moderation System
 
-## Enforcement Guidelines
+BirdDex uses an **automated + user-driven moderation system** backed by Firebase and AI moderation tools.
 
-Community leaders will follow these Community Impact Guidelines in determining
-the consequences for any action they deem in violation of this Code of Conduct:
+### Content Moderation States
 
-### 1. Correction
+Content (posts, comments, replies) can have the following states:
 
-**Community Impact**: Use of inappropriate language or other behavior deemed
-unprofessional or unwelcome in the community.
+- `visible` → Public content  
+- `under_review` → Flagged but still visible  
+- `hidden` → Removed from public view  
+- `removed` → Fully removed and location data cleared  
 
-**Consequence**: A private, written warning from community leaders, providing
-clarity around the nature of the violation and an explanation of why the
-behavior was inappropriate. A public apology may be requested.
+---
 
-### 2. Warning
+### 📊 Report-Based Moderation
 
-**Community Impact**: A violation through a single incident or series
-of actions.
+Users can report content. The system applies the following thresholds:
 
-**Consequence**: A warning with consequences for continued behavior. No
-interaction with the people involved, including unsolicited interaction with
-those enforcing the Code of Conduct, for a specified period of time. This
-includes avoiding interactions in community spaces as well as external channels
-like social media. Violating these terms may lead to a temporary or
-permanent ban.
+- **3 unique reports → under_review**
+- **5 unique reports → hidden**
 
-### 3. Temporary Ban
+Rules:
+- Users cannot report their own content  
+- Duplicate reports are blocked  
+- Max **10 reports per hour per user**  
 
-**Community Impact**: A serious violation of community standards, including
-sustained inappropriate behavior.
+---
 
-**Consequence**: A temporary ban from any sort of interaction or public
-communication with the community for a specified period of time. No public or
-private interaction with the people involved, including unsolicited interaction
-with those enforcing the Code of Conduct, is allowed during this period.
-Violating these terms may lead to a permanent ban.
+### ⚠️ Automatic Penalties
 
-### 4. Permanent Ban
+When content is hidden or blocked, the system applies penalties:
 
-**Community Impact**: Demonstrating a pattern of violation of community
-standards, including sustained inappropriate behavior,  harassment of an
-individual, or aggression toward or disparagement of classes of individuals.
+#### First Violation
+- Warning issued
+- `warningCount +1`
 
-**Consequence**: A permanent ban from any sort of public interaction within
-the community.
+#### Subsequent Violations
+- Escalate to **strikes**
 
-## Attribution
+#### Strike System
 
-This Code of Conduct is adapted from the [Contributor Covenant][homepage],
-version 2.0, available at
-https://www.contributor-covenant.org/version/2/0/code_of_conduct.html.
+| Strikes | Penalty |
+|--------|--------|
+| 1 | 24-hour forum suspension |
+| 2 | 7-day forum suspension |
+| 3+ | Permanent forum ban |
 
-Community Impact Guidelines were inspired by [Mozilla's code of conduct
-enforcement ladder](https://github.com/mozilla/diversity).
+Additional notes:
+- Warnings expire after **90 days**
+- Strikes expire after **180 days**
 
-[homepage]: https://www.contributor-covenant.org
+---
 
-For answers to common questions about this code of conduct, see the FAQ at
-https://www.contributor-covenant.org/faq. Translations are available at
-https://www.contributor-covenant.org/translations.
+### 🚫 Posting Restrictions
+
+Restricted users:
+- Can still log in and view content
+- Cannot:
+  - Post
+  - Comment
+  - Reply
+  - Edit content
+
+---
+
+### 🖼 Image Moderation
+
+All forum images are scanned using **AI SafeSearch**.
+
+Content is blocked if:
+- Adult content is **LIKELY or VERY_LIKELY**
+- Racy content is **VERY_LIKELY**
+
+If blocked:
+- Post is rejected
+- Moderation event is created
+- Penalties may be applied
+
+---
+
+### 📍 Location Behavior
+
+- **Hidden posts** → keep map coordinates  
+- **Removed posts** → coordinates are deleted  
+
+---
+
+## ⚖️ Appeals Process
+
+Users have the right to appeal moderation actions.
+
+### Rules:
+- One appeal per moderation event
+- Must be submitted within **14 days**
+
+### What happens on approval:
+- Moderation event is reversed
+- Content may be restored
+- Warning/strike counts are recalculated
+
+### What happens on denial:
+- Moderation remains unchanged
+
+---
+
+## 👮 Enforcement Responsibilities
+
+Moderation is enforced by:
+
+- Automated backend systems
+- User reports
+- Authorized reviewers (admin/moderator/staff roles)
+
+Moderators may:
+
+- Remove or hide content
+- Issue warnings or strikes
+- Suspend or ban users
+- Review and resolve appeals
+
+All decisions are logged and auditable.
+
+---
+
+## 🔍 Transparency & Fairness
+
+BirdDex moderation ensures:
+
+- No duplicate reporting abuse
+- No self-reporting
+- Rate-limited reporting
+- Logged moderation events
+- Reversible decisions via appeals
+
+---
+
+## 📌 Scope
+
+This Code of Conduct applies to:
+
+- Forum posts
+- Comments and replies
+- User-generated images
+- Any interaction within BirdDex
+
+---
+
+## 📬 Reporting Issues
+
+Users can report content directly in the app.
+
+For additional support:
+📧 birddexhelpdesk@gmail.com
+
+---
+
+## ⚠️ Enforcement Summary
+
+| Level | Action |
+|------|-------|
+| Warning | First violation |
+| Strike 1 | 24-hour suspension |
+| Strike 2 | 7-day suspension |
+| Strike 3+ | Permanent ban |
+
+---
+
+## 📚 Attribution
+
+This Code of Conduct is adapted from the Contributor Covenant, version 2.0, and extended to reflect BirdDex’s live moderation system and backend enforcement model.

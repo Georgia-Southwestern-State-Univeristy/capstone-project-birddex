@@ -60,7 +60,7 @@ public class NearbyBirdSearchAdapter extends RecyclerView.Adapter<NearbyBirdSear
     @NonNull
     @Override
     public ViewHolder onCreateViewHolder(@NonNull ViewGroup parent, int viewType) {
-        View view = LayoutInflater.from(parent.getContext()).inflate(R.layout.item_heatmap_bird_placeholder, parent, false);
+        View view = LayoutInflater.from(parent.getContext()).inflate(R.layout.item_nearby_bird_search, parent, false);
         return new ViewHolder(view);
     }
 

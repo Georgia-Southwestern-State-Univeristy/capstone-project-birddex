@@ -21,7 +21,8 @@
     <string name="legend_heatmap_title">Heatmap (Sightings)</string>
     <string name="legend_unverified_user_sightings">Unverified User Sightings</string>
     <string name="legend_verified_user_sightings">Verified User Sightings</string>
-    <string name="legend_verified_sightings">Verified Sightings</string>
+    <string name="legend_mixed_user_sightings">Mixed User Sightings</string>
+    <string name="legend_verified_sightings">Verified eBird Sightings</string>
     <string name="legend_chirps_title">Chirps (Recent Posts)</string>
     <string name="legend_spotted_pin">Spotted Pin</string>
     <string name="legend_hunted_pin">Hunted Pin</string>

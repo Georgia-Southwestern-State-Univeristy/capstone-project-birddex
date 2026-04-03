@@ -36,9 +36,19 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginTop="4dp"
-            android:text="Unverified Sightings: 0  •  Verified Sightings: 0"
+            android:text="User sightings: 0  •  Verified sightings: 0"
             android:textColor="?attr/colorOnSurfaceVariant"
             android:textSize="13sp" />
+
+        <TextView
+            android:id="@+id/tvSheetStatus"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:text="Hotspot status: Unverified Sighting"
+            android:textColor="#FF8A00"
+            android:textSize="13sp"
+            android:textStyle="bold" />
 
         <TextView
             android:id="@+id/tvEmptyBirds"

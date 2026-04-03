@@ -20,6 +20,7 @@ const { defineSecret } = require("firebase-functions/params");
 const admin = require("firebase-admin");
 const axios = require("axios");
 const crypto = require("crypto");
+const { GoogleAuth } = require("google-auth-library");
 
 if (admin.apps.length === 0) {
     admin.initializeApp();
@@ -34,11 +35,19 @@ const EBIRD_API_KEY = defineSecret("EBIRD_API_KEY");
 const NUTHATCH_API_KEY = defineSecret("NUTHATCH_API_KEY");
 const BIRDDEX_MODEL_API_KEY = defineSecret("BIRDDEX_MODEL_API_KEY");
 
+function secureOnCall(optionsOrHandler, maybeHandler) {
+    if (typeof optionsOrHandler === "function") {
+        return onCall({ enforceAppCheck: true }, optionsOrHandler);
+    }
+    return onCall({ ...(optionsOrHandler || {}), enforceAppCheck: true }, maybeHandler);
+}
+
 // ======================================================
 // CENTRALIZED CONFIG (replaces scattered hard-coded values)
 // ======================================================
 const CONFIG = {
     GEORGIA_DNR_HUNTING_LINK: "https://georgiawildlife.com/hunting",
+    BIRDDEX_MODEL_BASE_URL: "https://birddex-api-650774648072.us-central1.run.app",
     MAX_OPENAI_REQUESTS: 100,
     MAX_PFP_CHANGES: 5,
     COOLDOWN_PERIOD_MS: 24 * 60 * 60 * 1000,       // 24 hours
@@ -79,6 +88,11 @@ const USER_RATE_LIMITS = {
         maxEvents: 25,
         userMessage: "You're identifying birds too quickly. Please wait a moment and try again.",
     },
+    birdDexWarmup: {
+        windowMs: 10 * 60 * 1000,
+        maxEvents: 2,
+        userMessage: "BirdDex is already warming up. Please wait a moment and try again.",
+    },
     bugReport: {
         windowMs: 60 * 60 * 1000,
         maxEvents: 5,
@@ -100,7 +114,7 @@ const USER_RATE_LIMITS = {
 // HYBRID IDENTIFICATION CONFIG
 // ======================================================
 const HYBRID_ID_CONFIG = {
-    BIRDDEX_MODEL_URL: "https://birddex-api-650774648072.us-central1.run.app/predict-json",
+    BIRDDEX_MODEL_URL: `${CONFIG.BIRDDEX_MODEL_BASE_URL}/predict-json`,
     MODEL_DIRECT_CONFIDENCE_THRESHOLD: 0.70,
     MODEL_DIRECT_MARGIN_THRESHOLD: 0.15,
     MODEL_TIEBREAK_MARGIN_THRESHOLD: 0.10,
@@ -514,7 +528,7 @@ function commitUserRateLimitState(transaction, state) {
 // ======================================================
 // logFilteredContentAttempt — client-side blocked content logger
 // ======================================================
-exports.logFilteredContentAttempt = onCall(async (request) => {
+exports.logFilteredContentAttempt = secureOnCall(async (request) => {
     if (!request.auth) {
         throw new HttpsError("unauthenticated", "Login required.");
     }
@@ -1140,7 +1154,7 @@ async function getOrCreateAndSaveBirdFacts(birdId, commonName) {
  * Export: Callable used during sign-up/profile setup to check whether a username/email is available
  * before account creation continues.
  */
-exports.checkUsernameAndEmailAvailability = onCall(async (request) => {
+exports.checkUsernameAndEmailAvailability = secureOnCall(async (request) => {
     const { username, email } = request.data;
     const sanitizedUsername = sanitizeUsername(username);
 
@@ -1179,7 +1193,7 @@ exports.checkUsernameAndEmailAvailability = onCall(async (request) => {
  * Export: Callable used during first-time setup to sanitize profile fields and create the initial BirdDex
  * user document.
  */
-exports.initializeUser = onCall(async (request) => {
+exports.initializeUser = secureOnCall(async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Authentication required.");
 
     const { username, email, bio, profilePictureUrl } = request.data;
@@ -1303,7 +1317,7 @@ exports.initializeUser = onCall(async (request) => {
  * Updates an existing user profile through a dedicated callable so profile edits do not reuse
  * initializeUser.
  */
-exports.updateUserProfile = onCall(async (request) => {
+exports.updateUserProfile = secureOnCall(async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Authentication required.");
 
     const uid = request.auth.uid;
@@ -1494,7 +1508,7 @@ exports.updateUserProfile = onCall(async (request) => {
 /**
  * Export: Backend-owned location creation/lookup so clients cannot write arbitrary location docs.
  */
-exports.createOrGetLocation = onCall(async (request) => {
+exports.createOrGetLocation = secureOnCall(async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
 
     const userId = request.auth.uid;
@@ -1562,6 +1576,24 @@ exports.createUserDocument = auth.user().onCreate(async (user) => {
     return null;
 });
 
+async function invokeBirdDexCloudRunWarmup({ reason, uid }) {
+    const serviceUrl = CONFIG.BIRDDEX_MODEL_BASE_URL;
+    const authClient = await new GoogleAuth().getIdTokenClient(serviceUrl);
+    const warmupUrl = `${serviceUrl}/`;
+    const authHeaders = await authClient.getRequestHeaders(warmupUrl);
+
+    return axios.get(warmupUrl, {
+        headers: {
+            ...authHeaders,
+            "X-BirdDex-Warmup": "1",
+            "X-BirdDex-Warmup-Reason": sanitizeText(reason || "unknown", 80),
+            "X-BirdDex-Warmup-Uid": sanitizeText(uid || "unknown", 128),
+        },
+        timeout: 5000,
+        validateStatus: (status) => status >= 200 && status < 500,
+    });
+}
+
 // ======================================================
 // archiveAndDeleteUser
 // FIX #19: Sequential get → set → delete had no idempotency guard.
@@ -1582,50 +1614,74 @@ exports.createUserDocument = auth.user().onCreate(async (user) => {
  * Export: Callable that archives key user data and then deletes the user account/documents as part of
  * account removal.
  */
-exports.archiveAndDeleteUser = onCall(async (request) => {
+exports.archiveAndDeleteUser = secureOnCall(async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "The function must be called while authenticated.");
 
     const uid = request.auth.uid;
-    // This is where the function touches Firestore documents/collections for the requested action.
     const userRef = db.collection("users").doc(uid);
     const archiveRef = db.collection("usersdeletedAccounts").doc(uid);
-    try {
-        const [userDoc, archiveDoc] = await Promise.all([userRef.get(), archiveRef.get()]);
 
-        if (!archiveDoc.exists) {
-            if (!userDoc.exists) {
-                // Nothing to archive and nothing to delete — already fully cleaned up.
-                return { success: true };
-            }
-            // Atomic: write archive record AND delete source doc together.
-            const batch = db.batch();
-            batch.set(archiveRef, {
-                ...userDoc.data(),
-                archivedAt: admin.firestore.FieldValue.serverTimestamp(),
-                originalUid: uid,
-                deletionReason: "User requested account deletion"
-            });
-            batch.delete(userRef);
-            const deletedUsername = userDoc.data().username;
-                if (deletedUsername) {
-                batch.delete(db.collection("usernames").doc(deletedUsername));
-                    }
-                    await batch.commit();
-            logger.info(`Archived and deleted user doc for UID: ${uid}`);
-        } else {
-            // Archive already written (crash after set, before delete — or duplicate call).
-            // Just ensure the source doc is gone.
-            if (userDoc.exists) {
-                await userRef.delete();
-                logger.info(`archiveAndDeleteUser: Archive existed; deleted stale source doc for UID: ${uid}`);
-            } else {
-                logger.info(`archiveAndDeleteUser: Already fully processed for UID: ${uid}`);
-            }
+    try {
+        const userDoc = await userRef.get();
+        const archivePayload = {
+            originalUid: uid,
+            deletionReason: "User requested account deletion",
+            deleteRequestedAt: admin.firestore.FieldValue.serverTimestamp(),
+            deleteRequestedBy: uid,
+            authDeleteStartedAt: admin.firestore.FieldValue.serverTimestamp(),
+            cleanupStatus: "auth_delete_requested",
+        };
+
+        if (userDoc.exists) {
+            Object.assign(archivePayload, userDoc.data() || {});
         }
+
+        await archiveRef.set(archivePayload, { merge: true });
+        await admin.auth().deleteUser(uid);
+
+        logger.info(`archiveAndDeleteUser: backend auth delete requested for UID: ${uid}`);
         return { success: true };
     } catch (error) {
-        logger.error("Error archiving user:", error);
-        throw new HttpsError("internal", `Internal error during account archiving: ${error.message}`);
+        logger.error("Error archiving/deleting user:", error);
+        await archiveRef.set({
+            cleanupStatus: "auth_delete_failed",
+            cleanupError: sanitizeText(error?.message || "auth_delete_failed", 500),
+            authDeleteFailedAt: admin.firestore.FieldValue.serverTimestamp(),
+        }, { merge: true }).catch(() => null);
+        throw new HttpsError("internal", `Internal error during account deletion: ${error.message}`);
+    }
+});
+
+exports.warmBirdDexModel = secureOnCall(async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Auth required.");
+
+    const uid = request.auth.uid;
+    const reason = sanitizeText(String(request.data?.reason || "unknown"), 80) || "unknown";
+
+    try {
+        const warmupRateLimitState = await db.runTransaction(async (t) => {
+            const state = await readUserRateLimitState(t, uid, "birdDexWarmup", USER_RATE_LIMITS.birdDexWarmup, { reason });
+            commitUserRateLimitState(t, state);
+            return {
+                recentAttempts: Array.isArray(state?.events) ? state.events.length : 0,
+            };
+        });
+
+        const response = await invokeBirdDexCloudRunWarmup({ reason, uid });
+        return {
+            success: true,
+            statusCode: response.status,
+            recentAttempts: warmupRateLimitState?.recentAttempts ?? 0,
+        };
+    } catch (error) {
+        logger.error("warmBirdDexModel failed", {
+            message: error?.message || null,
+            code: error?.code || null,
+            uid,
+            reason,
+        });
+        if (error instanceof HttpsError) throw error;
+        throw new HttpsError("internal", "Failed to warm BirdDex right now.");
     }
 });
 
@@ -1673,7 +1729,19 @@ async function findBirdByCommonName(commonName) {
  * Helper: Calls the BirdDex model service running on Cloud Run.
  */
 async function callBirdModelApi(base64Image) {
-    const headers = { "Content-Type": "application/json" };
+    const serviceUrl = CONFIG.BIRDDEX_MODEL_BASE_URL;
+
+    // This gets a Google-signed ID token client for your Cloud Run service.
+    const authClient = await new GoogleAuth().getIdTokenClient(serviceUrl);
+
+    // These headers include Authorization: Bearer <token>
+    const authHeaders = await authClient.getRequestHeaders(HYBRID_ID_CONFIG.BIRDDEX_MODEL_URL);
+
+    const headers = {
+        ...authHeaders,
+        "Content-Type": "application/json",
+    };
+
     const internalKey = BIRDDEX_MODEL_API_KEY.value();
     if (internalKey) {
         headers["X-Internal-Api-Key"] = internalKey;
@@ -2756,7 +2824,7 @@ function buildIdentifyBirdResponse({
  * Export: Main bird-identification callable. Runs the hybrid model/OpenAI flow, stores identification
  * logs, and returns point-award eligibility details.
  */
-exports.identifyBird = onCall({ secrets: [OPENAI_API_KEY, BIRDDEX_MODEL_API_KEY], timeoutSeconds: 60 }, async (request) => {
+exports.identifyBird = secureOnCall({ secrets: [OPENAI_API_KEY, BIRDDEX_MODEL_API_KEY], timeoutSeconds: 60 }, async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
 
     const userId = request.auth.uid;
@@ -3042,7 +3110,7 @@ exports.identifyBird = onCall({ secrets: [OPENAI_API_KEY, BIRDDEX_MODEL_API_KEY]
  * Export: Callable used by the “not my bird” / review flow to build safer alternative bird choices from
  * the prior identification log.
  */
-exports.reviewBirdAlternatives = onCall({ secrets: [OPENAI_API_KEY], timeoutSeconds: 60 }, async (request) => {
+exports.reviewBirdAlternatives = secureOnCall({ secrets: [OPENAI_API_KEY], timeoutSeconds: 60 }, async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
 
     const userId = request.auth.uid;
@@ -3378,7 +3446,7 @@ async function writeIdentificationFeedbackEventWithGuards({
  * Export: Callable that records user feedback about an identification result so later tuning/auditing can
  * use it.
  */
-exports.syncIdentificationFeedback = onCall(async (request) => {
+exports.syncIdentificationFeedback = secureOnCall(async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
 
     const userId = request.auth.uid;
@@ -3614,7 +3682,7 @@ exports.syncIdentificationFeedback = onCall(async (request) => {
  * Input/permission checks happen here first so invalid requests fail before any expensive
  * backend work starts.
  */
-exports.recordPfpChange = onCall({ timeoutSeconds: 15 }, async (request) => {
+exports.recordPfpChange = secureOnCall({ timeoutSeconds: 15 }, async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Authentication required.");
 
     const userId = request.auth.uid;
@@ -3692,7 +3760,7 @@ exports.recordPfpChange = onCall({ timeoutSeconds: 15 }, async (request) => {
     }
 });
 
-exports.rollbackPfpChange = onCall({ timeoutSeconds: 15 }, async (request) => {
+exports.rollbackPfpChange = secureOnCall({ timeoutSeconds: 15 }, async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Authentication required.");
 
     const userId = request.auth.uid;
@@ -3758,7 +3826,7 @@ exports.rollbackPfpChange = onCall({ timeoutSeconds: 15 }, async (request) => {
     }
 });
 
-exports.finalizePfpChange = onCall({ timeoutSeconds: 15 }, async (request) => {
+exports.finalizePfpChange = secureOnCall({ timeoutSeconds: 15 }, async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Authentication required.");
 
     const userId = request.auth.uid;
@@ -3967,7 +4035,7 @@ async function _syncGeorgiaBirdsCore() {
 /**
  * Export: Callable that returns the cached Georgia bird list, fetching/refreshing data when needed.
  */
-exports.getGeorgiaBirds = onCall({ secrets: [EBIRD_API_KEY], timeoutSeconds: 60 }, async (request) => {
+exports.getGeorgiaBirds = secureOnCall({ secrets: [EBIRD_API_KEY], timeoutSeconds: 60 }, async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Authentication required.");
 
     try {
@@ -4026,7 +4094,7 @@ exports.scheduledGetGeorgiaBirds = onSchedule({
  * Export: Callable that loads bird metadata/facts and generates fresh facts only when cache is missing or
  * stale.
  */
-exports.getBirdDetailsAndFacts = onCall({ secrets: [OPENAI_API_KEY], timeoutSeconds: 60 }, async (request) => {
+exports.getBirdDetailsAndFacts = secureOnCall({ secrets: [OPENAI_API_KEY], timeoutSeconds: 60 }, async (request) => {
     const { birdId } = request.data;
     if (!birdId || typeof birdId !== "string" || birdId.trim().length === 0) {
         throw new HttpsError("invalid-argument", "The birdId field is required and must be a non-empty string.");
@@ -4074,11 +4142,11 @@ async function performDeletedUserCleanup(user) {
         ]);
 
         if (processedSnap.exists || archiveSnap.get("cleanupStatus") === "complete") {
-            userDocData = userSnap.exists ? (userSnap.data() || null) : null;
+            userDocData = userSnap.exists ? (userSnap.data() || null) : (archiveSnap.exists ? (archiveSnap.data() || null) : null);
             return;
         }
 
-        userDocData = userSnap.exists ? (userSnap.data() || {}) : null;
+        userDocData = userSnap.exists ? (userSnap.data() || {}) : (archiveSnap.exists ? (archiveSnap.data() || {}) : null);
 
         t.set(processedRef, {
             uid,
@@ -4094,10 +4162,29 @@ async function performDeletedUserCleanup(user) {
         }, { merge: true });
     });
 
+    const permanentBulkWriterFailures = [];
     const bulkWriter = db.bulkWriter();
     bulkWriter.onWriteError((error) => {
-        logger.error("performDeletedUserCleanup bulkWriter error", error);
-        return false;
+        const retryableCodes = new Set([
+            4, 8, 10, 13, 14,
+            "aborted", "cancelled", "data-loss", "deadline-exceeded", "internal", "resource-exhausted", "unavailable",
+        ]);
+        const shouldRetry = retryableCodes.has(error.code) && error.failedAttempts < 5;
+        logger.error("performDeletedUserCleanup bulkWriter error", {
+            code: error.code,
+            message: error.message,
+            failedAttempts: error.failedAttempts,
+            documentPath: error.documentRef?.path || null,
+            willRetry: shouldRetry,
+        });
+        if (!shouldRetry) {
+            permanentBulkWriterFailures.push({
+                code: error.code || null,
+                message: sanitizeText(error.message || "bulk_writer_error", 300),
+                documentPath: error.documentRef?.path || null,
+            });
+        }
+        return shouldRetry;
     });
 
     try {
@@ -4142,6 +4229,7 @@ async function performDeletedUserCleanup(user) {
             "settings",
             "following",
             "followers",
+            "rateLimits",
         ];
 
         for (const subcollection of userSubcollections) {
@@ -4174,11 +4262,60 @@ async function performDeletedUserCleanup(user) {
             snap.docs.forEach(docSnap => bulkWriter.delete(docSnap.ref));
         }
 
+        const userCommentsSnap = await db.collectionGroup("comments").where("userId", "==", uid).get();
+        userCommentsSnap.docs.forEach((docSnap) => bulkWriter.delete(docSnap.ref));
+
         const sightingsSnap = await db.collection("userBirdSightings").where("userId", "==", uid).get();
         sightingsSnap.docs.forEach(docSnap => bulkWriter.set(docSnap.ref, {
             username: "Deleted User",
             imageUrl: "",
             isAnonymized: true,
+            userId: null,
+        }, { merge: true }));
+
+        const bugReportsSnap = await db.collection("bug_reports").where("userId", "==", uid).get();
+        bugReportsSnap.docs.forEach((docSnap) => bulkWriter.set(docSnap.ref, {
+            userId: null,
+            contactEmail: null,
+            anonymized: true,
+            anonymizedAt: admin.firestore.FieldValue.serverTimestamp(),
+            anonymizationReason: "account_deleted",
+        }, { merge: true }));
+
+        const reportsSnap = await db.collection("reports").where("reporterId", "==", uid).get();
+        reportsSnap.docs.forEach((docSnap) => bulkWriter.set(docSnap.ref, {
+            reporterId: null,
+            reporterDeleted: true,
+            anonymized: true,
+            anonymizedAt: admin.firestore.FieldValue.serverTimestamp(),
+            anonymizationReason: "account_deleted",
+        }, { merge: true }));
+
+        const moderationEventsSnap = await db.collection("moderationEvents").where("userId", "==", uid).get();
+        moderationEventsSnap.docs.forEach((docSnap) => bulkWriter.set(docSnap.ref, {
+            userId: null,
+            deletedUserId: uid,
+            anonymized: true,
+            anonymizedAt: admin.firestore.FieldValue.serverTimestamp(),
+            anonymizationReason: "account_deleted",
+        }, { merge: true }));
+
+        const moderationAppealsSnap = await db.collection("moderationAppeals").where("userId", "==", uid).get();
+        moderationAppealsSnap.docs.forEach((docSnap) => bulkWriter.set(docSnap.ref, {
+            userId: null,
+            deletedUserId: uid,
+            anonymized: true,
+            anonymizedAt: admin.firestore.FieldValue.serverTimestamp(),
+            anonymizationReason: "account_deleted",
+        }, { merge: true }));
+
+        const privateAuditLogsSnap = await db.collection(PRIVATE_AUDIT_LOG_COLLECTION).where("userId", "==", uid).get();
+        privateAuditLogsSnap.docs.forEach((docSnap) => bulkWriter.set(docSnap.ref, {
+            userId: null,
+            deletedUserId: uid,
+            anonymized: true,
+            anonymizedAt: admin.firestore.FieldValue.serverTimestamp(),
+            anonymizationReason: "account_deleted",
         }, { merge: true }));
 
         if (userDocData && typeof userDocData.profilePictureUrl === "string" && userDocData.profilePictureUrl.includes("firebasestorage.googleapis.com")) {
@@ -4200,6 +4337,13 @@ async function performDeletedUserCleanup(user) {
         bulkWriter.delete(userRef);
         await bulkWriter.close();
 
+        if (permanentBulkWriterFailures.length > 0) {
+            const partialFailure = new Error("cleanup_partial_failure");
+            partialFailure.partialCleanupFailure = true;
+            partialFailure.failures = permanentBulkWriterFailures.slice(0, 20);
+            throw partialFailure;
+        }
+
         await archiveRef.set({
             cleanupStatus: "complete",
             cleanupCompletedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -4208,9 +4352,11 @@ async function performDeletedUserCleanup(user) {
         logger.info(`Successfully cleaned up deleted user ${uid}`);
     } catch (error) {
         logger.error(`Unified cleanup failed for user ${uid}:`, error);
+        const nextStatus = error?.partialCleanupFailure ? "partial_failure" : "failed";
         await archiveRef.set({
-            cleanupStatus: "failed",
+            cleanupStatus: nextStatus,
             cleanupError: sanitizeText(error?.message || "cleanup_failed", 500),
+            cleanupFailures: Array.isArray(error?.failures) ? error.failures : null,
             cleanupFailedAt: admin.firestore.FieldValue.serverTimestamp(),
         }, { merge: true }).catch(() => null);
         throw error;
@@ -4665,7 +4811,7 @@ exports.fetchAndStoreEBirdData = onSchedule({
 /**
  * Export: Callable admin/manual trigger that runs the eBird fetch logic on demand.
  */
-exports.triggerEbirdDataFetch = onCall({ secrets: [EBIRD_API_KEY], timeoutSeconds: 60 }, async (request) => {
+exports.triggerEbirdDataFetch = secureOnCall({ secrets: [EBIRD_API_KEY], timeoutSeconds: 60 }, async (request) => {
     logger.info("Callable eBird data fetch triggered.");
     try {
         return await _fetchAndStoreEBirdDataCore();
@@ -4961,7 +5107,7 @@ exports.onDeleteUserBirdImage = onDocumentDeleted("users/{userId}/userBirdImage/
 /**
  * Export: Callable that moderates a profile picture and stores the moderation outcome.
  */
-exports.moderatePfpImage = onCall({ secrets: [OPENAI_API_KEY], timeoutSeconds: 30 }, async (request) => {
+exports.moderatePfpImage = secureOnCall({ secrets: [OPENAI_API_KEY], timeoutSeconds: 30 }, async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
 
     const { imageBase64 } = request.data;
@@ -5161,7 +5307,7 @@ exports.clearRemovedForumPostCoordinates = onDocumentUpdated("forumThreads/{post
 // ======================================================
 // Forum engagement callables — optimistic UI on the client, authoritative writes on the backend
 // ======================================================
-exports.toggleForumPostLike = onCall(async (request) => {
+exports.toggleForumPostLike = secureOnCall(async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Authentication required.");
 
     const userId = request.auth.uid;
@@ -5232,7 +5378,7 @@ exports.toggleForumPostLike = onCall(async (request) => {
     }
 });
 
-exports.toggleForumCommentLike = onCall(async (request) => {
+exports.toggleForumCommentLike = secureOnCall(async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Authentication required.");
 
     const userId = request.auth.uid;
@@ -5307,7 +5453,7 @@ exports.toggleForumCommentLike = onCall(async (request) => {
     }
 });
 
-exports.recordForumPostView = onCall(async (request) => {
+exports.recordForumPostView = secureOnCall(async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Authentication required.");
 
     const userId = request.auth.uid;
@@ -5372,7 +5518,7 @@ exports.recordForumPostView = onCall(async (request) => {
 /**
  * Export: Backend-owned bug report intake with server-side rate limiting.
  */
-exports.submitBugReport = onCall(async (request) => {
+exports.submitBugReport = secureOnCall(async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
 
     const userId = request.auth.uid;
@@ -5890,7 +6036,7 @@ exports.onUserAuthDeleted = auth.user().onDelete(async (user) => {
  * Export: Callable that follows or unfollows another user and keeps follower/following counters
  * consistent.
  */
-exports.toggleFollow = onCall(async (request) => {
+exports.toggleFollow = secureOnCall(async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Auth required.");
 
     const followerId = request.auth.uid;
@@ -5963,7 +6109,7 @@ exports.toggleFollow = onCall(async (request) => {
  * Export: Callable that lets users report posts/comments/profiles and creates a pending moderator report
  * record.
  */
-exports.submitReport = onCall(async (request) => {
+exports.submitReport = secureOnCall(async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Auth required.");
 
     const reporterId = request.auth.uid;
@@ -6163,7 +6309,7 @@ exports.submitReport = onCall(async (request) => {
 // ======================================================
 // getMyModerationState — user-facing moderation overview for appeals/restrictions
 // ======================================================
-exports.getMyModerationState = onCall(async (request) => {
+exports.getMyModerationState = secureOnCall(async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Auth required.");
 
     const userId = request.auth.uid;
@@ -6195,7 +6341,7 @@ exports.getMyModerationState = onCall(async (request) => {
 // ======================================================
 // submitModerationAppeal — one appeal per moderation event
 // ======================================================
-exports.submitModerationAppeal = onCall(async (request) => {
+exports.submitModerationAppeal = secureOnCall(async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Auth required.");
 
     const userId = request.auth.uid;
@@ -6279,7 +6425,7 @@ exports.submitModerationAppeal = onCall(async (request) => {
 // ======================================================
 // getPendingModerationAppeals — moderator queue for pending appeals
 // ======================================================
-exports.getPendingModerationAppeals = onCall(async (request) => {
+exports.getPendingModerationAppeals = secureOnCall(async (request) => {
     getModerationReviewerIdentityOrThrow(request);
 
     const appealsSnap = await db.collection("moderationAppeals")
@@ -6338,7 +6484,7 @@ exports.getPendingModerationAppeals = onCall(async (request) => {
 // ======================================================
 // getPendingModerationReports — moderator queue for pending user reports
 // ======================================================
-exports.getPendingModerationReports = onCall(async (request) => {
+exports.getPendingModerationReports = secureOnCall(async (request) => {
     getModerationReviewerIdentityOrThrow(request);
 
     const reportsSnap = await db.collection("reports")
@@ -6440,7 +6586,7 @@ exports.getPendingModerationReports = onCall(async (request) => {
 // ======================================================
 // reviewModerationAppeal — moderator approval/denial with reversal handling
 // ======================================================
-exports.reviewModerationAppeal = onCall(async (request) => {
+exports.reviewModerationAppeal = secureOnCall(async (request) => {
     const { reviewedBy, moderatorSourceMeta } = getModerationReviewerIdentityOrThrow(request);
 
     const data = request.data || {};
@@ -6601,7 +6747,7 @@ exports.reviewModerationAppeal = onCall(async (request) => {
 // ======================================================
 // reviewPendingReport — moderator review path for pending user reports
 // ======================================================
-exports.reviewPendingReport = onCall(async (request) => {
+exports.reviewPendingReport = secureOnCall(async (request) => {
     const { reviewedBy, moderatorSourceMeta } = getModerationReviewerIdentityOrThrow(request);
 
     const data = request.data || {};
@@ -6892,7 +7038,7 @@ exports.decayModerationState = onSchedule("every 60 minutes", async () => {
 /**
  * Export: Callable that returns leaderboard data derived from user totals.
  */
-exports.getLeaderboard = onCall(async (request) => {
+exports.getLeaderboard = secureOnCall(async (request) => {
     try {
         // This is where the function touches Firestore documents/collections for the requested action.
         const snapshot = await db.collection("users")
@@ -7034,7 +7180,7 @@ exports.archiveStaleEBirdSightings = onSchedule({
 /**
  * Export: Callable/manual trigger for the stale eBird sighting archival job.
  */
-exports.triggerArchiveStaleEBirdSightings = onCall(async (request) => {
+exports.triggerArchiveStaleEBirdSightings = secureOnCall(async (request) => {
     logger.info("Callable archiveStaleEBirdSightings triggered.");
     try { return await _archiveStaleEBirdSightingsCore(); }
     catch (error) {
@@ -7134,7 +7280,7 @@ exports.archiveStaleUserBirdSightings = onSchedule({
 /**
  * Export: Callable/manual trigger for the stale user sighting archival job.
  */
-exports.triggerArchiveStaleUserBirdSightings = onCall(async (request) => {
+exports.triggerArchiveStaleUserBirdSightings = secureOnCall(async (request) => {
     logger.info("Callable archiveStaleUserBirdSightings triggered.");
     try { return await _archiveStaleUserBirdSightingsCore(); }
     catch (error) {
@@ -7168,7 +7314,7 @@ exports.triggerArchiveStaleUserBirdSightings = onCall(async (request) => {
 /**
  * Export: Callable that records a user bird sighting/map pin with normalized location data.
  */
-exports.recordBirdSighting = onCall(async (request) => {
+exports.recordBirdSighting = secureOnCall(async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
 
     const userId = request.auth.uid;
@@ -7288,7 +7434,7 @@ exports.recordBirdSighting = onCall(async (request) => {
 //   - enforce the 3-per-day limit
 //   - atomically increment the user's daily map-location post count
 // ======================================================
-exports.recordForumPost = onCall(async (request) => {
+exports.recordForumPost = secureOnCall(async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
 
     const userId = request.auth.uid;
@@ -8397,7 +8543,7 @@ async function archiveForumPostImageIfNeeded(userId, postId, imageUrl) {
 /**
  * Export: Main callable that validates, moderates, and writes a new forum thread.
  */
-exports.createForumPost = onCall(async (request) => {
+exports.createForumPost = secureOnCall(async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
 
     const userId = request.auth.uid;
@@ -8567,7 +8713,7 @@ exports.createForumPost = onCall(async (request) => {
 /**
  * Export: Main callable that validates, moderates, and writes a new forum comment/reply.
  */
-exports.createForumComment = onCall(async (request) => {
+exports.createForumComment = secureOnCall(async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
 
     const userId = request.auth.uid;
@@ -8679,7 +8825,7 @@ exports.createForumComment = onCall(async (request) => {
 /**
  * Export: Callable that edits an existing forum post while rechecking edit window/moderation rules.
  */
-exports.updateForumPostContent = onCall(async (request) => {
+exports.updateForumPostContent = secureOnCall(async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
 
     const userId = request.auth.uid;
@@ -8748,7 +8894,7 @@ exports.updateForumPostContent = onCall(async (request) => {
 /**
  * Export: Callable that edits an existing forum comment while rechecking edit window/moderation rules.
  */
-exports.updateForumCommentContent = onCall(async (request) => {
+exports.updateForumCommentContent = secureOnCall(async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
 
     const userId = request.auth.uid;
@@ -8817,7 +8963,7 @@ exports.updateForumCommentContent = onCall(async (request) => {
 /**
  * Export: Callable that deletes/soft-deletes a forum thread and updates related counters/state.
  */
-exports.deleteForumPost = onCall(async (request) => {
+exports.deleteForumPost = secureOnCall(async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
 
     const userId = request.auth.uid;
@@ -8898,7 +9044,7 @@ exports.deleteForumPost = onCall(async (request) => {
 /**
  * Export: Callable that deletes/soft-deletes a forum comment and updates related counters/state.
  */
-exports.deleteForumComment = onCall(async (request) => {
+exports.deleteForumComment = secureOnCall(async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
 
     const userId = request.auth.uid;
@@ -8993,7 +9139,7 @@ exports.deleteForumComment = onCall(async (request) => {
 /**
  * Export: Callable that saves a forum thread to the user’s saved-posts collection.
  */
-exports.saveForumPost = onCall(async (request) => {
+exports.saveForumPost = secureOnCall(async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
 
     const userId = request.auth.uid;
@@ -9047,7 +9193,7 @@ exports.saveForumPost = onCall(async (request) => {
 /**
  * Export: Callable that returns whether the current user has already saved a given forum post.
  */
-exports.getForumPostSaveState = onCall(async (request) => {
+exports.getForumPostSaveState = secureOnCall(async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
 
     const userId = request.auth.uid;
@@ -9080,7 +9226,7 @@ exports.getForumPostSaveState = onCall(async (request) => {
 /**
  * Export: Callable that removes a forum thread from the user’s saved-posts collection.
  */
-exports.unsaveForumPost = onCall(async (request) => {
+exports.unsaveForumPost = secureOnCall(async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
 
     const userId = request.auth.uid;
@@ -9180,7 +9326,7 @@ function getCardUpgradeCost(currentRarity, targetRarity) {
 /**
  * Export: Callable that spends points to upgrade a collection card rarity tier.
  */
-exports.upgradeCollectionSlotRarity = onCall(async (request) => {
+exports.upgradeCollectionSlotRarity = secureOnCall(async (request) => {
     if (!request.auth) {
         throw new HttpsError("unauthenticated", "Login required.");
     }
@@ -9295,7 +9441,7 @@ function getCardDowngradeRefund(currentRarity, targetRarity) {
 // ======================================================
 // revertCollectionSlotRarity — server-side rarity downgrade with refund
 // ======================================================
-exports.revertCollectionSlotRarity = onCall(async (request) => {
+exports.revertCollectionSlotRarity = secureOnCall(async (request) => {
     if (!request.auth) {
         throw new HttpsError("unauthenticated", "Login required.");
     }

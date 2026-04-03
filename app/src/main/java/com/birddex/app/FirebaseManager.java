@@ -421,6 +421,10 @@ public class FirebaseManager {
     /**
      * Main logic block for this part of the feature.
      */
+    /**
+     * Requests full backend-owned account deletion.
+     * The client must not call FirebaseUser.delete() separately after this succeeds.
+     */
     public void archiveAndDeleteUser(OnCompleteListener<HttpsCallableResult> listener) {
         Log.d(TAG, "Calling archiveAndDeleteUser Cloud Function.");
         mFunctions.getHttpsCallable("archiveAndDeleteUser").call().addOnCompleteListener(task -> {
@@ -526,13 +530,11 @@ public class FirebaseManager {
      * become permanent.
      */
     public void deleteUser(String userId, OnCompleteListener<Void> listener) {
-        Log.d(TAG, "Deleting user document: " + userId);
-        // Set up or query the Firebase layer that supplies/stores this feature's data.
-        db.collection("users").document(userId).delete().addOnCompleteListener(task -> {
-            if (task.isSuccessful()) Log.d(TAG, "User doc deleted.");
-            else Log.e(TAG, "User doc deletion failed.", task.getException());
-            listener.onComplete(task);
-        });
+        Log.w(TAG, "Direct client user document deletion is disabled. Use archiveAndDeleteUser instead. userId=" + userId);
+        if (listener != null) {
+            listener.onComplete(Tasks.forException(
+                    new UnsupportedOperationException("Direct client user deletion is disabled. Use archiveAndDeleteUser instead.")));
+        }
     }
 
     /**

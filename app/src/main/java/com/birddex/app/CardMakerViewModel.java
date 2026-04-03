@@ -18,4 +18,5 @@ public class CardMakerViewModel extends ViewModel {
     public final AtomicBoolean isSaveFinished   = new AtomicBoolean(false);
     public String saveOperationId = null;
     public String pendingUploadPath = null;
+    public boolean pendingUploadCleanupRequired = false;
 }

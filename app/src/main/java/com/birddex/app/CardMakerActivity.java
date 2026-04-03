@@ -31,6 +31,7 @@ import com.google.firebase.firestore.SetOptions;
 import com.google.firebase.storage.FirebaseStorage;
 import com.google.firebase.storage.StorageReference;
 
+import java.io.File;
 import java.util.Collections;
 import java.util.Date;
 import java.util.HashMap;
@@ -115,17 +116,9 @@ public class CardMakerActivity extends AppCompatActivity {
     public static final String EXTRA_AWARD_POINTS = "awardPoints";
     private boolean shouldAwardPoints;
     private final Handler pointAwardStatusHandler = new Handler(Looper.getMainLooper());
+    private StorageReference uploadedCollectionImageStorageRef;
+    private String uploadedCollectionImageDownloadUrl;
 
-    /**
-     * Android calls this when the Activity is first created. This is where the screen usually
-     * inflates its layout, grabs views, creates helpers, and wires listeners.
-     * It grabs layout/view references here so later code can read from them, update them, or
-     * attach listeners.
-     * It wires user actions here, so taps on buttons/cards/menus trigger the next step in the
-     * flow.
-     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
-     * changes.
-     */
     @Override
     protected void onCreate(@Nullable Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -133,9 +126,7 @@ public class CardMakerActivity extends AppCompatActivity {
         setContentView(R.layout.activity_card_maker);
 
         viewModel       = new ViewModelProvider(this).get(CardMakerViewModel.class);
-        // Set up or query the Firebase layer that supplies/stores this feature's data.
         firebaseManager = new FirebaseManager(this);
-        // Bind or inflate the UI pieces this method needs before it can update the screen.
         loadingOverlay  = findViewById(R.id.loadingOverlay);
         btnSave         = findViewById(R.id.btnSaveCard);
         btnCancel       = findViewById(R.id.btnCancelCard);
@@ -176,7 +167,6 @@ public class CardMakerActivity extends AppCompatActivity {
         shouldAwardPoints = getIntent().getBooleanExtra(EXTRA_AWARD_POINTS, true);
 
         if (originalImageUri == null) {
-            // Give the user immediate feedback about the result of this action.
             Toast.makeText(this, "No image passed.", Toast.LENGTH_SHORT).show();
             finish();
             return;
@@ -196,7 +186,6 @@ public class CardMakerActivity extends AppCompatActivity {
         txtFooter.setText("Preview only • Original photo will be saved");
 
         imgBird.setImageDrawable(null);
-        // Load the image asynchronously so the UI can show remote/local media without blocking the main thread.
         Glide.with(this)
                 .load(originalImageUri)
                 .signature(new ObjectKey(originalImageUri.toString() + System.currentTimeMillis()))
@@ -212,19 +201,6 @@ public class CardMakerActivity extends AppCompatActivity {
         btnSave.setOnClickListener(v -> processAndSaveBirdDiscovery(originalImageUri));
     }
 
-    // -------------------------------------------------------------------------
-    // Step 1: upload image to Storage
-    // -------------------------------------------------------------------------
-
-    /**
-     * Main logic block for this part of the feature.
-     * There is also one-time async data loading here, so success/failure callbacks are important
-     * for the final UI state.
-     * Part of this method writes changes back to Firestore/storage, so this is where app actions
-     * become permanent.
-     * User-facing feedback is shown here so the user knows whether the action succeeded, failed,
-     * or needs attention.
-     */
     private String getOrCreateSaveOperationId() {
         if (viewModel.saveOperationId == null || viewModel.saveOperationId.trim().isEmpty()) {
             viewModel.saveOperationId = UUID.randomUUID().toString();
@@ -240,7 +216,6 @@ public class CardMakerActivity extends AppCompatActivity {
     }
 
     private void processAndSaveBirdDiscovery(Uri imageUriToSave) {
-        // Kick off an asynchronous one-time read; the callbacks below decide how the UI should react.
         if (viewModel.isSaveInProgress.get() || viewModel.isSaveFinished.get()) {
             Log.d(TAG, "Ignoring duplicate save tap.");
             return;
@@ -248,24 +223,30 @@ public class CardMakerActivity extends AppCompatActivity {
 
         FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
         if (user == null) {
-            // Give the user immediate feedback about the result of this action.
             Toast.makeText(this, "Error: No user logged in. Please log in again.", Toast.LENGTH_LONG).show();
             return;
         }
 
-        // Persist the new state so the action is saved outside the current screen.
         viewModel.isSaveInProgress.set(true);
         setSavingUi(true);
         Toast.makeText(this, "Saving to collection...", Toast.LENGTH_SHORT).show();
 
         String userId   = user.getUid();
         String fileName = getOrCreatePendingUploadPath(userId);
+        viewModel.pendingUploadCleanupRequired = false;
+
         StorageReference storageRef = FirebaseStorage.getInstance().getReference().child(fileName);
+        uploadedCollectionImageStorageRef = storageRef;
+        uploadedCollectionImageDownloadUrl = null;
 
         storageRef.putFile(imageUriToSave)
                 .addOnSuccessListener(ts -> storageRef.getDownloadUrl()
                         .addOnSuccessListener(uri -> {
                             if (viewModel.isSaveFinished.get()) return;
+
+                            uploadedCollectionImageDownloadUrl = uri.toString();
+                            viewModel.pendingUploadCleanupRequired = true;
+
                             final String resolvedImageUrl = uri.toString();
                             final Double latitudeForSave = currentLatitude;
                             final Double longitudeForSave = currentLongitude;
@@ -292,41 +273,26 @@ public class CardMakerActivity extends AppCompatActivity {
                 .addOnFailureListener(e -> handleSaveFailure("Failed to upload image to your collection.", e));
     }
 
-    // -------------------------------------------------------------------------
-    // Step 2: atomic Firestore transaction for all collection writes (Fix #16/#17)
-    // -------------------------------------------------------------------------
-
-    /**
-     * Main logic block for this part of the feature.
-     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
-     * changes.
-     * Part of this method writes changes back to Firestore/storage, so this is where app actions
-     * become permanent.
-     * Location values are handled here, so this is part of the logic that decides what area/bird
-     * sightings the user sees.
-     */
     private void storeBirdDiscoveryAtomic(String originalImageUrl, @NonNull String locationId) {
         FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
         if (user == null) { handleSaveFailure("Error: No user logged in.", null); return; }
 
-        String userId              = user.getUid();
-        // Set up or query the Firebase layer that supplies/stores this feature's data.
-        FirebaseFirestore db       = FirebaseFirestore.getInstance();
-        String operationId         = getOrCreateSaveOperationId();
-        String userBirdId          = "UB_" + operationId;
-        String userBirdImageId     = "UBI_" + operationId;
-        String deterministicSlotId = userId + "_" + currentBirdId;
+        String userId               = user.getUid();
+        FirebaseFirestore db        = FirebaseFirestore.getInstance();
+        String operationId          = getOrCreateSaveOperationId();
+        String userBirdId           = "UB_" + operationId;
+        String userBirdImageId      = "UBI_" + operationId;
+        String deterministicSlotId  = userId + "_" + currentBirdId;
         Date now = currentCaughtTime > 0 ? new Date(currentCaughtTime) : new Date();
 
-        DocumentReference userBirdRef     = db.collection("userBirds").document(userBirdId);
+        DocumentReference userBirdRef = db.collection("userBirds").document(userBirdId);
         DocumentReference userBirdImageRef = db.collection("users").document(userId)
                 .collection("userBirdImage").document(userBirdImageId);
-        DocumentReference slotRef         = db.collection("users").document(userId)
+        DocumentReference slotRef = db.collection("users").document(userId)
                 .collection("collectionSlot").document(deterministicSlotId);
-        DocumentReference slotCounterRef  = db.collection("users").document(userId)
+        DocumentReference slotCounterRef = db.collection("users").document(userId)
                 .collection("collectionMeta").document("slotCounter");
 
-        // Capture for lambda (userBirdId is already effectively final as a local)
         final String capturedUserBirdId = userBirdId;
         final Date capturedNow = now;
 
@@ -334,7 +300,6 @@ public class CardMakerActivity extends AppCompatActivity {
             DocumentSnapshot slotSnap    = transaction.get(slotRef);
             DocumentSnapshot counterSnap = transaction.get(slotCounterRef);
 
-            // --- UserBird ---
             Map<String, Object> ubData = new HashMap<>();
             ubData.put("id", capturedUserBirdId);
             ubData.put("userId", userId);
@@ -352,7 +317,6 @@ public class CardMakerActivity extends AppCompatActivity {
             }
             transaction.set(userBirdRef, ubData);
 
-            // --- UserBirdImage ---
             Map<String, Object> ubiData = new HashMap<>();
             ubiData.put("id", userBirdImageId);
             ubiData.put("userId", userId);
@@ -362,7 +326,6 @@ public class CardMakerActivity extends AppCompatActivity {
             ubiData.put("userBirdRefId", capturedUserBirdId);
             transaction.set(userBirdImageRef, ubiData);
 
-            // --- CollectionSlot (only if this species not already in collection) ---
             if (!slotSnap.exists()) {
                 long nextIndex = (counterSnap.exists() && counterSnap.getLong("nextSlotIndex") != null)
                         ? counterSnap.getLong("nextSlotIndex") : 0L;
@@ -394,6 +357,8 @@ public class CardMakerActivity extends AppCompatActivity {
 
         }).addOnSuccessListener(result -> {
             Log.d(TAG, "Discovery saved atomically.");
+            markCollectionImageAsKept();
+            cleanupLocalTempImageIfOwned();
             if (shouldRecordSighting) {
                 recordSightingViaCloudFunction(capturedUserBirdId, capturedNow);
             } else {
@@ -402,26 +367,6 @@ public class CardMakerActivity extends AppCompatActivity {
         }).addOnFailureListener(e -> handleSaveFailure("Error saving discovery. Please try again.", e));
     }
 
-    // -------------------------------------------------------------------------
-    // Step 3 (optional): record heatmap sighting via server-side CF (Fix SIGHTING)
-    //
-    // Why this replaces the old saveUserBirdSightingIfAllowed():
-    //   OLD: read cooldown doc → check locally → write cooldown + write sighting (two separate ops)
-    //        Race: two concurrent saves pass the check before either writes the cooldown.
-    //        Race: crash between the two writes leaves state inconsistent.
-    //   NEW: single CF call → server reads + checks + writes cooldown + writes sighting
-    //        inside ONE Firestore transaction. Concurrent calls for same user+species retry
-    //        automatically; only the first one through commits.
-    //
-    // This call is intentionally non-fatal. The bird is already saved to the user's
-    // collection. If the sighting is on cooldown or the CF errors, we log and proceed.
-    // -------------------------------------------------------------------------
-
-    /**
-     * Main logic block for this part of the feature.
-     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
-     * changes.
-     */
     private void recordSightingViaCloudFunction(String userBirdId, Date timestamp) {
         firebaseManager.recordBirdSighting(
                 currentBirdId,
@@ -434,19 +379,16 @@ public class CardMakerActivity extends AppCompatActivity {
                 currentCountry,
                 currentQuantity,
                 timestamp.getTime(),
-                // Set up or query the Firebase layer that supplies/stores this feature's data.
                 new FirebaseManager.BirdSightingListener() {
                     @Override public void onRecorded() {
                         if (isFinishing() || isDestroyed()) return;
                         handleSaveSuccess(userBirdId);
                     }
                     @Override public void onCooldown() {
-                        // Silent — bird still saved to collection, heatmap skipped
                         if (isFinishing() || isDestroyed()) return;
                         handleSaveSuccess(userBirdId);
                     }
                     @Override public void onFailure(String errorMessage) {
-                        // Non-fatal: collection save already succeeded
                         Log.w(TAG, "recordBirdSighting failed (non-fatal): " + errorMessage);
                         if (isFinishing() || isDestroyed()) return;
                         handleSaveSuccess(userBirdId);
@@ -455,21 +397,7 @@ public class CardMakerActivity extends AppCompatActivity {
         );
     }
 
-    // -------------------------------------------------------------------------
-    // UI helpers
-    // -------------------------------------------------------------------------
-
-    /**
-     * Central handler that reacts to an event/input and decides what the next app action should
-     * be.
-     * There is also one-time async data loading here, so success/failure callbacks are important
-     * for the final UI state.
-     * Part of this method writes changes back to Firestore/storage, so this is where app actions
-     * become permanent.
-     * It also packages extras into an Intent when this flow needs to open another Activity.
-     */
     private void handleSaveSuccess(@Nullable String userBirdId) {
-        // Kick off an asynchronous one-time read; the callbacks below decide how the UI should react.
         if (viewModel.isSaveFinished.get() || isFinishing() || isDestroyed()) return;
 
         if (!shouldAwardPoints) {
@@ -620,56 +548,103 @@ public class CardMakerActivity extends AppCompatActivity {
         Intent home = new Intent(CardMakerActivity.this, HomeActivity.class);
         home.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
         home.putExtra("openTab", "collection");
-        // Move into the next screen and pass the identifiers/data that screen needs.
         startActivity(home);
         finish();
     }
 
-    /**
-     * Central handler that reacts to an event/input and decides what the next app action should
-     * be.
-     * There is also one-time async data loading here, so success/failure callbacks are important
-     * for the final UI state.
-     * Part of this method writes changes back to Firestore/storage, so this is where app actions
-     * become permanent.
-     * User-facing feedback is shown here so the user knows whether the action succeeded, failed,
-     * or needs attention.
-     */
     private void handleSaveFailure(String userMessage, @Nullable Exception e) {
-        // Kick off an asynchronous one-time read; the callbacks below decide how the UI should react.
         if (viewModel.isSaveFinished.get() || isFinishing() || isDestroyed()) return;
         Log.e(TAG, userMessage, e);
-        // Persist the new state so the action is saved outside the current screen.
+        deletePendingCollectionImageIfNeeded();
         viewModel.isSaveInProgress.set(false);
         setSavingUi(false);
-        // Give the user immediate feedback about the result of this action.
         Toast.makeText(CardMakerActivity.this, userMessage, Toast.LENGTH_LONG).show();
     }
 
-    /**
-     * Updates object/screen state by storing a new value or reconfiguring a dependency.
-     */
     private void setSavingUi(boolean saving) {
         if (loadingOverlay != null) loadingOverlay.setVisibility(saving ? View.VISIBLE : View.GONE);
-        if (btnSave   != null) {
+        if (btnSave != null) {
             btnSave.setEnabled(!saving);
             btnSave.setClickable(!saving);
             btnSave.setText(saving ? "Saving..." : defaultSaveButtonText);
         }
-        if (btnCancel != null) { btnCancel.setEnabled(!saving); btnCancel.setClickable(!saving); }
+        if (btnCancel != null) {
+            btnCancel.setEnabled(!saving);
+            btnCancel.setClickable(!saving);
+        }
     }
 
-    /**
-     * Runs when the screen is leaving the foreground, so it is used to pause work or save
-     * transient state.
-     * There is also one-time async data loading here, so success/failure callbacks are important
-     * for the final UI state.
-     */
     @Override
     protected void onPause() {
         super.onPause();
-        // Kick off an asynchronous one-time read; the callbacks below decide how the UI should react.
         if (!viewModel.isSaveFinished.get() && loadingOverlay != null)
             loadingOverlay.setVisibility(View.GONE);
+    }
+
+    private void deletePendingCollectionImageIfNeeded() {
+        if (viewModel == null || !viewModel.pendingUploadCleanupRequired) {
+            return;
+        }
+
+        final StorageReference ref = uploadedCollectionImageStorageRef;
+        if (ref == null) {
+            return;
+        }
+
+        viewModel.pendingUploadCleanupRequired = false;
+        uploadedCollectionImageStorageRef = null;
+        uploadedCollectionImageDownloadUrl = null;
+
+        ref.delete()
+                .addOnSuccessListener(unused ->
+                        Log.d(TAG, "Deleted orphaned collection image after failed save."))
+                .addOnFailureListener(e ->
+                        Log.w(TAG, "Failed to delete orphaned collection image after failed save.", e));
+    }
+
+    private void markCollectionImageAsKept() {
+        if (viewModel != null) {
+            viewModel.pendingUploadCleanupRequired = false;
+        }
+    }
+
+    private void cleanupLocalTempImageIfOwned() {
+        if (originalImageUri == null) {
+            return;
+        }
+
+        try {
+            String scheme = originalImageUri.getScheme();
+            String path = originalImageUri.getPath();
+
+            if (!"file".equalsIgnoreCase(scheme) || path == null || path.trim().isEmpty()) {
+                return;
+            }
+
+            File file = new File(path);
+            File cacheDir = getCacheDir();
+            if (cacheDir == null) {
+                return;
+            }
+
+            String cacheRoot = cacheDir.getAbsolutePath();
+            String filePath = file.getAbsolutePath();
+
+            boolean isOwnedTempFile =
+                    filePath.startsWith(new File(cacheDir, "cropped_images").getAbsolutePath()) ||
+                            filePath.startsWith(new File(cacheDir, "camera_burst_frames").getAbsolutePath());
+
+            if (!isOwnedTempFile || !file.exists()) {
+                return;
+            }
+
+            if (file.delete()) {
+                Log.d(TAG, "Deleted local temp image after successful collection save: " + filePath);
+            } else {
+                Log.w(TAG, "Failed to delete local temp image after successful collection save: " + filePath);
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "Error while deleting local temp image after successful collection save.", e);
+        }
     }
 }

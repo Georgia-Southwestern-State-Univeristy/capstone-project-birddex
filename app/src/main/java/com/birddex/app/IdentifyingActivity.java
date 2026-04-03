@@ -33,6 +33,7 @@ import com.google.firebase.storage.FirebaseStorage;
 import com.google.firebase.storage.StorageReference;
 
 import java.io.ByteArrayOutputStream;
+import java.io.File;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.UUID;
@@ -76,8 +77,8 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
     private final ArrayList<String> pendingFeedbackNotes = new ArrayList<>();
     @Nullable private String currentIdentificationLogId;
     @Nullable private String currentIdentificationId;
-    @Nullable private StorageReference uploadedIdentificationStorageRef;
-    @Nullable private String uploadedIdentificationDownloadUrl;
+    private StorageReference uploadedIdentificationStorageRef;
+    private String uploadedIdentificationDownloadUrl;
     private boolean identificationImageShouldBeKept = false;
 
     /**
@@ -109,6 +110,10 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
         localImageUri = Uri.parse(uriStr);
         identifyingImageView.setImageURI(localImageUri);
 
+        // Burst frames are no longer needed here because the guard report was already computed
+        // before this screen and passed in the intent.
+        clearBurstFrameCacheAsync();
+
         openAiApi = new OpenAiApi();
         // Set up or query the Firebase layer that supplies/stores this feature's data.
         firebaseManager = new FirebaseManager(this);
@@ -120,6 +125,8 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
         timeoutRunnable = () -> {
             if (identificationCompleted.compareAndSet(false, true)) {
                 Log.e(TAG, "Identification process timed out after " + IDENTIFICATION_TIMEOUT_MS + "ms");
+                deleteUploadedIdentificationImageIfUnused();
+                deleteLocalTempImageIfNeeded(localImageUri);
                 finishActivityWithToast("Identification timed out. Please try again.");
             }
         };
@@ -307,11 +314,13 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
                     }).addOnFailureListener(e -> {
                         Log.e(TAG, "Failed to get download URL", e);
                         deleteUploadedIdentificationImageIfUnused();
+                        deleteLocalTempImageIfNeeded(localImageUri);
                         finishActivityWithToast("Failed to process identification image link.");
                     });
                 })
                 .addOnFailureListener(e -> {
                     Log.e(TAG, "Upload failed", e);
+                    deleteLocalTempImageIfNeeded(localImageUri);
                     finishActivityWithToast("Image upload for identification failed.");
                 });
     }
@@ -328,6 +337,7 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
         String base64Image = encodeImage(localImageUri); // Still need base64 for the Vision API call
         if (base64Image == null) {
             deleteUploadedIdentificationImageIfUnused();
+            deleteLocalTempImageIfNeeded(localImageUri);
             finishActivityWithToast("Failed to encode image for analysis.");
             return;
         }
@@ -351,18 +361,21 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
 
                 if (result.isGore) {
                     deleteUploadedIdentificationImageIfUnused();
+                    deleteLocalTempImageIfNeeded(localImageUri);
                     finishActivityWithToast("Please take a picture of a non-gore picture of a bird.");
                     return;
                 }
 
                 if (!result.isInDatabase || "NOT_IN_DATABASE".equals(result.reasonCode)) {
                     deleteUploadedIdentificationImageIfUnused();
+                    deleteLocalTempImageIfNeeded(localImageUri);
                     finishActivityWithToast("Sorry, this bird is not in our database just yet.");
                     return;
                 }
 
                 if (!result.isVerified || result.primaryBird == null || result.primaryBird.birdId == null || result.primaryBird.birdId.trim().isEmpty()) {
                     deleteUploadedIdentificationImageIfUnused();
+                    deleteLocalTempImageIfNeeded(localImageUri);
                     finishActivityWithToast(result.userMessage != null && !result.userMessage.trim().isEmpty()
                             ? result.userMessage
                             : "Identification could not be verified.");
@@ -377,6 +390,7 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
                 if (identificationCompleted.get() || isFinishing() || isDestroyed()) return;
                 Log.e(TAG, "identifyBird onFailure: " + message, e);
                 deleteUploadedIdentificationImageIfUnused();
+                deleteLocalTempImageIfNeeded(localImageUri);
                 finishActivityWithToast("Identification failed: " + message);
             }
         });
@@ -386,24 +400,6 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
      * Main logic block for this part of the feature.
      * It also packages extras into an Intent when this flow needs to open another Activity.
      */
-    private void deleteUploadedIdentificationImageIfUnused() {
-        if (identificationImageShouldBeKept) {
-            return;
-        }
-
-        StorageReference ref = uploadedIdentificationStorageRef;
-        if (ref == null) {
-            return;
-        }
-
-        uploadedIdentificationStorageRef = null;
-        uploadedIdentificationDownloadUrl = null;
-
-        ref.delete()
-                .addOnSuccessListener(unused -> Log.d(TAG, "Unused identification image deleted from Storage."))
-                .addOnFailureListener(e -> Log.w(TAG, "Failed to delete unused identification image.", e));
-    }
-
     private void flushPendingFeedbackIfPossible() {
         if (currentIdentificationLogId == null || currentIdentificationLogId.trim().isEmpty() || pendingFeedbackNotes.isEmpty()) {
             return;
@@ -441,10 +437,10 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
     }
 
     private void proceedToInfoActivity(OpenAiApi.IdentifyBirdResult result, @Nullable String downloadUrl, @Nullable Double latitude, @Nullable Double longitude, @Nullable String localityName, @Nullable String state, @Nullable String country) {
-        identificationImageShouldBeKept = true;
         if (identificationCompleted.compareAndSet(false, true)) {
             timeoutHandler.removeCallbacks(timeoutRunnable);
 
+            identificationImageShouldBeKept = true;
             OpenAiApi.BirdChoice primary = result.primaryBird;
             Intent intent = new Intent(IdentifyingActivity.this, BirdInfoActivity.class);
             intent.putExtra("imageUri", localImageUri.toString());
@@ -509,6 +505,72 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
      * Bitmap/rendering work happens here, so this block is shaping the final card/image output
      * rather than just text data.
      */
+
+    private void deleteUploadedIdentificationImageIfUnused() {
+        if (identificationImageShouldBeKept) {
+            return;
+        }
+
+        StorageReference ref = uploadedIdentificationStorageRef;
+        if (ref == null) {
+            return;
+        }
+
+        uploadedIdentificationStorageRef = null;
+        uploadedIdentificationDownloadUrl = null;
+
+        ref.delete()
+                .addOnSuccessListener(unused -> Log.d(TAG, "Unused identification image deleted from Storage."))
+                .addOnFailureListener(e -> Log.w(TAG, "Failed to delete unused identification image.", e));
+    }
+
+    private void deleteLocalTempImageIfNeeded(@Nullable Uri uri) {
+        if (uri == null || uri.getPath() == null) {
+            return;
+        }
+
+        try {
+            File file = new File(uri.getPath());
+            String cacheRoot = getCacheDir().getAbsolutePath();
+            String filePath = file.getAbsolutePath();
+
+            if (!filePath.startsWith(cacheRoot)) {
+                return;
+            }
+            if (!file.exists()) {
+                return;
+            }
+
+            if (file.delete()) {
+                Log.d(TAG, "Deleted local temp identification image: " + filePath);
+            } else {
+                Log.w(TAG, "Failed to delete local temp identification image: " + filePath);
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "Failed to delete local temp identification image.", e);
+        }
+    }
+
+    private void clearBurstFrameCacheAsync() {
+        new Thread(() -> {
+            try {
+                File dir = new File(getCacheDir(), "camera_burst_frames");
+                if (!dir.exists()) return;
+
+                File[] files = dir.listFiles();
+                if (files == null) return;
+
+                for (File file : files) {
+                    if (file != null && file.exists() && !file.delete()) {
+                        Log.w(TAG, "Failed to delete burst temp file: " + file.getAbsolutePath());
+                    }
+                }
+            } catch (Exception e) {
+                Log.w(TAG, "Failed to clean burst frame cache.", e);
+            }
+        }).start();
+    }
+
     private String encodeImage(Uri imageUri) {
         try {
             Bitmap bitmap = (Build.VERSION.SDK_INT >= 28) ? ImageDecoder.decodeBitmap(ImageDecoder.createSource(this.getContentResolver(), imageUri)) : MediaStore.Images.Media.getBitmap(this.getContentResolver(), imageUri);

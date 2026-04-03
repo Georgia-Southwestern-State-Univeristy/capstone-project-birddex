@@ -4273,6 +4273,84 @@ exports.onCollectionSlotUpdatedForImageDeletion = onDocumentUpdated("users/{user
 });
 
 // ======================================================
+// onCollectionSlotDeletedCleanupImage
+// When a collection slot document is deleted outright, delete the matching
+// userBirdImage doc so the existing onDeleteUserBirdImage cleanup chain removes
+// the stored userCollectionImages file, related sightings, and parent userBird
+// bookkeeping when needed.
+// ======================================================
+/**
+ * Export: Firestore trigger that reacts when a collection slot document is deleted and
+ * forwards cleanup to the existing userBirdImage deletion pipeline.
+ */
+exports.onCollectionSlotDeletedCleanupImage = onDocumentDeleted("users/{userId}/collectionSlot/{slotId}", async (event) => {
+    const deletedSlot = event.data?.data();
+    const { userId, slotId } = event.params;
+
+    if (!deletedSlot) {
+        logger.info(`onCollectionSlotDeletedCleanupImage: No deleted slot payload for slot ${slotId}.`);
+        return null;
+    }
+
+    const { userBirdId, imageUrl, birdId } = deletedSlot;
+
+    if (!imageUrl || !imageUrl.includes("userCollectionImages")) {
+        logger.info(`onCollectionSlotDeletedCleanupImage: Slot ${slotId} has no collection image to clean up.`);
+        return null;
+    }
+
+    const eventLogRef = db.collection("processedEvents").doc(`SLOT_DOC_DEL_${slotId}`);
+
+    try {
+        let alreadyProcessed = false;
+        await db.runTransaction(async (transaction) => {
+            const eventDoc = await transaction.get(eventLogRef);
+            if (eventDoc.exists) {
+                alreadyProcessed = true;
+                return;
+            }
+
+            transaction.set(eventLogRef, {
+                slotId,
+                userId,
+                userBirdId: userBirdId || null,
+                imageUrl,
+                processedAt: admin.firestore.FieldValue.serverTimestamp(),
+            });
+        });
+
+        if (alreadyProcessed) {
+            logger.info(`onCollectionSlotDeletedCleanupImage: slot ${slotId} already processed. Skipping.`);
+            return null;
+        }
+
+        let query = db.collection("users").doc(userId).collection("userBirdImage")
+            .where("imageUrl", "==", imageUrl);
+
+        if (userBirdId) {
+            query = query.where("userBirdRefId", "==", userBirdId);
+        } else if (birdId) {
+            query = query.where("birdId", "==", birdId);
+        }
+
+        const matchingImagesSnap = await query.limit(1).get();
+
+        if (matchingImagesSnap.empty) {
+            logger.info(`onCollectionSlotDeletedCleanupImage: No matching userBirdImage found for slot ${slotId}.`);
+            return null;
+        }
+
+        const imageDoc = matchingImagesSnap.docs[0];
+        await imageDoc.ref.delete();
+        logger.info(`onCollectionSlotDeletedCleanupImage: Deleted userBirdImage ${imageDoc.id} for slot ${slotId}.`);
+    } catch (error) {
+        logger.error(`onCollectionSlotDeletedCleanupImage: Failed for slot ${slotId}.`, error);
+    }
+
+    return null;
+});
+
+// ======================================================
 // HELPER: Update user totals (IDEMPOTENT version)
 // ======================================================
 async function _updateUserTotals(userId, eventId, totalBirdsChange, duplicateBirdsChange, totalPointsChange) {

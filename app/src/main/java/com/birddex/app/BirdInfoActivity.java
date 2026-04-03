@@ -3,6 +3,7 @@ package com.birddex.app;
 import android.content.Intent;
 import android.net.Uri;
 import android.os.Bundle;
+import android.util.Log;
 import android.view.View;
 import android.widget.Button;
 import android.widget.ImageView;
@@ -10,6 +11,8 @@ import android.widget.RadioButton;
 import android.widget.RadioGroup;
 import android.widget.TextView;
 import android.widget.Toast;
+
+import java.io.File;
 
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
@@ -26,6 +29,8 @@ import java.util.ArrayList;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class BirdInfoActivity extends AppCompatActivity {
+
+    private static final String TAG = "BirdInfoActivity";
 
     private String currentImageUriStr;
     private String currentImageUrl;
@@ -301,6 +306,7 @@ public class BirdInfoActivity extends AppCompatActivity {
             );
 
             deleteIdentificationImageFromStorage(currentImageUrl);
+            deleteLocalTempImageIfNeeded(currentImageUriStr);
 
             Intent home = new Intent(BirdInfoActivity.this, HomeActivity.class);
             home.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
@@ -308,6 +314,7 @@ public class BirdInfoActivity extends AppCompatActivity {
             finish();
         });
     }
+
 
     private void deleteIdentificationImageFromStorage(@Nullable String downloadUrl) {
         if (downloadUrl == null || downloadUrl.trim().isEmpty()) {
@@ -317,15 +324,45 @@ public class BirdInfoActivity extends AppCompatActivity {
         try {
             StorageReference ref = FirebaseStorage.getInstance().getReferenceFromUrl(downloadUrl);
             ref.delete()
-                    .addOnSuccessListener(unused -> {
-                        currentImageUrl = null;
-                        android.util.Log.d("BirdInfoActivity", "Discarded identification image deleted.");
-                    })
-                    .addOnFailureListener(e -> android.util.Log.w("BirdInfoActivity", "Failed to delete discarded identification image.", e));
+                    .addOnSuccessListener(unused -> Log.d(TAG, "Discarded identification image deleted."))
+                    .addOnFailureListener(e -> Log.w(TAG, "Failed to delete discarded identification image.", e));
         } catch (Exception e) {
-            android.util.Log.w("BirdInfoActivity", "Could not resolve identification image URL for deletion.", e);
+            Log.w(TAG, "Could not resolve identification image URL for deletion.", e);
         }
     }
+
+    private void deleteLocalTempImageIfNeeded(@Nullable String uriString) {
+        if (uriString == null || uriString.trim().isEmpty()) {
+            return;
+        }
+
+        try {
+            Uri uri = Uri.parse(uriString);
+            if (uri.getPath() == null) {
+                return;
+            }
+
+            File file = new File(uri.getPath());
+            String cacheRoot = getCacheDir().getAbsolutePath();
+            String filePath = file.getAbsolutePath();
+
+            if (!filePath.startsWith(cacheRoot)) {
+                return;
+            }
+            if (!file.exists()) {
+                return;
+            }
+
+            if (file.delete()) {
+                Log.d(TAG, "Deleted local temp BirdInfo image: " + filePath);
+            } else {
+                Log.w(TAG, "Failed to delete local temp BirdInfo image: " + filePath);
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "Failed to delete local temp BirdInfo image.", e);
+        }
+    }
+
 
     private void updateBirdUi() {
         commonNameTextView.setText("Common Name: " + (currentCommonName != null ? currentCommonName : "N/A"));

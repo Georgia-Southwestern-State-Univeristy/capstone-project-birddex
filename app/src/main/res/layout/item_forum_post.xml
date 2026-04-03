@@ -82,6 +82,21 @@
                         android:textSize="10sp"
                         android:visibility="gone"
                         tools:visibility="visible" />
+
+                    <TextView
+                        android:id="@+id/tvPoiBadge"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="4dp"
+                        android:background="@drawable/bg_circle"
+                        android:backgroundTint="#8B5E3C"
+                        android:paddingHorizontal="6dp"
+                        android:paddingVertical="2dp"
+                        android:text="POI"
+                        android:textColor="@color/white"
+                        android:textSize="10sp"
+                        android:visibility="gone"
+                        tools:visibility="visible" />
                 </LinearLayout>
 
                 <TextView

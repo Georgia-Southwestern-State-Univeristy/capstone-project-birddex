@@ -310,9 +310,10 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
         ((TextView) v.findViewById(R.id.tvCommentCount)).setText(String.valueOf(post.getCommentCount()));
         ((TextView) v.findViewById(R.id.tvViewCount)).setText(post.getViewCount() + " views");
 
-        View sp = v.findViewById(R.id.tvSpottedBadge), hu = v.findViewById(R.id.tvHuntedBadge);
+        View sp = v.findViewById(R.id.tvSpottedBadge), hu = v.findViewById(R.id.tvHuntedBadge), poi = v.findViewById(R.id.tvPoiBadge);
         if (sp != null) sp.setVisibility(post.isSpotted() ? View.VISIBLE : View.GONE);
         if (hu != null) hu.setVisibility(post.isHunted() ? View.VISIBLE : View.GONE);
+        if (poi != null) poi.setVisibility(post.isShowLocation() && !post.isSpotted() && !post.isHunted() ? View.VISIBLE : View.GONE);
 
         if (post.getTimestamp() != null) ((TextView) v.findViewById(R.id.tvPostTimestamp)).setText(DateUtils.getRelativeTimeSpanString(post.getTimestamp().toDate().getTime()));
         // Load the image asynchronously so the UI can show remote/local media without blocking the main thread.
@@ -335,7 +336,7 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
 
         View mapBtn = v.findViewById(R.id.btnViewOnMap);
         if (mapBtn != null) {
-            if ((post.isSpotted() || post.isHunted()) && post.isShowLocation() && post.getLatitude() != null) {
+            if (post.isShowLocation() && post.getLatitude() != null && post.getLongitude() != null) {
                 mapBtn.setVisibility(View.VISIBLE);
                 // Attach the user interaction that should run when this control is tapped.
                 mapBtn.setOnClickListener(view -> {
@@ -344,7 +345,10 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
                     // Move into the next screen and pass the identifiers/data that screen needs.
                     startActivity(new Intent(this, NearbyHeatmapActivity.class).putExtra(NearbyHeatmapActivity.EXTRA_CENTER_LAT, post.getLatitude()).putExtra(NearbyHeatmapActivity.EXTRA_CENTER_LNG, post.getLongitude()).putExtra("extra_post_id", post.getId()));
                 });
-            } else mapBtn.setVisibility(View.GONE);
+            } else {
+                mapBtn.setVisibility(View.GONE);
+                mapBtn.setOnClickListener(null);
+            }
         }
 
         FirebaseUser user = mAuth.getCurrentUser();

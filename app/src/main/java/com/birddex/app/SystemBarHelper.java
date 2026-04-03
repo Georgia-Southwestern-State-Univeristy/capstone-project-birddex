@@ -3,6 +3,7 @@ package com.birddex.app;
 import android.app.Activity;
 import android.graphics.Color;
 import android.os.Build;
+import android.view.Window;
 
 import androidx.core.content.ContextCompat;
 import androidx.core.view.WindowCompat;
@@ -49,6 +50,36 @@ public final class SystemBarHelper {
             if (controller != null) {
                 controller.setAppearanceLightNavigationBars(false);
                 controller.setAppearanceLightStatusBars(false);
+            }
+        }
+    }
+
+
+    public static void applyDialogNavBar(Activity activity, Window window) {
+        if (activity == null || window == null) return;
+
+        boolean isThreeButtonNav = isThreeButtonNavigationMode(activity);
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            window.setNavigationBarContrastEnforced(false);
+        }
+
+        WindowInsetsControllerCompat controller =
+                WindowCompat.getInsetsController(window, window.getDecorView());
+
+        if (isThreeButtonNav) {
+            window.setNavigationBarColor(Color.BLACK);
+
+            if (controller != null) {
+                controller.setAppearanceLightNavigationBars(false);
+            }
+        } else {
+            window.setNavigationBarColor(
+                    ContextCompat.getColor(activity, R.color.nav_brown)
+            );
+
+            if (controller != null) {
+                controller.setAppearanceLightNavigationBars(false);
             }
         }
     }

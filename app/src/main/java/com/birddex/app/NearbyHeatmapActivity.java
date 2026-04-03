@@ -105,6 +105,7 @@ public class NearbyHeatmapActivity extends AppCompatActivity
     private static final String TAG = "NearbyHeatmapActivity";
     public static final String EXTRA_CENTER_LAT = "extra_center_lat";
     public static final String EXTRA_CENTER_LNG = "extra_center_lng";
+    public static final String EXTRA_OPEN_POST_ID = "extra_post_id";
     private static final String PREFS_NAME = "BirdDexPrefs";
     public static final String EXTRA_TRACKED_SIGHTING_ID = "extra_tracked_sighting_id";
     public static final String EXTRA_TRACKED_BIRD_ID = "extra_tracked_bird_id";
@@ -131,6 +132,7 @@ public class NearbyHeatmapActivity extends AppCompatActivity
     private static final double DEFAULT_LNG = -83.2220;
     private static final float DEFAULT_ZOOM = 7f;
     private static final float NEARBY_ZOOM = 10f;
+    private static final float POST_FOCUS_ZOOM = 16f;
 
     private static final double SEARCH_RADIUS_METERS = 50000d;
     private static final long SIGHTING_RECENCY_MS = 72L * 60 * 60 * 1000;
@@ -208,6 +210,8 @@ public class NearbyHeatmapActivity extends AppCompatActivity
     private boolean isFetchingPopupComments = false;
     private boolean isLastPopupCommentsPage = false;
     private boolean trackedBirdNotificationHandled = false;
+    private String pendingOpenPostId;
+    private boolean pendingOpenPostHandled = false;
     private static final int POPUP_COMMENTS_PAGE_SIZE = 25;
 
     // --- FIXES ---
@@ -277,6 +281,7 @@ public class NearbyHeatmapActivity extends AppCompatActivity
             trackedSightingIdFromNotification = getIntent().getStringExtra(EXTRA_TRACKED_SIGHTING_ID);
             trackedBirdIdFromNotification = getIntent().getStringExtra(EXTRA_TRACKED_BIRD_ID);
             trackedBirdNameFromNotification = getIntent().getStringExtra(EXTRA_TRACKED_BIRD_NAME);
+            pendingOpenPostId = getIntent().getStringExtra(EXTRA_OPEN_POST_ID);
         }
 
         SupportMapFragment mapFragment = (SupportMapFragment) getSupportFragmentManager().findFragmentById(R.id.map);
@@ -760,6 +765,8 @@ public class NearbyHeatmapActivity extends AppCompatActivity
         clearForumMarkers();
         boolean showGraphic = getSharedPreferences(PREFS_NAME, MODE_PRIVATE).getBoolean(KEY_GRAPHIC_CONTENT, false);
 
+        ForumPost pendingPostToOpen = null;
+
         for (DocumentSnapshot doc : snap.getDocuments()) {
             ForumPost p = doc.toObject(ForumPost.class);
             if (p == null) continue;
@@ -780,8 +787,16 @@ public class NearbyHeatmapActivity extends AppCompatActivity
 
             if (inBounds && (showGraphic || !p.isHunted())) {
                 addPinToMap(p);
+
+                if (!pendingOpenPostHandled
+                        && pendingOpenPostId != null
+                        && pendingOpenPostId.equals(p.getId())) {
+                    pendingPostToOpen = p;
+                }
             }
         }
+
+        maybeOpenRequestedPost(pendingPostToOpen);
     }
 
     /**
@@ -871,6 +886,29 @@ public class NearbyHeatmapActivity extends AppCompatActivity
     private void clearForumMarkers() {
         for (Marker m : forumMarkers) m.remove();
         forumMarkers.clear();
+    }
+
+    private void maybeOpenRequestedPost(@Nullable ForumPost post) {
+        if (pendingOpenPostHandled || post == null || googleMap == null) return;
+        if (post.getLatitude() == null || post.getLongitude() == null) return;
+
+        pendingOpenPostHandled = true;
+
+        LatLng target = new LatLng(post.getLatitude(), post.getLongitude());
+        googleMap.animateCamera(
+                CameraUpdateFactory.newLatLngZoom(target, POST_FOCUS_ZOOM),
+                new GoogleMap.CancelableCallback() {
+                    @Override
+                    public void onFinish() {
+                        showPostInBottomSheet(post);
+                    }
+
+                    @Override
+                    public void onCancel() {
+                        showPostInBottomSheet(post);
+                    }
+                }
+        );
     }
 
     @Override
@@ -1002,6 +1040,25 @@ public class NearbyHeatmapActivity extends AppCompatActivity
         });
 
         currentPopupEditText = view.findViewById(R.id.etComment);
+        ImageView ivCurrentUserPfp = view.findViewById(R.id.ivCurrentUserPfp);
+        if (user != null) {
+            db.collection("users").document(user.getUid()).get()
+                    .addOnSuccessListener(doc -> {
+                        if (isFinishing() || isDestroyed()) return;
+                        String profilePictureUrl = doc != null ? doc.getString("profilePictureUrl") : null;
+                        Glide.with(NearbyHeatmapActivity.this)
+                                .load(profilePictureUrl)
+                                .placeholder(R.drawable.ic_profile)
+                                .into(ivCurrentUserPfp);
+                    })
+                    .addOnFailureListener(e -> Glide.with(NearbyHeatmapActivity.this)
+                            .load((Object) null)
+                            .placeholder(R.drawable.ic_profile)
+                            .into(ivCurrentUserPfp));
+        } else {
+            Glide.with(this).load((Object) null).placeholder(R.drawable.ic_profile).into(ivCurrentUserPfp);
+        }
+
         View sendCommentButton = view.findViewById(R.id.btnSendComment);
         sendCommentButton.setOnClickListener(v -> {
             String text = currentPopupEditText.getText().toString().trim();
@@ -1048,6 +1105,12 @@ public class NearbyHeatmapActivity extends AppCompatActivity
         });
 
         dialog.show();
+
+        Window window = dialog.getWindow();
+        if (window != null) {
+            SystemBarHelper.applyDialogNavBar(this, window);
+        }
+
         View bs = dialog.findViewById(com.google.android.material.R.id.design_bottom_sheet);
         if (bs != null) {
             BottomSheetBehavior<View> behavior = BottomSheetBehavior.from(bs);
@@ -1811,15 +1874,23 @@ public class NearbyHeatmapActivity extends AppCompatActivity
         BottomSheetDialog dialog = new BottomSheetDialog(this);
         dialog.setContentView(R.layout.bottom_sheet_heatmap_birds);
 
-        View bs = dialog.findViewById(com.google.android.material.R.id.design_bottom_sheet);
-        if (bs != null) {
-            bs.setBackgroundColor(Color.TRANSPARENT);
-            ViewGroup.LayoutParams p = bs.getLayoutParams();
-            p.height = (int) (getResources().getDisplayMetrics().heightPixels * 0.58f);
-            bs.setLayoutParams(p);
-            BottomSheetBehavior<View> behavior = BottomSheetBehavior.from(bs);
-            behavior.setState(BottomSheetBehavior.STATE_EXPANDED);
-        }
+        dialog.setOnShowListener(d -> {
+            Window window = dialog.getWindow();
+            if (window != null) {
+                SystemBarHelper.applyDialogNavBar(this, window);
+            }
+
+            View shownBottomSheet = dialog.findViewById(com.google.android.material.R.id.design_bottom_sheet);
+            if (shownBottomSheet != null) {
+                shownBottomSheet.setBackgroundColor(Color.TRANSPARENT);
+                ViewGroup.LayoutParams params = shownBottomSheet.getLayoutParams();
+                params.height = (int) (getResources().getDisplayMetrics().heightPixels * 0.58f);
+                shownBottomSheet.setLayoutParams(params);
+
+                BottomSheetBehavior<View> behavior = BottomSheetBehavior.from(shownBottomSheet);
+                behavior.setState(BottomSheetBehavior.STATE_EXPANDED);
+            }
+        });
 
         TextView tvSheetSummary = dialog.findViewById(R.id.tvSheetSummary);
         TextView tvSheetStatus = dialog.findViewById(R.id.tvSheetStatus);
@@ -1833,7 +1904,7 @@ public class NearbyHeatmapActivity extends AppCompatActivity
 
         Runnable refreshSummary = () -> {
             if (tvSheetSummary != null) {
-                tvSheetSummary.setText("User sightings: " + b.userCount + "  •  Verified sightings: " + b.eBirdCount);
+                tvSheetSummary.setText("Thumbs Up or Thumbs Down A Bird If You Have or Haven't Seen It");
             }
 
             if (tvSheetStatus != null) {

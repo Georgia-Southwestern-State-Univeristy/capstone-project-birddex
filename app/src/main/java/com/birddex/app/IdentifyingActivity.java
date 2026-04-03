@@ -76,6 +76,9 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
     private final ArrayList<String> pendingFeedbackNotes = new ArrayList<>();
     @Nullable private String currentIdentificationLogId;
     @Nullable private String currentIdentificationId;
+    @Nullable private StorageReference uploadedIdentificationStorageRef;
+    @Nullable private String uploadedIdentificationDownloadUrl;
+    private boolean identificationImageShouldBeKept = false;
 
     /**
      * Android calls this when the Activity is first created. This is where the screen usually
@@ -287,6 +290,9 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
         // Reverted: Folder changed to identificationImages
         String fileName = "identificationImages/" + user.getUid() + "/" + UUID.randomUUID().toString() + ".jpg";
         StorageReference storageRef = FirebaseStorage.getInstance().getReference().child(fileName);
+        uploadedIdentificationStorageRef = storageRef;
+        uploadedIdentificationDownloadUrl = null;
+        identificationImageShouldBeKept = false;
 
         Log.d(TAG, "uploadImageToIdentificationStorage: Uploading to " + fileName);
         storageRef.putFile(imageUri)
@@ -295,10 +301,12 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
                     if (identificationCompleted.get() || isFinishing() || isDestroyed()) return;
                     storageRef.getDownloadUrl().addOnSuccessListener(downloadUri -> {
                         if (identificationCompleted.get() || isFinishing() || isDestroyed()) return;
+                        uploadedIdentificationDownloadUrl = downloadUri.toString();
                         Log.d(TAG, "Image uploaded. Download URL: " + downloadUri);
                         identifyBirdWithUrl(downloadUri.toString(), latitude, longitude, localityName, state, country);
                     }).addOnFailureListener(e -> {
                         Log.e(TAG, "Failed to get download URL", e);
+                        deleteUploadedIdentificationImageIfUnused();
                         finishActivityWithToast("Failed to process identification image link.");
                     });
                 })
@@ -319,6 +327,7 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
         Log.d(TAG, "identifyBirdWithUrl: Encoding image for AI analysis...");
         String base64Image = encodeImage(localImageUri); // Still need base64 for the Vision API call
         if (base64Image == null) {
+            deleteUploadedIdentificationImageIfUnused();
             finishActivityWithToast("Failed to encode image for analysis.");
             return;
         }
@@ -341,16 +350,19 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
                         + ", reasonCode=" + result.reasonCode);
 
                 if (result.isGore) {
+                    deleteUploadedIdentificationImageIfUnused();
                     finishActivityWithToast("Please take a picture of a non-gore picture of a bird.");
                     return;
                 }
 
                 if (!result.isInDatabase || "NOT_IN_DATABASE".equals(result.reasonCode)) {
+                    deleteUploadedIdentificationImageIfUnused();
                     finishActivityWithToast("Sorry, this bird is not in our database just yet.");
                     return;
                 }
 
                 if (!result.isVerified || result.primaryBird == null || result.primaryBird.birdId == null || result.primaryBird.birdId.trim().isEmpty()) {
+                    deleteUploadedIdentificationImageIfUnused();
                     finishActivityWithToast(result.userMessage != null && !result.userMessage.trim().isEmpty()
                             ? result.userMessage
                             : "Identification could not be verified.");
@@ -364,6 +376,7 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
             public void onFailure(Exception e, String message) {
                 if (identificationCompleted.get() || isFinishing() || isDestroyed()) return;
                 Log.e(TAG, "identifyBird onFailure: " + message, e);
+                deleteUploadedIdentificationImageIfUnused();
                 finishActivityWithToast("Identification failed: " + message);
             }
         });
@@ -373,6 +386,24 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
      * Main logic block for this part of the feature.
      * It also packages extras into an Intent when this flow needs to open another Activity.
      */
+    private void deleteUploadedIdentificationImageIfUnused() {
+        if (identificationImageShouldBeKept) {
+            return;
+        }
+
+        StorageReference ref = uploadedIdentificationStorageRef;
+        if (ref == null) {
+            return;
+        }
+
+        uploadedIdentificationStorageRef = null;
+        uploadedIdentificationDownloadUrl = null;
+
+        ref.delete()
+                .addOnSuccessListener(unused -> Log.d(TAG, "Unused identification image deleted from Storage."))
+                .addOnFailureListener(e -> Log.w(TAG, "Failed to delete unused identification image.", e));
+    }
+
     private void flushPendingFeedbackIfPossible() {
         if (currentIdentificationLogId == null || currentIdentificationLogId.trim().isEmpty() || pendingFeedbackNotes.isEmpty()) {
             return;
@@ -410,6 +441,7 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
     }
 
     private void proceedToInfoActivity(OpenAiApi.IdentifyBirdResult result, @Nullable String downloadUrl, @Nullable Double latitude, @Nullable Double longitude, @Nullable String localityName, @Nullable String state, @Nullable String country) {
+        identificationImageShouldBeKept = true;
         if (identificationCompleted.compareAndSet(false, true)) {
             timeoutHandler.removeCallbacks(timeoutRunnable);
 

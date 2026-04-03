@@ -19,6 +19,8 @@ import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
 
 import com.bumptech.glide.Glide;
+import com.google.firebase.storage.FirebaseStorage;
+import com.google.firebase.storage.StorageReference;
 
 import java.util.ArrayList;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -298,11 +300,31 @@ public class BirdInfoActivity extends AppCompatActivity {
                     currentFamily
             );
 
+            deleteIdentificationImageFromStorage(currentImageUrl);
+
             Intent home = new Intent(BirdInfoActivity.this, HomeActivity.class);
             home.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
             startActivity(home);
             finish();
         });
+    }
+
+    private void deleteIdentificationImageFromStorage(@Nullable String downloadUrl) {
+        if (downloadUrl == null || downloadUrl.trim().isEmpty()) {
+            return;
+        }
+
+        try {
+            StorageReference ref = FirebaseStorage.getInstance().getReferenceFromUrl(downloadUrl);
+            ref.delete()
+                    .addOnSuccessListener(unused -> {
+                        currentImageUrl = null;
+                        android.util.Log.d("BirdInfoActivity", "Discarded identification image deleted.");
+                    })
+                    .addOnFailureListener(e -> android.util.Log.w("BirdInfoActivity", "Failed to delete discarded identification image.", e));
+        } catch (Exception e) {
+            android.util.Log.w("BirdInfoActivity", "Could not resolve identification image URL for deletion.", e);
+        }
     }
 
     private void updateBirdUi() {

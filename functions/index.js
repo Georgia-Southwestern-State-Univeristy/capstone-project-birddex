@@ -47,6 +47,7 @@ const CONFIG = {
     FORUM_HEATMAP_TTL_MS: 48 * 60 * 60 * 1000,        // 48 hours
     FORUM_ARCHIVE_DAYS_MS: 7 * 24 * 60 * 60 * 1000,   // 7 days
     UNVERIFIED_USER_TTL_MS: 72 * 60 * 60 * 1000,      // 72 hours
+    IDENTIFICATION_IMAGE_TTL_MS: 24 * 60 * 60 * 1000, // 24 hours
     FIRESTORE_BATCH_SIZE: 400,  // Firestore max is 500; using 400 for safety
     LOCATION_PRECISION: 3,      // decimal places (~110 meters)
 };
@@ -4632,6 +4633,134 @@ exports.cleanupUnverifiedUsers = onSchedule({
     } catch (error) {
         logger.error("Error during unverified user cleanup:", error);
     }
+    return null;
+});
+
+// ======================================================
+// cleanupStaleIdentificationImages (scheduled, every 24h)
+// ======================================================
+/**
+ * Helper: Deletes old orphaned identification images left behind in Storage if the app/client
+ * failed to remove them earlier in the identification flow.
+ */
+async function deleteStaleIdentificationImagesJob() {
+    const bucket = admin.storage().bucket();
+    const cutoff = Date.now() - CONFIG.IDENTIFICATION_IMAGE_TTL_MS;
+
+    let deletedCount = 0;
+    let skippedCount = 0;
+    let checkedCount = 0;
+
+    try {
+        const [files] = await bucket.getFiles({ prefix: "identificationImages/" });
+
+        for (const file of files) {
+            try {
+                // Skip folder placeholders / invalid entries.
+                if (!file || !file.name || file.name.endsWith("/")) {
+                    continue;
+                }
+
+                checkedCount++;
+
+                const metadata = file.metadata || {};
+                const createdAtRaw = metadata.timeCreated || metadata.updated;
+
+                if (!createdAtRaw) {
+                    logger.warn(`cleanupStaleIdentificationImages: Missing timestamp for ${file.name}, skipping.`);
+                    skippedCount++;
+                    continue;
+                }
+
+                const createdAtMs = new Date(createdAtRaw).getTime();
+                if (Number.isNaN(createdAtMs)) {
+                    logger.warn(`cleanupStaleIdentificationImages: Invalid timestamp for ${file.name}, skipping.`);
+                    skippedCount++;
+                    continue;
+                }
+
+                if (createdAtMs >= cutoff) {
+                    skippedCount++;
+                    continue;
+                }
+
+                await file.delete().catch((err) => {
+                    // Ignore already-gone style races.
+                    if (err && (err.code === 404 || err.code === 412)) {
+                        logger.info(`cleanupStaleIdentificationImages: File already gone: ${file.name}`);
+                        return;
+                    }
+                    throw err;
+                });
+
+                deletedCount++;
+                logger.info(`cleanupStaleIdentificationImages: Deleted stale file ${file.name}`);
+            } catch (fileErr) {
+                logger.error(`cleanupStaleIdentificationImages: Failed for file ${file?.name || "unknown"}`, fileErr);
+            }
+        }
+
+        logger.info("cleanupStaleIdentificationImages complete.", {
+            checkedCount,
+            deletedCount,
+            skippedCount
+        });
+    } catch (error) {
+        logger.error("cleanupStaleIdentificationImages job failed.", error);
+    }
+
+    return null;
+}
+
+/**
+ * Export: Scheduled Storage cleanup for stale identification images that were uploaded but never
+ * successfully kept/saved by the user flow.
+ */
+exports.cleanupStaleIdentificationImages = onSchedule({
+    schedule: "every 24 hours",
+    timeZone: "America/New_York",
+    timeoutSeconds: 300
+}, async (event) => {
+    const lockRef = db.collection("schedulerLocks").doc("cleanupStaleIdentificationImages");
+    const now = Date.now();
+    const lockTimeoutMs = 15 * 60 * 1000; // 15 minutes
+
+    try {
+        let alreadyRunning = false;
+
+        await db.runTransaction(async (transaction) => {
+            const lockDoc = await transaction.get(lockRef);
+
+            if (lockDoc.exists) {
+                const lockData = lockDoc.data() || {};
+                const lockedAt = lockData.lockedAt?.toMillis?.() || 0;
+
+                if (lockedAt && (now - lockedAt) < lockTimeoutMs) {
+                    alreadyRunning = true;
+                    return;
+                }
+            }
+
+            transaction.set(lockRef, {
+                lockedAt: admin.firestore.FieldValue.serverTimestamp()
+            }, { merge: true });
+        });
+
+        if (alreadyRunning) {
+            logger.info("cleanupStaleIdentificationImages: Existing lock found, skipping this run.");
+            return null;
+        }
+
+        logger.info("cleanupStaleIdentificationImages: Starting scheduled cleanup.");
+        await deleteStaleIdentificationImagesJob();
+    } catch (error) {
+        logger.error("cleanupStaleIdentificationImages: Scheduled run failed.", error);
+    } finally {
+        await lockRef.delete().catch((err) => {
+            logger.warn("cleanupStaleIdentificationImages: Failed to clear scheduler lock.", err);
+        });
+    }
+
     return null;
 });
 

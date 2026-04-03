@@ -224,6 +224,7 @@ public class CameraFragment extends Fragment {
      * or needs attention.
      */
     private void takePhoto() {
+        cleanupBurstFrameCache();
         if (imageCapture == null) {
             restoreCaptureButton();
             return;
@@ -275,6 +276,28 @@ public class CameraFragment extends Fragment {
             }
         });
     }
+
+
+    private void cleanupBurstFrameCache() {
+        if (!isAdded()) return;
+
+        try {
+            File dir = new File(requireContext().getCacheDir(), "camera_burst_frames");
+            if (!dir.exists()) return;
+
+            File[] files = dir.listFiles();
+            if (files == null) return;
+
+            for (File file : files) {
+                if (file != null && file.exists() && !file.delete()) {
+                    Log.w(TAG, "Failed to delete stale burst frame: " + file.getAbsolutePath());
+                }
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "Failed to clear burst frame cache.", e);
+        }
+    }
+
 
     @Nullable
     private File createBurstFrameFile(int frameIndex) {

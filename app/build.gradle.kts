@@ -29,9 +29,20 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+            
+            buildConfigField("String", "APP_CHECK_DEBUG_TOKEN", "\"\"")
         }
         debug {
             signingConfig = signingConfigs.getByName("debug")
+            
+            // Read App Check token from local.properties
+            val localProperties = Properties()
+            val localPropertiesFile = project.rootProject.file("local.properties")
+            if (localPropertiesFile.exists()) {
+                localProperties.load(localPropertiesFile.inputStream())
+            }
+            val appCheckToken = localProperties.getProperty("APP_CHECK_DEBUG_TOKEN") ?: ""
+            buildConfigField("String", "APP_CHECK_DEBUG_TOKEN", "\"$appCheckToken\"")
         }
     }
     compileOptions {

@@ -5,6 +5,7 @@ import android.graphics.Color;
 import android.os.Build;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.Window;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 
@@ -58,6 +59,29 @@ public final class SystemBarHelper {
         WindowCompat.setDecorFitsSystemWindows(activity.getWindow(), true);
         applyNavigationBarColorsAndAppearance(activity);
         activity.getWindow().setStatusBarColor(ContextCompat.getColor(activity, R.color.nav_brown));
+    }
+
+    /**
+     * Same navigation bar coloring as {@link #applyStandardNavBar(Activity)} for a secondary
+     * window (bottom sheets, dialogs) so the system nav area matches the app when those UIs draw
+     * edge-to-edge.
+     */
+    public static void applyDialogNavBar(Activity activity, Window window) {
+        if (activity == null || window == null) return;
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            window.setNavigationBarContrastEnforced(false);
+        }
+
+        int navBrown = ContextCompat.getColor(activity, R.color.nav_brown);
+        window.setNavigationBarColor(navBrown);
+
+        WindowInsetsControllerCompat controller =
+                WindowCompat.getInsetsController(window, window.getDecorView());
+        if (controller != null) {
+            controller.setAppearanceLightNavigationBars(false);
+            controller.setAppearanceLightStatusBars(false);
+        }
     }
 
     private static void applyNavigationBarColorsAndAppearance(Activity activity) {

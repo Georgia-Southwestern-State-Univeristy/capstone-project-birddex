@@ -818,6 +818,16 @@ function buildRoundedLocationId(latitude, longitude) {
     return `LOC_${fixedLat}_${fixedLng}`;
 }
 
+// ======================================================
+// HELPER: Hotspot Bucket ID (Matches Android App)
+// ======================================================
+function calculateHotspotBucketId(lat, lng) {
+    const BUCKET_SIZE = 0.02;
+    const blat = (Math.round(lat / BUCKET_SIZE) * BUCKET_SIZE).toFixed(4);
+    const blng = (Math.round(lng / BUCKET_SIZE) * BUCKET_SIZE).toFixed(4);
+    return `${blat},${blng}`;
+}
+
 async function getOrCreateLocation(latitude, longitude, localityName, db, extra = {}) {
     const roundedLat = roundCoordinateForStorage(latitude);
     const roundedLng = roundCoordinateForStorage(longitude);
@@ -876,6 +886,211 @@ async function commitBatchOperations(operations, chunkSize = CONFIG.FIRESTORE_BA
         }
         await batch.commit();
     }
+}
+
+function normalizeHotspotBirdKeySegment(value, maxLength = 120) {
+    const safe = sanitizeText(value || "", maxLength).toLowerCase();
+    return safe
+        .replace(/[^a-z0-9]+/g, "_")
+        .replace(/^_+|_+$/g, "")
+        .slice(0, maxLength);
+}
+
+function buildHotspotBirdKey({ birdId = null, commonName = null, userBirdId = null } = {}) {
+    const normalizedBirdId = normalizeHotspotBirdKeySegment(birdId, 120);
+    if (normalizedBirdId) return `bird_${normalizedBirdId}`;
+
+    const normalizedUserBirdId = normalizeHotspotBirdKeySegment(userBirdId, 120);
+    if (normalizedUserBirdId) return `userbird_${normalizedUserBirdId}`;
+
+    const normalizedCommonName = sanitizeText(commonName || "", 200).toLowerCase();
+    if (normalizedCommonName) {
+        const hash = crypto.createHash("sha1").update(normalizedCommonName).digest("hex").slice(0, 16);
+        return `name_${hash}`;
+    }
+
+    return "bird_unknown";
+}
+
+function normalizeHotspotVoteValue(value) {
+    return value === "down" ? "down" : "up";
+}
+
+function getHotspotVotesCollectionRef(hotspotId, birdKey) {
+    return db.collection("hotspotVotes").doc(hotspotId).collection("birds").doc(birdKey).collection("votes");
+}
+
+function getHotspotBirdSummaryRef(hotspotId, birdKey) {
+    return db.collection("hotspotVoteSummaries").doc(hotspotId).collection("birds").doc(birdKey);
+}
+
+function getHotspotSummaryRef(hotspotId) {
+    return db.collection("hotspotVoteSummaries").doc(hotspotId);
+}
+
+async function getUserBirdSightingRowsForHotspot(hotspotId) {
+    if (!hotspotId || typeof hotspotId !== "string") return [];
+    const snap = await db.collection("userBirdSightings").where("hotspotId", "==", hotspotId).get();
+    return snap.docs.map((doc) => ({ id: doc.id, ...(doc.data() || {}) }));
+}
+
+function buildHotspotBirdAggregatesFromSightings(sightings) {
+    const birdMap = new Map();
+
+    for (const sighting of sightings) {
+        const birdKey = buildHotspotBirdKey({
+            birdId: sighting.birdId || null,
+            commonName: sighting.commonName || null,
+            userBirdId: sighting.userBirdId || null,
+        });
+
+        if (!birdMap.has(birdKey)) {
+            birdMap.set(birdKey, {
+                birdKey,
+                birdId: sighting.birdId || null,
+                commonName: sighting.commonName || "",
+                userBirdCount: 0,
+                lastSightingAt: sighting.timestamp || null,
+            });
+        }
+
+        const entry = birdMap.get(birdKey);
+        entry.userBirdCount += 1;
+        if (!entry.birdId && sighting.birdId) entry.birdId = sighting.birdId;
+        if ((!entry.commonName || !entry.commonName.trim()) && sighting.commonName) entry.commonName = sighting.commonName;
+        if (sighting.timestamp) entry.lastSightingAt = sighting.timestamp;
+    }
+
+    return birdMap;
+}
+
+async function recomputeHotspotBirdSummary(hotspotId, birdKey) {
+    if (!hotspotId || typeof hotspotId !== "string" || !birdKey || typeof birdKey !== "string") return null;
+
+    const sightings = await getUserBirdSightingRowsForHotspot(hotspotId);
+    const birdAggregates = buildHotspotBirdAggregatesFromSightings(sightings);
+    const birdAggregate = birdAggregates.get(birdKey) || null;
+
+    const votesSnap = await getHotspotVotesCollectionRef(hotspotId, birdKey).get();
+    let upVoteCount = 0;
+    let downVoteCount = 0;
+
+    votesSnap.forEach((doc) => {
+        const vote = normalizeHotspotVoteValue(doc.get("vote"));
+        if (vote === "down") downVoteCount += 1;
+        else upVoteCount += 1;
+    });
+
+    const summaryRef = getHotspotBirdSummaryRef(hotspotId, birdKey);
+    const userBirdCount = birdAggregate?.userBirdCount || 0;
+
+    if (userBirdCount <= 0) {
+        await summaryRef.delete().catch(() => null);
+        return null;
+    }
+
+    const isVerified = (upVoteCount > 0 && upVoteCount > downVoteCount);
+    const status = isVerified ? "verified" : (downVoteCount > upVoteCount ? "flagged" : "unverified");
+
+    const summaryData = {
+        hotspotId,
+        birdKey,
+        birdId: birdAggregate?.birdId || null,
+        commonName: birdAggregate?.commonName || "",
+        userBirdCount,
+        upVoteCount,
+        downVoteCount,
+        voteCount: upVoteCount + downVoteCount,
+        netVotes: upVoteCount - downVoteCount,
+        isVerified,
+        status,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        lastSightingAt: birdAggregate?.lastSightingAt || null,
+    };
+
+    await summaryRef.set(summaryData, { merge: true });
+    return summaryData;
+}
+
+async function recomputeHotspotSummary(hotspotId) {
+    if (!hotspotId || typeof hotspotId !== "string") return null;
+
+    const birdsSnap = await getHotspotSummaryRef(hotspotId).collection("birds").get();
+    let userBirdCount = 0;
+    let verifiedBirdCount = 0;
+    let unverifiedBirdCount = 0;
+    const birds = {};
+
+    birdsSnap.forEach((doc) => {
+        const data = doc.data() || {};
+        const ubc = data.userBirdCount || 0;
+        if (ubc <= 0) return; // Ignore birds with no user sightings
+
+        userBirdCount += 1;
+        const isV = (data.isVerified === true);
+        if (isV) {
+            verifiedBirdCount += 1;
+        } else {
+            unverifiedBirdCount += 1;
+        }
+
+        birds[doc.id] = {
+            birdId: data.birdId || null,
+            commonName: data.commonName || "",
+            userBirdCount: ubc,
+            upVoteCount: data.upVoteCount || 0,
+            downVoteCount: data.downVoteCount || 0,
+            isVerified: isV,
+            status: data.status || "unverified",
+        };
+    });
+
+    let state = "unverified";
+    if (userBirdCount > 0) {
+        if (verifiedBirdCount > 0 && verifiedBirdCount === userBirdCount) {
+            state = "verified";
+        } else if (verifiedBirdCount > 0) {
+            state = "mixed";
+        } else {
+            const hasFlags = Object.values(birds).some(b => b.status === "flagged");
+            state = hasFlags ? "flagged" : "unverified";
+        }
+    }
+
+    const hotspotSummaryRef = getHotspotSummaryRef(hotspotId);
+    const summaryPayload = {
+        hotspotId,
+        sourceType: "user",
+        state,
+        status: state,
+        displayState: state,
+        verifiedBirdCount,
+        unverifiedBirdCount,
+        userBirdCount,
+        hasUserSightings: userBirdCount > 0,
+        isVerified: state === "verified",
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        birds,
+    };
+
+    await hotspotSummaryRef.set(summaryPayload, { merge: true });
+    return summaryPayload;
+}
+
+async function recomputeHotspotVoteSummaryForHotspot(hotspotId) {
+    if (!hotspotId || typeof hotspotId !== "string") return null;
+
+    const sightings = await getUserBirdSightingRowsForHotspot(hotspotId);
+    const birdAggregates = buildHotspotBirdAggregatesFromSightings(sightings);
+
+    const existingBirdDocs = await getHotspotSummaryRef(hotspotId).collection("birds").listDocuments();
+    const knownBirdKeys = new Set([...birdAggregates.keys(), ...existingBirdDocs.map((doc) => doc.id)]);
+
+    for (const birdKey of knownBirdKeys) {
+        await recomputeHotspotBirdSummary(hotspotId, birdKey);
+    }
+
+    return recomputeHotspotSummary(hotspotId);
 }
 
 // ======================================================
@@ -1755,7 +1970,7 @@ async function callBirdModelApi(base64Image) {
         },
         {
             headers,
-            timeout: 15000,
+            timeout: 30000,
         }
     );
 
@@ -7338,6 +7553,16 @@ exports.recordBirdSighting = secureOnCall(async (request) => {
     const COOLDOWN_MS = 24 * 60 * 60 * 1000; // 24 hours
     const now = Date.now();
     const sightingTimestamp = (typeof clientTimestamp === "number") ? clientTimestamp : now;
+    const roundedLatitude = roundCoordinateForStorage(latitude);
+    const roundedLongitude = roundCoordinateForStorage(longitude);
+
+    const locationId = await getOrCreateLocation(latitude, longitude, locality, db, {
+        userId,
+        country,
+        state,
+    });
+    const hotspotId = calculateHotspotBucketId(latitude, longitude);
+    const birdKey = buildHotspotBirdKey({ birdId, commonName, userBirdId });
 
     const cooldownRef = db
         // This is where the function touches Firestore documents/collections for the requested action.
@@ -7367,7 +7592,7 @@ exports.recordBirdSighting = secureOnCall(async (request) => {
 
             if ((now - lastUploadMs) < COOLDOWN_MS) {
                 // Still within cooldown window — reject
-                return { recorded: false, reason: "cooldown", nextAllowedMs: lastUploadMs + COOLDOWN_MS };
+                return { recorded: false, reason: "cooldown", nextAllowedMs: lastUploadMs + COOLDOWN_MS, hotspotId, birdKey };
             }
 
             // Update cooldown INSIDE the transaction (prevents race)
@@ -7382,21 +7607,24 @@ exports.recordBirdSighting = secureOnCall(async (request) => {
                 id: sightingId,
                 userId,
                 birdId,
+                birdKey,
+                hotspotId,
+                locationId,
                 commonName: commonName || "",
                 userBirdId: userBirdId || "",
                 timestamp: new Date(sightingTimestamp),
-                latitude: roundCoordinateForStorage(latitude),
-                longitude: roundCoordinateForStorage(longitude),
+                latitude: roundedLatitude,
+                longitude: roundedLongitude,
                 state: state || "",
                 locality: locality || "",
                 country: country || "US",
                 quantity: quantity || "1",
             });
 
-            return { recorded: true };
+            return { recorded: true, hotspotId, locationId: hotspotId, birdKey };
         });
 
-        logger.info(`recordBirdSighting: userId=${userId} birdId=${birdId} recorded=${result.recorded}`);
+        logger.info(`recordBirdSighting: userId=${userId} birdId=${birdId} recorded=${result.recorded} hotspotId=${hotspotId}`);
         return result;
 
     } catch (error) {
@@ -7405,6 +7633,92 @@ exports.recordBirdSighting = secureOnCall(async (request) => {
         throw new HttpsError("internal", `Failed to record sighting: ${error.message}`);
     }
 });
+
+// ======================================================
+// hotspot vote aggregation — per-bird vote docs + hotspot summary docs
+// ======================================================
+exports.onHotspotVoteWritten = onDocumentCreated("hotspotVotes/{hotspotId}/birds/{birdKey}/votes/{uid}", async (event) => {
+    const { hotspotId, birdKey } = event.params;
+    await recomputeHotspotBirdSummary(hotspotId, birdKey);
+    await recomputeHotspotSummary(hotspotId);
+});
+
+exports.onHotspotVoteUpdated = onDocumentUpdated("hotspotVotes/{hotspotId}/birds/{birdKey}/votes/{uid}", async (event) => {
+    const { hotspotId, birdKey } = event.params;
+    await recomputeHotspotBirdSummary(hotspotId, birdKey);
+    await recomputeHotspotSummary(hotspotId);
+});
+
+exports.onHotspotVoteDeleted = onDocumentDeleted("hotspotVotes/{hotspotId}/birds/{birdKey}/votes/{uid}", async (event) => {
+    const { hotspotId, birdKey } = event.params;
+    await recomputeHotspotBirdSummary(hotspotId, birdKey);
+    await recomputeHotspotSummary(hotspotId);
+});
+
+exports.onHotspotUserBirdSightingCreated = onDocumentCreated("userBirdSightings/{sightingId}", async (event) => {
+    try {
+        const data = event.data?.data() || {};
+        const hotspotId = typeof data.hotspotId === "string" && data.hotspotId.trim()
+            ? data.hotspotId.trim()
+            : (typeof data.locationId === "string" && data.locationId.trim() ? data.locationId.trim() : null);
+
+        if (!hotspotId) return null;
+        await recomputeHotspotVoteSummaryForHotspot(hotspotId);
+    } catch (error) {
+        logger.error("onHotspotUserBirdSightingCreated failed:", error);
+    }
+    return null;
+});
+
+exports.onHotspotUserBirdSightingDeleted = onDocumentDeleted("userBirdSightings/{sightingId}", async (event) => {
+    try {
+        const data = event.data?.data() || {};
+        const hotspotId = typeof data.hotspotId === "string" && data.hotspotId.trim()
+            ? data.hotspotId.trim()
+            : (typeof data.locationId === "string" && data.locationId.trim() ? data.locationId.trim() : null);
+
+        if (!hotspotId) return null;
+        await recomputeHotspotVoteSummaryForHotspot(hotspotId);
+    } catch (error) {
+        logger.error("onHotspotUserBirdSightingDeleted failed:", error);
+    }
+    return null;
+});
+
+exports.onHotspotUserBirdSightingUpdated = onDocumentUpdated("userBirdSightings/{sightingId}", async (event) => {
+    try {
+        const before = event.data?.before?.data() || {};
+        const after = event.data?.after?.data() || {};
+        const hotspotIds = new Set();
+
+        const beforeHotspotId = typeof before.hotspotId === "string" && before.hotspotId.trim()
+            ? before.hotspotId.trim()
+            : (typeof before.locationId === "string" && before.locationId.trim() ? before.locationId.trim() : null);
+        const afterHotspotId = typeof after.hotspotId === "string" && after.hotspotId.trim()
+            ? after.hotspotId.trim()
+            : (typeof after.locationId === "string" && after.locationId.trim() ? after.locationId.trim() : null);
+
+        if (beforeHotspotId) hotspotIds.add(beforeHotspotId);
+        if (afterHotspotId) hotspotIds.add(afterHotspotId);
+
+        for (const hotspotId of hotspotIds) {
+            await recomputeHotspotVoteSummaryForHotspot(hotspotId);
+        }
+    } catch (error) {
+        logger.error("onHotspotUserBirdSightingUpdated failed:", error);
+    }
+    return null;
+});
+
+// ======================================================
+// recordForumPost — server-side 3 posts per user per calendar day
+// ======================================================
+// Called from CreatePostActivity before writing the Firestore post doc.
+// Uses a transaction to atomically check + increment the daily post count.
+// Resets automatically at midnight UTC.
+//
+// Returns: { allowed: true, remaining: N }  — post is permitted
+//          { allowed: false, remaining: 0 } — daily limit reached
 
 // ======================================================
 // recordForumPost — server-side 3 posts per user per calendar day

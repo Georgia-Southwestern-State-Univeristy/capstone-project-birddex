@@ -65,6 +65,7 @@ import com.google.firebase.firestore.DocumentReference;
 import com.google.firebase.firestore.DocumentSnapshot;
 import com.google.firebase.firestore.FieldValue;
 import com.google.firebase.firestore.FirebaseFirestore;
+import com.google.firebase.firestore.ListenerRegistration;
 import com.google.firebase.firestore.MetadataChanges;
 import com.google.firebase.firestore.Query;
 import com.google.firebase.firestore.Source;
@@ -114,7 +115,6 @@ public class NearbyHeatmapActivity extends AppCompatActivity
     private String trackedBirdIdFromNotification;
     private String trackedBirdNameFromNotification;
     private static final String KEY_GRAPHIC_CONTENT = "show_graphic_content";
-    private static final String PREF_HEATMAP_VOTES = "heatmapBirdVotes";
     private static final int VOTE_NONE = 0;
     private static final int VOTE_UP = 1;
     private static final int VOTE_DOWN = -1;
@@ -206,6 +206,7 @@ public class NearbyHeatmapActivity extends AppCompatActivity
     private ForumCommentAdapter popupCommentAdapter;
 
     private List<ForumComment> popupCommentList = new ArrayList<>();
+    private final List<ListenerRegistration> activeListeners = new ArrayList<>();
     private DocumentSnapshot lastPopupCommentVisible;
     private boolean isFetchingPopupComments = false;
     private boolean isLastPopupCommentsPage = false;
@@ -291,6 +292,15 @@ public class NearbyHeatmapActivity extends AppCompatActivity
             Toast.makeText(this, "Map failed to load", Toast.LENGTH_SHORT).show();
             finish();
         }
+    }
+
+    @Override
+    protected void onDestroy() {
+        super.onDestroy();
+        for (ListenerRegistration lr : activeListeners) {
+            if (lr != null) lr.remove();
+        }
+        activeListeners.clear();
     }
 
     private void toggleLegend() {
@@ -1525,7 +1535,7 @@ public class NearbyHeatmapActivity extends AppCompatActivity
      */
     private void loadUserBirdSightings(int gen) {
         // Set up or query the Firebase layer that supplies/stores this feature's data.
-        db.collection("userBirdSightings").limit(500).get(Source.CACHE).addOnSuccessListener(snap -> {
+        db.collection("userBirdSightings").get(Source.CACHE).addOnSuccessListener(snap -> {
             if (snap != null && !snap.isEmpty()) processSightings(snap, true, gen);
             else onCollectionFinished(gen);
             fetchUserBirdSightingsFromServer(gen);
@@ -1535,26 +1545,14 @@ public class NearbyHeatmapActivity extends AppCompatActivity
         });
     }
 
-    /**
-     * Pulls data from a local source, Firebase, or an external API and prepares it for the UI or
-     * caller.
-     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
-     * changes.
-     */
     private void fetchUserBirdSightingsFromServer(int gen) {
         // Set up or query the Firebase layer that supplies/stores this feature's data.
-        db.collection("userBirdSightings").limit(500).get(Source.SERVER).addOnSuccessListener(snap -> processSightings(snap, true, gen)).addOnFailureListener(e -> onCollectionFinished(gen));
+        db.collection("userBirdSightings").get(Source.SERVER).addOnSuccessListener(snap -> processSightings(snap, true, gen)).addOnFailureListener(e -> onCollectionFinished(gen));
     }
 
-    /**
-     * Pulls data from a local source, Firebase, or an external API and prepares it for the UI or
-     * caller.
-     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
-     * changes.
-     */
     private void loadEbirdApiSightings(int gen) {
         // Set up or query the Firebase layer that supplies/stores this feature's data.
-        db.collection("eBirdApiSightings").limit(1000).get(Source.CACHE).addOnSuccessListener(snap -> {
+        db.collection("eBirdApiSightings").get(Source.CACHE).addOnSuccessListener(snap -> {
             if (snap != null && !snap.isEmpty()) processSightings(snap, false, gen);
             else onCollectionFinished(gen);
             fetchEbirdApiSightingsFromServer(gen);
@@ -1564,15 +1562,9 @@ public class NearbyHeatmapActivity extends AppCompatActivity
         });
     }
 
-    /**
-     * Pulls data from a local source, Firebase, or an external API and prepares it for the UI or
-     * caller.
-     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
-     * changes.
-     */
     private void fetchEbirdApiSightingsFromServer(int gen) {
         // Set up or query the Firebase layer that supplies/stores this feature's data.
-        db.collection("eBirdApiSightings").limit(1000).get(Source.SERVER).addOnSuccessListener(snap -> processSightings(snap, false, gen)).addOnFailureListener(e -> onCollectionFinished(gen));
+        db.collection("eBirdApiSightings").get(Source.SERVER).addOnSuccessListener(snap -> processSightings(snap, false, gen)).addOnFailureListener(e -> onCollectionFinished(gen));
     }
 
     /**
@@ -1614,10 +1606,11 @@ public class NearbyHeatmapActivity extends AppCompatActivity
     private HotspotSighting buildHotspotSighting(DocumentSnapshot d, double lat, double lng, boolean user) {
         String sightingId = d.getId();
         String birdId = getAnyString(d, "birdId", "speciesCode", "speciesCodeClean", "species_code");
+        String userBirdId = getAnyString(d, "userBirdId", "userBirdRefId");
         String commonName = cleanBirdText(getAnyString(d, "commonName", "comName", "birdName"));
         String scientificName = cleanBirdText(getAnyString(d, "scientificName", "sciName"));
         String displayName = firstNonBlank(commonName, scientificName, cleanBirdText(getAnyString(d, "species", "birdId", "speciesCode")), "Unknown bird");
-        return new HotspotSighting(sightingId, lat, lng, birdId, commonName, scientificName, displayName, user);
+        return new HotspotSighting(sightingId, lat, lng, birdId, userBirdId, commonName, scientificName, displayName, user);
     }
 
     /**
@@ -1927,6 +1920,13 @@ public class NearbyHeatmapActivity extends AppCompatActivity
             }
         };
 
+        dialog.setOnDismissListener(d -> {
+            for (ListenerRegistration lr : activeListeners) {
+                if (lr != null) lr.remove();
+            }
+            activeListeners.clear();
+        });
+
         container.removeAllViews();
 
         List<BirdSheetRow> rows = new ArrayList<>(b.birdRows.values());
@@ -2067,16 +2067,41 @@ public class NearbyHeatmapActivity extends AppCompatActivity
      * sightings the user sees.
      */
     private void addToHotspotBucket(@NonNull HotspotSighting sighting, boolean user) {
-        double blat = Math.round(sighting.lat / HOTSPOT_BUCKET_SIZE) * HOTSPOT_BUCKET_SIZE, blng = Math.round(sighting.lng / HOTSPOT_BUCKET_SIZE) * HOTSPOT_BUCKET_SIZE;
+        double blat = (Math.round(sighting.lat / HOTSPOT_BUCKET_SIZE) * HOTSPOT_BUCKET_SIZE);
+        double blng = (Math.round(sighting.lng / HOTSPOT_BUCKET_SIZE) * HOTSPOT_BUCKET_SIZE);
         String key = String.format(Locale.US, "%.4f,%.4f", blat, blng);
         HotspotBucket b = hotspotBuckets.get(key);
         if (b == null) {
-            b = new HotspotBucket();
-            hotspotBuckets.put(key, b);
+            HotspotBucket newB = new HotspotBucket();
+            hotspotBuckets.put(key, newB);
+            activeListeners.add(firebaseManager.listenToHotspotSummary(key, (snapshot, e) -> {
+                if (isFinishing() || isDestroyed()) return;
+                if (e != null || snapshot == null) return;
+
+                Map<String, Object> birds = (Map<String, Object>) snapshot.get("birds");
+                if (birds != null) {
+                    for (Map.Entry<String, Object> entry : birds.entrySet()) {
+                        String birdKey = entry.getKey();
+                        Map<String, Object> birdData = (Map<String, Object>) entry.getValue();
+                        if (birdData != null) {
+                            Long upVoteCount = (Long) birdData.get("upVoteCount");
+                            Boolean isVerified = (Boolean) birdData.get("isVerified");
+                            newB.verifiedCounts.put(birdKey, upVoteCount != null ? upVoteCount.intValue() : 0);
+                            newB.isVerifiedMap.put(birdKey, isVerified != null && isVerified);
+                        }
+                    }
+                }
+                renderHeatmaps();
+            }));
+            b = newB;
         }
         b.add(sighting, user);
     }
     private void rebuildHotspotBuckets() {
+        for (ListenerRegistration lr : activeListeners) {
+            if (lr != null) lr.remove();
+        }
+        activeListeners.clear();
         hotspotBuckets.clear();
 
         for (HotspotSighting sighting : userHotspotSightings) {
@@ -2147,53 +2172,62 @@ public class NearbyHeatmapActivity extends AppCompatActivity
         for (BirdSheetRow row : bucket.birdRows.values()) {
             if (row.userCount <= 0) continue;
             userBirdRows++;
-            if (getBirdVote(bucket, row) == VOTE_UP) {
+
+            String birdKey = buildHotspotBirdKey(row.birdId, row.commonName, row.userBirdId);
+            Boolean isVerified = bucket.isVerifiedMap.get(birdKey);
+            if (isVerified != null && isVerified) {
                 verifiedBirdRows++;
             }
         }
 
-        if (userBirdRows == 0 || verifiedBirdRows == 0) {
-            return HotspotVerificationState.UNVERIFIED;
-        }
-        if (verifiedBirdRows == userBirdRows) {
-            return HotspotVerificationState.VERIFIED;
-        }
+        if (userBirdRows == 0) return HotspotVerificationState.UNVERIFIED;
+        if (verifiedBirdRows == 0) return HotspotVerificationState.UNVERIFIED;
+        if (verifiedBirdRows == userBirdRows) return HotspotVerificationState.VERIFIED;
         return HotspotVerificationState.MIXED;
     }
 
     private int getBirdVote(@NonNull HotspotBucket bucket, @NonNull BirdSheetRow row) {
-        SharedPreferences prefs = getSharedPreferences(PREF_HEATMAP_VOTES, MODE_PRIVATE);
-        return prefs.getInt(buildVotePrefKey(bucket, row), VOTE_NONE);
+        String birdKey = buildHotspotBirdKey(row.birdId, row.commonName, row.userBirdId);
+        Integer vote = bucket.userVotes.get(birdKey);
+        return vote != null ? vote : VOTE_NONE;
     }
 
-    private void setBirdVote(@NonNull HotspotBucket bucket, @NonNull BirdSheetRow row, int vote) {
-        SharedPreferences prefs = getSharedPreferences(PREF_HEATMAP_VOTES, MODE_PRIVATE);
-        prefs.edit().putInt(buildVotePrefKey(bucket, row), vote).apply();
+    private String sanitizeText(String text, int maxLength) {
+        if (text == null) return "";
+        String trimmed = text.trim();
+        if (trimmed.length() > maxLength) trimmed = trimmed.substring(0, maxLength);
+        return trimmed.replaceAll("<[^>]*>", "");
     }
 
-    @NonNull
-    private String buildVotePrefKey(@NonNull HotspotBucket bucket, @NonNull BirdSheetRow row) {
-        return buildBucketStableKey(bucket) + "|" + buildRowStableKey(row);
+    private String normalizeHotspotBirdKeySegment(String value, int maxLength) {
+        String safe = sanitizeText(value != null ? value : "", maxLength).toLowerCase();
+        return safe.replaceAll("[^a-z0-9]+", "_")
+                .replaceAll("^_+|_+$", "")
+                .substring(0, Math.min(safe.length(), maxLength));
     }
 
-    @NonNull
-    private String buildBucketStableKey(@NonNull HotspotBucket bucket) {
-        return String.format(Locale.US, "%.4f,%.4f", bucket.getCenterLat(), bucket.getCenterLng());
-    }
+    private String buildHotspotBirdKey(String birdId, String commonName, String userBirdId) {
+        String normalizedBirdId = normalizeHotspotBirdKeySegment(birdId, 120);
+        if (!normalizedBirdId.isEmpty()) return "bird_" + normalizedBirdId;
 
-    @NonNull
-    private String buildRowStableKey(@NonNull BirdSheetRow row) {
-        String normalizedBirdId = normalizeBirdValue(row.birdId);
-        if (normalizedBirdId != null) return normalizedBirdId;
+        String normalizedUserBirdId = normalizeHotspotBirdKeySegment(userBirdId, 120);
+        if (!normalizedUserBirdId.isEmpty()) return "userbird_" + normalizedUserBirdId;
 
-        String normalizedCommonName = normalizeBirdValue(row.commonName);
-        if (normalizedCommonName != null) return normalizedCommonName;
-
-        String normalizedScientificName = normalizeBirdValue(row.scientificName);
-        if (normalizedScientificName != null) return normalizedScientificName;
-
-        String normalizedDisplayName = normalizeBirdValue(row.displayName);
-        return normalizedDisplayName == null ? "unknown-bird" : normalizedDisplayName;
+        String normalizedCommonName = sanitizeText(commonName != null ? commonName : "", 200).toLowerCase();
+        if (!normalizedCommonName.isEmpty()) {
+            try {
+                java.security.MessageDigest digest = java.security.MessageDigest.getInstance("SHA-1");
+                byte[] bytes = digest.digest(normalizedCommonName.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                StringBuilder sb = new StringBuilder();
+                for (int i = 0; i < Math.min(bytes.length, 8); i++) {
+                    sb.append(String.format("%02x", bytes[i]));
+                }
+                return "name_" + sb.toString();
+            } catch (Exception e) {
+                return "name_error";
+            }
+        }
+        return "bird_unknown";
     }
 
     private void bindVoteUi(@NonNull HotspotBucket bucket,
@@ -2213,8 +2247,19 @@ public class NearbyHeatmapActivity extends AppCompatActivity
         btnThumbUp.setVisibility(View.VISIBLE);
         btnThumbDown.setVisibility(View.VISIBLE);
 
-        Runnable renderVoteState = () -> {
-            int vote = getBirdVote(bucket, item);
+        String hotspotId = String.format(Locale.US, "%.4f,%.4f",
+                Math.round(bucket.getCenterLat() / HOTSPOT_BUCKET_SIZE) * HOTSPOT_BUCKET_SIZE,
+                Math.round(bucket.getCenterLng() / HOTSPOT_BUCKET_SIZE) * HOTSPOT_BUCKET_SIZE);
+        String birdKey = buildHotspotBirdKey(item.birdId, item.commonName, item.userBirdId);
+
+        activeListeners.add(firebaseManager.listenToMyHotspotBirdVote(hotspotId, birdKey, (snapshot, e) -> {
+            if (isFinishing() || isDestroyed()) return;
+            if (e != null || snapshot == null) return;
+            String voteVal = snapshot.getString("vote");
+            int vote = VOTE_NONE;
+            if ("up".equals(voteVal)) vote = VOTE_UP;
+            else if ("down".equals(voteVal)) vote = VOTE_DOWN;
+            bucket.userVotes.put(birdKey, vote);
 
             if (vote == VOTE_UP) {
                 tvVoteStatus.setText("Verified");
@@ -2229,25 +2274,36 @@ public class NearbyHeatmapActivity extends AppCompatActivity
 
             btnThumbUp.setAlpha(vote == VOTE_UP ? 1f : 0.45f);
             btnThumbDown.setAlpha(vote == VOTE_DOWN ? 1f : 0.45f);
-        };
+        }));
+
+        activeListeners.add(firebaseManager.listenToHotspotBirdSummary(hotspotId, birdKey, (snapshot, e) -> {
+            if (isFinishing() || isDestroyed()) return;
+            if (e != null || snapshot == null) return;
+            Long upVoteCount = snapshot.getLong("upVoteCount");
+            Boolean isVerified = snapshot.getBoolean("isVerified");
+            bucket.verifiedCounts.put(birdKey, upVoteCount != null ? upVoteCount.intValue() : 0);
+            bucket.isVerifiedMap.put(birdKey, isVerified != null && isVerified);
+            refreshBottomSheetUi.run();
+            renderHeatmaps();
+        }));
 
         btnThumbUp.setOnClickListener(v -> {
             int currentVote = getBirdVote(bucket, item);
-            setBirdVote(bucket, item, currentVote == VOTE_UP ? VOTE_NONE : VOTE_UP);
-            renderVoteState.run();
-            refreshBottomSheetUi.run();
-            renderHeatmaps();
+            if (currentVote == VOTE_UP) {
+                firebaseManager.clearHotspotBirdVote(hotspotId, birdKey, null);
+            } else {
+                firebaseManager.voteOnHotspotBird(hotspotId, birdKey, "up", null);
+            }
         });
 
         btnThumbDown.setOnClickListener(v -> {
             int currentVote = getBirdVote(bucket, item);
-            setBirdVote(bucket, item, currentVote == VOTE_DOWN ? VOTE_NONE : VOTE_DOWN);
-            renderVoteState.run();
-            refreshBottomSheetUi.run();
-            renderHeatmaps();
+            if (currentVote == VOTE_DOWN) {
+                firebaseManager.clearHotspotBirdVote(hotspotId, birdKey, null);
+            } else {
+                firebaseManager.voteOnHotspotBird(hotspotId, birdKey, "down", null);
+            }
         });
-
-        renderVoteState.run();
     }
 
     private List<WeightedLatLng> buildDisplayHeatPoints(boolean user) {
@@ -2392,6 +2448,7 @@ public class NearbyHeatmapActivity extends AppCompatActivity
         final String sightingId;
         final double lat, lng;
         final String birdId;
+        final String userBirdId;
         final String commonName;
         final String scientificName;
         final String displayName;
@@ -2401,6 +2458,7 @@ public class NearbyHeatmapActivity extends AppCompatActivity
                         double lat,
                         double lng,
                         String birdId,
+                        String userBirdId,
                         String commonName,
                         String scientificName,
                         String displayName,
@@ -2409,6 +2467,7 @@ public class NearbyHeatmapActivity extends AppCompatActivity
             this.lat = lat;
             this.lng = lng;
             this.birdId = birdId;
+            this.userBirdId = userBirdId;
             this.commonName = commonName;
             this.scientificName = scientificName;
             this.displayName = displayName;
@@ -2432,15 +2491,17 @@ public class NearbyHeatmapActivity extends AppCompatActivity
     private static class BirdSheetRow {
         final String displayName;
         String birdId;
+        String userBirdId;
         String commonName;
         String scientificName;
         int count;
         int userCount;
         int eBirdCount;
 
-        BirdSheetRow(String displayName, String birdId, String commonName, String scientificName) {
+        BirdSheetRow(String displayName, String birdId, String userBirdId, String commonName, String scientificName) {
             this.displayName = displayName;
             this.birdId = birdId;
+            this.userBirdId = userBirdId;
             this.commonName = commonName;
             this.scientificName = scientificName;
             this.count = 0;
@@ -2451,6 +2512,9 @@ public class NearbyHeatmapActivity extends AppCompatActivity
         void mergeIdentifiers(HotspotSighting sighting) {
             if ((birdId == null || birdId.trim().isEmpty()) && sighting.birdId != null && !sighting.birdId.trim().isEmpty()) {
                 birdId = sighting.birdId;
+            }
+            if ((userBirdId == null || userBirdId.trim().isEmpty()) && sighting.userBirdId != null && !sighting.userBirdId.trim().isEmpty()) {
+                userBirdId = sighting.userBirdId;
             }
             if ((commonName == null || commonName.trim().isEmpty()) && sighting.commonName != null && !sighting.commonName.trim().isEmpty()) {
                 commonName = sighting.commonName;
@@ -2466,6 +2530,9 @@ public class NearbyHeatmapActivity extends AppCompatActivity
         int pointCount = 0, userCount = 0, eBirdCount = 0;
         final Map<String, BirdSheetRow> birdRows = new LinkedHashMap<>();
         final Set<String> sightingIds = new HashSet<>();
+        final Map<String, Integer> userVotes = new HashMap<>();
+        final Map<String, Integer> verifiedCounts = new HashMap<>();
+        final Map<String, Boolean> isVerifiedMap = new HashMap<>();
 
         void add(HotspotSighting sighting, boolean user) {
             latSum += sighting.lat;
@@ -2484,7 +2551,7 @@ public class NearbyHeatmapActivity extends AppCompatActivity
 
             BirdSheetRow row = birdRows.get(key);
             if (row == null) {
-                row = new BirdSheetRow(key, sighting.birdId, sighting.commonName, sighting.scientificName);
+                row = new BirdSheetRow(key, sighting.birdId, sighting.userBirdId, sighting.commonName, sighting.scientificName);
                 birdRows.put(key, row);
             } else {
                 row.mergeIdentifiers(sighting);

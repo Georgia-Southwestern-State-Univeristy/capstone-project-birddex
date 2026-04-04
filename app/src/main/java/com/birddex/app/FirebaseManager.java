@@ -10,6 +10,7 @@ import com.google.firebase.auth.FirebaseAuth;
 import com.google.firebase.auth.FirebaseUser;
 import com.google.firebase.firestore.DocumentSnapshot;
 import com.google.firebase.firestore.EventListener;
+import com.google.firebase.firestore.FieldValue;
 import com.google.firebase.firestore.FirebaseFirestore;
 import com.google.firebase.firestore.ListenerRegistration;
 import com.google.firebase.firestore.QuerySnapshot;
@@ -146,6 +147,11 @@ public class FirebaseManager {
 
     public interface LocationIdListener {
         void onSuccess(String locationId);
+        void onFailure(String errorMessage);
+    }
+
+    public interface HotspotVoteListener {
+        void onSuccess();
         void onFailure(String errorMessage);
     }
 
@@ -421,10 +427,6 @@ public class FirebaseManager {
     /**
      * Main logic block for this part of the feature.
      */
-    /**
-     * Requests full backend-owned account deletion.
-     * The client must not call FirebaseUser.delete() separately after this succeeds.
-     */
     public void archiveAndDeleteUser(OnCompleteListener<HttpsCallableResult> listener) {
         Log.d(TAG, "Calling archiveAndDeleteUser Cloud Function.");
         mFunctions.getHttpsCallable("archiveAndDeleteUser").call().addOnCompleteListener(task -> {
@@ -530,11 +532,13 @@ public class FirebaseManager {
      * become permanent.
      */
     public void deleteUser(String userId, OnCompleteListener<Void> listener) {
-        Log.w(TAG, "Direct client user document deletion is disabled. Use archiveAndDeleteUser instead. userId=" + userId);
-        if (listener != null) {
-            listener.onComplete(Tasks.forException(
-                    new UnsupportedOperationException("Direct client user deletion is disabled. Use archiveAndDeleteUser instead.")));
-        }
+        Log.d(TAG, "Deleting user document: " + userId);
+        // Set up or query the Firebase layer that supplies/stores this feature's data.
+        db.collection("users").document(userId).delete().addOnCompleteListener(task -> {
+            if (task.isSuccessful()) Log.d(TAG, "User doc deleted.");
+            else Log.e(TAG, "User doc deletion failed.", task.getException());
+            listener.onComplete(task);
+        });
     }
 
     /**
@@ -873,6 +877,113 @@ public class FirebaseManager {
                 if (listener != null) listener.onFailure(error);
             }
         });
+    }
+
+    public void voteOnHotspotBird(String hotspotId, String birdKey, String vote, HotspotVoteListener listener) {
+        FirebaseUser user = mAuth.getCurrentUser();
+        if (user == null) {
+            if (listener != null) listener.onFailure("User not authenticated.");
+            return;
+        }
+
+        String safeHotspotId = hotspotId != null ? hotspotId.trim() : "";
+        String safeBirdKey = birdKey != null ? birdKey.trim() : "";
+        String safeVote = "down".equalsIgnoreCase(vote) ? "down" : "up";
+        if (safeHotspotId.isEmpty() || safeBirdKey.isEmpty()) {
+            if (listener != null) listener.onFailure("Missing hotspot vote identifiers.");
+            return;
+        }
+
+        String uid = user.getUid();
+        Map<String, Object> data = new HashMap<>();
+        data.put("vote", safeVote);
+        data.put("userId", uid);
+        data.put("birdKey", safeBirdKey);
+        data.put("hotspotId", safeHotspotId);
+        data.put("updatedAt", FieldValue.serverTimestamp());
+        data.put("createdAt", FieldValue.serverTimestamp());
+
+        db.collection("hotspotVotes")
+                .document(safeHotspotId)
+                .collection("birds")
+                .document(safeBirdKey)
+                .collection("votes")
+                .document(uid)
+                .set(data, SetOptions.merge())
+                .addOnSuccessListener(unused -> {
+                    Log.d(TAG, "Hotspot vote written: hotspotId=" + safeHotspotId + " birdKey=" + safeBirdKey + " vote=" + safeVote);
+                    if (listener != null) listener.onSuccess();
+                })
+                .addOnFailureListener(e -> {
+                    String error = e.getMessage() != null ? e.getMessage() : "Failed to save hotspot vote.";
+                    Log.e(TAG, "Hotspot vote write failed.", e);
+                    if (listener != null) listener.onFailure(error);
+                });
+    }
+
+    public void clearHotspotBirdVote(String hotspotId, String birdKey, HotspotVoteListener listener) {
+        FirebaseUser user = mAuth.getCurrentUser();
+        if (user == null) {
+            if (listener != null) listener.onFailure("User not authenticated.");
+            return;
+        }
+
+        String safeHotspotId = hotspotId != null ? hotspotId.trim() : "";
+        String safeBirdKey = birdKey != null ? birdKey.trim() : "";
+        if (safeHotspotId.isEmpty() || safeBirdKey.isEmpty()) {
+            if (listener != null) listener.onFailure("Missing hotspot vote identifiers.");
+            return;
+        }
+
+        db.collection("hotspotVotes")
+                .document(safeHotspotId)
+                .collection("birds")
+                .document(safeBirdKey)
+                .collection("votes")
+                .document(user.getUid())
+                .delete()
+                .addOnSuccessListener(unused -> {
+                    Log.d(TAG, "Hotspot vote cleared: hotspotId=" + safeHotspotId + " birdKey=" + safeBirdKey);
+                    if (listener != null) listener.onSuccess();
+                })
+                .addOnFailureListener(e -> {
+                    String error = e.getMessage() != null ? e.getMessage() : "Failed to clear hotspot vote.";
+                    Log.e(TAG, "Hotspot vote delete failed.", e);
+                    if (listener != null) listener.onFailure(error);
+                });
+    }
+
+    public ListenerRegistration listenToHotspotSummary(String hotspotId, EventListener<DocumentSnapshot> listener) {
+        String safeHotspotId = hotspotId != null ? hotspotId.trim() : "";
+        if (safeHotspotId.isEmpty()) return null;
+        return db.collection("hotspotVoteSummaries")
+                .document(safeHotspotId)
+                .addSnapshotListener(listener);
+    }
+
+    public ListenerRegistration listenToHotspotBirdSummary(String hotspotId, String birdKey, EventListener<DocumentSnapshot> listener) {
+        String safeHotspotId = hotspotId != null ? hotspotId.trim() : "";
+        String safeBirdKey = birdKey != null ? birdKey.trim() : "";
+        if (safeHotspotId.isEmpty() || safeBirdKey.isEmpty()) return null;
+        return db.collection("hotspotVoteSummaries")
+                .document(safeHotspotId)
+                .collection("birds")
+                .document(safeBirdKey)
+                .addSnapshotListener(listener);
+    }
+
+    public ListenerRegistration listenToMyHotspotBirdVote(String hotspotId, String birdKey, EventListener<DocumentSnapshot> listener) {
+        FirebaseUser user = mAuth.getCurrentUser();
+        String safeHotspotId = hotspotId != null ? hotspotId.trim() : "";
+        String safeBirdKey = birdKey != null ? birdKey.trim() : "";
+        if (user == null || safeHotspotId.isEmpty() || safeBirdKey.isEmpty()) return null;
+        return db.collection("hotspotVotes")
+                .document(safeHotspotId)
+                .collection("birds")
+                .document(safeBirdKey)
+                .collection("votes")
+                .document(user.getUid())
+                .addSnapshotListener(listener);
     }
 
     /**

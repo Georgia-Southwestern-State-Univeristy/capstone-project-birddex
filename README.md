@@ -129,7 +129,7 @@ BirdDex includes a **fully implemented moderation system**:
 
 # 🏗 System Architecture
 
-![System Architecture](documents/diagrams/system/system_architecture.png)
+![System Architecture](documents/diagrams/birddex_system_architecture_v2.pdf)
 
 BirdDex follows a **layered architecture**:
 
@@ -147,7 +147,7 @@ This structure enables:
 
 ## 🤖 AI Identification Flow
 
-![AI Flow](documents/diagrams/flows/ai_identification_flow.png)
+![AI Flow](documents/diagrams/birddex_ai_identification_flow_v2.pdf)
 
 * In-house AI performs primary prediction
 * OpenAI is used for tie-break and fallback scenarios
@@ -158,7 +158,7 @@ This structure enables:
 
 ## 📤 Upload Identification Flow
 
-![Upload Flow](documents/diagrams/flows/upload_flow.png)
+![Upload Flow](documents/diagrams/birddex_upload_flow_v2.pdf)
 
 * Uses the same AI pipeline as live capture
 * Includes additional validation (captureGuard)
@@ -169,7 +169,7 @@ This structure enables:
 
 ## 🌍 Near Me Flow
 
-![Near Me Flow](documents/diagrams/flows/near_me_flow.png)
+![Near Me Flow](documents/diagrams/birddex_near_me_flow.pdf)
 
 * Triggered after verified identification
 * Stores sightings in Firestore
@@ -180,7 +180,7 @@ This structure enables:
 
 ## 💬 Forum Flow
 
-![Forum Flow](documents/diagrams/flows/forum_flow.png)
+![Forum Flow](documents/diagrams/birddex_forum_flow_v2.pdf)
 
 * Backend-enforced moderation and validation
 * Report thresholds trigger moderation states
@@ -193,7 +193,7 @@ This structure enables:
 
 ## 🔷 Core Data Model
 
-![Core ERD](documents/diagrams/database/erd_core.png)
+![Core ERD](documents/diagrams/Main ERD-core app tables.pdf)
 
 Includes:
 
@@ -210,7 +210,7 @@ The `identifications` collection stores the **full AI pipeline**, enabling trace
 
 ## 🛡 Moderation & Forum Data
 
-![Moderation ERD](documents/diagrams/database/erd_moderation.png)
+![Moderation ERD](documents/diagrams/ERD-moderation, forum, and archive.pdf)
 
 Includes:
 

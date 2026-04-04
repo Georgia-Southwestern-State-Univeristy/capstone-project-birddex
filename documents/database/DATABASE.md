@@ -11,8 +11,7 @@
 - [External Data & Images](#-external-data--images)
 - [Event Processing](#-event-processing)
 - [Storage Structure](#-storage-structure)
-- [Architecture Notes](#-architecture-notes)
-- [System Flow](#-system-flow)
+
 
 ---
 

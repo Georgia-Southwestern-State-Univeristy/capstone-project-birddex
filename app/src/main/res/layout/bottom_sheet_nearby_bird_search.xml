@@ -92,7 +92,7 @@
             android:layout_weight="1"
             android:clipToPadding="false"
             android:paddingBottom="8dp"
-            tools:listitem="@layout/item_heatmap_bird_placeholder" />
+            tools:listitem="@layout/item_nearby_bird_search" />
 
     </LinearLayout>
 

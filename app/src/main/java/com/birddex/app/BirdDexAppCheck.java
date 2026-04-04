@@ -46,6 +46,12 @@ public class BirdDexAppCheck extends Application {
         FirebaseAppCheck firebaseAppCheck = FirebaseAppCheck.getInstance();
 
         if (BuildConfig.DEBUG) {
+            // Read hardcoded debug token from BuildConfig (populated from local.properties)
+            // to prevent it from changing on re-installs.
+            // Remember to add this token to the Firebase Console App Check debug tokens list.
+            if (BuildConfig.APP_CHECK_DEBUG_TOKEN != null && !BuildConfig.APP_CHECK_DEBUG_TOKEN.isEmpty()) {
+                System.setProperty("firebase.appcheck.debug.token", BuildConfig.APP_CHECK_DEBUG_TOKEN);
+            }
             firebaseAppCheck.installAppCheckProviderFactory(
                     DebugAppCheckProviderFactory.getInstance());
         } else {

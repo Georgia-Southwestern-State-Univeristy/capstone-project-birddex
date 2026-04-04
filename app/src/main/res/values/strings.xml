@@ -17,11 +17,28 @@
     <string name="heatmap_scope_72h">last 72h</string>
     <string name="heatmap_stats">%1$s • User: %2$d • eBird: %3$d</string>
 
+    <plurals name="user_sightings_count">
+        <item quantity="one">%1$d user sighting</item>
+        <item quantity="other">%1$d user sightings</item>
+    </plurals>
+
+    <plurals name="verified_sightings_count">
+        <item quantity="one">%1$d verified sighting</item>
+        <item quantity="other">%1$d verified sightings</item>
+    </plurals>
+
+    <!-- Hotspot Bottom Sheet -->
+    <string name="hotspot_sheet_title">Birds in This Hotspot</string>
+    <string name="hotspot_status_prefix">Hotspot Status: </string>
+    <string name="no_birds_found">No birds found for this hotspot.</string>
+    <string name="hotspot_summary_format">%1$s  •  %2$s</string>
+
     <!-- Legend Strings -->
     <string name="legend_heatmap_title">Heatmap (Sightings)</string>
     <string name="legend_unverified_user_sightings">Unverified User Sightings</string>
     <string name="legend_verified_user_sightings">Verified User Sightings</string>
-    <string name="legend_verified_sightings">Verified Sightings</string>
+    <string name="legend_mixed_user_sightings">Mixed User Sightings</string>
+    <string name="legend_verified_sightings">Verified eBird Sightings</string>
     <string name="legend_chirps_title">Chirps (Recent Posts)</string>
     <string name="legend_spotted_pin">Spotted Pin</string>
     <string name="legend_hunted_pin">Hunted Pin</string>

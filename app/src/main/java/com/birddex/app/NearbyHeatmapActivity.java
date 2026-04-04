@@ -105,6 +105,7 @@ public class NearbyHeatmapActivity extends AppCompatActivity
     private static final String TAG = "NearbyHeatmapActivity";
     public static final String EXTRA_CENTER_LAT = "extra_center_lat";
     public static final String EXTRA_CENTER_LNG = "extra_center_lng";
+    public static final String EXTRA_OPEN_POST_ID = "extra_post_id";
     private static final String PREFS_NAME = "BirdDexPrefs";
     public static final String EXTRA_TRACKED_SIGHTING_ID = "extra_tracked_sighting_id";
     public static final String EXTRA_TRACKED_BIRD_ID = "extra_tracked_bird_id";
@@ -113,6 +114,10 @@ public class NearbyHeatmapActivity extends AppCompatActivity
     private String trackedBirdIdFromNotification;
     private String trackedBirdNameFromNotification;
     private static final String KEY_GRAPHIC_CONTENT = "show_graphic_content";
+    private static final String PREF_HEATMAP_VOTES = "heatmapBirdVotes";
+    private static final int VOTE_NONE = 0;
+    private static final int VOTE_UP = 1;
+    private static final int VOTE_DOWN = -1;
     private View legendHeader;
     private View legendContent;
     private TextView tvLegendToggle;
@@ -127,6 +132,7 @@ public class NearbyHeatmapActivity extends AppCompatActivity
     private static final double DEFAULT_LNG = -83.2220;
     private static final float DEFAULT_ZOOM = 7f;
     private static final float NEARBY_ZOOM = 10f;
+    private static final float POST_FOCUS_ZOOM = 16f;
 
     private static final double SEARCH_RADIUS_METERS = 50000d;
     private static final long SIGHTING_RECENCY_MS = 72L * 60 * 60 * 1000;
@@ -134,8 +140,18 @@ public class NearbyHeatmapActivity extends AppCompatActivity
     private static final double HOTSPOT_BUCKET_SIZE = 0.02d;
     private static final double HOTSPOT_CIRCLE_RADIUS_METERS = 900d;
 
-    private static final Gradient USER_GRADIENT = new Gradient(
-            new int[]{Color.argb(0, 255, 138, 0), Color.rgb(255, 195, 0), Color.rgb(255, 122, 0), Color.rgb(220, 38, 38)},
+    private static final Gradient USER_UNVERIFIED_GRADIENT = new Gradient(
+            new int[]{Color.argb(0, 255, 138, 0), Color.rgb(255, 195, 0), Color.rgb(255, 138, 0), Color.rgb(255, 122, 0)},
+            new float[]{0.2f, 0.5f, 0.8f, 1f}
+    );
+
+    private static final Gradient USER_MIXED_GRADIENT = new Gradient(
+            new int[]{Color.argb(0, 255, 105, 180), Color.rgb(255, 145, 214), Color.rgb(244, 114, 182), Color.rgb(236, 72, 153)},
+            new float[]{0.2f, 0.5f, 0.8f, 1f}
+    );
+
+    private static final Gradient USER_VERIFIED_GRADIENT = new Gradient(
+            new int[]{Color.argb(0, 109, 40, 217), Color.rgb(196, 181, 253), Color.rgb(139, 92, 246), Color.rgb(109, 40, 217)},
             new float[]{0.2f, 0.5f, 0.8f, 1f}
     );
 
@@ -161,7 +177,9 @@ public class NearbyHeatmapActivity extends AppCompatActivity
     private String selectedBirdScientificName;
     private String selectedBirdLabel;
 
-    private TileOverlay userOverlay;
+    private TileOverlay userUnverifiedOverlay;
+    private TileOverlay userMixedOverlay;
+    private TileOverlay userVerifiedOverlay;
     private TileOverlay eBirdOverlay;
 
     private final List<WeightedLatLng> userHeatPoints = new ArrayList<>();
@@ -192,6 +210,8 @@ public class NearbyHeatmapActivity extends AppCompatActivity
     private boolean isFetchingPopupComments = false;
     private boolean isLastPopupCommentsPage = false;
     private boolean trackedBirdNotificationHandled = false;
+    private String pendingOpenPostId;
+    private boolean pendingOpenPostHandled = false;
     private static final int POPUP_COMMENTS_PAGE_SIZE = 25;
 
     // --- FIXES ---
@@ -260,6 +280,7 @@ public class NearbyHeatmapActivity extends AppCompatActivity
             trackedSightingIdFromNotification = getIntent().getStringExtra(EXTRA_TRACKED_SIGHTING_ID);
             trackedBirdIdFromNotification = getIntent().getStringExtra(EXTRA_TRACKED_BIRD_ID);
             trackedBirdNameFromNotification = getIntent().getStringExtra(EXTRA_TRACKED_BIRD_NAME);
+            pendingOpenPostId = getIntent().getStringExtra(EXTRA_OPEN_POST_ID);
         }
 
         SupportMapFragment mapFragment = (SupportMapFragment) getSupportFragmentManager().findFragmentById(R.id.map);
@@ -743,6 +764,8 @@ public class NearbyHeatmapActivity extends AppCompatActivity
         clearForumMarkers();
         boolean showGraphic = getSharedPreferences(PREFS_NAME, MODE_PRIVATE).getBoolean(KEY_GRAPHIC_CONTENT, false);
 
+        ForumPost pendingPostToOpen = null;
+
         for (DocumentSnapshot doc : snap.getDocuments()) {
             ForumPost p = doc.toObject(ForumPost.class);
             if (p == null) continue;
@@ -763,8 +786,16 @@ public class NearbyHeatmapActivity extends AppCompatActivity
 
             if (inBounds && (showGraphic || !p.isHunted())) {
                 addPinToMap(p);
+
+                if (!pendingOpenPostHandled
+                        && pendingOpenPostId != null
+                        && pendingOpenPostId.equals(p.getId())) {
+                    pendingPostToOpen = p;
+                }
             }
         }
+
+        maybeOpenRequestedPost(pendingPostToOpen);
     }
 
     /**
@@ -789,7 +820,7 @@ public class NearbyHeatmapActivity extends AppCompatActivity
         } else if (p.isSpotted()) {
             icon = createColoredPin(Color.parseColor("#4CAF50")); // green
         } else {
-            icon = createColoredPin(Color.parseColor("#800080")); // purple map-only pin
+            icon = createColoredPin(Color.parseColor("#8A6240")); // brown map-only pin
         }
 
         Marker m = googleMap.addMarker(
@@ -854,6 +885,29 @@ public class NearbyHeatmapActivity extends AppCompatActivity
     private void clearForumMarkers() {
         for (Marker m : forumMarkers) m.remove();
         forumMarkers.clear();
+    }
+
+    private void maybeOpenRequestedPost(@Nullable ForumPost post) {
+        if (pendingOpenPostHandled || post == null || googleMap == null) return;
+        if (post.getLatitude() == null || post.getLongitude() == null) return;
+
+        pendingOpenPostHandled = true;
+
+        LatLng target = new LatLng(post.getLatitude(), post.getLongitude());
+        googleMap.animateCamera(
+                CameraUpdateFactory.newLatLngZoom(target, POST_FOCUS_ZOOM),
+                new GoogleMap.CancelableCallback() {
+                    @Override
+                    public void onFinish() {
+                        showPostInBottomSheet(post);
+                    }
+
+                    @Override
+                    public void onCancel() {
+                        showPostInBottomSheet(post);
+                    }
+                }
+        );
     }
 
     @Override
@@ -985,6 +1039,25 @@ public class NearbyHeatmapActivity extends AppCompatActivity
         });
 
         currentPopupEditText = view.findViewById(R.id.etComment);
+        ImageView ivCurrentUserPfp = view.findViewById(R.id.ivCurrentUserPfp);
+        if (user != null) {
+            db.collection("users").document(user.getUid()).get()
+                    .addOnSuccessListener(doc -> {
+                        if (isFinishing() || isDestroyed()) return;
+                        String profilePictureUrl = doc != null ? doc.getString("profilePictureUrl") : null;
+                        Glide.with(NearbyHeatmapActivity.this)
+                                .load(profilePictureUrl)
+                                .placeholder(R.drawable.ic_profile)
+                                .into(ivCurrentUserPfp);
+                    })
+                    .addOnFailureListener(e -> Glide.with(NearbyHeatmapActivity.this)
+                            .load((Object) null)
+                            .placeholder(R.drawable.ic_profile)
+                            .into(ivCurrentUserPfp));
+        } else {
+            Glide.with(this).load((Object) null).placeholder(R.drawable.ic_profile).into(ivCurrentUserPfp);
+        }
+
         View sendCommentButton = view.findViewById(R.id.btnSendComment);
         sendCommentButton.setOnClickListener(v -> {
             String text = currentPopupEditText.getText().toString().trim();
@@ -1031,6 +1104,12 @@ public class NearbyHeatmapActivity extends AppCompatActivity
         });
 
         dialog.show();
+
+        Window window = dialog.getWindow();
+        if (window != null) {
+            SystemBarHelper.applyDialogNavBar(this, window);
+        }
+
         View bs = dialog.findViewById(com.google.android.material.R.id.design_bottom_sheet);
         if (bs != null) {
             BottomSheetBehavior<View> behavior = BottomSheetBehavior.from(bs);
@@ -1549,14 +1628,24 @@ public class NearbyHeatmapActivity extends AppCompatActivity
             eBirdOverlay.remove();
             eBirdOverlay = null;
         }
-        if (userOverlay != null) {
-            userOverlay.remove();
-            userOverlay = null;
+        if (userUnverifiedOverlay != null) {
+            userUnverifiedOverlay.remove();
+            userUnverifiedOverlay = null;
+        }
+        if (userMixedOverlay != null) {
+            userMixedOverlay.remove();
+            userMixedOverlay = null;
+        }
+        if (userVerifiedOverlay != null) {
+            userVerifiedOverlay.remove();
+            userVerifiedOverlay = null;
         }
         clearHotspotCircles();
 
         List<WeightedLatLng> displayEBirdHeatPoints = buildDisplayHeatPoints(false);
-        List<WeightedLatLng> displayUserHeatPoints = buildDisplayHeatPoints(true);
+        List<WeightedLatLng> displayUserUnverifiedHeatPoints = buildUserHeatPointsForStatus(HotspotVerificationState.UNVERIFIED);
+        List<WeightedLatLng> displayUserMixedHeatPoints = buildUserHeatPointsForStatus(HotspotVerificationState.MIXED);
+        List<WeightedLatLng> displayUserVerifiedHeatPoints = buildUserHeatPointsForStatus(HotspotVerificationState.VERIFIED);
 
         if (!displayEBirdHeatPoints.isEmpty()) {
             eBirdOverlay = googleMap.addTileOverlay(
@@ -1571,31 +1660,85 @@ public class NearbyHeatmapActivity extends AppCompatActivity
             );
         }
 
-        if (!displayUserHeatPoints.isEmpty()) {
-            userOverlay = googleMap.addTileOverlay(
+        if (!displayUserUnverifiedHeatPoints.isEmpty()) {
+            userUnverifiedOverlay = googleMap.addTileOverlay(
                     new TileOverlayOptions().tileProvider(
                             new HeatmapTileProvider.Builder()
-                                    .weightedData(displayUserHeatPoints)
+                                    .weightedData(displayUserUnverifiedHeatPoints)
                                     .radius(45)
                                     .opacity(0.70)
-                                    .gradient(USER_GRADIENT)
+                                    .gradient(USER_UNVERIFIED_GRADIENT)
                                     .build()
                     ).zIndex(2f)
             );
         }
 
+        if (!displayUserMixedHeatPoints.isEmpty()) {
+            userMixedOverlay = googleMap.addTileOverlay(
+                    new TileOverlayOptions().tileProvider(
+                            new HeatmapTileProvider.Builder()
+                                    .weightedData(displayUserMixedHeatPoints)
+                                    .radius(45)
+                                    .opacity(0.70)
+                                    .gradient(USER_MIXED_GRADIENT)
+                                    .build()
+                    ).zIndex(2.1f)
+            );
+        }
+
+        if (!displayUserVerifiedHeatPoints.isEmpty()) {
+            userVerifiedOverlay = googleMap.addTileOverlay(
+                    new TileOverlayOptions().tileProvider(
+                            new HeatmapTileProvider.Builder()
+                                    .weightedData(displayUserVerifiedHeatPoints)
+                                    .radius(45)
+                                    .opacity(0.72)
+                                    .gradient(USER_VERIFIED_GRADIENT)
+                                    .build()
+                    ).zIndex(2.2f)
+            );
+        }
+
         renderHotspotCircles();
 
-        if (displayUserHeatPoints.isEmpty() && displayEBirdHeatPoints.isEmpty()) {
+        int userUnverifiedHotspots = countUserHotspotsByState(HotspotVerificationState.UNVERIFIED);
+        int userMixedHotspots = countUserHotspotsByState(HotspotVerificationState.MIXED);
+        int userVerifiedHotspots = countUserHotspotsByState(HotspotVerificationState.VERIFIED);
+
+        if (displayUserUnverifiedHeatPoints.isEmpty()
+                && displayUserMixedHeatPoints.isEmpty()
+                && displayUserVerifiedHeatPoints.isEmpty()
+                && displayEBirdHeatPoints.isEmpty()) {
             if (hasSelectedBirdFilter()) {
                 tvMapSubtitle.setText("No nearby sightings for " + safeSelectedBirdLabel() + ".");
             } else {
                 tvMapSubtitle.setText("No recent sightings found.");
             }
         } else if (hasSelectedBirdFilter()) {
-            tvMapSubtitle.setText(safeSelectedBirdLabel() + ": " + displayUserHeatPoints.size() + " unverified, " + displayEBirdHeatPoints.size() + " verified nearby");
+            tvMapSubtitle.setText(
+                    safeSelectedBirdLabel()
+                            + ": "
+                            + userUnverifiedHotspots
+                            + " unverified, "
+                            + userMixedHotspots
+                            + " mixed, "
+                            + userVerifiedHotspots
+                            + " verified user hotspots, "
+                            + displayEBirdHeatPoints.size()
+                            + " verified nearby"
+            );
         } else {
-            tvMapSubtitle.setText("Heatmap: " + displayUserHeatPoints.size() + " unverified, " + displayEBirdHeatPoints.size() + " verified");
+            tvMapSubtitle.setText(
+                    "Heatmap: "
+                            + userUnverifiedHotspots
+                            + " unverified, "
+                            + userMixedHotspots
+                            + " mixed, "
+                            + userVerifiedHotspots
+                            + " verified user hotspots, "
+                            + displayEBirdHeatPoints.size()
+                            + " verified"
+            );
         }
 
         if (!hasSelectedBirdFilter()) {
@@ -1730,47 +1873,103 @@ public class NearbyHeatmapActivity extends AppCompatActivity
         BottomSheetDialog dialog = new BottomSheetDialog(this);
         dialog.setContentView(R.layout.bottom_sheet_heatmap_birds);
 
-        View bs = dialog.findViewById(com.google.android.material.R.id.design_bottom_sheet);
-        if (bs != null) {
-            bs.setBackgroundColor(Color.TRANSPARENT);
-            ViewGroup.LayoutParams p = bs.getLayoutParams();
-            p.height = (int) (getResources().getDisplayMetrics().heightPixels * 0.58f);
-            bs.setLayoutParams(p);
-            BottomSheetBehavior<View> behavior = BottomSheetBehavior.from(bs);
-            behavior.setState(BottomSheetBehavior.STATE_EXPANDED);
-        }
+        dialog.setOnShowListener(d -> {
+            Window window = dialog.getWindow();
+            if (window != null) {
+                SystemBarHelper.applyDialogNavBar(this, window);
+            }
 
-        ((TextView) dialog.findViewById(R.id.tvSheetSummary))
-                .setText("Unverified: " + b.userCount + "  •  Verified: " + b.eBirdCount);
+            View shownBottomSheet = dialog.findViewById(com.google.android.material.R.id.design_bottom_sheet);
+            if (shownBottomSheet != null) {
+                shownBottomSheet.setBackgroundColor(Color.TRANSPARENT);
+                ViewGroup.LayoutParams params = shownBottomSheet.getLayoutParams();
+                params.height = (int) (getResources().getDisplayMetrics().heightPixels * 0.58f);
+                shownBottomSheet.setLayoutParams(params);
 
+                BottomSheetBehavior<View> behavior = BottomSheetBehavior.from(shownBottomSheet);
+                behavior.setState(BottomSheetBehavior.STATE_EXPANDED);
+            }
+        });
+
+        TextView tvSheetSummary = dialog.findViewById(R.id.tvSheetSummary);
+        TextView tvSheetStatus = dialog.findViewById(R.id.tvSheetStatus);
         LinearLayout container = dialog.findViewById(R.id.birdListContainer);
+        TextView tvEmptyBirds = dialog.findViewById(R.id.tvEmptyBirds);
+
         if (container == null) {
             dialog.show();
             return;
         }
+
+        Runnable refreshSummary = () -> {
+            if (tvSheetSummary != null) {
+                tvSheetSummary.setText("Thumbs Up or Thumbs Down A Bird If You Have or Haven't Seen It");
+            }
+
+            if (tvSheetStatus != null) {
+                if (b.userCount == 0 && b.eBirdCount > 0) {
+                    tvSheetStatus.setText("Hotspot status: Verified Sighting");
+                    tvSheetStatus.setTextColor(Color.parseColor("#2563EB")); // eBird = blue
+                } else {
+                    HotspotVerificationState state = classifyBucketVerificationState(b);
+                    if (state == HotspotVerificationState.VERIFIED) {
+                        tvSheetStatus.setText("Hotspot status: Verified Sighting");
+                        tvSheetStatus.setTextColor(Color.parseColor("#6D28D9")); // user verified = purple
+                    } else if (state == HotspotVerificationState.MIXED) {
+                        tvSheetStatus.setText("Hotspot status: Mixed Sighting");
+                        tvSheetStatus.setTextColor(Color.parseColor("#EC4899")); // pink
+                    } else {
+                        tvSheetStatus.setText("Hotspot status: Unverified Sighting");
+                        tvSheetStatus.setTextColor(Color.parseColor("#FF8A00")); // orange
+                    }
+                }
+            }
+        };
 
         container.removeAllViews();
 
         List<BirdSheetRow> rows = new ArrayList<>(b.birdRows.values());
         Collections.sort(rows, (a, c) -> String.CASE_INSENSITIVE_ORDER.compare(a.displayName, c.displayName));
 
+        if (tvEmptyBirds != null) {
+            tvEmptyBirds.setVisibility(rows.isEmpty() ? View.VISIBLE : View.GONE);
+        }
+
         LayoutInflater inf = LayoutInflater.from(this);
         for (BirdSheetRow item : rows) {
             View row = inf.inflate(R.layout.item_heatmap_bird_placeholder, container, false);
 
             ((TextView) row.findViewById(R.id.tvBirdName)).setText(item.displayName);
-            ((TextView) row.findViewById(R.id.tvBirdCount)).setText(item.count + " sightings");
+
+            TextView tvBirdCount = row.findViewById(R.id.tvBirdCount);
+            if (item.userCount > 0 && item.eBirdCount > 0) {
+                tvBirdCount.setText(item.userCount + " user  •  " + item.eBirdCount + " verified");
+            } else if (item.userCount > 0) {
+                tvBirdCount.setText(item.userCount + " user sightings");
+            } else {
+                tvBirdCount.setText(item.eBirdCount + " verified sightings");
+            }
 
             ImageView ivBird = row.findViewById(R.id.ivBirdPlaceholder);
             BirdImageLoader.loadBirdImageInto(ivBird, item.birdId, item.commonName, item.scientificName);
 
-            row.setClickable(true);
-            row.setFocusable(true);
-            row.setOnClickListener(v -> openBirdWikiFromHeatmapRow(item, dialog));
+            TextView tvVoteStatus = row.findViewById(R.id.tvVoteStatus);
+            TextView btnThumbUp = row.findViewById(R.id.btnThumbUp);
+            TextView btnThumbDown = row.findViewById(R.id.btnThumbDown);
+            bindVoteUi(b, item, tvVoteStatus, btnThumbUp, btnThumbDown, refreshSummary);
+
+            View clickArea = row.findViewById(R.id.rowContent);
+            if (clickArea == null) {
+                clickArea = row;
+            }
+            clickArea.setClickable(true);
+            clickArea.setFocusable(true);
+            clickArea.setOnClickListener(v -> openBirdWikiFromHeatmapRow(item, dialog));
 
             container.addView(row);
         }
 
+        refreshSummary.run();
         dialog.show();
     }
 
@@ -1904,6 +2103,151 @@ public class NearbyHeatmapActivity extends AppCompatActivity
      * Location values are handled here, so this is part of the logic that decides what area/bird
      * sightings the user sees.
      */
+
+
+    private List<WeightedLatLng> buildUserHeatPointsForStatus(@NonNull HotspotVerificationState targetState) {
+        List<WeightedLatLng> filtered = new ArrayList<>();
+
+        for (HotspotBucket bucket : hotspotBuckets.values()) {
+            if (bucket.userCount <= 0) continue;
+            if (classifyBucketVerificationState(bucket) != targetState) continue;
+
+            double weight = hasSelectedBirdFilter()
+                    ? bucket.getMatchingUserSightingCount(this::matchesSelectedBird)
+                    : bucket.userCount;
+
+            if (weight <= 0d) continue;
+
+            filtered.add(new WeightedLatLng(
+                    new LatLng(bucket.getCenterLat(), bucket.getCenterLng()),
+                    Math.max(1.8d, weight * 1.8d)
+            ));
+        }
+
+        return filtered;
+    }
+
+    private int countUserHotspotsByState(@NonNull HotspotVerificationState targetState) {
+        int count = 0;
+        for (HotspotBucket bucket : hotspotBuckets.values()) {
+            if (bucket.userCount <= 0) continue;
+            if (hasSelectedBirdFilter() && bucket.getMatchingUserSightingCount(this::matchesSelectedBird) <= 0) continue;
+            if (classifyBucketVerificationState(bucket) == targetState) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    private HotspotVerificationState classifyBucketVerificationState(@NonNull HotspotBucket bucket) {
+        int userBirdRows = 0;
+        int verifiedBirdRows = 0;
+
+        for (BirdSheetRow row : bucket.birdRows.values()) {
+            if (row.userCount <= 0) continue;
+            userBirdRows++;
+            if (getBirdVote(bucket, row) == VOTE_UP) {
+                verifiedBirdRows++;
+            }
+        }
+
+        if (userBirdRows == 0 || verifiedBirdRows == 0) {
+            return HotspotVerificationState.UNVERIFIED;
+        }
+        if (verifiedBirdRows == userBirdRows) {
+            return HotspotVerificationState.VERIFIED;
+        }
+        return HotspotVerificationState.MIXED;
+    }
+
+    private int getBirdVote(@NonNull HotspotBucket bucket, @NonNull BirdSheetRow row) {
+        SharedPreferences prefs = getSharedPreferences(PREF_HEATMAP_VOTES, MODE_PRIVATE);
+        return prefs.getInt(buildVotePrefKey(bucket, row), VOTE_NONE);
+    }
+
+    private void setBirdVote(@NonNull HotspotBucket bucket, @NonNull BirdSheetRow row, int vote) {
+        SharedPreferences prefs = getSharedPreferences(PREF_HEATMAP_VOTES, MODE_PRIVATE);
+        prefs.edit().putInt(buildVotePrefKey(bucket, row), vote).apply();
+    }
+
+    @NonNull
+    private String buildVotePrefKey(@NonNull HotspotBucket bucket, @NonNull BirdSheetRow row) {
+        return buildBucketStableKey(bucket) + "|" + buildRowStableKey(row);
+    }
+
+    @NonNull
+    private String buildBucketStableKey(@NonNull HotspotBucket bucket) {
+        return String.format(Locale.US, "%.4f,%.4f", bucket.getCenterLat(), bucket.getCenterLng());
+    }
+
+    @NonNull
+    private String buildRowStableKey(@NonNull BirdSheetRow row) {
+        String normalizedBirdId = normalizeBirdValue(row.birdId);
+        if (normalizedBirdId != null) return normalizedBirdId;
+
+        String normalizedCommonName = normalizeBirdValue(row.commonName);
+        if (normalizedCommonName != null) return normalizedCommonName;
+
+        String normalizedScientificName = normalizeBirdValue(row.scientificName);
+        if (normalizedScientificName != null) return normalizedScientificName;
+
+        String normalizedDisplayName = normalizeBirdValue(row.displayName);
+        return normalizedDisplayName == null ? "unknown-bird" : normalizedDisplayName;
+    }
+
+    private void bindVoteUi(@NonNull HotspotBucket bucket,
+                            @NonNull BirdSheetRow item,
+                            @NonNull TextView tvVoteStatus,
+                            @NonNull TextView btnThumbUp,
+                            @NonNull TextView btnThumbDown,
+                            @NonNull Runnable refreshBottomSheetUi) {
+        if (item.userCount <= 0) {
+            tvVoteStatus.setText("Verified eBird entry");
+            tvVoteStatus.setTextColor(Color.parseColor("#2563EB"));
+            btnThumbUp.setVisibility(View.GONE);
+            btnThumbDown.setVisibility(View.GONE);
+            return;
+        }
+
+        btnThumbUp.setVisibility(View.VISIBLE);
+        btnThumbDown.setVisibility(View.VISIBLE);
+
+        Runnable renderVoteState = () -> {
+            int vote = getBirdVote(bucket, item);
+
+            if (vote == VOTE_UP) {
+                tvVoteStatus.setText("Verified");
+                tvVoteStatus.setTextColor(Color.parseColor("#6D28D9"));
+            } else if (vote == VOTE_DOWN) {
+                tvVoteStatus.setText("Marked unverified");
+                tvVoteStatus.setTextColor(Color.parseColor("#DC2626"));
+            } else {
+                tvVoteStatus.setText("Unverified");
+                tvVoteStatus.setTextColor(Color.parseColor("#FF8A00"));
+            }
+
+            btnThumbUp.setAlpha(vote == VOTE_UP ? 1f : 0.45f);
+            btnThumbDown.setAlpha(vote == VOTE_DOWN ? 1f : 0.45f);
+        };
+
+        btnThumbUp.setOnClickListener(v -> {
+            int currentVote = getBirdVote(bucket, item);
+            setBirdVote(bucket, item, currentVote == VOTE_UP ? VOTE_NONE : VOTE_UP);
+            renderVoteState.run();
+            refreshBottomSheetUi.run();
+            renderHeatmaps();
+        });
+
+        btnThumbDown.setOnClickListener(v -> {
+            int currentVote = getBirdVote(bucket, item);
+            setBirdVote(bucket, item, currentVote == VOTE_DOWN ? VOTE_NONE : VOTE_DOWN);
+            renderVoteState.run();
+            refreshBottomSheetUi.run();
+            renderHeatmaps();
+        });
+
+        renderVoteState.run();
+    }
 
     private List<WeightedLatLng> buildDisplayHeatPoints(boolean user) {
         if (!hasSelectedBirdFilter()) {
@@ -2071,12 +2415,27 @@ public class NearbyHeatmapActivity extends AppCompatActivity
         }
     }
 
+    private interface BirdMatchPredicate {
+        boolean matches(@Nullable String birdId,
+                        @Nullable String commonName,
+                        @Nullable String scientificName,
+                        @Nullable String displayName);
+    }
+
+    private enum HotspotVerificationState {
+        UNVERIFIED,
+        MIXED,
+        VERIFIED
+    }
+
     private static class BirdSheetRow {
         final String displayName;
         String birdId;
         String commonName;
         String scientificName;
         int count;
+        int userCount;
+        int eBirdCount;
 
         BirdSheetRow(String displayName, String birdId, String commonName, String scientificName) {
             this.displayName = displayName;
@@ -2084,6 +2443,8 @@ public class NearbyHeatmapActivity extends AppCompatActivity
             this.commonName = commonName;
             this.scientificName = scientificName;
             this.count = 0;
+            this.userCount = 0;
+            this.eBirdCount = 0;
         }
 
         void mergeIdentifiers(HotspotSighting sighting) {
@@ -2128,6 +2489,22 @@ public class NearbyHeatmapActivity extends AppCompatActivity
                 row.mergeIdentifiers(sighting);
             }
             row.count++;
+            if (user) {
+                row.userCount++;
+            } else {
+                row.eBirdCount++;
+            }
+        }
+
+        int getMatchingUserSightingCount(@NonNull BirdMatchPredicate predicate) {
+            int matches = 0;
+            for (BirdSheetRow row : birdRows.values()) {
+                if (row.userCount <= 0) continue;
+                if (predicate.matches(row.birdId, row.commonName, row.scientificName, row.displayName)) {
+                    matches += row.userCount;
+                }
+            }
+            return matches;
         }
 
         double getCenterLat() {

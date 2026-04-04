@@ -16,6 +16,7 @@ import android.widget.Toast;
 
 import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.core.text.HtmlCompat;
 
 import com.bumptech.glide.Glide;
 import com.bumptech.glide.load.DataSource;
@@ -65,6 +66,7 @@ public class BirdWikiActivity extends AppCompatActivity {
     private ImageView btnBack;
     private TextView tvPageTitle;
     private TextView tvPageScientificName;
+    private TextView tvImageAttribution;
     private View contentScrollView;
     private View loadingOverlay;
 
@@ -151,6 +153,7 @@ public class BirdWikiActivity extends AppCompatActivity {
         btnBack = findViewById(R.id.btnBack);
         tvPageTitle = findViewById(R.id.tvPageTitle);
         tvPageScientificName = findViewById(R.id.tvPageScientificName);
+        tvImageAttribution = findViewById(R.id.tvImageAttribution);
 
         if (btnBack != null) {
             btnBack.setOnClickListener(v -> finish());
@@ -186,6 +189,10 @@ public class BirdWikiActivity extends AppCompatActivity {
         registerFactView("relevantRegulations", R.id.tvRelevantRegulations);
         registerFactView("georgiaDNRHuntingLink", R.id.tvGeorgiaDNRHuntingLink);
 
+        if (tvImageAttribution != null) {
+            tvImageAttribution.setMovementMethod(LinkMovementMethod.getInstance());
+        }
+
         TextView linkView = findViewById(R.id.tvGeorgiaDNRHuntingLink);
         if (linkView != null) {
             linkView.setMovementMethod(LinkMovementMethod.getInstance());
@@ -212,6 +219,10 @@ public class BirdWikiActivity extends AppCompatActivity {
         tvPageTitle.setText("Loading...");
         tvPageScientificName.setText("Scientific name");
         ivBirdHeaderImage.setVisibility(View.GONE);
+        if (tvImageAttribution != null) {
+            tvImageAttribution.setText("");
+            tvImageAttribution.setVisibility(View.GONE);
+        }
 
         for (TextView tv : factViews.values()) {
             tv.setText("Not available yet.");
@@ -297,11 +308,11 @@ public class BirdWikiActivity extends AppCompatActivity {
                             updateHunterFactsFromMap((Map<String, Object>) hunterFactsObj);
                         }
 
-                        markFactsLoaded();
-                    } else {
-                        fetchFactsFromCloudFunction(birdId);
-                    }
-                });
+                                        markFactsLoaded();
+                                    } else {
+                                        fetchFactsFromCloudFunction(birdId);
+                                    }
+                                });
     }
 
     /**
@@ -535,6 +546,7 @@ public class BirdWikiActivity extends AppCompatActivity {
             currentImageUrl = null;
             ivBirdHeaderImage.setImageDrawable(null);
             ivBirdHeaderImage.setVisibility(View.GONE);
+            clearImageAttribution();
             markImageLoaded();
             return;
         }
@@ -545,10 +557,12 @@ public class BirdWikiActivity extends AppCompatActivity {
         if (isBlank(imageUrl)) {
             ivBirdHeaderImage.setImageDrawable(null);
             ivBirdHeaderImage.setVisibility(View.GONE);
+            clearImageAttribution();
             markImageLoaded();
             return;
         }
 
+        applyImageAttribution(buildImageAttributionText(imageDoc));
         ivBirdHeaderImage.setVisibility(View.VISIBLE);
 
         // Optimized Glide call
@@ -567,6 +581,7 @@ public class BirdWikiActivity extends AppCompatActivity {
                         }
                         // Hide if failed so the UI doesn't show a blank gap
                         ivBirdHeaderImage.setVisibility(View.GONE);
+                        clearImageAttribution();
                         markImageLoaded();
                         return false;
                     }
@@ -583,6 +598,148 @@ public class BirdWikiActivity extends AppCompatActivity {
                     }
                 })
                 .into(ivBirdHeaderImage);
+    }
+
+    private void applyImageAttribution(@Nullable CharSequence attributionText) {
+        if (tvImageAttribution == null) return;
+
+        if (attributionText == null || attributionText.length() == 0) {
+            tvImageAttribution.setText("");
+            tvImageAttribution.setVisibility(View.GONE);
+            return;
+        }
+
+        tvImageAttribution.setText(attributionText);
+        tvImageAttribution.setVisibility(View.VISIBLE);
+    }
+
+    private void clearImageAttribution() {
+        if (tvImageAttribution == null) return;
+        tvImageAttribution.setText("");
+        tvImageAttribution.setVisibility(View.GONE);
+    }
+
+    @Nullable
+    private CharSequence buildImageAttributionText(DocumentSnapshot imageDoc) {
+        String photoCredit = extractPhotoCredit(imageDoc);
+        String source = extractSourceLabel(imageDoc);
+        String license = extractLicenseLabel(imageDoc);
+
+        StringBuilder sb = new StringBuilder();
+
+        if (!isBlank(photoCredit)) {
+            sb.append("<b>Photo:</b> ").append(photoCredit);
+        }
+
+        if (!isBlank(source)) {
+            if (sb.length() > 0) sb.append("<br/>");
+            sb.append("<b>Source:</b> ").append(source);
+        }
+
+        if (!isBlank(license)) {
+            if (sb.length() > 0) sb.append("<br/>");
+            sb.append("<b>License:</b> ").append(license);
+        }
+
+        if (sb.length() == 0) {
+            return null;
+        }
+
+        return HtmlCompat.fromHtml(sb.toString(), HtmlCompat.FROM_HTML_MODE_LEGACY);
+    }
+
+    @Nullable
+    private String extractPhotoCredit(DocumentSnapshot imageDoc) {
+        Map<String, Object> firstImage = getFirstImageEntry(imageDoc);
+        String nestedAttribution = cleanMetadataString(getString(firstImage != null ? firstImage.get("attribution") : null));
+        if (!isBlank(nestedAttribution)) {
+            return nestedAttribution;
+        }
+
+        String rootAttribution = cleanMetadataString(imageDoc.getString("attribution"));
+        if (!isBlank(rootAttribution)) {
+            return rootAttribution;
+        }
+
+        return null;
+    }
+
+    @Nullable
+    private String extractSourceLabel(DocumentSnapshot imageDoc) {
+        String rootSource = cleanMetadataString(imageDoc.getString("source"));
+        if (!isBlank(rootSource)) {
+            return rootSource;
+        }
+
+        String collectionName = imageDoc.getReference() != null && imageDoc.getReference().getParent() != null
+                ? imageDoc.getReference().getParent().getId()
+                : null;
+
+        if ("nuthatch_images".equals(collectionName)) return "Nuthatch";
+        if ("inaturalist_images".equals(collectionName)) return "iNaturalist";
+        if ("images_fetched_identifications".equals(collectionName)) return "Fetched";
+        return null;
+    }
+
+    @Nullable
+    private String extractLicenseLabel(DocumentSnapshot imageDoc) {
+        Map<String, Object> firstImage = getFirstImageEntry(imageDoc);
+        String nestedLicense = cleanMetadataString(getString(firstImage != null ? firstImage.get("license") : null));
+        if (!isBlank(nestedLicense)) {
+            return formatLicenseLabel(nestedLicense);
+        }
+
+        String rootLicense = cleanMetadataString(imageDoc.getString("license"));
+        if (!isBlank(rootLicense)) {
+            return formatLicenseLabel(rootLicense);
+        }
+
+        return null;
+    }
+
+    @Nullable
+    private Map<String, Object> getFirstImageEntry(DocumentSnapshot imageDoc) {
+        Object imagesObj = imageDoc.get("images");
+        if (!(imagesObj instanceof List)) {
+            return null;
+        }
+
+        List<?> images = (List<?>) imagesObj;
+        if (images.isEmpty()) {
+            return null;
+        }
+
+        Object first = images.get(0);
+        if (first instanceof Map) {
+            return (Map<String, Object>) first;
+        }
+
+        return null;
+    }
+
+    @Nullable
+    private String cleanMetadataString(@Nullable String value) {
+        if (isBlank(value)) return null;
+        String plain = androidx.core.text.HtmlCompat.fromHtml(
+                String.valueOf(value),
+                androidx.core.text.HtmlCompat.FROM_HTML_MODE_LEGACY
+        ).toString();
+        plain = plain.replaceAll("\\s+", " ").trim();
+        return plain.isEmpty() ? null : plain;
+    }
+
+    @Nullable
+    private String formatLicenseLabel(@Nullable String license) {
+        String cleaned = cleanMetadataString(license);
+        if (isBlank(cleaned)) return null;
+
+        String normalized = cleaned.replace('_', '-').trim();
+        if (normalized.equalsIgnoreCase("cc-by")) return "CC BY";
+        if (normalized.equalsIgnoreCase("cc-by-sa")) return "CC BY-SA";
+        if (normalized.equalsIgnoreCase("cc-by-nc")) return "CC BY-NC";
+        if (normalized.equalsIgnoreCase("cc-by-nd")) return "CC BY-ND";
+        if (normalized.equalsIgnoreCase("cc0")) return "CC0";
+        return normalized.toUpperCase();
     }
 
     /**

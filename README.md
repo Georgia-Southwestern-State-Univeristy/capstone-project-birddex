@@ -1,273 +1,326 @@
-# Capstone-Project-BirdDex
+# 🐦 BirdDex
 
-# BirdDex
 ### Computer Science Capstone Project
 
 ---
 
-## Project Overview
+## 📖 Project Overview
 
-BirdDex is an Android mobile application that allows users to **capture, identify, and catalog bird species using their own photos**. The application combines camera functionality, AI-assisted image recognition, and cloud-based storage to create a digital bird collection.
+BirdDex is an Android mobile application that allows users to **capture, identify, and catalog bird species using their own photos**.
 
-BirdDex enables users to photograph birds in the wild, receive AI-generated species identification, verify results using external bird databases, and store discoveries in a personal collection. The application also provides location-aware sightings and community discussion through integrated forum features.
+The system integrates:
 
-The system serves as a **data modeling and scalable wildlife observation platform**, demonstrating the integration of mobile development, cloud infrastructure, and external APIs.
+* real-time camera-based image capture
+* a **hybrid AI identification pipeline (in-house + OpenAI)**
+* cloud-based data storage and processing
+* geospatial bird sighting visualization
+* a moderated community forum
 
----
+BirdDex functions as both:
 
-## Project Status
-
-**In Development**
-
-- ✔ Sprint 1 Complete – Core system foundations implemented  
-- ✔ Sprint 2 Complete – Feature expansion and system stability improvements  
-
----
-
-## Current Development Focus
-
-Upcoming development work includes:
-
-- Nuthatch API integration
-- Improved bird identification fallback system
-- Bird selection interface for uncertain matches
-- Card rarity upgrade system
-- In-app store mechanics
-- Additional system performance optimizations
+* a **personal bird collection system**
+* a **scalable wildlife observation platform**
 
 ---
 
-## Core System Features
+## 🚀 System Status
 
-### Bird Capture
-Users capture bird images using the built-in device camera through the **CameraX API**.
+BirdDex is a **fully integrated and functional system** demonstrating:
 
-### AI Identification
-Captured images are processed through an AI pipeline that analyzes the bird and returns species identification data.
+* end-to-end AI identification workflows
+* real-time database synchronization
+* scalable cloud architecture
+* user-driven community interaction
+* production-style moderation and validation systems
 
-### Data Verification
-Bird identification results are cross-referenced with the **eBird database** to validate species information.
+Recent development efforts focused on refining:
 
-### Bird Collection
-Users can store identified birds in their personal **BirdDex collection**, including:
-
-- Bird image  
-- Species information  
-- Capture location  
-- Capture timestamp  
-
-### Bird Facts
-Bird facts are pre-generated and cached to reduce repeated AI requests and improve system performance.
-
-### Near Me Feature
-Bird sightings are stored with geographic metadata and displayed on a map-based interface that allows users to view nearby bird activity.
-
-### Community Forum
-Users can share bird sightings and interact with the community using a forum system that supports:
-
-- Threads  
-- Replies  
-- Pagination  
-- Content filtering  
-- Reporting  
+* AI identification reliability
+* system performance and caching
+* moderation and safety enforcement
+* user experience and feature completeness
 
 ---
 
-## Technology Stack
+## ⚙️ Core Features
 
-### Platform
-Android
+### 📸 Bird Capture
 
-### Language
-Java
-
-### Build System
-Gradle (Kotlin DSL)
-
-### IDE
-Android Studio
-
-### Version Control
-Git + GitHub
+Users capture bird images using the CameraX API with on-device preprocessing.
 
 ---
 
-## Backend Infrastructure
+### 🤖 AI Identification System
 
-### Firebase Services
+BirdDex uses a **multi-stage AI pipeline**:
 
-BirdDex uses **Firebase** as its backend platform.
-
-Services used:
-
-- **Firebase Authentication** – user login and account management  
-- **Cloud Firestore** – structured cloud database  
-- **Firebase Storage** – image storage  
-- **Firebase Cloud Functions** – API processing and backend logic  
-
-Firebase manages authentication, stores bird metadata, and securely stores user-uploaded images.
-
-Provider: Google Firebase  
-https://firebase.google.com
+* In-house model (primary identification)
+* OpenAI integration (tie-break and fallback)
+* Confidence-based decision logic
+* User-assisted correction for uncertain results
 
 ---
 
-## Third-Party APIs
+### 🛡 Anti-Cheat Validation
 
-### OpenAI API
-Used for AI-assisted bird identification from captured images.
+Ensures valid captures using:
 
-### eBird API
-Bird observation database provided by the **Cornell Lab of Ornithology** used for species verification and bird metadata.
+* screen detection
+* motion validation (multi-frame capture)
+* metadata inspection
 
-Provider: Cornell Lab of Ornithology  
-https://ebird.org  
-
-API Terms:  
-https://ebird.org/api/terms-of-use
-
-All eBird data used in this application is subject to the **eBird API Terms of Use and the eBird Data Access Terms**. Data is used for educational and research purposes only.
-
-© Cornell Lab of Ornithology. Attribution is provided where applicable.
+This prevents invalid submissions and protects system integrity.
 
 ---
 
-## System Architecture (Current Implementation)
+### 🐦 Bird Collection System
 
-![BirdDex System Architecture](documents/diagrams/Updated_Sys_Arch_Diagram.png)
+Users maintain a structured BirdDex collection:
 
-The BirdDex system consists of a mobile client connected to cloud services and external data APIs.
-
-## Database Schema
-
-![BirdDex Database ERD](documents/diagrams/BirdDex_ERD.png)
-
-### Mobile Application (Android)
-
-Handles:
-
-- user authentication  
-- camera capture  
-- image preprocessing  
-- API communication  
-- UI rendering  
-- collection management  
-- forum interaction  
-- map-based sightings display  
-
-### Cloud Infrastructure
-
-Firebase services manage:
-
-- user accounts  
-- bird data storage  
-- image storage  
-- bird fact caching  
-- forum data  
-- location-based sightings  
-
-### External APIs
-
-External APIs provide:
-
-- bird species identification  
-- bird metadata verification  
-- reference bird images  
+* captured bird images
+* species data
+* rarity and points system
+* duplicate detection
 
 ---
 
-### System Flow
-User Captures Bird Image
-↓
-Image Processed in App
-↓
-AI Identification Request
-↓
-Verification via eBird Database
-↓
-Results Stored in Firestore
-↓
-Bird Added to User Collection
-↓
-Bird Sightings Stored for Near Me Feature
+### 🌍 Near Me Feature
+
+Displays nearby bird sightings using geospatial queries:
+
+* powered by `userBirdSightings`
+* real-time map rendering
+* regional bird activity tracking
 
 ---
 
-## Setup Instructions
+### 💬 Community Forum
 
-### 1. Clone Repository
+The forum system supports:
+
+* posts and threaded replies
+* saved posts
+* content reporting
+* real-time updates
+
+---
+
+### 🛡 Moderation System
+
+BirdDex includes a **fully implemented moderation system**:
+
+* automated content filtering (text + image SafeSearch)
+* report-based moderation thresholds
+* warning and strike system
+* suspensions and permanent bans
+* appeal and audit workflows
+
+---
+
+## 🧰 Technology Stack
+
+* **Platform:** Android
+* **Language:** Java
+* **Backend:** Firebase (Auth, Firestore, Storage, Cloud Functions)
+* **APIs:** OpenAI, eBird, Nuthatch
+* **Maps:** Google Maps SDK
+
+---
+
+# 🏗 System Architecture
+
+![System Architecture](documents/diagrams/system_architecture.png)
+
+BirdDex follows a **layered architecture**:
+
+Android App → Firebase Auth → Cloud Functions → AI Pipeline → Storage → Firestore → Feature Systems
+
+This structure enables:
+
+* scalable backend processing
+* real-time updates
+* modular system expansion
+
+---
+
+# 🔄 Core System Flows
+
+## 🤖 AI Identification Flow
+
+![AI Flow](documents/diagrams/ai_identification_flow.png)
+
+* In-house AI performs primary prediction
+* OpenAI is used for tie-break and fallback scenarios
+* Full identification pipeline is stored in Firestore
+* Results update collection, sightings, and progression systems
+
+---
+
+## 📤 Upload Identification Flow
+
+![Upload Flow](documents/diagrams/upload_flow.png)
+
+* Uses the same AI pipeline as live capture
+* Includes additional validation (captureGuard)
+* Allows user refinement for uncertain results
+* Does not award points to maintain fairness
+
+---
+
+## 🌍 Near Me Flow
+
+![Near Me Flow](documents/diagrams/near_me_flow.png)
+
+* Triggered after verified identification
+* Stores sightings in Firestore
+* Uses geospatial queries to display nearby birds
+* Renders results on an interactive map
+
+---
+
+## 💬 Forum Flow
+
+![Forum Flow](documents/diagrams/forum_flow.png)
+
+* Backend-enforced moderation and validation
+* Report thresholds trigger moderation states
+* Supports appeals and content recovery
+* Real-time UI updates through Firestore
+
+---
+
+# 🗄 Database Architecture
+
+## 🔷 Core Data Model
+
+![Core ERD](documents/database/Main_ERD-core_app_tables.png)
+
+Includes:
+
+* users
+* birds
+* userBirds
+* identifications
+* locations
+* userBirdSightings
+
+The `identifications` collection stores the **full AI pipeline**, enabling traceability and system analysis.
+
+---
+
+## 🛡 Moderation & Forum Data
+
+![Moderation ERD](documents/database/ERD-moderation_forum_archive.png)
+
+Includes:
+
+* forumThreads + comments
+* reports
+* moderationEvents
+* moderationAppeals
+* audit logs
+* archive collections
+
+---
+
+# 🔁 End-to-End System Flow
+
+1. User captures or uploads image
+2. Anti-cheat validation runs
+3. Cloud Functions validate and route request
+4. AI pipeline processes image:
+
+   * in-house model
+   * OpenAI (when needed)
+5. Result verified with bird dataset (eBird)
+6. Data stored:
+
+   * image → Firebase Storage
+   * pipeline → Firestore (`identifications`)
+7. System updates:
+
+   * collection
+   * sightings
+   * user stats
+8. Event processing:
+
+   * points
+   * duplicates
+   * logs
+9. Features update:
+
+   * collection
+   * Near Me
+   * forum
+10. Real-time synchronization via Firestore
+
+---
+
+# 🧑‍💻 Setup Instructions
 
 ```bash
 git clone https://github.com/Georgia-Southwestern-State-University/capstone-project-birddex.git
-2. Open Project
+```
 
-Open the project in Android Studio.
+1. Open in Android Studio
+2. Add `google-services.json` to `/app`
+3. Sync Gradle
+4. Run on emulator/device
 
-3. Configure Firebase
+---
 
-Download the google-services.json file from Firebase and place it inside:
+# 📱 User Guide
 
+### Capture Bird
+
+* Open camera
+* Take photo
+* Wait for identification
+
+### Save Bird
+
+* Confirm result
+* Add to collection
+
+### View Collection
+
+* Browse BirdDex grid
+
+### Near Me
+
+* Explore nearby bird sightings on the map
+
+### Forum
+
+* Create posts
+* Reply to discussions
+* Save posts
+* Report content
+
+---
+
+# 📁 Project Structure
+
+```text
 app/
-4. Sync Gradle
+├── Activities
+├── Fragments
+├── API services
+├── Firebase manager
+└── UI adapters
 
-Allow Android Studio to run Gradle Sync.
+documents/
+└── diagrams/
+```
 
-5. Run Application
+---
 
-Connect an Android device or emulator and run the application from Android Studio.
+# 📜 License
 
-User Guide
-Create Account
+Educational use – Computer Science Capstone Project
 
--Launch the application
--Register using an email and password
--Sign in to access the main interface
+---
 
-Capture a Bird
+## 📌 Notes
 
--Tap Camera
--Take a photo of a bird
--Wait for the AI identification process
-
-Save Bird
-
--Review the identification result
--Confirm the species
--Save the bird to your collection
-
-View Collection
--Navigate to BirdDex Collection to view all captured birds.
-
-View Nearby Sightings
--Open the Near Me screen to view nearby bird sightings displayed on the map.
-
-Use Forum
-Access the Forum to:
-
--share sightings
--reply to posts
--discuss bird observations with other users
-
-License
-This project is developed for educational purposes as part of a university Computer Science Capstone project.
-
-Extras
-Project Structure (UNDER MAINTENANCE)
-
-capstone-project-birddex/
-
-app/
-├── src/main/java/com/example/birddex
-│   ├── Activities
-│   ├── Fragments
-│   ├── API services
-│   ├── Firebase manager
-│   └── UI adapters
-│
-├── res/
-│   ├── layout
-│   ├── drawable
-│   ├── values
-│   └── menu
-│
-└── AndroidManifest.xml
+This documentation reflects the **current implemented system architecture and workflows**.

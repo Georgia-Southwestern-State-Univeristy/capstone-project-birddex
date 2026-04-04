@@ -4,6 +4,7 @@ import android.content.Intent;
 import android.graphics.Bitmap;
 import android.net.Uri;
 import android.os.Bundle;
+import android.util.Log;
 import android.widget.Button;
 
 import androidx.annotation.Nullable;
@@ -27,6 +28,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * when you are debugging or presenting the app. Only comments were added; runtime logic was not changed.
  */
 public class CropActivity extends AppCompatActivity {
+
+    private static final String TAG = "CropActivity";
 
     // Key for passing the image URI via intent extras.
     public static final String EXTRA_IMAGE_URI = "image_uri";
@@ -76,7 +79,11 @@ public class CropActivity extends AppCompatActivity {
 
         // Exit the activity if the user cancels cropping.
         // Attach the user interaction that should run when this control is tapped.
-        btnCancel.setOnClickListener(v -> finish());
+        btnCancel.setOnClickListener(v -> {
+            deleteTempFileIfOwnedByApp(inputUri);
+            cleanupBurstFrameCache();
+            finish();
+        });
 
         // Handle the identify button click: get the cropped bitmap, save it, and move to identification.
         btnIdentify.setOnClickListener(v -> {
@@ -103,6 +110,11 @@ public class CropActivity extends AppCompatActivity {
                 intent.putExtra("awardPoints", awardPoints);
                 CaptureGuardHelper.putGuardExtras(intent, guardReport);
                 intent.putExtra(CaptureGuardHelper.EXTRA_CAPTURE_SOURCE, guardReport.captureSource);
+
+                // Safe to delete the original selected temp input now.
+                // Do NOT clear camera_burst_frames here on the Identify path.
+                deleteTempFileIfOwnedByApp(inputUri);
+
                 // Move into the next screen and pass the identifiers/data that screen needs.
                 startActivity(intent);
                 finish();
@@ -137,6 +149,44 @@ public class CropActivity extends AppCompatActivity {
      * Bitmap/rendering work happens here, so this block is shaping the final card/image output
      * rather than just text data.
      */
+
+    private void cleanupBurstFrameCache() {
+        try {
+            File dir = new File(getCacheDir(), "camera_burst_frames");
+            if (!dir.exists()) return;
+
+            File[] files = dir.listFiles();
+            if (files == null) return;
+
+            for (File file : files) {
+                if (file != null && file.exists() && !file.delete()) {
+                    Log.w(TAG, "Failed to delete burst temp file: " + file.getAbsolutePath());
+                }
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "Failed to clean burst frame cache.", e);
+        }
+    }
+
+    private void deleteTempFileIfOwnedByApp(@Nullable Uri uri) {
+        if (uri == null || uri.getPath() == null) return;
+
+        try {
+            File file = new File(uri.getPath());
+            String cacheRoot = getCacheDir().getAbsolutePath();
+            String filePath = file.getAbsolutePath();
+
+            if (!filePath.startsWith(cacheRoot)) return;
+            if (!file.exists()) return;
+
+            if (!file.delete()) {
+                Log.w(TAG, "Failed to delete temp file: " + filePath);
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "Failed to delete temp file for uri.", e);
+        }
+    }
+
     private Uri saveBitmapToFile(Bitmap bmp) {
         try {
             // Create a directory in the cache for cropped images.

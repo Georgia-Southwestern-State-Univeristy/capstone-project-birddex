@@ -389,23 +389,24 @@ public class SettingsActivity extends AppCompatActivity {
     }
 
     /**
-     * Orchestrates the deletion of the user's data from Firestore and their Auth record.
+     * Requests permanent account deletion from the backend.
+     * The backend now owns the full auth-delete + cleanup pipeline.
      */
     private void processAccountDeletion(FirebaseUser user) {
         if (isNavigating) return;
         isNavigating = true;
         firebaseManager.archiveAndDeleteUser(task -> {
             if (task.isSuccessful()) {
-                user.delete().addOnCompleteListener(deleteTask -> {
-                    if (deleteTask.isSuccessful()) {
-                        sessionManager.clearSession(user.getUid());
-                        goToWelcomeAndClear();
-                    } else {
-                        isNavigating = false;
-                    }
-                });
+                sessionManager.clearSession(user.getUid());
+                FirebaseAuth.getInstance().signOut();
+                goToWelcomeAndClear();
             } else {
                 isNavigating = false;
+                String message = "Failed to delete account. Please try again.";
+                if (task.getException() != null && task.getException().getMessage() != null) {
+                    message = task.getException().getMessage();
+                }
+                Toast.makeText(SettingsActivity.this, message, Toast.LENGTH_LONG).show();
             }
         });
     }

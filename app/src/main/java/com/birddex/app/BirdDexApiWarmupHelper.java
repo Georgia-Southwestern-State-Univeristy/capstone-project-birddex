@@ -4,23 +4,16 @@ import android.content.Context;
 import android.content.SharedPreferences;
 import android.util.Log;
 
-import androidx.annotation.NonNull;
+import com.google.android.gms.tasks.Task;
+import com.google.firebase.functions.FirebaseFunctions;
 
-import java.io.IOException;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
-import okhttp3.Call;
-import okhttp3.Callback;
-import okhttp3.OkHttpClient;
-import okhttp3.Request;
-import okhttp3.Response;
-
 /**
- * Sends a small fire-and-forget request to the BirdDex model service so Cloud Run can start
- * booting the container before the user reaches the identification step.
- *
- * This helper is intentionally separate from FirebaseManager because the model service lives on
- * Cloud Run, not in Firebase Functions, and the warm-up should stay lightweight and isolated.
+ * Sends a lightweight callable request so the backend can warm the BirdDex Cloud Run service
+ * without exposing the raw Cloud Run URL to the client.
  */
 public final class BirdDexApiWarmupHelper {
 
@@ -28,18 +21,8 @@ public final class BirdDexApiWarmupHelper {
     private static final String PREFS_NAME = "birddex_api_warmup_prefs";
     private static final String KEY_LAST_WARM_AT_MS = "last_warm_at_ms";
 
-    // 9 minutes keeps the service reasonably warm without sending a ping on every screen open.
+    // 9 minutes keeps the service reasonably warm without sending a request on every screen open.
     private static final long WARMUP_COOLDOWN_MS = TimeUnit.MINUTES.toMillis(9);
-
-    // Root request is enough to spin up the Cloud Run container. A 404 still warms the service.
-    private static final String WARMUP_URL = "https://birddex-api-650774648072.us-central1.run.app/";
-
-    private static final OkHttpClient HTTP_CLIENT = new OkHttpClient.Builder()
-            .connectTimeout(3, TimeUnit.SECONDS)
-            .readTimeout(3, TimeUnit.SECONDS)
-            .writeTimeout(3, TimeUnit.SECONDS)
-            .callTimeout(5, TimeUnit.SECONDS)
-            .build();
 
     private BirdDexApiWarmupHelper() {
         // No instances.
@@ -60,30 +43,22 @@ public final class BirdDexApiWarmupHelper {
             return;
         }
 
-        prefs.edit().putLong(KEY_LAST_WARM_AT_MS, now).apply();
-        sendWarmupRequest(reason);
+        Map<String, Object> data = new HashMap<>();
+        data.put("reason", reason == null ? "unknown" : reason);
+
+        FirebaseFunctions.getInstance()
+                .getHttpsCallable("warmBirdDexModel")
+                .call(data)
+                .addOnCompleteListener(task -> handleWarmupResult(prefs, now, reason, task));
     }
 
-    private static void sendWarmupRequest(String reason) {
-        Request request = new Request.Builder()
-                .url(WARMUP_URL)
-                .get()
-                .header("X-BirdDex-Warmup", "1")
-                .header("X-BirdDex-Warmup-Reason", reason == null ? "unknown" : reason)
-                .build();
-
-        HTTP_CLIENT.newCall(request).enqueue(new Callback() {
-            @Override
-            public void onFailure(@NonNull Call call, @NonNull IOException e) {
-                Log.w(TAG, "Warm-up request failed: " + e.getMessage());
-            }
-
-            @Override
-            public void onResponse(@NonNull Call call, @NonNull Response response) {
-                try (Response ignored = response) {
-                    Log.d(TAG, "Warm-up request completed with code=" + response.code());
-                }
-            }
-        });
+    private static void handleWarmupResult(SharedPreferences prefs, long attemptedAt, String reason, Task<?> task) {
+        if (task.isSuccessful()) {
+            prefs.edit().putLong(KEY_LAST_WARM_AT_MS, attemptedAt).apply();
+            Log.d(TAG, "Warm-up callable succeeded. reason=" + reason);
+        } else {
+            Exception e = task.getException();
+            Log.w(TAG, "Warm-up callable failed: " + (e != null ? e.getMessage() : "unknown"));
+        }
     }
 }

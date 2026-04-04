@@ -147,6 +147,7 @@ public class ForumPostAdapter extends RecyclerView.Adapter<ForumPostAdapter.Post
 
         TextView tvSpottedBadge;
         TextView tvHuntedBadge;
+        TextView tvPoiBadge;
 
         /**
          * Main logic block for this part of the feature.
@@ -173,6 +174,7 @@ public class ForumPostAdapter extends RecyclerView.Adapter<ForumPostAdapter.Post
 
             tvSpottedBadge = itemView.findViewById(R.id.tvSpottedBadge);
             tvHuntedBadge = itemView.findViewById(R.id.tvHuntedBadge);
+            tvPoiBadge = itemView.findViewById(R.id.tvPoiBadge);
         }
 
         /**
@@ -198,16 +200,21 @@ public class ForumPostAdapter extends RecyclerView.Adapter<ForumPostAdapter.Post
             if (tvHuntedBadge != null) {
                 tvHuntedBadge.setVisibility(post.isHunted() ? View.VISIBLE : View.GONE);
             }
+            if (tvPoiBadge != null) {
+                boolean poiOnly = post.isShowLocation() && !post.isSpotted() && !post.isHunted();
+                tvPoiBadge.setVisibility(poiOnly ? View.VISIBLE : View.GONE);
+            }
 
-            // View on Map button visibility - Show for both spotted and hunted posts if location is shared
+            // View on Map button visibility - show for any post that shared map location.
             if (btnViewOnMap != null) {
                 boolean hasLocation = post.isShowLocation() && post.getLatitude() != null && post.getLongitude() != null;
-                if ((post.isSpotted() || post.isHunted()) && hasLocation) {
+                if (hasLocation) {
                     btnViewOnMap.setVisibility(View.VISIBLE);
                     // Attach the user interaction that should run when this control is tapped.
                     btnViewOnMap.setOnClickListener(v -> listener.onMapClick(post));
                 } else {
                     btnViewOnMap.setVisibility(View.GONE);
+                    btnViewOnMap.setOnClickListener(null);
                 }
             }
 

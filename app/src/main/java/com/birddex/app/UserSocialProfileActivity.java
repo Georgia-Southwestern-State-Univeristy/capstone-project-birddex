@@ -115,7 +115,6 @@ public class UserSocialProfileActivity extends AppCompatActivity implements
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        SystemBarHelper.applyStandardNavBar(this);
         setContentView(R.layout.activity_user_social_profile);
 
         targetUserId = getIntent().getStringExtra(EXTRA_USER_ID);

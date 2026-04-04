@@ -173,8 +173,7 @@ public class CollectionCardAdapter extends RecyclerView.Adapter<CollectionCardAd
         if (holder.imgBird != null) {
             ViewGroup.LayoutParams imgLp = holder.imgBird.getLayoutParams();
             if (imgLp != null) {
-                // Keep cards compact while giving header text an extra line of room.
-                imgLp.height = (int) (128 * d);
+                imgLp.height = holder.itemView.getResources().getDimensionPixelSize(R.dimen.collection_card_image_height);
                 holder.imgBird.setLayoutParams(imgLp);
                 // Use fitCenter to ensure the image is not cut off
                 holder.imgBird.setScaleType(ImageView.ScaleType.FIT_CENTER);

@@ -61,7 +61,6 @@ public class SettingsActivity extends AppCompatActivity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        SystemBarHelper.applyStandardNavBar(this);
         setContentView(R.layout.activity_settings);
 
         sharedPreferences = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);

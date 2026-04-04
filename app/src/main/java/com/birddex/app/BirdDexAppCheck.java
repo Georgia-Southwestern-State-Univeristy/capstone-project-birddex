@@ -5,6 +5,7 @@ import android.app.Application;
 import android.content.Intent;
 import android.os.Bundle;
 import android.util.Log;
+import android.view.View;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
@@ -60,6 +61,28 @@ public class BirdDexAppCheck extends Application {
             @Override
             public void onActivityCreated(@NonNull Activity activity, @Nullable Bundle savedInstanceState) {}
 
+            /**
+             * Runs after {@code onCreate} and after the content view exists, so status-bar insets
+             * apply consistently on every BirdDex screen (including activities that used to call
+             * {@link SystemBarHelper#applyStandardNavBar(Activity)} before {@code setContentView}).
+             * <p>
+             * The work is posted to the next frame so we do not reparent the content view while
+             * splash/entry animations are running (which would cancel them and block navigation).
+             */
+            @Override
+            public void onActivityPostCreated(@NonNull Activity activity, @Nullable Bundle savedInstanceState) {
+                final View decor = activity.getWindow() != null ? activity.getWindow().getDecorView() : null;
+                if (decor == null) {
+                    return;
+                }
+                decor.post(() -> {
+                    if (activity.isFinishing() || activity.isDestroyed()) {
+                        return;
+                    }
+                    applyBirdDexSystemBarsIfNeeded(activity);
+                });
+            }
+
             @Override
             public void onActivityStarted(@NonNull Activity activity) {
                 currentActivity = activity;
@@ -98,6 +121,22 @@ public class BirdDexAppCheck extends Application {
             @Override
             public void onActivityDestroyed(@NonNull Activity activity) {}
         });
+    }
+
+    /**
+     * One place for edge-to-edge status/navigation handling so all app activities match.
+     * Skips embedded library activities (e.g. CanHub cropper) that expect their own window layout.
+     */
+    private static void applyBirdDexSystemBarsIfNeeded(@NonNull Activity activity) {
+        String name = activity.getClass().getName();
+        if (!name.startsWith("com.birddex.app.")) {
+            return;
+        }
+        if (activity instanceof SplashActivity) {
+            SystemBarHelper.applySplashWindowBars(activity);
+        } else {
+            SystemBarHelper.applyStandardNavBar(activity);
+        }
     }
 
     /**

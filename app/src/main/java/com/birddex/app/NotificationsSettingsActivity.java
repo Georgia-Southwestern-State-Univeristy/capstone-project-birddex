@@ -37,7 +37,6 @@ public class NotificationsSettingsActivity extends AppCompatActivity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        SystemBarHelper.applyStandardNavBar(this);
         setContentView(R.layout.activity_notifications_settings);
 
         // Bind UI components

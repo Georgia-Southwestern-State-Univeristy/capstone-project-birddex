@@ -10,6 +10,7 @@
         android:id="@+id/fragmentContainer"
         android:layout_width="0dp"
         android:layout_height="0dp"
+        android:layout_marginBottom="0dp"
         android:background="@color/page_cream"
         app:layout_constraintTop_toTopOf="parent"
         app:layout_constraintBottom_toTopOf="@id/bottomNavContainer"
@@ -21,7 +22,7 @@
         android:layout_width="0dp"
         android:layout_height="wrap_content"
         android:orientation="vertical"
-        android:background="@android:color/transparent"
+        android:background="@color/nav_brown"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent">
@@ -32,15 +33,16 @@
             android:layout_height="wrap_content"
             android:background="?attr/colorPrimary"
             android:paddingTop="6dp"
-            android:paddingBottom="8dp"
+            android:paddingBottom="3dp"
+            app:itemIconSize="28dp"
             app:itemIconTint="@color/bottom_nav_item_tint"
             app:itemTextColor="@color/bottom_nav_item_tint"
             app:menu="@menu/bottom_nav_menu"
             app:labelVisibilityMode="labeled"
             app:itemBackground="@drawable/bottom_nav_item_background"
             app:itemActiveIndicatorStyle="@null"
-            app:itemPaddingTop="20dp"
-            app:itemPaddingBottom="6dp" />
+            app:itemPaddingTop="10dp"
+            app:itemPaddingBottom="4dp" />
 
         <View
             android:id="@+id/bottomNavSystemInset"

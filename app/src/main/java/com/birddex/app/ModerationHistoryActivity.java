@@ -49,7 +49,6 @@ public class ModerationHistoryActivity extends AppCompatActivity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        SystemBarHelper.applyStandardNavBar(this);
         setContentView(R.layout.activity_moderation_history);
 
         firebaseManager = new FirebaseManager(this);

@@ -26,7 +26,6 @@ public class ImageUploadActivity extends AppCompatActivity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        SystemBarHelper.applyStandardNavBar(this);
 
         BirdDexApiWarmupHelper.maybeWarmup(this, "camera_entry");
 

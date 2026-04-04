@@ -52,7 +52,6 @@ public class ModeratorActivity extends AppCompatActivity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        SystemBarHelper.applyStandardNavBar(this);
         setContentView(R.layout.activity_moderator);
 
         firebaseManager = new FirebaseManager(this);

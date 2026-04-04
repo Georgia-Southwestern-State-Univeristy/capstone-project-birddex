@@ -48,7 +48,7 @@
                 <ImageView
                     android:id="@+id/imgBird"
                     android:layout_width="0dp"
-                    android:layout_height="340dp"
+                    android:layout_height="@dimen/bird_card_image_height"
                     android:layout_marginTop="12dp"
                     android:adjustViewBounds="true"
                     android:background="@android:color/transparent"

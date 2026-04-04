@@ -35,7 +35,6 @@ public class ForumImageViewerActivity extends AppCompatActivity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        SystemBarHelper.applyStandardNavBar(this);
         binding = ActivityForumImageViewerBinding.inflate(getLayoutInflater());
         setContentView(binding.getRoot());
 

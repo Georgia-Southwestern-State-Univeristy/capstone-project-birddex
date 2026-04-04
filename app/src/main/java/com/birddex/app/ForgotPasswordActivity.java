@@ -46,7 +46,6 @@ public class ForgotPasswordActivity extends AppCompatActivity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        SystemBarHelper.applyStandardNavBar(this);
         setContentView(R.layout.activity_forgot_password);
 
         // Set up or query the Firebase layer that supplies/stores this feature's data.

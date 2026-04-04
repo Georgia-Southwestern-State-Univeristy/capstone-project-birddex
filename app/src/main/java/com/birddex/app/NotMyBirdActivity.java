@@ -42,7 +42,6 @@ public class NotMyBirdActivity extends AppCompatActivity {
     @Override
     protected void onCreate(@Nullable Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        SystemBarHelper.applyStandardNavBar(this);
         setContentView(R.layout.activity_not_my_bird);
 
         ImageView ivMain = findViewById(R.id.ivMain);

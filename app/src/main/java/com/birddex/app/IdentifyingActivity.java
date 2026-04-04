@@ -93,7 +93,6 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
     @Override
     protected void onCreate(@Nullable Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        SystemBarHelper.applyStandardNavBar(this);
         setContentView(R.layout.activity_identifying);
 
         Log.d(TAG, "onCreate: Activity started");

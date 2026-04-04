@@ -67,7 +67,6 @@ public class SocialActivity extends AppCompatActivity implements UserAdapter.OnU
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        SystemBarHelper.applyStandardNavBar(this);
         setContentView(R.layout.activity_social);
 
         targetUserId = getIntent().getStringExtra(EXTRA_USER_ID);

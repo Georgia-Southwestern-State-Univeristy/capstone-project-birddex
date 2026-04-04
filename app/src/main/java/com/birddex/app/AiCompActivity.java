@@ -28,7 +28,6 @@ public class AiCompActivity extends AppCompatActivity {
     @Override
     protected void onCreate(@Nullable Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        SystemBarHelper.applyStandardNavBar(this);
         setContentView(R.layout.activity_ai_comp);
 
         ImageView ivMain = findViewById(R.id.ivMain);

@@ -35,7 +35,6 @@ public class ReportBugActivity extends AppCompatActivity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        SystemBarHelper.applyStandardNavBar(this);
         setContentView(R.layout.activity_report_bug);
 
         // Initialize FirebaseManager to handle data persistence.

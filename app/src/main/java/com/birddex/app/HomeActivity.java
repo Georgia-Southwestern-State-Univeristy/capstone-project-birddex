@@ -1,8 +1,6 @@
 package com.birddex.app;
 
 import android.content.Intent;
-import android.graphics.Color;
-import android.os.Build;
 import android.os.Bundle;
 import android.util.Log;
 import android.view.View;
@@ -15,9 +13,7 @@ import android.widget.Toast;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.graphics.Insets;
 import androidx.core.view.ViewCompat;
-import androidx.core.view.WindowCompat;
 import androidx.core.view.WindowInsetsCompat;
-import androidx.core.view.WindowInsetsControllerCompat;
 import androidx.fragment.app.Fragment;
 
 import com.google.android.material.bottomnavigation.BottomNavigationView;
@@ -156,75 +152,52 @@ public class HomeActivity extends AppCompatActivity implements NetworkMonitor.Ne
     }
 
     /**
-     * Keeps the brown bottom nav looking the same in gesture mode,
-     * but adds a black strip only for 3-button mode.
+     * Bottom nav padding. System status/navigation bar colors and the top status inset strip are
+     * applied globally after the content view is set (see {@link BirdDexAppCheck}).
      *
      * This expects activity_home.xml to contain:
      * - @id/bottomNavContainer
      * - @id/bottomNavSystemInset
+     * <p>
+     * System navigation inset is applied on {@link #bottomNav} in {@link #onStart()} with minimal
+     * base padding so the fragment and bar stay as close as the system allows.
      */
     private void applyBottomNavInsets() {
         if (bottomNav == null) return;
 
-        boolean isThreeButtonNav = isThreeButtonNavigationMode();
+        // Larger tap targets; system nav inset is applied in onStart() on bottomNav.
+        bottomNav.setItemPaddingTop(dp(10));
+        bottomNav.setItemPaddingBottom(dp(4));
 
-        // Keep your bottom nav looking the same.
-        bottomNav.setPadding(
-                bottomNav.getPaddingLeft(),
-                dp(6),
-                bottomNav.getPaddingRight(),
-                dp(8)
-        );
-        bottomNav.setItemPaddingTop(dp(20));
-        bottomNav.setItemPaddingBottom(dp(6));
+        // Window navigation bar colors and status-bar strip are applied globally (BirdDexAppCheck).
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            getWindow().setNavigationBarContrastEnforced(false);
+        if (bottomNavSystemInset != null) {
+            bottomNavSystemInset.setVisibility(View.GONE);
+            ViewGroup.LayoutParams params = bottomNavSystemInset.getLayoutParams();
+            params.height = 0;
+            bottomNavSystemInset.setLayoutParams(params);
         }
 
-        WindowInsetsControllerCompat controller =
-                WindowCompat.getInsetsController(getWindow(), getWindow().getDecorView());
-
-        if (isThreeButtonNav) {
-            // REAL fix: make the actual system 3-button bar black.
-            getWindow().setNavigationBarColor(Color.BLACK);
-
-            if (controller != null) {
-                // Black background needs light nav icons.
-                controller.setAppearanceLightNavigationBars(false);
-            }
-
-            // Do not use the fake inset view for this approach.
-            if (bottomNavSystemInset != null) {
-                bottomNavSystemInset.setVisibility(View.GONE);
-                ViewGroup.LayoutParams params = bottomNavSystemInset.getLayoutParams();
-                params.height = 0;
-                bottomNavSystemInset.setLayoutParams(params);
-            }
-        } else {
-            // Gesture mode stays brown.
-            getWindow().setNavigationBarColor(getResources().getColor(R.color.nav_brown));
-
-            if (controller != null) {
-                controller.setAppearanceLightNavigationBars(false);
-            }
-
-            if (bottomNavSystemInset != null) {
-                bottomNavSystemInset.setVisibility(View.GONE);
-                ViewGroup.LayoutParams params = bottomNavSystemInset.getLayoutParams();
-                params.height = 0;
-                bottomNavSystemInset.setLayoutParams(params);
-            }
-        }
     }
 
-    private boolean isThreeButtonNavigationMode() {
-        int resId = getResources().getIdentifier("config_navBarInteractionMode", "integer", "android");
-        if (resId > 0) {
-            int mode = getResources().getInteger(resId);
-            return mode == 0; // 0 = 3-button, 1 = 2-button, 2 = gesture
+    /**
+     * Minimal padding above system gestures/buttons: apply inset on the bar itself so there is no
+     * extra band between fragment content and the icons beyond this single inset.
+     */
+    @Override
+    protected void onStart() {
+        super.onStart();
+        if (bottomNav == null) {
+            return;
         }
-        return false;
+        final int padTop = dp(6);
+        final int padBottom = dp(3);
+        ViewCompat.setOnApplyWindowInsetsListener(bottomNav, (v, insets) -> {
+            int sys = insets.getInsets(WindowInsetsCompat.Type.navigationBars()).bottom;
+            v.setPadding(0, padTop, 0, padBottom + sys);
+            return insets;
+        });
+        ViewCompat.requestApplyInsets(bottomNav);
     }
 
     /**

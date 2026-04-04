@@ -105,7 +105,6 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        SystemBarHelper.applyStandardNavBar(this);
         // Bind or inflate the UI pieces this method needs before it can update the screen.
         binding = ActivityPostDetailBinding.inflate(getLayoutInflater());
         setContentView(binding.getRoot());

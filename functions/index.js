@@ -7832,6 +7832,139 @@ exports.recordForumPost = secureOnCall(async (request) => {
     }
 });
 
+/**
+ * Reverses the daily post increment if the client-side upload or write fails.
+ */
+exports.rollbackForumPostRecord = secureOnCall(async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
+
+    const userId = request.auth.uid;
+    const today = new Date().toISOString().slice(0, 10);
+    const postLimitRef = db.collection("users").doc(userId).collection("settings").doc("forumPostLimits");
+
+    try {
+        await db.runTransaction(async (t) => {
+            const snap = await t.get(postLimitRef);
+            if (!snap.exists) return;
+
+            const data = snap.data();
+            if (data.date !== today) return;
+
+            const currentCount = typeof data.locationPostsToday === "number" ? data.locationPostsToday : 0;
+            if (currentCount > 0) {
+                t.update(postLimitRef, {
+                    locationPostsToday: currentCount - 1,
+                    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+                });
+            }
+        });
+        return { success: true };
+    } catch (error) {
+        logger.error("rollbackForumPostRecord failed:", error);
+        throw new HttpsError("internal", "Failed to rollback post record.");
+    }
+});
+
+// ======================================================
+// archiveStaleHotspots (scheduled, every 6 hours)
+// ======================================================
+async function _archiveStaleHotspotsCore() {
+    logger.info("_archiveStaleHotspotsCore: starting.");
+
+    const lockRef = db.collection("schedulerLocks").doc("archiveStaleHotspots");
+    const STALE_LOCK_MS = 15 * 60 * 1000;
+    const lockAcquired = await db.runTransaction(async (t) => {
+        const lockDoc = await t.get(lockRef);
+        if (lockDoc.exists) {
+            const startedAt = lockDoc.data().startedAt?.toDate();
+            if (startedAt && (Date.now() - startedAt.getTime()) < STALE_LOCK_MS) return false;
+        }
+        t.set(lockRef, { startedAt: admin.firestore.FieldValue.serverTimestamp() });
+        return true;
+    });
+
+    if (!lockAcquired) {
+        logger.info("_archiveStaleHotspotsCore: another instance is running. Skipping.");
+        return { status: "skipped", message: "Archive already in progress." };
+    }
+
+    try {
+        const THREE_DAYS_MS = 3 * 24 * 60 * 60 * 1000;
+        const cutoffDate = new Date(Date.now() - THREE_DAYS_MS);
+
+        const staleSummariesSnap = await db.collection("hotspotVoteSummaries")
+            .where("updatedAt", "<", cutoffDate)
+            .get();
+
+        if (staleSummariesSnap.empty) {
+            logger.info("_archiveStaleHotspotsCore: no stale hotspots found.");
+            return { status: "success", message: "No stale hotspots to archive." };
+        }
+
+        let archivedCount = 0;
+        for (const summaryDoc of staleSummariesSnap.docs) {
+            const hotspotId = summaryDoc.id;
+            const summaryData = summaryDoc.data();
+
+            // Archive the root summary (which contains the aggregated 'birds' map)
+            await db.collection("hotspotVoteSummaries_backlog").doc(hotspotId).set({
+                ...summaryData,
+                archivedAt: admin.firestore.FieldValue.serverTimestamp(),
+            });
+
+            // Archive bird sub-summaries
+            const birdsSnap = await summaryDoc.ref.collection("birds").get();
+            const batch = db.batch();
+            for (const birdDoc of birdsSnap.docs) {
+                batch.set(db.collection("hotspotVoteSummaries_backlog").doc(hotspotId)
+                    .collection("birds").doc(birdDoc.id), birdDoc.data());
+                batch.delete(birdDoc.ref);
+            }
+
+            // Archive the votes themselves for data science/location tracking
+            const votesSnap = await db.collection("hotspotVotes").doc(hotspotId).collection("birds").get();
+            for (const birdVoteDoc of votesSnap.docs) {
+                const birdKey = birdVoteDoc.id;
+                const individualVotesSnap = await birdVoteDoc.ref.collection("votes").get();
+                for (const voteDoc of individualVotesSnap.docs) {
+                    batch.set(db.collection("hotspotVotes_backlog").doc(hotspotId)
+                        .collection("birds").doc(birdKey).collection("votes").doc(voteDoc.id), voteDoc.data());
+                    batch.delete(voteDoc.ref);
+                }
+                batch.delete(birdVoteDoc.ref);
+            }
+
+            batch.delete(summaryDoc.ref);
+            batch.delete(db.collection("hotspotVotes").doc(hotspotId));
+
+            await batch.commit();
+            archivedCount++;
+        }
+
+        const summary = `Archived ${archivedCount} stale hotspots.`;
+        logger.info(`_archiveStaleHotspotsCore: done. ${summary}`);
+        return { status: "success", message: summary };
+
+    } finally {
+        await lockRef.delete().catch(e => logger.error("_archiveStaleHotspotsCore: failed to release lock.", e));
+    }
+}
+
+exports.archiveStaleHotspots = onSchedule({
+    schedule: "every 6 hours",
+    timeZone: "America/New_York",
+    timeoutSeconds: 540,
+}, async (event) => {
+    try { await _archiveStaleHotspotsCore(); }
+    catch (error) { logger.error("Scheduled archiveStaleHotspots failed:", error); }
+    return null;
+});
+
+exports.triggerArchiveStaleHotspots = secureOnCall(async (request) => {
+    try { return await _archiveStaleHotspotsCore(); }
+    catch (error) { throw new HttpsError("internal", error.message); }
+});
+
 // ======================================================
 // Forum write callables — backend-authoritative create/edit paths
 // ======================================================

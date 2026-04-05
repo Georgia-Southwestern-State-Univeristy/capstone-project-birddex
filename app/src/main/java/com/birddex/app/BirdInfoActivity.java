@@ -42,6 +42,10 @@ public class BirdInfoActivity extends AppCompatActivity {
     private String identificationLogId;
     private String identificationId;
     private String currentSelectionSource;
+    @Nullable
+    private String preselectedSightingQuantity;
+    @Nullable
+    private String captureSource;
 
     private Double currentLatitude;
     private Double currentLongitude;
@@ -146,6 +150,8 @@ public class BirdInfoActivity extends AppCompatActivity {
         identificationLogId = getIntent().getStringExtra("identificationLogId");
         identificationId = getIntent().getStringExtra("identificationId");
         currentSelectionSource = getIntent().getStringExtra("selectionSource");
+        preselectedSightingQuantity = getIntent().getStringExtra(IdentifyingActivity.EXTRA_PRESELECTED_SIGHTING_QUANTITY);
+        captureSource = getIntent().getStringExtra(CaptureGuardHelper.EXTRA_CAPTURE_SOURCE);
         awardPoints = getIntent().getBooleanExtra("awardPoints", true);
         pointAwardBlockReason = getIntent().getStringExtra("pointAwardBlockReason");
         pointAwardUserMessage = getIntent().getStringExtra("pointAwardUserMessage");
@@ -178,7 +184,7 @@ public class BirdInfoActivity extends AppCompatActivity {
         updateBirdUi();
 
         rgQuantity.setOnCheckedChangeListener((group, checkedId) -> {
-            if (awardPoints) {
+            if (showBirdInfoQuantitySelector()) {
                 btnStore.setEnabled(checkedId != -1);
             }
         });
@@ -510,17 +516,32 @@ public class BirdInfoActivity extends AppCompatActivity {
         storeClicked.set(false);
     }
 
-    private void configureQuantityUi() {
-        if (awardPoints) {
-            if (layoutQuantity != null) layoutQuantity.setAlpha(1f);
-            setQuantityOptionsEnabled(true);
-            btnStore.setEnabled(rgQuantity.getCheckedRadioButtonId() != -1);
-        } else {
-            rgQuantity.clearCheck();
-            if (layoutQuantity != null) layoutQuantity.setAlpha(0.45f);
-            setQuantityOptionsEnabled(false);
-            btnStore.setEnabled(true);
+    /**
+     * In-app camera: quantity is collected on IdentifyingActivity before AI.
+     * Gallery upload: no quantity prompt anywhere in the flow.
+     */
+    private boolean showBirdInfoQuantitySelector() {
+        if (CaptureGuardHelper.CAPTURE_SOURCE_GALLERY_IMPORT.equals(captureSource)) {
+            return false;
         }
+        if (preselectedSightingQuantity != null && !preselectedSightingQuantity.trim().isEmpty()) {
+            return false;
+        }
+        return true;
+    }
+
+    private void configureQuantityUi() {
+        if (!showBirdInfoQuantitySelector()) {
+            if (layoutQuantity != null) layoutQuantity.setVisibility(View.GONE);
+            btnStore.setEnabled(true);
+            return;
+        }
+        if (layoutQuantity != null) {
+            layoutQuantity.setVisibility(View.VISIBLE);
+            layoutQuantity.setAlpha(1f);
+        }
+        setQuantityOptionsEnabled(true);
+        btnStore.setEnabled(rgQuantity.getCheckedRadioButtonId() != -1);
     }
 
     private void setQuantityOptionsEnabled(boolean enabled) {
@@ -533,7 +554,10 @@ public class BirdInfoActivity extends AppCompatActivity {
     }
 
     private String getSelectedQuantity() {
-        if (!awardPoints) {
+        if (!showBirdInfoQuantitySelector()) {
+            if (preselectedSightingQuantity != null && !preselectedSightingQuantity.trim().isEmpty()) {
+                return preselectedSightingQuantity.trim();
+            }
             return null;
         }
 

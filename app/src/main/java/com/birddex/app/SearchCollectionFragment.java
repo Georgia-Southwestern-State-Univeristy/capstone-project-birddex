@@ -207,7 +207,8 @@ public class SearchCollectionFragment extends Fragment {
             // Move into the next screen and pass the identifiers/data that screen needs.
             startActivity(new Intent(getContext(), CropActivity.class)
                     .putExtra(CropActivity.EXTRA_IMAGE_URI, uri.toString())
-                    .putExtra(CropActivity.EXTRA_AWARD_POINTS, false));
+                    .putExtra(CropActivity.EXTRA_AWARD_POINTS, false)
+                    .putExtra(CaptureGuardHelper.EXTRA_CAPTURE_SOURCE, CaptureGuardHelper.CAPTURE_SOURCE_GALLERY_IMPORT));
         }
     }
 

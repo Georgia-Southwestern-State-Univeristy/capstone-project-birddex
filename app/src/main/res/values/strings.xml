@@ -128,4 +128,10 @@
     <!-- BirdImageLoader Strings -->
     <string name="searching_reference_photo">Finding image...</string>
     <string name="reference_photo_unavailable">Reference photo unavailable</string>
+
+    <!-- Identification (pre-AI, camera capture only) -->
+    <string name="identify_how_many_birds">How many birds did you see?</string>
+    <string name="identify_after_quantity_hint">Choose a range, then continue.</string>
+    <string name="identifying_bird">Identifying bird…</string>
+    <string name="btn_identify_bird">Identify bird</string>
 </resources>

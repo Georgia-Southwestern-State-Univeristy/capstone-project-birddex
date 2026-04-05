@@ -16,8 +16,71 @@
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintTop_toTopOf="parent"
-        app:layout_constraintBottom_toTopOf="@+id/pbLoading"
+        app:layout_constraintBottom_toTopOf="@+id/layoutPreIdentifyQuantity"
         tools:srcCompat="@tools:sample/avatars" />
+
+    <LinearLayout
+        android:id="@+id/layoutPreIdentifyQuantity"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginHorizontal="24dp"
+        android:layout_marginTop="8dp"
+        android:gravity="center"
+        android:orientation="vertical"
+        android:visibility="gone"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toBottomOf="@id/identifyingImageView"
+        app:layout_constraintBottom_toTopOf="@+id/pbLoading">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/identify_how_many_birds"
+            android:textColor="?attr/colorOnSurface"
+            android:textSize="16sp"
+            android:textStyle="bold" />
+
+        <RadioGroup
+            android:id="@+id/rgPreIdentifyQuantity"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:orientation="horizontal">
+
+            <RadioButton
+                android:id="@+id/rbPreIdentify1_3"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="1-3" />
+
+            <RadioButton
+                android:id="@+id/rbPreIdentify4_6"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="4-6" />
+
+            <RadioButton
+                android:id="@+id/rbPreIdentify7_9"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="7-9" />
+
+            <RadioButton
+                android:id="@+id/rbPreIdentify10plus"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="10+" />
+        </RadioGroup>
+
+        <Button
+            android:id="@+id/btnConfirmIdentify"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:enabled="false"
+            android:text="@string/btn_identify_bird" />
+    </LinearLayout>
 
     <ProgressBar
         android:id="@+id/pbLoading"
@@ -27,14 +90,14 @@
         app:layout_constraintBottom_toTopOf="@+id/identifyingTextView"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toBottomOf="@+id/identifyingImageView" />
+        app:layout_constraintTop_toBottomOf="@+id/layoutPreIdentifyQuantity" />
 
     <TextView
         android:id="@+id/identifyingTextView"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_marginTop="8dp"
-        android:text="Identifying bird..."
+        android:text="@string/identifying_bird"
         android:textSize="18sp"
         android:textColor="?attr/colorOnSurface"
         app:layout_constraintBottom_toBottomOf="parent"

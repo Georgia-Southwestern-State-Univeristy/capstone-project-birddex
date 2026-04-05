@@ -15,7 +15,12 @@ import android.os.Looper;
 import android.provider.MediaStore;
 import android.util.Base64;
 import android.util.Log;
+import android.view.View;
+import android.widget.Button;
 import android.widget.ImageView;
+import android.widget.ProgressBar;
+import android.widget.RadioButton;
+import android.widget.RadioGroup;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -52,6 +57,8 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
 
     private static final String TAG = "IdentifyingActivity";
     public static final String EXTRA_VERIFIED_BIRD_ID = "verifiedBirdId";
+    /** Sighting quantity chosen on this screen (in-app camera capture only), forwarded to BirdInfoActivity. */
+    public static final String EXTRA_PRESELECTED_SIGHTING_QUANTITY = "preselectedSightingQuantity";
 
     private Uri localImageUri;
     private OpenAiApi openAiApi;
@@ -81,6 +88,13 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
     private String uploadedIdentificationDownloadUrl;
     private boolean identificationImageShouldBeKept = false;
 
+    private boolean cameraCaptureFlow;
+    private View layoutPreIdentifyQuantity;
+    private RadioGroup rgPreIdentifyQuantity;
+    private Button btnConfirmIdentify;
+    @Nullable
+    private String selectedSightingQuantity;
+
     /**
      * Android calls this when the Activity is first created. This is where the screen usually
      * inflates its layout, grabs views, creates helpers, and wires listeners.
@@ -109,6 +123,9 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
         localImageUri = Uri.parse(uriStr);
         identifyingImageView.setImageURI(localImageUri);
 
+        String captureSource = getIntent().getStringExtra(CaptureGuardHelper.EXTRA_CAPTURE_SOURCE);
+        cameraCaptureFlow = CaptureGuardHelper.CAPTURE_SOURCE_CAMERA_BURST.equals(captureSource);
+
         // Burst frames are no longer needed here because the guard report was already computed
         // before this screen and passed in the intent.
         clearBurstFrameCacheAsync();
@@ -120,6 +137,12 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
         locationHelper = new LocationHelper(this, this);
         networkMonitor = new NetworkMonitor(this, this);
 
+        TextView identifyingTextView = findViewById(R.id.identifyingTextView);
+        layoutPreIdentifyQuantity = findViewById(R.id.layoutPreIdentifyQuantity);
+        rgPreIdentifyQuantity = findViewById(R.id.rgPreIdentifyQuantity);
+        btnConfirmIdentify = findViewById(R.id.btnConfirmIdentify);
+        ProgressBar pbLoading = findViewById(R.id.pbLoading);
+
         timeoutHandler = new Handler(Looper.getMainLooper());
         timeoutRunnable = () -> {
             if (identificationCompleted.compareAndSet(false, true)) {
@@ -129,7 +152,27 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
                 finishActivityWithToast("Identification timed out. Please try again.");
             }
         };
-        timeoutHandler.postDelayed(timeoutRunnable, IDENTIFICATION_TIMEOUT_MS);
+
+        if (cameraCaptureFlow) {
+            if (layoutPreIdentifyQuantity != null) layoutPreIdentifyQuantity.setVisibility(View.VISIBLE);
+            if (pbLoading != null) pbLoading.setVisibility(View.GONE);
+            if (identifyingTextView != null) {
+                identifyingTextView.setText(R.string.identify_after_quantity_hint);
+            }
+            if (btnConfirmIdentify != null) {
+                btnConfirmIdentify.setEnabled(false);
+                btnConfirmIdentify.setOnClickListener(v -> onCameraQuantityConfirmed());
+            }
+            if (rgPreIdentifyQuantity != null) {
+                rgPreIdentifyQuantity.setOnCheckedChangeListener((group, checkedId) -> {
+                    if (btnConfirmIdentify != null) {
+                        btnConfirmIdentify.setEnabled(checkedId != -1);
+                    }
+                });
+            }
+        } else {
+            if (layoutPreIdentifyQuantity != null) layoutPreIdentifyQuantity.setVisibility(View.GONE);
+        }
 
         locationPermissionLauncher = registerForActivityResult(
                 new ActivityResultContracts.RequestMultiplePermissions(),
@@ -149,6 +192,24 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
                         startIdentificationFlow(localImageUri, null, null, null, null, null);
                     }
                 });
+
+        if (!cameraCaptureFlow) {
+            requestLocationPermissions();
+        }
+    }
+
+    private void onCameraQuantityConfirmed() {
+        if (!cameraCaptureFlow || rgPreIdentifyQuantity == null) return;
+        int checkedId = rgPreIdentifyQuantity.getCheckedRadioButtonId();
+        if (checkedId == -1) return;
+        RadioButton rb = findViewById(checkedId);
+        selectedSightingQuantity = rb.getText().toString();
+
+        if (layoutPreIdentifyQuantity != null) layoutPreIdentifyQuantity.setVisibility(View.GONE);
+        ProgressBar pbLoading = findViewById(R.id.pbLoading);
+        if (pbLoading != null) pbLoading.setVisibility(View.VISIBLE);
+        TextView identifyingTextView = findViewById(R.id.identifyingTextView);
+        if (identifyingTextView != null) identifyingTextView.setText(R.string.identifying_bird);
 
         requestLocationPermissions();
     }
@@ -272,6 +333,11 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
             Log.e(TAG, "startIdentificationFlow: No internet connection");
             finishActivityWithToast("No internet connection.");
             return;
+        }
+
+        if (timeoutHandler != null && timeoutRunnable != null) {
+            timeoutHandler.removeCallbacks(timeoutRunnable);
+            timeoutHandler.postDelayed(timeoutRunnable, IDENTIFICATION_TIMEOUT_MS);
         }
 
         Log.d(TAG, "startIdentificationFlow: uploading identification image");
@@ -470,6 +536,14 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
                 intent.putExtra("localityName", localityName);
                 intent.putExtra("state", state);
                 intent.putExtra("country", country);
+            }
+
+            String capSrc = getIntent().getStringExtra(CaptureGuardHelper.EXTRA_CAPTURE_SOURCE);
+            if (capSrc != null) {
+                intent.putExtra(CaptureGuardHelper.EXTRA_CAPTURE_SOURCE, capSrc);
+            }
+            if (selectedSightingQuantity != null && !selectedSightingQuantity.trim().isEmpty()) {
+                intent.putExtra(EXTRA_PRESELECTED_SIGHTING_QUANTITY, selectedSightingQuantity.trim());
             }
 
             startActivity(intent);

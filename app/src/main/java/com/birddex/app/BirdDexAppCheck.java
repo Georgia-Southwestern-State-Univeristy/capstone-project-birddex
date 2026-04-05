@@ -72,8 +72,10 @@ public class BirdDexAppCheck extends Application {
              * apply consistently on every BirdDex screen (including activities that used to call
              * {@link SystemBarHelper#applyStandardNavBar(Activity)} before {@code setContentView}).
              * <p>
-             * The work is posted to the next frame so we do not reparent the content view while
-             * splash/entry animations are running (which would cancel them and block navigation).
+             * The work is posted to the next frame so layout is stable. Splash uses
+             * {@link SystemBarHelper#applySplashWindowBars(Activity)} only (no reparenting) so
+             * entry animations still complete; other screens use
+             * {@link SystemBarHelper#applyStandardNavBar(Activity)}.
              */
             @Override
             public void onActivityPostCreated(@NonNull Activity activity, @Nullable Bundle savedInstanceState) {
@@ -136,6 +138,8 @@ public class BirdDexAppCheck extends Application {
         if (!name.startsWith("com.birddex.app.")) {
             return;
         }
+        // Splash must not use applyStandardNavBar: reparenting the content view cancels View
+        // animations and onAnimationEnd never runs, so the app never leaves SplashActivity.
         if (activity instanceof SplashActivity) {
             SystemBarHelper.applySplashWindowBars(activity);
         } else {

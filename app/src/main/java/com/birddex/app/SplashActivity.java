@@ -12,6 +12,7 @@ import androidx.appcompat.app.AppCompatActivity;
 
 import com.google.firebase.auth.FirebaseAuth;
 import com.google.firebase.auth.FirebaseUser;
+import com.google.firebase.auth.FirebaseUserMetadata;
 
 import java.util.concurrent.TimeUnit;
 
@@ -85,12 +86,16 @@ public class SplashActivity extends AppCompatActivity {
         FirebaseUser currentUser = FirebaseAuth.getInstance().getCurrentUser();
 
         if (currentUser != null) {
-            // Check if login is still valid (e.g., within 30 days)
-            long lastSignInTimestamp = currentUser.getMetadata().getLastSignInTimestamp();
+            // Only treat as stale when we have a real timestamp; 0 means unknown and would
+            // otherwise compare as billions of ms since "epoch" and wrongly sign everyone out.
+            FirebaseUserMetadata meta = currentUser.getMetadata();
+            long lastSignInTimestamp = meta != null ? meta.getLastSignInTimestamp() : 0L;
             long thirtyDaysInMillis = TimeUnit.DAYS.toMillis(30);
             long currentTime = System.currentTimeMillis();
+            boolean sessionTooOld =
+                    lastSignInTimestamp > 0 && (currentTime - lastSignInTimestamp) > thirtyDaysInMillis;
 
-            if ((currentTime - lastSignInTimestamp) > thirtyDaysInMillis) {
+            if (sessionTooOld) {
                 FirebaseAuth.getInstance().signOut();
                 navigateToWelcome();
             } else {

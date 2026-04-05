@@ -17,6 +17,7 @@ import androidx.core.content.ContextCompat;
 
 import com.google.firebase.auth.FirebaseAuth;
 import com.google.firebase.auth.FirebaseUser;
+import com.google.firebase.auth.FirebaseUserMetadata;
 import com.google.firebase.firestore.FirebaseFirestore;
 import com.google.firebase.messaging.FirebaseMessaging;
 
@@ -140,8 +141,12 @@ public class WelcomeActivity extends AppCompatActivity implements NetworkMonitor
 
         FirebaseUser currentUser = mAuth.getCurrentUser();
         if (currentUser != null) {
-            long lastSignIn = currentUser.getMetadata().getLastSignInTimestamp();
-            if ((System.currentTimeMillis() - lastSignIn) > TimeUnit.DAYS.toMillis(30)) {
+            FirebaseUserMetadata meta = currentUser.getMetadata();
+            long lastSignIn = meta != null ? meta.getLastSignInTimestamp() : 0L;
+            long now = System.currentTimeMillis();
+            boolean sessionTooOld =
+                    lastSignIn > 0 && (now - lastSignIn) > TimeUnit.DAYS.toMillis(30);
+            if (sessionTooOld) {
                 mAuth.signOut();
                 showWelcomeScreenLayout();
             } else {

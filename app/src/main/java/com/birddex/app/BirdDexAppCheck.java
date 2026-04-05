@@ -68,14 +68,10 @@ public class BirdDexAppCheck extends Application {
             public void onActivityCreated(@NonNull Activity activity, @Nullable Bundle savedInstanceState) {}
 
             /**
-             * Runs after {@code onCreate} and after the content view exists, so status-bar insets
-             * apply consistently on every BirdDex screen (including activities that used to call
-             * {@link SystemBarHelper#applyStandardNavBar(Activity)} before {@code setContentView}).
-             * <p>
-             * The work is posted to the next frame so layout is stable. Splash uses
-             * {@link SystemBarHelper#applySplashWindowBars(Activity)} only (no reparenting) so
-             * entry animations still complete; other screens use
-             * {@link SystemBarHelper#applyStandardNavBar(Activity)}.
+             * Runs after {@code onCreate} when the content view exists so system-bar insets apply
+             * consistently. Splash applies insets inside {@link SplashActivity#onCreate} before
+             * animations (skipped here). Welcome/auth screens apply immediately so the bottom nav
+             * band is correct on the first frame; other screens post one frame for layout stability.
              */
             @Override
             public void onActivityPostCreated(@NonNull Activity activity, @Nullable Bundle savedInstanceState) {
@@ -83,12 +79,20 @@ public class BirdDexAppCheck extends Application {
                 if (decor == null) {
                     return;
                 }
-                decor.post(() -> {
+                if (activity instanceof SplashActivity) {
+                    return;
+                }
+                Runnable apply = () -> {
                     if (activity.isFinishing() || activity.isDestroyed()) {
                         return;
                     }
                     applyBirdDexSystemBarsIfNeeded(activity);
-                });
+                };
+                if (usesAuthFlowImmediateSystemBars(activity)) {
+                    apply.run();
+                } else {
+                    decor.post(apply);
+                }
             }
 
             @Override
@@ -138,13 +142,15 @@ public class BirdDexAppCheck extends Application {
         if (!name.startsWith("com.birddex.app.")) {
             return;
         }
-        // Splash must not use applyStandardNavBar: reparenting the content view cancels View
-        // animations and onAnimationEnd never runs, so the app never leaves SplashActivity.
-        if (activity instanceof SplashActivity) {
-            SystemBarHelper.applySplashWindowBars(activity);
-        } else {
-            SystemBarHelper.applyStandardNavBar(activity);
-        }
+        SystemBarHelper.applyStandardNavBar(activity);
+    }
+
+    private static boolean usesAuthFlowImmediateSystemBars(@NonNull Activity activity) {
+        return activity instanceof WelcomeActivity
+                || activity instanceof LoginActivity
+                || activity instanceof SignUpActivity
+                || activity instanceof SignUpCompleteActivity
+                || activity instanceof ForgotPasswordActivity;
     }
 
     /**

@@ -35,6 +35,7 @@ public class SplashActivity extends AppCompatActivity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_splash);
+        SystemBarHelper.applyStandardNavBar(this);
 
         // Bind or inflate the UI pieces this method needs before it can update the screen.
         View splashRoot = findViewById(R.id.splashRoot);

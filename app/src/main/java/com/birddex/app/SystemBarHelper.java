@@ -48,20 +48,6 @@ public final class SystemBarHelper {
     }
 
     /**
-     * Splash / launch: same navigation bar treatment as {@link #applyStandardNavBar(Activity)}
-     * but keeps {@code decorFitsSystemWindows(true)} and does not reparent the content view.
-     * Reparenting while {@link android.view.animation.Animation} is running can cancel callbacks
-     * and block the handoff to {@link LoadingActivity}.
-     */
-    public static void applySplashWindowBars(Activity activity) {
-        if (activity == null) return;
-
-        WindowCompat.setDecorFitsSystemWindows(activity.getWindow(), true);
-        applyNavigationBarColorsAndAppearance(activity);
-        activity.getWindow().setStatusBarColor(ContextCompat.getColor(activity, R.color.nav_brown));
-    }
-
-    /**
      * Same navigation bar coloring as {@link #applyStandardNavBar(Activity)} for a secondary
      * window (bottom sheets, dialogs) so the system nav area matches the app when those UIs draw
      * edge-to-edge.

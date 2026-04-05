@@ -550,8 +550,16 @@ public class CreatePostActivity extends AppCompatActivity {
      * or needs attention.
      */
     private void uploadImageAndPost(String msg) {
+        String uid = mAuth.getUid();
+        if (uid == null) {
+            viewModel.isPostInProgress.set(false);
+            setPostingUi(false);
+            Toast.makeText(this, "User not signed in", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
         String id = UUID.randomUUID().toString();
-        StorageReference ref = storage.getReference().child("forum_post_images/" + id + ".jpg");
+        StorageReference ref = storage.getReference().child("forum_post_images/" + uid + "/" + id + ".jpg");
         ref.putFile(selectedImageUri)
                 .addOnSuccessListener(ts -> ref.getDownloadUrl().addOnSuccessListener(uri -> {
                     if (isFinishing() || isDestroyed()) return;
@@ -561,6 +569,8 @@ public class CreatePostActivity extends AppCompatActivity {
                 }))
                 .addOnFailureListener(e -> {
                     if (isFinishing() || isDestroyed()) return;
+                    // Roll back the post limit record if the upload fails
+                    firebaseManager.rollbackForumPostRecord(binding.swShowLocation.isChecked());
                     // Persist the new state so the action is saved outside the current screen.
                     viewModel.isPostInProgress.set(false);
                     setPostingUi(false);
@@ -611,6 +621,10 @@ public class CreatePostActivity extends AppCompatActivity {
             @Override
             public void onFailure(String errorMessage) {
                 if (isFinishing() || isDestroyed()) return;
+
+                // Roll back the post limit record if the Firestore write fails
+                firebaseManager.rollbackForumPostRecord(binding.swShowLocation.isChecked());
+
                 viewModel.isPostInProgress.set(false);
                 setPostingUi(false);
 

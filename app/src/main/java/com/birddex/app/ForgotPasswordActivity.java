@@ -27,7 +27,7 @@ public class ForgotPasswordActivity extends AppCompatActivity {
 
     private static final String TAG = "ForgotPasswordActivity";
     private FirebaseManager firebaseManager;
-    private sign_IN_upValidator signINupValidator;
+    private SignInUpValidator signINupValidator;
 
     private EditText forgotPasswordEmailEditText;
     private Button btnSendReset;
@@ -50,7 +50,7 @@ public class ForgotPasswordActivity extends AppCompatActivity {
 
         // Set up or query the Firebase layer that supplies/stores this feature's data.
         firebaseManager = new FirebaseManager(this);
-        signINupValidator = new sign_IN_upValidator();
+        signINupValidator = new SignInUpValidator();
 
         // Bind or inflate the UI pieces this method needs before it can update the screen.
         forgotPasswordEmailEditText = findViewById(R.id.etForgotEmail);

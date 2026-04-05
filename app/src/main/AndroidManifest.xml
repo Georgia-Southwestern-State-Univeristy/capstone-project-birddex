@@ -86,10 +86,7 @@
             android:name=".NotMyBirdActivity"
             android:exported="false"
             android:screenOrientation="portrait" />
-        <activity
-            android:name=".AiLoadingActivity"
-            android:exported="false"
-            android:screenOrientation="portrait" />
+
         <activity
             android:name=".AiCompLoadingActivity"
             android:exported="false"
@@ -173,11 +170,6 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
-
-        <activity
-            android:name=".LoadingActivity"
-            android:exported="false"
-            android:screenOrientation="portrait" />
 
         <activity
             android:name=".WelcomeActivity"

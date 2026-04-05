@@ -71,57 +71,12 @@
 
 # These are also model/data classes that are likely to be serialized,
 # mapped, or passed around in Firebase-heavy flows.
--keep class com.birddex.app.UserBird {
-    public <init>();
-    *;
-}
-
--keep class com.birddex.app.UserBirdSighting {
-    public <init>();
-    *;
-}
-
--keep class com.birddex.app.UserBirdImage {
-    public <init>();
-    *;
-}
-
--keep class com.birddex.app.BirdFact {
-    public <init>();
-    *;
-}
-
 -keep class com.birddex.app.Report {
     public <init>();
     *;
 }
 
--keep class com.birddex.app.HunterSighting {
-    public <init>();
-    *;
-}
-
--keep class com.birddex.app.Identification {
-    public <init>();
-    *;
-}
-
--keep class com.birddex.app.Location {
-    public <init>();
-    *;
-}
-
--keep class com.birddex.app.Media {
-    public <init>();
-    *;
-}
-
 -keep class com.birddex.app.UserSettings {
-    public <init>();
-    *;
-}
-
--keep class com.birddex.app.BirdCard {
     public <init>();
     *;
 }

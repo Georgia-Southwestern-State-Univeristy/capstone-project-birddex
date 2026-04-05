@@ -19,7 +19,7 @@ import com.google.firebase.auth.FirebaseUser;
 public class LoginActivity extends AppCompatActivity {
 
     private FirebaseManager firebaseManager;
-    private sign_IN_upValidator signINupValidator;
+    private SignInUpValidator signINupValidator;
 
     private EditText emailEditText;
     private EditText passwordEditText;
@@ -33,7 +33,7 @@ public class LoginActivity extends AppCompatActivity {
         setContentView(R.layout.activity_login);
 
         firebaseManager = new FirebaseManager(this);
-        signINupValidator = new sign_IN_upValidator();
+        signINupValidator = new SignInUpValidator();
 
         emailEditText = findViewById(R.id.etEmail);
         passwordEditText = findViewById(R.id.etPassword);

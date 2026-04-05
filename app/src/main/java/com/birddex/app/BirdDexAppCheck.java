@@ -94,8 +94,7 @@ public class BirdDexAppCheck extends Application {
                 currentActivity = activity;
                 // Only start listening if user is logged in and we are not on login/welcome screens
                 if (!(activity instanceof LoginActivity || activity instanceof WelcomeActivity || 
-                      activity instanceof SignUpActivity || activity instanceof SplashActivity || 
-                      activity instanceof LoadingActivity)) {
+                      activity instanceof SignUpActivity || activity instanceof SplashActivity)) {
                     startSessionListener();
                 }
             }
@@ -115,8 +114,7 @@ public class BirdDexAppCheck extends Application {
             @Override
             public void onActivityStopped(@NonNull Activity activity) {
                 if (!(activity instanceof LoginActivity || activity instanceof WelcomeActivity || 
-                      activity instanceof SignUpActivity || activity instanceof SplashActivity || 
-                      activity instanceof LoadingActivity)) {
+                      activity instanceof SignUpActivity || activity instanceof SplashActivity)) {
                     stopSessionListener();
                 }
             }

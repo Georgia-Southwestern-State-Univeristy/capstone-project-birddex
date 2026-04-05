@@ -25,7 +25,7 @@ import com.google.firebase.auth.FirebaseUser;
 public class SignUpActivity extends AppCompatActivity {
 
     private FirebaseManager firebaseManager;
-    private sign_IN_upValidator signINupValidator;
+    private SignInUpValidator signINupValidator;
     private View loadingOverlay;
     private Button btnSignUp;
     private boolean isNavigating = false;
@@ -51,7 +51,7 @@ public class SignUpActivity extends AppCompatActivity {
 
         // Set up or query the Firebase layer that supplies/stores this feature's data.
         firebaseManager = new FirebaseManager(this);
-        signINupValidator = new sign_IN_upValidator();
+        signINupValidator = new SignInUpValidator();
         // Bind or inflate the UI pieces this method needs before it can update the screen.
         loadingOverlay = findViewById(R.id.loadingOverlay);
 

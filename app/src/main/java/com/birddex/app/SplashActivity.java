@@ -10,6 +10,11 @@ import android.view.animation.AnimationUtils;
 
 import androidx.appcompat.app.AppCompatActivity;
 
+import com.google.firebase.auth.FirebaseAuth;
+import com.google.firebase.auth.FirebaseUser;
+
+import java.util.concurrent.TimeUnit;
+
 /**
  * SplashActivity: Very early launch entry point used before handing off to the real loading/login flow.
  *
@@ -62,10 +67,8 @@ public class SplashActivity extends AppCompatActivity {
 
             @Override
             public void onAnimationEnd(Animation animation) {
-                // Transition to LoadingActivity
-                // Move into the next screen and pass the identifiers/data that screen needs.
-                startActivity(new Intent(SplashActivity.this, LoadingActivity.class));
-                finish();
+                // Transition to appropriate activity based on auth state
+                checkAuthAndProceed();
                 // Smooth transition without blinking
                 overridePendingTransition(android.R.anim.fade_in, android.R.anim.fade_out);
             }
@@ -73,5 +76,38 @@ public class SplashActivity extends AppCompatActivity {
             @Override
             public void onAnimationRepeat(Animation animation) {}
         });
+    }
+
+    /**
+     * Checks if the user is signed in and if the session is still valid.
+     */
+    private void checkAuthAndProceed() {
+        FirebaseUser currentUser = FirebaseAuth.getInstance().getCurrentUser();
+
+        if (currentUser != null) {
+            // Check if login is still valid (e.g., within 30 days)
+            long lastSignInTimestamp = currentUser.getMetadata().getLastSignInTimestamp();
+            long thirtyDaysInMillis = TimeUnit.DAYS.toMillis(30);
+            long currentTime = System.currentTimeMillis();
+
+            if ((currentTime - lastSignInTimestamp) > thirtyDaysInMillis) {
+                FirebaseAuth.getInstance().signOut();
+                navigateToWelcome();
+            } else {
+                // Move into the next screen.
+                startActivity(new Intent(SplashActivity.this, HomeActivity.class));
+                finish();
+            }
+        } else {
+            navigateToWelcome();
+        }
+    }
+
+    /**
+     * Moves the user to the WelcomeActivity.
+     */
+    private void navigateToWelcome() {
+        startActivity(new Intent(SplashActivity.this, WelcomeActivity.class));
+        finish();
     }
 }

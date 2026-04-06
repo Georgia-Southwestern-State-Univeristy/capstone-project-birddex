@@ -24,6 +24,7 @@ import java.util.Locale;
 public final class CaptureGuardHelper {
 
     public static final String CAPTURE_SOURCE_CAMERA_BURST = "camera_burst";
+    public static final String CAPTURE_SOURCE_EXTERNAL_CAMERA = "external_camera";
     public static final String CAPTURE_SOURCE_GALLERY_IMPORT = "gallery_import";
     public static final String CAPTURE_SOURCE_UNKNOWN = "unknown";
 

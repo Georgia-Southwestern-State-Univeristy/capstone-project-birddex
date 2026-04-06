@@ -11,6 +11,7 @@ import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
 import android.view.LayoutInflater;
+import android.view.MotionEvent;
 import android.view.ScaleGestureDetector;
 import android.view.View;
 import android.view.ViewGroup;
@@ -24,10 +25,17 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.camera.core.Camera;
 import androidx.camera.core.CameraSelector;
+import androidx.camera.core.FocusMeteringAction;
 import androidx.camera.core.ImageCapture;
 import androidx.camera.core.ImageCaptureException;
+import androidx.camera.core.MeteringPoint;
+import androidx.camera.core.MeteringPointFactory;
 import androidx.camera.core.Preview;
+import androidx.camera.core.SurfaceOrientedMeteringPointFactory;
 import androidx.camera.core.ZoomState;
+import androidx.camera.core.resolutionselector.AspectRatioStrategy;
+import androidx.camera.core.resolutionselector.ResolutionSelector;
+import androidx.camera.core.resolutionselector.ResolutionStrategy;
 import androidx.camera.lifecycle.ProcessCameraProvider;
 import androidx.camera.view.PreviewView;
 import androidx.core.app.ActivityCompat;
@@ -103,7 +111,13 @@ public class CameraFragment extends Fragment {
             }
         });
 
-        previewView.setOnTouchListener((view, event) -> { scaleGestureDetector.onTouchEvent(event); return true; });
+        previewView.setOnTouchListener((view, event) -> {
+            scaleGestureDetector.onTouchEvent(event);
+            if (event.getAction() == MotionEvent.ACTION_UP) {
+                tapToFocus(event.getX(), event.getY());
+            }
+            return true;
+        });
 
         cameraPermissionLauncher = registerForActivityResult(new ActivityResultContracts.RequestPermission(), granted -> {
             if (granted) startCamera();
@@ -191,19 +205,46 @@ public class CameraFragment extends Fragment {
     /**
      * Connects already-fetched data to views so the user can see the current state.
      */
+    @androidx.annotation.OptIn(markerClass = androidx.camera.core.ExperimentalZeroShutterLag.class)
     private void bindCameraUseCases() {
         if (cameraProvider == null) return;
         cameraProvider.unbindAll();
+
         CameraSelector selector = new CameraSelector.Builder().requireLensFacing(lensFacing).build();
-        Preview preview = new Preview.Builder().build();
+
+        // Use 4:3 Aspect Ratio and Highest Available Resolution for maximum sensor data
+        ResolutionSelector resolutionSelector = new ResolutionSelector.Builder()
+                .setAspectRatioStrategy(AspectRatioStrategy.RATIO_4_3_FALLBACK_AUTO_STRATEGY)
+                .setResolutionStrategy(ResolutionStrategy.HIGHEST_AVAILABLE_STRATEGY)
+                .build();
+
+        Preview preview = new Preview.Builder()
+                .setResolutionSelector(resolutionSelector)
+                .build();
         preview.setSurfaceProvider(previewView.getSurfaceProvider());
-        imageCapture = new ImageCapture.Builder().setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY).build();
+
+        // ZERO_SHUTTER_LAG provides high quality without breaking the speed of the anti-cheat burst
+        imageCapture = new ImageCapture.Builder()
+                .setCaptureMode(ImageCapture.CAPTURE_MODE_ZERO_SHUTTER_LAG)
+                .setResolutionSelector(resolutionSelector)
+                .setJpegQuality(100)
+                .build();
+
         camera = cameraProvider.bindToLifecycle(this, selector, preview, imageCapture);
         if (btnFlash != null) btnFlash.setEnabled(camera.getCameraInfo().hasFlashUnit());
         applyFlashState();
         if (btnFlip != null) btnFlip.setEnabled(true);
     }
 
+    private void tapToFocus(float x, float y) {
+        if (camera == null) return;
+        MeteringPointFactory factory = new SurfaceOrientedMeteringPointFactory(
+                (float) previewView.getWidth(), (float) previewView.getHeight());
+        MeteringPoint point = factory.createPoint(x, y);
+        FocusMeteringAction action = new FocusMeteringAction.Builder(point, FocusMeteringAction.FLAG_AF | FocusMeteringAction.FLAG_AE).build();
+        camera.getCameraControl().startFocusAndMetering(action);
+    }
+}
     /**
      * Main logic block for this part of the feature.
      */

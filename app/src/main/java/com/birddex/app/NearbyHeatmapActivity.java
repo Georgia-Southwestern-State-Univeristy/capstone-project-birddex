@@ -10,6 +10,8 @@ import android.graphics.Color;
 import android.graphics.Paint;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.text.Editable;
 import android.text.InputFilter;
 import android.text.InputType;
@@ -127,6 +129,11 @@ public class NearbyHeatmapActivity extends AppCompatActivity
     private LatLng lastAppliedTarget;
     private static final float MIN_ZOOM_CHANGE_TO_REFRESH = 0.5f;
     private static final float MIN_CAMERA_MOVE_TO_REFRESH_METERS = 500f;
+    /** Wait until the camera stops before reloading tiles — avoids flicker/jitter while panning or zooming. */
+    private static final long CAMERA_IDLE_DEBOUNCE_MS = 420L;
+
+    private final Handler heatmapCameraHandler = new Handler(Looper.getMainLooper());
+    private final Runnable debouncedHeatmapReloadRunnable = this::onDebouncedCameraIdleForHeatmap;
 
     private static final double DEFAULT_LAT = 32.6781;
     private static final double DEFAULT_LNG = -83.2220;
@@ -295,6 +302,7 @@ public class NearbyHeatmapActivity extends AppCompatActivity
 
     @Override
     protected void onDestroy() {
+        heatmapCameraHandler.removeCallbacks(debouncedHeatmapReloadRunnable);
         super.onDestroy();
         for (ListenerRegistration lr : activeListeners) {
             if (lr != null) lr.remove();
@@ -653,21 +661,8 @@ public class NearbyHeatmapActivity extends AppCompatActivity
             centerLat = cp.target.latitude;
             centerLng = cp.target.longitude;
 
-            boolean shouldRefresh = false;
-            if (lastAppliedTarget == null) shouldRefresh = true;
-            else {
-                float[] res = new float[1];
-                android.location.Location.distanceBetween(lastAppliedTarget.latitude, lastAppliedTarget.longitude, cp.target.latitude, cp.target.longitude, res);
-                if (res[0] >= MIN_CAMERA_MOVE_TO_REFRESH_METERS || Math.abs(cp.zoom - lastAppliedZoom) >= MIN_ZOOM_CHANGE_TO_REFRESH)
-                    shouldRefresh = true;
-            }
-
-            if (shouldRefresh) {
-                lastAppliedTarget = cp.target;
-                lastAppliedZoom = cp.zoom;
-                fetchHeatmapData();
-                loadForumPins();
-            }
+            heatmapCameraHandler.removeCallbacks(debouncedHeatmapReloadRunnable);
+            heatmapCameraHandler.postDelayed(debouncedHeatmapReloadRunnable, CAMERA_IDLE_DEBOUNCE_MS);
         });
 
         googleMap.setOnMapLoadedCallback(() -> {
@@ -680,6 +675,39 @@ public class NearbyHeatmapActivity extends AppCompatActivity
                 loadForumPins();
             }
         });
+    }
+
+    /**
+     * Runs shortly after the camera stops moving. Reloading heatmap tiles on every intermediate
+     * {@link GoogleMap.OnCameraIdleListener} frame caused visible flicker; debouncing keeps the map stable while panning/zooming.
+     */
+    private void onDebouncedCameraIdleForHeatmap() {
+        if (googleMap == null || isFinishing()) return;
+        CameraPosition cp = googleMap.getCameraPosition();
+        currentVisibleBounds = googleMap.getProjection().getVisibleRegion().latLngBounds;
+        centerLat = cp.target.latitude;
+        centerLng = cp.target.longitude;
+
+        boolean shouldRefresh = false;
+        if (lastAppliedTarget == null) {
+            shouldRefresh = true;
+        } else {
+            float[] res = new float[1];
+            android.location.Location.distanceBetween(
+                    lastAppliedTarget.latitude, lastAppliedTarget.longitude,
+                    cp.target.latitude, cp.target.longitude, res);
+            if (res[0] >= MIN_CAMERA_MOVE_TO_REFRESH_METERS
+                    || Math.abs(cp.zoom - lastAppliedZoom) >= MIN_ZOOM_CHANGE_TO_REFRESH) {
+                shouldRefresh = true;
+            }
+        }
+
+        if (shouldRefresh) {
+            lastAppliedTarget = cp.target;
+            lastAppliedZoom = cp.zoom;
+            fetchHeatmapData();
+            loadForumPins();
+        }
     }
 
     private void markPostViewedFromHeatmap(String userId, ForumPost post, TextView tvViewCount) {

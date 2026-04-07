@@ -47,6 +47,8 @@ const {
   generateAndSaveBirdFacts,
   generateAndSaveHunterFacts,
   getOrCreateAndSaveBirdFacts,
+  timestampToMillis,
+  createModerationAppealRef,
   functions,
   auth,
   admin,

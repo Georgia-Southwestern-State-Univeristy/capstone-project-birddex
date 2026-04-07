@@ -47,6 +47,7 @@ const {
   generateAndSaveBirdFacts,
   generateAndSaveHunterFacts,
   getOrCreateAndSaveBirdFacts,
+  buildInitialUserModerationFields,
   functions,
   auth,
   admin,

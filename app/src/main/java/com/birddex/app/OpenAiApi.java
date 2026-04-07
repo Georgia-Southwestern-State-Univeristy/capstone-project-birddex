@@ -11,6 +11,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 /**
  * OpenAiApi is a helper class for Cloud Function calls related to BirdDex identification.
@@ -80,7 +81,10 @@ public class OpenAiApi {
         Map<String, Object> data = new HashMap<>();
         data.put("image", base64Image);
         data.put("imageUrl", imageUrl);
-        data.put("requestId", requestId);
+        String safeRequestId = (requestId != null && !requestId.trim().isEmpty())
+                ? requestId
+                : UUID.randomUUID().toString();
+        data.put("requestId", safeRequestId);
 
         CaptureGuardHelper.GuardReport safeReport = captureGuardReport != null
                 ? captureGuardReport
@@ -158,7 +162,10 @@ public class OpenAiApi {
         data.put("image", base64Image);
         data.put("imageUrl", imageUrl);
         data.put("identificationLogId", identificationLogId);
-        data.put("requestId", requestId);
+        String safeRequestId = (requestId != null && !requestId.trim().isEmpty())
+                ? requestId
+                : UUID.randomUUID().toString();
+        data.put("requestId", safeRequestId);
 
         FirebaseFunctions.getInstance()
                 .getHttpsCallable("reviewBirdAlternatives")

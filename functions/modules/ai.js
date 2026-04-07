@@ -133,15 +133,11 @@ async function findBirdByCommonName(commonName) {
  */
 async function callBirdModelApi(base64Image) {
     const serviceUrl = CONFIG.BIRDDEX_MODEL_BASE_URL;
+    const targetUrl = HYBRID_ID_CONFIG.BIRDDEX_MODEL_URL;
 
-    // This gets a Google-signed ID token client for your Cloud Run service.
     const authClient = await new GoogleAuth().getIdTokenClient(serviceUrl);
 
-    // These headers include Authorization: Bearer <token>
-    const authHeaders = await authClient.getRequestHeaders(HYBRID_ID_CONFIG.BIRDDEX_MODEL_URL);
-
     const headers = {
-        ...authHeaders,
         "Content-Type": "application/json",
     };
 
@@ -150,30 +146,193 @@ async function callBirdModelApi(base64Image) {
         headers["X-Internal-Api-Key"] = internalKey;
     }
 
-    const response = await axios.post(
-        HYBRID_ID_CONFIG.BIRDDEX_MODEL_URL,
-        {
+    const response = await authClient.request({
+        url: targetUrl,
+        method: "POST",
+        data: {
             imageBase64: base64Image,
             topK: HYBRID_ID_CONFIG.MODEL_TOP_K,
         },
-        {
-            headers,
-            timeout: 30000,
-        }
-    );
+        headers,
+        timeout: 30000,
+    });
 
-    const rawPredictions = Array.isArray(response.data?.top_predictions)
-        ? response.data.top_predictions
+    const responseData = response.data || {};
+    const rawTopPredictions = Array.isArray(responseData?.top_predictions)
+        ? responseData.top_predictions
         : [];
+    const rawMainPredictions = Array.isArray(responseData?.main_model_top_predictions)
+        ? responseData.main_model_top_predictions
+        : rawTopPredictions;
 
-    if (!rawPredictions.length) {
+    const topPredictions = rawTopPredictions.map(normalizeModelPrediction).filter(Boolean);
+    const mainModelTopPredictions = rawMainPredictions.map(normalizeModelPrediction).filter(Boolean);
+
+    if (!topPredictions.length) {
         throw new HttpsError("internal", "Bird model returned no predictions.");
     }
 
-    return rawPredictions.map((prediction) => ({
-        commonName: prediction.commonName || prediction.species || prediction.label || null,
+    return {
+        topPredictions,
+        mainModelTopPredictions: mainModelTopPredictions.length ? mainModelTopPredictions : topPredictions,
+        reranker: buildRerankerResultPayload(responseData?.reranker, rawMainPredictions, rawTopPredictions),
+        filename: typeof responseData?.filename === "string" ? responseData.filename : null,
+    };
+}
+
+/**
+ * Helper: Normalizes a single Cloud Run bird prediction object.
+ */
+function normalizeModelPrediction(prediction) {
+    if (!prediction || typeof prediction !== "object") return null;
+    const commonName = prediction.commonName || prediction.species || prediction.label || null;
+    if (!commonName) return null;
+    return {
+        commonName,
         confidence: Number(prediction.confidence || 0),
-    }));
+    };
+}
+
+/**
+ * Helper: Creates a safe normalized reranker payload from the Cloud Run response.
+ */
+function buildRerankerResultPayload(reranker, mainModelTopPredictions = [], finalTopPredictions = []) {
+    const normalizedMain = Array.isArray(mainModelTopPredictions)
+        ? mainModelTopPredictions.map(normalizeModelPrediction).filter(Boolean)
+        : [];
+    const normalizedFinal = Array.isArray(finalTopPredictions)
+        ? finalTopPredictions.map(normalizeModelPrediction).filter(Boolean)
+        : [];
+
+    const safe = reranker && typeof reranker === "object" ? reranker : {};
+    const candidatePair = Array.isArray(safe.candidate_pair)
+        ? safe.candidate_pair.filter(value => typeof value === "string" && value.trim())
+        : [];
+
+    const mainTop1 = normalizedMain[0] || null;
+    const mainTop2 = normalizedMain[1] || null;
+    const rerankerTop1 = normalizedFinal[0] || null;
+    const rerankerTop2 = normalizedFinal[1] || null;
+
+    const mainWinner = mainTop1?.commonName || null;
+    const rerankerWinner = rerankerTop1?.commonName || null;
+
+    return {
+        used: safe.used === true,
+        pairKey: typeof safe.pair_key === "string" ? safe.pair_key : null,
+        backbone: typeof safe.backbone === "string" ? safe.backbone : null,
+        candidatePair,
+        mainTop1Common: mainWinner,
+        mainTop2Common: mainTop2?.commonName || null,
+        mainTop1Confidence: mainTop1?.confidence ?? null,
+        mainTop2Confidence: mainTop2?.confidence ?? null,
+        rerankerTop1Common: rerankerWinner,
+        rerankerTop2Common: rerankerTop2?.commonName || null,
+        rerankerTop1Confidence: rerankerTop1?.confidence ?? null,
+        rerankerTop2Confidence: rerankerTop2?.confidence ?? null,
+        flippedWinner: !!(mainWinner && rerankerWinner && mainWinner !== rerankerWinner),
+    };
+}
+
+/**
+ * Helper: Writes aggregate reranker accuracy metrics once the user confirms/corrects an identification.
+ */
+async function writeRerankerAccuracyMetrics({
+    identificationLogRef,
+    identificationLogData,
+    resolvedChosenBirdId,
+    resolvedChosenCommonName,
+    action,
+    selectedSource,
+}) {
+    const rerankerLog = identificationLogData?.reranker || {};
+    if (rerankerLog.used !== true) {
+        return;
+    }
+
+    const finalResult = identificationLogData?.finalResult || {};
+    const localModel = identificationLogData?.localModel || {};
+
+    const chosenBirdId = resolvedChosenBirdId || null;
+    const chosenCommonName = resolvedChosenCommonName || null;
+
+    const mainWinnerBirdId = localModel.top1BirdId || null;
+    const mainWinnerCommon = localModel.top1Common || null;
+    const rerankerWinnerBirdId = rerankerLog.rerankerTop1BirdId || finalResult.birdId || null;
+    const rerankerWinnerCommon = rerankerLog.rerankerTop1Common || finalResult.commonName || null;
+
+    const chosenMatchesMain = !!(
+        chosenBirdId
+            ? (mainWinnerBirdId && chosenBirdId === mainWinnerBirdId)
+            : (chosenCommonName && mainWinnerCommon && chosenCommonName === mainWinnerCommon)
+    );
+    const chosenMatchesReranker = !!(
+        chosenBirdId
+            ? (rerankerWinnerBirdId && chosenBirdId === rerankerWinnerBirdId)
+            : (chosenCommonName && rerankerWinnerCommon && chosenCommonName === rerankerWinnerCommon)
+    );
+
+    const pairKey = rerankerLog.pairKey || "unknown_pair";
+    const safePairKey = pairKey.replace(/[\/\\.#$\[\]]/g, "_");
+
+    const aggregateRef = db.collection("identificationMetrics").doc("reranker_overall");
+    const pairAggregateRef = db.collection("identificationMetrics").doc(`reranker_pair_${safePairKey}`);
+
+    const aggregateUpdate = {
+        lastMeasuredAt: admin.firestore.FieldValue.serverTimestamp(),
+        totalMeasured: admin.firestore.FieldValue.increment(1),
+        mainCorrectCount: admin.firestore.FieldValue.increment(chosenMatchesMain ? 1 : 0),
+        rerankerCorrectCount: admin.firestore.FieldValue.increment(chosenMatchesReranker ? 1 : 0),
+        rerankerWinDeltaCount: admin.firestore.FieldValue.increment(
+            chosenMatchesReranker && !chosenMatchesMain ? 1 : 0
+        ),
+        rerankerLossDeltaCount: admin.firestore.FieldValue.increment(
+            chosenMatchesMain && !chosenMatchesReranker ? 1 : 0
+        ),
+    };
+
+    const pairUpdate = {
+        pairKey,
+        backbone: rerankerLog.backbone || null,
+        candidatePair: Array.isArray(rerankerLog.candidatePair) ? rerankerLog.candidatePair : [],
+        lastMeasuredAt: admin.firestore.FieldValue.serverTimestamp(),
+        totalMeasured: admin.firestore.FieldValue.increment(1),
+        mainCorrectCount: admin.firestore.FieldValue.increment(chosenMatchesMain ? 1 : 0),
+        rerankerCorrectCount: admin.firestore.FieldValue.increment(chosenMatchesReranker ? 1 : 0),
+        rerankerWinDeltaCount: admin.firestore.FieldValue.increment(
+            chosenMatchesReranker && !chosenMatchesMain ? 1 : 0
+        ),
+        rerankerLossDeltaCount: admin.firestore.FieldValue.increment(
+            chosenMatchesMain && !chosenMatchesReranker ? 1 : 0
+        ),
+    };
+
+    const measurementData = {
+        measuredAt: admin.firestore.FieldValue.serverTimestamp(),
+        action: action || null,
+        selectedSource: selectedSource || null,
+        pairKey,
+        backbone: rerankerLog.backbone || null,
+        chosenBirdId,
+        chosenCommonName,
+        mainWinnerBirdId,
+        mainWinnerCommon,
+        rerankerWinnerBirdId,
+        rerankerWinnerCommon,
+        chosenMatchesMain,
+        chosenMatchesReranker,
+    };
+
+    await identificationLogRef.set({
+        rerankerMeasurement: {
+            ...measurementData,
+        },
+    }, { merge: true });
+
+    const batch = db.batch();
+    batch.set(aggregateRef, aggregateUpdate, { merge: true });
+    batch.set(pairAggregateRef, pairUpdate, { merge: true });
+    await batch.commit();
 }
 
 /**
@@ -984,6 +1143,8 @@ async function persistHybridIdentification({
     captureSource,
     captureGuard,
     pointAwardDecision,
+    rerankerResult,
+    modelApiDiagnostics,
 }) {
     const identificationLogRef = db.collection("identificationLogs").doc();
 
@@ -1000,7 +1161,7 @@ async function persistHybridIdentification({
         timestamp: admin.firestore.FieldValue.serverTimestamp(),
         imageUrl: imageUrl || "",
         locationId: locationId || null,
-        pipelineVersion: "hybrid_v1",
+        pipelineVersion: "hybrid_v2_reranker",
         modelVersion,
         localModel: {
             top1Common: safeTop1?.commonName || null,
@@ -1023,6 +1184,32 @@ async function persistHybridIdentification({
             marginThreshold: HYBRID_ID_CONFIG.MODEL_DIRECT_MARGIN_THRESHOLD,
             tieBreakMarginThreshold: HYBRID_ID_CONFIG.MODEL_TIEBREAK_MARGIN_THRESHOLD,
             lowConfidenceThreshold: HYBRID_ID_CONFIG.MODEL_FULL_FALLBACK_CONFIDENCE_THRESHOLD,
+        },
+        reranker: {
+            used: rerankerResult?.used === true,
+            pairKey: rerankerResult?.pairKey || null,
+            backbone: rerankerResult?.backbone || null,
+            candidatePair: Array.isArray(rerankerResult?.candidatePair) ? rerankerResult.candidatePair : [],
+            mainTop1Common: rerankerResult?.mainTop1Common || null,
+            mainTop2Common: rerankerResult?.mainTop2Common || null,
+            mainTop1BirdId: birdMatch1?.id || null,
+            mainTop2BirdId: birdMatch2?.id || null,
+            mainTop1Confidence: rerankerResult?.mainTop1Confidence ?? null,
+            mainTop2Confidence: rerankerResult?.mainTop2Confidence ?? null,
+            rerankerTop1Common: rerankerResult?.rerankerTop1Common || null,
+            rerankerTop2Common: rerankerResult?.rerankerTop2Common || null,
+            rerankerTop1BirdId: finalBirdId || null,
+            rerankerTop2BirdId: null,
+            rerankerTop1Confidence: rerankerResult?.rerankerTop1Confidence ?? null,
+            rerankerTop2Confidence: rerankerResult?.rerankerTop2Confidence ?? null,
+            flippedWinner: rerankerResult?.flippedWinner === true,
+        },
+        modelApiDiagnostics: {
+            filename: modelApiDiagnostics?.filename || null,
+            topPredictionCount: Array.isArray(modelPredictions) ? modelPredictions.length : 0,
+            mainTopPredictionCount: Array.isArray(modelApiDiagnostics?.mainModelTopPredictions)
+                ? modelApiDiagnostics.mainModelTopPredictions.length
+                : 0,
         },
         openAi: {
             used: usedOpenAi,
@@ -1116,7 +1303,7 @@ async function persistHybridIdentification({
             identificationLogId: identificationLogRef.id,
             modelVersion,
             usedOpenAi,
-            pipelineVersion: "hybrid_v1",
+            pipelineVersion: "hybrid_v2_reranker",
             captureGuard: {
                 captureSource: sanitizeCaptureSource(captureSource),
                 analyzerVersion: captureGuard?.analyzerVersion || null,
@@ -1279,13 +1466,21 @@ exports.identifyBird = secureOnCall({ secrets: [OPENAI_API_KEY, BIRDDEX_MODEL_AP
 
         const locationId = await getOrCreateLocation(latitude, longitude, localityName, db, { userId });
         const userLocationContext = await getLocationContext(locationId);
-        const modelPredictions = await callBirdModelApi(image);
+        const modelApiResult = await callBirdModelApi(image);
+        const mainModelPredictions = Array.isArray(modelApiResult?.mainModelTopPredictions)
+            ? modelApiResult.mainModelTopPredictions
+            : [];
+        const modelPredictions = Array.isArray(modelApiResult?.topPredictions)
+            ? modelApiResult.topPredictions
+            : mainModelPredictions;
+        const rerankerResult = modelApiResult?.reranker || { used: false };
+
         const topBirdMatches = await Promise.all(
-            modelPredictions.slice(0, 3).map((prediction) => findBirdByCommonName(prediction.commonName))
+            mainModelPredictions.slice(0, 3).map((prediction) => findBirdByCommonName(prediction.commonName))
         );
 
-        const top1 = modelPredictions[0] || null;
-        const top2 = modelPredictions[1] || null;
+        const top1 = mainModelPredictions[0] || null;
+        const top2 = mainModelPredictions[1] || null;
         const top1Bird = normalizeBirdData(topBirdMatches[0] || null);
         const top2Bird = normalizeBirdData(topBirdMatches[1] || null);
         const top1Confidence = top1?.confidence ?? 0;
@@ -1305,10 +1500,13 @@ exports.identifyBird = secureOnCall({ secrets: [OPENAI_API_KEY, BIRDDEX_MODEL_AP
         let decisionReason = "model_confident";
 
         const needsFullFallback = !top1Bird || top1Confidence < HYBRID_ID_CONFIG.MODEL_FULL_FALLBACK_CONFIDENCE_THRESHOLD;
-        const shouldTieBreak = !!top2Bird && topMargin <= HYBRID_ID_CONFIG.MODEL_TIEBREAK_MARGIN_THRESHOLD;
         const shouldPreferModelDirect = !!top1Bird
             && top1Confidence >= HYBRID_ID_CONFIG.MODEL_DIRECT_CONFIDENCE_THRESHOLD
             && topMargin >= HYBRID_ID_CONFIG.MODEL_DIRECT_MARGIN_THRESHOLD;
+        const shouldUseReranker = rerankerResult?.used === true
+            && !!top2Bird
+            && !shouldPreferModelDirect
+            && !needsFullFallback;
 
         if (shouldPreferModelDirect) {
             finalBirdData = top1Bird;
@@ -1316,27 +1514,37 @@ exports.identifyBird = secureOnCall({ secrets: [OPENAI_API_KEY, BIRDDEX_MODEL_AP
             finalSource = "local_model";
             isVerified = true;
             finalIdentification = buildBirdIdentificationText(finalBirdId, finalBirdData);
-        } else {
-            usedOpenAi = true;
+        } else if (shouldUseReranker) {
+            const rerankerTopPrediction = modelPredictions[0] || null;
+            const rerankerTopBird = await findBirdByCommonName(rerankerTopPrediction?.commonName || null);
+            const normalizedRerankerTopBird = normalizeBirdData(rerankerTopBird || null);
 
-            if (shouldTieBreak) {
-                decisionReason = "top2_close";
-                openAiMode = "tiebreak";
-                openAiCandidates = [top1Bird, top2Bird].filter(Boolean);
-            } else if (needsFullFallback) {
-                decisionReason = !top1Bird ? "top1_not_in_supported_birds" : "low_confidence";
-                openAiMode = "full_fallback";
+            if (normalizedRerankerTopBird && normalizedRerankerTopBird.id) {
+                finalBirdData = normalizedRerankerTopBird;
+                finalBirdId = normalizedRerankerTopBird.id;
+                finalSource = "reranker_tiebreak";
+                isVerified = true;
+                finalIdentification = buildBirdIdentificationText(finalBirdId, finalBirdData);
+                decisionReason = rerankerResult?.flippedWinner === true
+                    ? "reranker_flipped_top1"
+                    : (topMargin <= HYBRID_ID_CONFIG.MODEL_TIEBREAK_MARGIN_THRESHOLD
+                        ? "reranker_top2_close"
+                        : "reranker_margin_below_direct_threshold");
             } else {
-                decisionReason = "margin_below_direct_threshold";
-                openAiMode = top2Bird ? "tiebreak" : "full_fallback";
-                openAiCandidates = top2Bird ? [top1Bird, top2Bird].filter(Boolean) : [];
+                decisionReason = "reranker_unverified";
             }
+        }
+
+        if (!isVerified) {
+            usedOpenAi = true;
+            decisionReason = decisionReason === "reranker_unverified"
+                ? "reranker_unverified_full_fallback"
+                : (!top1Bird ? "top1_not_in_supported_birds" : "low_confidence");
+            openAiMode = "full_fallback";
 
             await reserveOpenAiQuota(userRef, eventLogRef, userId);
 
-            openAiRawResponse = openAiMode === "tiebreak"
-                ? await callOpenAiBirdTieBreak(image, openAiCandidates[0], openAiCandidates[1])
-                : await callOpenAiBirdFullFallback(image);
+            openAiRawResponse = await callOpenAiBirdFullFallback(image);
 
             if (openAiRawResponse.includes("GORE")) {
                 const goreLogRef = db.collection("identificationLogs").doc();
@@ -1345,11 +1553,17 @@ exports.identifyBird = secureOnCall({ secrets: [OPENAI_API_KEY, BIRDDEX_MODEL_AP
                     timestamp: admin.firestore.FieldValue.serverTimestamp(),
                     imageUrl: imageUrl || "",
                     locationId: locationId || null,
-                    pipelineVersion: "hybrid_v1",
+                    pipelineVersion: "hybrid_v2_reranker",
                     modelVersion,
                     decision: {
                         usedOpenAi: true,
                         decisionReason,
+                    },
+                    reranker: {
+                        used: rerankerResult?.used === true,
+                        pairKey: rerankerResult?.pairKey || null,
+                        backbone: rerankerResult?.backbone || null,
+                        candidatePair: Array.isArray(rerankerResult?.candidatePair) ? rerankerResult.candidatePair : [],
                     },
                     openAi: {
                         used: true,
@@ -1409,28 +1623,25 @@ exports.identifyBird = secureOnCall({ secrets: [OPENAI_API_KEY, BIRDDEX_MODEL_AP
                 if (openAiWinnerPlausibility.locationPlausible) {
                     finalBirdData = matchedBird;
                     finalBirdId = matchedBird.id;
-                    finalSource = openAiMode === "tiebreak" ? "openai_tiebreak" : "openai_full";
+                    finalSource = "openai_full";
                     isVerified = true;
                     finalIdentification = buildBirdIdentificationText(finalBirdId, finalBirdData);
                 } else {
                     decisionReason = "openai_location_gate_blocked";
                     finalBirdData = null;
                     finalBirdId = null;
-                    finalSource = openAiMode === "tiebreak"
-                        ? "openai_tiebreak_location_blocked"
-                        : "openai_full_location_blocked";
+                    finalSource = "openai_full_location_blocked";
                     isVerified = false;
                     finalIdentification = null;
                 }
             } else {
                 finalBirdData = null;
                 finalBirdId = null;
-                finalSource = openAiMode === "tiebreak" ? "openai_tiebreak_unverified" : "openai_full_unverified";
+                finalSource = "openai_full_unverified";
                 isVerified = false;
                 finalIdentification = null;
             }
         }
-
         const persisted = await persistHybridIdentification({
             userId,
             imageUrl,
@@ -1450,6 +1661,8 @@ exports.identifyBird = secureOnCall({ secrets: [OPENAI_API_KEY, BIRDDEX_MODEL_AP
             captureSource: normalizedCaptureSource,
             captureGuard: normalizedCaptureGuard,
             pointAwardDecision,
+            rerankerResult,
+            modelApiDiagnostics: modelApiResult,
         });
 
         const finalResult = isVerified
@@ -1503,9 +1716,17 @@ exports.identifyBird = secureOnCall({ secrets: [OPENAI_API_KEY, BIRDDEX_MODEL_AP
 
         return finalResult;
     } catch (error) {
-        logger.error("Hybrid identification failed:", error);
+        const errorData = error.response?.data;
+        logger.error("Hybrid identification failed:", {
+            message: error.message,
+            data: errorData,
+            stack: error.stack,
+        });
+
         if (error instanceof HttpsError) throw error;
-        throw new HttpsError("internal", `Hybrid identification failed: ${error.message}`);
+
+        const detail = errorData ? ` (Details: ${JSON.stringify(errorData)})` : "";
+        throw new HttpsError("internal", `Hybrid identification failed: ${error.message}${detail}`);
     }
 });
 
@@ -1730,9 +1951,17 @@ exports.reviewBirdAlternatives = secureOnCall({ secrets: [OPENAI_API_KEY], timeo
 
         return response;
     } catch (error) {
-        logger.error("Alternative review failed:", error);
+        const errorData = error.response?.data;
+        logger.error("Alternative review failed:", {
+            message: error.message,
+            data: errorData,
+            stack: error.stack,
+        });
+
         if (error instanceof HttpsError) throw error;
-        throw new HttpsError("internal", `Alternative review failed: ${error.message}`);
+
+        const detail = errorData ? ` (Details: ${JSON.stringify(errorData)})` : "";
+        throw new HttpsError("internal", `Alternative review failed: ${error.message}${detail}`);
     }
 });
 
@@ -2070,6 +2299,27 @@ exports.syncIdentificationFeedback = secureOnCall(async (request) => {
             finalSelectionSupportedInDatabase: !!selectedBird,
             finalConfirmedAt: admin.firestore.FieldValue.serverTimestamp(),
         }, { merge: true });
+    }
+
+
+    if (["select_model_alternative", "select_openai_alternative", "confirm_final_choice"].includes(action)) {
+        const resolvedChosenBirdId = selectedBird?.id
+            || updatePayload?.userFeedback?.correctedBirdId
+            || identificationLogData?.finalResult?.birdId
+            || null;
+        const resolvedChosenCommonName = selectedBird?.commonName
+            || updatePayload?.userFeedback?.correctedCommonName
+            || identificationLogData?.finalResult?.commonName
+            || null;
+
+        await writeRerankerAccuracyMetrics({
+            identificationLogRef,
+            identificationLogData,
+            resolvedChosenBirdId,
+            resolvedChosenCommonName,
+            action,
+            selectedSource,
+        });
     }
 
     return syncResponse;

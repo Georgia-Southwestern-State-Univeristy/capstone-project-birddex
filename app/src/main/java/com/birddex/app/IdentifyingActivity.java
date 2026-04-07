@@ -381,7 +381,9 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
                     return;
                 }
 
-                proceedToInfoActivity(result, downloadUrl, latitude, longitude, localityName, state, country);
+                boolean awardPointsRequested = getIntent().getBooleanExtra("awardPoints", true);
+                CaptureGuardHelper.GuardReport captureGuardReport = CaptureGuardHelper.readReportFromIntent(getIntent(), awardPointsRequested);
+                proceedToInfoActivity(result, downloadUrl, latitude, longitude, localityName, state, country, captureGuardReport);
             }
 
             @Override
@@ -435,7 +437,7 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
         pendingFeedbackNotes.clear();
     }
 
-    private void proceedToInfoActivity(OpenAiApi.IdentifyBirdResult result, @Nullable String downloadUrl, @Nullable Double latitude, @Nullable Double longitude, @Nullable String localityName, @Nullable String state, @Nullable String country) {
+    private void proceedToInfoActivity(OpenAiApi.IdentifyBirdResult result, @Nullable String downloadUrl, @Nullable Double latitude, @Nullable Double longitude, @Nullable String localityName, @Nullable String state, @Nullable String country, CaptureGuardHelper.GuardReport captureGuardReport) {
         if (identificationCompleted.compareAndSet(false, true)) {
             timeoutHandler.removeCallbacks(timeoutRunnable);
 
@@ -458,6 +460,9 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
             if (result.modelTop1Confidence != null) intent.putExtra("modelTop1Confidence", result.modelTop1Confidence);
             if (result.modelTop2Confidence != null) intent.putExtra("modelTop2Confidence", result.modelTop2Confidence);
             if (result.modelConfidenceMargin != null) intent.putExtra("modelConfidenceMargin", result.modelConfidenceMargin);
+
+            // Anti-cheat: Forward CaptureGuard report
+            CaptureGuardHelper.putGuardExtras(intent, captureGuardReport);
 
             boolean awardPoints = getIntent().getBooleanExtra("awardPoints", true) && result.allowPointAward;
             intent.putExtra("awardPoints", awardPoints);

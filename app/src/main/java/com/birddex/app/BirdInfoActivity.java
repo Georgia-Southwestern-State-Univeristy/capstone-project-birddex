@@ -241,6 +241,10 @@ public class BirdInfoActivity extends AppCompatActivity {
             if (currentLatitude != null) i.putExtra(CardMakerActivity.EXTRA_LATITUDE, currentLatitude);
             if (currentLongitude != null) i.putExtra(CardMakerActivity.EXTRA_LONGITUDE, currentLongitude);
             i.putExtra(CardMakerActivity.EXTRA_COUNTRY, currentCountry);
+
+            // Anti-cheat: Forward CaptureGuard report
+            CaptureGuardHelper.putGuardExtras(i, CaptureGuardHelper.readReportFromIntent(getIntent(), awardPoints));
+
             startActivity(i);
         });
 
@@ -287,6 +291,10 @@ public class BirdInfoActivity extends AppCompatActivity {
             intent.putExtra("identificationId", identificationId);
             intent.putExtra("selectionSource", currentSelectionSource);
             intent.putParcelableArrayListExtra("modelAlternatives", modelAlternatives);
+
+            // Anti-cheat: Forward CaptureGuard report
+            CaptureGuardHelper.putGuardExtras(intent, CaptureGuardHelper.readReportFromIntent(getIntent(), awardPoints));
+
             birdSelectionLauncher.launch(intent);
         });
 

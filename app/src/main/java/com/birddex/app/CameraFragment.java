@@ -244,7 +244,7 @@ public class CameraFragment extends Fragment {
         FocusMeteringAction action = new FocusMeteringAction.Builder(point, FocusMeteringAction.FLAG_AF | FocusMeteringAction.FLAG_AE).build();
         camera.getCameraControl().startFocusAndMetering(action);
     }
-}
+
     /**
      * Main logic block for this part of the feature.
      */

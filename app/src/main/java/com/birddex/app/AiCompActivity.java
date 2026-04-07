@@ -228,6 +228,10 @@ public class AiCompActivity extends AppCompatActivity {
             resultIntent.putExtra("selectedSpecies", selectedSpecies);
             resultIntent.putExtra("selectedFamily", selectedFamily);
             resultIntent.putExtra("selectedSource", source);
+
+            // Anti-cheat: Forward CaptureGuard report back to BirdInfo
+            CaptureGuardHelper.putGuardExtras(resultIntent, CaptureGuardHelper.readReportFromIntent(getIntent(), true));
+
             setResult(RESULT_OK, resultIntent);
             finish();
         };

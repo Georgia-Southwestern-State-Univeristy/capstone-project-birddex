@@ -113,6 +113,7 @@ public class CardMakerActivity extends AppCompatActivity {
     @Nullable private String currentIdentificationId;
     @Nullable private String currentPointAwardBlockReason;
     @Nullable private String currentPointAwardUserMessage;
+    private boolean currentSuspicious;
     public static final String EXTRA_AWARD_POINTS = "awardPoints";
     private boolean shouldAwardPoints;
     private final Handler pointAwardStatusHandler = new Handler(Looper.getMainLooper());
@@ -162,6 +163,8 @@ public class CardMakerActivity extends AppCompatActivity {
         currentIdentificationId    = getIntent().getStringExtra(EXTRA_IDENTIFICATION_ID);
         currentPointAwardBlockReason = getIntent().getStringExtra(EXTRA_POINT_AWARD_BLOCK_REASON);
         currentPointAwardUserMessage = getIntent().getStringExtra(EXTRA_POINT_AWARD_USER_MESSAGE);
+
+        currentSuspicious = getIntent().getBooleanExtra(CaptureGuardHelper.EXTRA_CAPTURE_GUARD_SUSPICIOUS, false);
 
         shouldAwardPoints = getIntent().getBooleanExtra(EXTRA_AWARD_POINTS, true);
 
@@ -378,6 +381,7 @@ public class CardMakerActivity extends AppCompatActivity {
                 currentCountry,
                 currentQuantity,
                 timestamp.getTime(),
+                currentSuspicious,
                 new FirebaseManager.BirdSightingListener() {
                     @Override public void onRecorded() {
                         if (isFinishing() || isDestroyed()) return;

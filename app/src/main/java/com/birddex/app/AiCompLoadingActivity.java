@@ -121,6 +121,10 @@ public class AiCompLoadingActivity extends AppCompatActivity {
                         intent.putExtra("identificationId", identificationId);
                         intent.putExtra("openAiUserMessage", userMessage);
                         intent.putParcelableArrayListExtra("openAiAlternatives", toCandidateBundles(candidates));
+
+                        // Anti-cheat: Forward CaptureGuard report
+                        CaptureGuardHelper.putGuardExtras(intent, CaptureGuardHelper.readReportFromIntent(getIntent(), true));
+
                         aiCompLauncher.launch(intent);
                     }
 

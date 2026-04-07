@@ -101,6 +101,10 @@ public class NotMyBirdActivity extends AppCompatActivity {
             intent.putExtra("imageUrl", imageUrl);
             intent.putExtra("identificationLogId", identificationLogId);
             intent.putExtra("identificationId", identificationId);
+
+            // Anti-cheat: Forward CaptureGuard report
+            CaptureGuardHelper.putGuardExtras(intent, CaptureGuardHelper.readReportFromIntent(getIntent(), true));
+
             aiCompLauncher.launch(intent);
         });
     }

@@ -20,6 +20,7 @@ public class Bird {
     private Long lastSeenTimestampGeorgia; 
     private Double lastSeenLatitudeGeorgia;
     private Double lastSeenLongitudeGeorgia;
+    private boolean suspicious;
 
     /**
      * Constructor that stores incoming dependencies/values so this object starts in a usable
@@ -212,5 +213,13 @@ public class Bird {
      */
     public void setLastSeenLongitudeGeorgia(Double lastSeenLongitudeGeorgia) {
         this.lastSeenLongitudeGeorgia = lastSeenLongitudeGeorgia;
+    }
+
+    public boolean isSuspicious() {
+        return suspicious;
+    }
+
+    public void setSuspicious(boolean suspicious) {
+        this.suspicious = suspicious;
     }
 }

@@ -7544,6 +7544,7 @@ exports.recordBirdSighting = secureOnCall(async (request) => {
         country,
         quantity,
         timestamp: clientTimestamp,
+        suspicious,
     } = request.data;
 
     if (!birdId || typeof birdId !== "string") {
@@ -7619,6 +7620,7 @@ exports.recordBirdSighting = secureOnCall(async (request) => {
                 locality: locality || "",
                 country: country || "US",
                 quantity: quantity || "1",
+                suspicious: !!suspicious,
             });
 
             return { recorded: true, hotspotId, locationId: hotspotId, birdKey };

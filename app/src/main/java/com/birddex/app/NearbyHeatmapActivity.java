@@ -1578,6 +1578,10 @@ public class NearbyHeatmapActivity extends AppCompatActivity
         hl.clear();
         hsl.clear();
         for (DocumentSnapshot d : snap.getDocuments()) {
+            // Anti-cheat: Skip sightings marked as suspicious
+            Boolean suspicious = d.getBoolean("suspicious");
+            if (suspicious != null && suspicious) continue;
+
             Double lat = getAnyDouble(d, "location.latitude", "lastSeenLatitudeGeorgia", "latitude", "lat"), lng = getAnyDouble(d, "location.longitude", "lastSeenLongitudeGeorgia", "longitude", "lng");
             if (lat == null || lng == null || shouldBeFiltered(lat, lng, getAnyTimeMillis(d, user ? "timestamp" : "observationDate")))
                 continue;

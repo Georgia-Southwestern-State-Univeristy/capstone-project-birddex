@@ -570,6 +570,11 @@ public class NearbyFragment extends Fragment {
         b.setLastSeenLatitudeGeorgia(getDoubleValue(d, "location.latitude", "latitude", "lat", "lastSeenLatitudeGeorgia"));
         b.setLastSeenLongitudeGeorgia(getDoubleValue(d, "location.longitude", "longitude", "lng", "lastSeenLongitudeGeorgia"));
         b.setLastSeenTimestampGeorgia(getTimeMillisValue(d, "timestamp", "observationDate", "lastSeenTimestampGeorgia"));
+
+        // Anti-cheat: Mark suspicious sightings
+        Boolean susp = d.getBoolean("suspicious");
+        b.setSuspicious(susp != null && susp);
+
         return b;
     }
 
@@ -582,6 +587,10 @@ public class NearbyFragment extends Fragment {
         if (b == null || b.getLastSeenLatitudeGeorgia() == null || b.getLastSeenTimestampGeorgia() == null || currentLocation == null) {
             return false;
         }
+
+        // Anti-cheat: Exclude suspicious sightings from the list
+        if (b.isSuspicious()) return false;
+
         if (b.getLastSeenTimestampGeorgia() < System.currentTimeMillis() - SIGHTING_RECENCY_MS) return false;
         float[] res = new float[1];
         Location.distanceBetween(

@@ -1064,6 +1064,7 @@ public class FirebaseManager {
             String country,
             String quantity,
             long timestampMs,
+            boolean suspicious,
             BirdSightingListener listener) {
 
         Log.d(TAG, "Calling recordBirdSighting CF for birdId=" + birdId);
@@ -1079,6 +1080,7 @@ public class FirebaseManager {
         data.put("country",    country  != null ? country  : "US");
         data.put("quantity",   quantity != null ? quantity : "1");
         data.put("timestamp",  timestampMs);
+        data.put("suspicious", suspicious);
 
         /**
          * Returns the current value/state this class needs somewhere else in the app.

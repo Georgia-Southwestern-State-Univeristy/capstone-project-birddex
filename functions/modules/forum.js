@@ -47,6 +47,15 @@ const {
   generateAndSaveBirdFacts,
   generateAndSaveHunterFacts,
   getOrCreateAndSaveBirdFacts,
+  timestampToMillis,
+  createModerationAppealRef,
+  buildInitialReportReasonCounts,
+  buildInitialModerationFields,
+  buildInitialUserModerationFields,
+  MODERATION_STATUS_VISIBLE,
+  MODERATION_STATUS_UNDER_REVIEW,
+  MODERATION_STATUS_HIDDEN,
+  MODERATION_STATUS_REMOVED,
   functions,
   auth,
   admin,
@@ -1100,11 +1109,6 @@ const FORUM_EDIT_WINDOW_MS = 5 * 60 * 1000;
 const FORUM_SUBMISSION_COOLDOWN_MS = 15 * 1000;
 
 
-const MODERATION_STATUS_VISIBLE = "visible";
-const MODERATION_STATUS_UNDER_REVIEW = "under_review";
-const MODERATION_STATUS_HIDDEN = "hidden";
-const MODERATION_STATUS_REMOVED = "removed";
-
 const REPORT_UNDER_REVIEW_THRESHOLD = 3;
 const REPORT_HIDE_THRESHOLD = 5;
 const MAX_REPORTS_PER_HOUR = 10;
@@ -1114,49 +1118,6 @@ const MODERATION_STRIKE_EXPIRY_MS = 180 * 24 * 60 * 60 * 1000;
 const MODERATION_SUSPEND_STAGE_ONE_MS = 24 * 60 * 60 * 1000;
 const MODERATION_SUSPEND_STAGE_TWO_MS = 7 * 24 * 60 * 60 * 1000;
 const REPORT_RATE_LIMIT_KEY = "forumReportRateLimit";
-
-/**
- * Helper: Builds a structured payload/default/response object used by later logic.
- */
-function buildInitialReportReasonCounts() {
-    return {
-        language: 0,
-        image: 0,
-        spam: 0,
-        harassment: 0,
-        other: 0,
-    };
-}
-
-/**
- * Helper: Builds a structured payload/default/response object used by later logic.
- */
-function buildInitialModerationFields() {
-    return {
-        moderationStatus: MODERATION_STATUS_VISIBLE,
-        moderationReason: null,
-        moderationSource: null,
-        moderatedAt: null,
-        hiddenAt: null,
-        reportCount: 0,
-        uniqueReporterCount: 0,
-        reportReasonCounts: buildInitialReportReasonCounts(),
-        lastReportedAt: null,
-    };
-}
-
-/**
- * Helper: Builds a structured payload/default/response object used by later logic.
- */
-function buildInitialUserModerationFields() {
-    return {
-        warningCount: 0,
-        strikeCount: 0,
-        permanentForumBan: false,
-        forumSuspendedUntil: null,
-        lastViolationAt: null,
-    };
-}
 
 /**
  * Helper: Converts values into one consistent shape so downstream logic can compare/store them safely.
@@ -1181,25 +1142,6 @@ function normalizeModerationStatus(status) {
 function isPublicForumStatus(status) {
     const normalized = normalizeModerationStatus(status);
     return normalized === MODERATION_STATUS_VISIBLE || normalized === MODERATION_STATUS_UNDER_REVIEW;
-}
-
-/**
- * Helper: Timestamp/date conversion helper used to keep time comparisons consistent.
- */
-function timestampToMillis(value) {
-    if (!value) return null;
-    try {
-        if (typeof value.toMillis === "function") return value.toMillis();
-        if (value instanceof Date) return value.getTime();
-        if (typeof value === "number") return value;
-        if (typeof value === "string") {
-            const parsed = Date.parse(value);
-            return Number.isNaN(parsed) ? null : parsed;
-        }
-    } catch (error) {
-        logger.warn("timestampToMillis failed:", error);
-    }
-    return null;
 }
 
 /**
@@ -1380,13 +1322,6 @@ async function resolveModerationTargetOrThrow(targetType, targetId, threadId = n
  */
 function createModerationEventRef() {
     return db.collection("moderationEvents").doc();
-}
-
-/**
- * Helper: Creates a reference/payload helper used by write operations.
- */
-function createModerationAppealRef(userId, moderationEventId) {
-    return db.collection("moderationAppeals").doc(`${userId}_${moderationEventId}`);
 }
 
 /**

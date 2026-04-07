@@ -63,6 +63,11 @@ const CONFIG = {
     LOCATION_PRECISION: 3,      // decimal places (~110 meters)
 };
 
+const MODERATION_STATUS_VISIBLE = "visible";
+const MODERATION_STATUS_UNDER_REVIEW = "under_review";
+const MODERATION_STATUS_HIDDEN = "hidden";
+const MODERATION_STATUS_REMOVED = "removed";
+
 const PRIVATE_AUDIT_LOG_COLLECTION = "privateAuditLogs";
 const USER_RATE_LIMITS = {
     forumPostLike: {
@@ -319,6 +324,50 @@ async function resolvePointAwardEligibility({ identificationId, identificationLo
         suspicionScore: 0,
     };
 }
+
+/**
+ * Helper: Builds a structured count object for moderation report reasons.
+ */
+function buildInitialReportReasonCounts() {
+    return {
+        language: 0,
+        image: 0,
+        spam: 0,
+        harassment: 0,
+        other: 0,
+    };
+}
+
+/**
+ * Helper: Builds the default moderation fields for a new forum post or comment.
+ */
+function buildInitialModerationFields() {
+    return {
+        moderationStatus: MODERATION_STATUS_VISIBLE,
+        moderationReason: null,
+        moderationSource: null,
+        moderatedAt: null,
+        hiddenAt: null,
+        reportCount: 0,
+        uniqueReporterCount: 0,
+        reportReasonCounts: buildInitialReportReasonCounts(),
+        lastReportedAt: null,
+    };
+}
+
+/**
+ * Helper: Builds the default moderation fields for a new user document.
+ */
+function buildInitialUserModerationFields() {
+    return {
+        warningCount: 0,
+        strikeCount: 0,
+        permanentForumBan: false,
+        forumSuspendedUntil: null,
+        lastViolationAt: null,
+    };
+}
+
 // ======================================================
 // HELPER: Input Sanitization
 // ======================================================
@@ -1359,6 +1408,26 @@ async function getOrCreateAndSaveBirdFacts(birdId, commonName) {
 
 
 
+function timestampToMillis(value) {
+    if (!value) return null;
+    try {
+        if (typeof value.toMillis === "function") return value.toMillis();
+        if (value instanceof Date) return value.getTime();
+        if (typeof value === "number") return value;
+        if (typeof value === "string") {
+            const parsed = Date.parse(value);
+            return Number.isNaN(parsed) ? null : parsed;
+        }
+    } catch (error) {
+        logger.warn("timestampToMillis failed:", error);
+    }
+    return null;
+}
+
+function createModerationAppealRef(userId, moderationEventId) {
+    return db.collection("moderationAppeals").doc(`${userId}_${moderationEventId}`);
+}
+
 module.exports = {
   Timestamp,
   FieldValue,
@@ -1419,6 +1488,15 @@ module.exports = {
   generateAndSaveBirdFacts,
   generateAndSaveHunterFacts,
   getOrCreateAndSaveBirdFacts,
+  buildInitialReportReasonCounts,
+  buildInitialModerationFields,
+  buildInitialUserModerationFields,
+  MODERATION_STATUS_VISIBLE,
+  MODERATION_STATUS_UNDER_REVIEW,
+  MODERATION_STATUS_HIDDEN,
+  MODERATION_STATUS_REMOVED,
+  timestampToMillis,
+  createModerationAppealRef,
   functions,
   auth,
   admin,

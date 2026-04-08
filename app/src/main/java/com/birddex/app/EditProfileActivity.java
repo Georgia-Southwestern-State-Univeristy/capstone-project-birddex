@@ -12,7 +12,6 @@ import android.view.View;
 import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.TextView;
-import android.widget.Toast;
 import android.graphics.Bitmap;
 import android.graphics.ImageDecoder;
 import android.util.Base64;
@@ -164,7 +163,7 @@ public class EditProfileActivity extends AppCompatActivity implements NetworkMon
         btnSave.setOnClickListener(v -> {
             if (isSaveInProgress) return;
             if (!networkMonitor.isConnected()) {
-                Toast.makeText(this, "No internet connection.", Toast.LENGTH_LONG).show();
+                MessagePopupHelper.show(this, "No internet connection.");
                 return;
             }
 
@@ -178,7 +177,7 @@ public class EditProfileActivity extends AppCompatActivity implements NetworkMon
             }
 
             if (cleanedBio.length() > MAX_BIO_LENGTH) {
-                Toast.makeText(this, "Bio too long.", Toast.LENGTH_SHORT).show();
+                MessagePopupHelper.show(this, "Bio too long.");
                 return;
             }
 
@@ -242,13 +241,13 @@ public class EditProfileActivity extends AppCompatActivity implements NetworkMon
                     public void onFailure(String err) {
                         resetSaveState();
                         String message = (err != null && !err.trim().isEmpty()) ? err : "Failed to reserve profile picture change.";
-                        Toast.makeText(EditProfileActivity.this, message, Toast.LENGTH_LONG).show();
+                        MessagePopupHelper.show(EditProfileActivity.this, message);
                     }
 
                     @Override
                     public void onLimitExceeded() {
                         resetSaveState();
-                        Toast.makeText(EditProfileActivity.this, "No profile picture changes remaining today.", Toast.LENGTH_LONG).show();
+                        MessagePopupHelper.show(EditProfileActivity.this, "No profile picture changes remaining today.");
                     }
                 });
             } else {
@@ -279,7 +278,7 @@ public class EditProfileActivity extends AppCompatActivity implements NetworkMon
         if (changeId == null) {
             resetSaveState();
             if (toastMessage != null && !toastMessage.trim().isEmpty()) {
-                Toast.makeText(this, toastMessage, Toast.LENGTH_LONG).show();
+                MessagePopupHelper.show(this, toastMessage);
             }
             return;
         }
@@ -291,7 +290,7 @@ public class EditProfileActivity extends AppCompatActivity implements NetworkMon
                 fetchPfpChangesRemaining();
                 resetSaveState();
                 if (toastMessage != null && !toastMessage.trim().isEmpty()) {
-                    Toast.makeText(EditProfileActivity.this, toastMessage, Toast.LENGTH_LONG).show();
+                    MessagePopupHelper.show(EditProfileActivity.this, toastMessage);
                 }
             }
 
@@ -304,7 +303,7 @@ public class EditProfileActivity extends AppCompatActivity implements NetworkMon
                 String message = (toastMessage != null && !toastMessage.trim().isEmpty())
                         ? toastMessage
                         : "Profile picture update failed.";
-                Toast.makeText(EditProfileActivity.this, message, Toast.LENGTH_LONG).show();
+                MessagePopupHelper.show(EditProfileActivity.this, message);
             }
         });
     }
@@ -532,7 +531,7 @@ public class EditProfileActivity extends AppCompatActivity implements NetworkMon
                 } else {
                     resetSaveState();
                     String message = (err != null && !err.trim().isEmpty()) ? err : "Update failed.";
-                    Toast.makeText(EditProfileActivity.this, message, Toast.LENGTH_SHORT).show();
+                    MessagePopupHelper.show(EditProfileActivity.this, message);
                 }
             }
 

@@ -16,7 +16,6 @@ import android.view.ViewGroup;
 import android.widget.Button;
 import android.widget.ImageView;
 import android.widget.TextView;
-import android.widget.Toast;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
@@ -227,7 +226,7 @@ public class RecentPhotoMemoriesAdapter extends RecyclerView.Adapter<RecyclerVie
                         context.getContentResolver().update(uri, values, null, null);
                     }
                     // Give the user immediate feedback about the result of this action.
-                    Toast.makeText(context, "Saved!", Toast.LENGTH_SHORT).show();
+                    MessagePopupHelper.showBrief(context, "Saved!");
                 } catch (Exception ignored) {}
             }
             @Override public void onLoadCleared(@Nullable android.graphics.drawable.Drawable placeholder) {}

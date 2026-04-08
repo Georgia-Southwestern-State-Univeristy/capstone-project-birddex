@@ -1,7 +1,6 @@
 package com.birddex.app;
 
 import android.content.Context;
-import android.widget.Toast;
 
 import java.text.Normalizer;
 import java.util.Arrays;
@@ -124,7 +123,7 @@ public class ContentFilter {
                 toastMessage = fieldName + " contains " + result + ".";
             }
             // Give the user immediate feedback about the result of this action.
-            Toast.makeText(context, toastMessage, Toast.LENGTH_LONG).show();
+            MessagePopupHelper.showBrief(context, toastMessage);
             return false;
         }
         return true;

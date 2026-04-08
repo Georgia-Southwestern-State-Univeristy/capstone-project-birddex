@@ -13,7 +13,6 @@ import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.PopupMenu;
 import android.widget.TextView;
-import android.widget.Toast;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
@@ -121,7 +120,7 @@ public class UserSocialProfileActivity extends AppCompatActivity implements
         if (targetUserId == null) {
             Log.e(TAG, "onCreate: Missing targetUserId in intent.");
             // Give the user immediate feedback about the result of this action.
-            Toast.makeText(this, "User ID not found.", Toast.LENGTH_SHORT).show();
+            MessagePopupHelper.showBrief(this, "User ID not found.");
             finish();
             return;
         }
@@ -416,7 +415,7 @@ public class UserSocialProfileActivity extends AppCompatActivity implements
                 } else {
                     Log.e(TAG, "unfollowUser failed.", task.getException());
                     // Give the user immediate feedback about the result of this action.
-                    Toast.makeText(this, "Unfollow failed.", Toast.LENGTH_SHORT).show();
+                    MessagePopupHelper.showBrief(this, "Unfollow failed.");
                 }
             });
         } else {
@@ -429,7 +428,7 @@ public class UserSocialProfileActivity extends AppCompatActivity implements
                     updateFollowButtonUI();
                 } else {
                     Log.e(TAG, "followUser failed.", task.getException());
-                    Toast.makeText(this, "Follow failed.", Toast.LENGTH_SHORT).show();
+                    MessagePopupHelper.showBrief(this, "Follow failed.");
                 }
             });
         }
@@ -560,7 +559,7 @@ public class UserSocialProfileActivity extends AppCompatActivity implements
                 }
                 adapter.notifyDataSetChanged();
                 if (errorMessage != null && !errorMessage.trim().isEmpty()) {
-                    Toast.makeText(UserSocialProfileActivity.this, errorMessage, Toast.LENGTH_SHORT).show();
+                    MessagePopupHelper.showBrief(UserSocialProfileActivity.this, errorMessage);
                 }
             }
         });
@@ -616,9 +615,9 @@ public class UserSocialProfileActivity extends AppCompatActivity implements
                                     postList.remove(post);
                                     adapter.setPosts(new ArrayList<>(postList));
                                     tvPostCount.setText(String.valueOf(postList.size()));
-                                    Toast.makeText(this, "Post deleted", Toast.LENGTH_SHORT).show();
+                                    MessagePopupHelper.showBrief(this, "Post deleted");
                                 } else if (task.getException() != null) {
-                                    Toast.makeText(this, task.getException().getMessage(), Toast.LENGTH_SHORT).show();
+                                    MessagePopupHelper.showBrief(this, task.getException().getMessage());
                                 }
                             });
                         })
@@ -640,12 +639,12 @@ public class UserSocialProfileActivity extends AppCompatActivity implements
         firebaseManager.saveForumPost(post.getId(), new FirebaseManager.ForumWriteListener() {
             @Override public void onSuccess() {
                 if (isFinishing() || isDestroyed()) return;
-                Toast.makeText(UserSocialProfileActivity.this, "Post saved", Toast.LENGTH_SHORT).show();
+                MessagePopupHelper.showBrief(UserSocialProfileActivity.this, "Post saved");
             }
 
             @Override public void onFailure(String errorMessage) {
                 if (isFinishing() || isDestroyed()) return;
-                Toast.makeText(UserSocialProfileActivity.this, errorMessage != null ? errorMessage : "Failed to save post.", Toast.LENGTH_SHORT).show();
+                MessagePopupHelper.showBrief(UserSocialProfileActivity.this, errorMessage != null ? errorMessage : "Failed to save post.");
             }
         });
     }
@@ -654,12 +653,12 @@ public class UserSocialProfileActivity extends AppCompatActivity implements
         firebaseManager.unsaveForumPost(post.getId(), new FirebaseManager.ForumWriteListener() {
             @Override public void onSuccess() {
                 if (isFinishing() || isDestroyed()) return;
-                Toast.makeText(UserSocialProfileActivity.this, "Post unsaved", Toast.LENGTH_SHORT).show();
+                MessagePopupHelper.showBrief(UserSocialProfileActivity.this, "Post unsaved");
             }
 
             @Override public void onFailure(String errorMessage) {
                 if (isFinishing() || isDestroyed()) return;
-                Toast.makeText(UserSocialProfileActivity.this, errorMessage != null ? errorMessage : "Failed to unsave post.", Toast.LENGTH_SHORT).show();
+                MessagePopupHelper.showBrief(UserSocialProfileActivity.this, errorMessage != null ? errorMessage : "Failed to unsave post.");
             }
         });
     }
@@ -696,7 +695,7 @@ public class UserSocialProfileActivity extends AppCompatActivity implements
     private void submitReport(ForumPost post, String r) {
         FirebaseUser u = FirebaseAuth.getInstance().getCurrentUser(); if (u == null) return;
         // Give the user immediate feedback about the result of this action.
-        firebaseManager.addReport(new Report("post", post.getId(), u.getUid(), r), t -> { if (t.isSuccessful()) Toast.makeText(this, "Reported", Toast.LENGTH_SHORT).show(); });
+        firebaseManager.addReport(new Report("post", post.getId(), u.getUid(), r), t -> { if (t.isSuccessful()) MessagePopupHelper.showBrief(this, "Reported"); });
     }
 
     /**

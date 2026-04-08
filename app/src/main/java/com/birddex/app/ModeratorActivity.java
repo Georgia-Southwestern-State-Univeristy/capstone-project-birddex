@@ -9,7 +9,6 @@ import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.ProgressBar;
 import android.widget.TextView;
-import android.widget.Toast;
 
 import androidx.annotation.NonNull;
 import androidx.appcompat.app.AlertDialog;
@@ -91,7 +90,7 @@ public class ModeratorActivity extends AppCompatActivity {
             public void onFailure(String errorMessage) {
                 pendingAppeals = new ArrayList<>();
                 appealsLoaded = true;
-                Toast.makeText(ModeratorActivity.this, errorMessage, Toast.LENGTH_SHORT).show();
+                MessagePopupHelper.show(ModeratorActivity.this, errorMessage);
                 finalizeQueueLoadIfReady();
             }
         });
@@ -108,7 +107,7 @@ public class ModeratorActivity extends AppCompatActivity {
             public void onFailure(String errorMessage) {
                 pendingReports = new ArrayList<>();
                 reportsLoaded = true;
-                Toast.makeText(ModeratorActivity.this, errorMessage, Toast.LENGTH_SHORT).show();
+                MessagePopupHelper.show(ModeratorActivity.this, errorMessage);
                 finalizeQueueLoadIfReady();
             }
         });
@@ -166,7 +165,7 @@ public class ModeratorActivity extends AppCompatActivity {
         String appealId = appealIdObj != null ? appealIdObj.toString() : null;
 
         if (appealId == null) {
-            Toast.makeText(this, "Error: Appeal ID missing.", Toast.LENGTH_SHORT).show();
+            MessagePopupHelper.show(this, "Error: Appeal ID missing.");
             return;
         }
 
@@ -206,7 +205,7 @@ public class ModeratorActivity extends AppCompatActivity {
         String reportId = reportIdObj != null ? reportIdObj.toString() : null;
 
         if (reportId == null) {
-            Toast.makeText(this, "Error: Report ID missing.", Toast.LENGTH_SHORT).show();
+            MessagePopupHelper.show(this, "Error: Report ID missing.");
             return;
         }
 
@@ -288,14 +287,14 @@ public class ModeratorActivity extends AppCompatActivity {
             @Override
             public void onSuccess() {
                 progressBar.setVisibility(View.GONE);
-                Toast.makeText(ModeratorActivity.this, "Appeal review submitted.", Toast.LENGTH_SHORT).show();
+                MessagePopupHelper.show(ModeratorActivity.this, "Appeal review submitted.");
                 loadModeratorQueue();
             }
 
             @Override
             public void onFailure(String errorMessage) {
                 progressBar.setVisibility(View.GONE);
-                Toast.makeText(ModeratorActivity.this, errorMessage, Toast.LENGTH_LONG).show();
+                MessagePopupHelper.show(ModeratorActivity.this, errorMessage);
             }
         });
     }
@@ -306,14 +305,14 @@ public class ModeratorActivity extends AppCompatActivity {
             @Override
             public void onSuccess() {
                 progressBar.setVisibility(View.GONE);
-                Toast.makeText(ModeratorActivity.this, "Report review submitted.", Toast.LENGTH_SHORT).show();
+                MessagePopupHelper.show(ModeratorActivity.this, "Report review submitted.");
                 loadModeratorQueue();
             }
 
             @Override
             public void onFailure(String errorMessage) {
                 progressBar.setVisibility(View.GONE);
-                Toast.makeText(ModeratorActivity.this, errorMessage, Toast.LENGTH_LONG).show();
+                MessagePopupHelper.show(ModeratorActivity.this, errorMessage);
             }
         });
     }

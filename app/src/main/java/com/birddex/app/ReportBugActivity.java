@@ -7,7 +7,6 @@ import android.widget.Button;
 import android.widget.EditText;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
-import android.widget.Toast;
 
 import androidx.appcompat.app.AppCompatActivity;
 
@@ -100,13 +99,13 @@ public class ReportBugActivity extends AppCompatActivity {
 
         firebaseManager.submitBugReport(subject, description, userEmail, task -> {
             if (task.isSuccessful()) {
-                Toast.makeText(this, "Thank you for voicing your concerns!", Toast.LENGTH_LONG).show();
+                MessagePopupHelper.show(this, "Thank you for voicing your concerns!");
                 finish(); // Close activity and return to settings on success.
             } else {
                 // Re-enable input on failure so the user can try again.
                 btnSubmitBug.setEnabled(true);
                 btnSubmitBug.setText("Submit Report");
-                Toast.makeText(this, "Failed to send report. Please try again.", Toast.LENGTH_SHORT).show();
+                MessagePopupHelper.show(this, "Failed to send report. Please try again.");
             }
         });
     }

@@ -4,7 +4,6 @@ import android.content.Intent;
 import android.os.Bundle;
 import android.widget.ImageView;
 import android.widget.TextView;
-import android.widget.Toast;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
@@ -122,7 +121,7 @@ public class ChangeCardImageActivity extends AppCompatActivity {
 
         if (isBlank(birdId)) {
             // Give the user immediate feedback about the result of this action.
-            Toast.makeText(this, "No bird ID found.", Toast.LENGTH_SHORT).show();
+            MessagePopupHelper.show(this, "No bird ID found.");
             finish();
             return;
         }
@@ -213,7 +212,7 @@ public class ChangeCardImageActivity extends AppCompatActivity {
     private void onImageChosen(@NonNull ChangeCardImageBrowserAdapter.BrowserItem item) {
         if (item.isCurrent) {
             // Give the user immediate feedback about the result of this action.
-            Toast.makeText(this, "Already in use.", Toast.LENGTH_SHORT).show();
+            MessagePopupHelper.show(this, "Already in use.");
             return;
         }
 

@@ -6,7 +6,6 @@ import android.util.Log;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.TextView;
-import android.widget.Toast;
 
 import androidx.appcompat.app.AppCompatActivity;
 
@@ -71,9 +70,9 @@ public class ForgotPasswordActivity extends AppCompatActivity {
                     btnSendReset.setEnabled(true);
                     if (task.isSuccessful()) {
                         // Give the user immediate feedback about the result of this action.
-                        Toast.makeText(ForgotPasswordActivity.this, "Password reset email sent.", Toast.LENGTH_LONG).show();
+                        MessagePopupHelper.show(ForgotPasswordActivity.this, "Password reset email sent.");
                     } else {
-                        Toast.makeText(ForgotPasswordActivity.this, task.getException() != null ? task.getException().getMessage() : "Error", Toast.LENGTH_LONG).show();
+                        MessagePopupHelper.show(ForgotPasswordActivity.this, task.getException() != null ? task.getException().getMessage() : "Error");
                     }
                 });
             }

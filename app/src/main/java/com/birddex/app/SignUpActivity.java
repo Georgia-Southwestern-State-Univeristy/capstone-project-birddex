@@ -6,7 +6,6 @@ import android.view.View;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.TextView;
-import android.widget.Toast;
 
 import androidx.appcompat.app.AppCompatActivity;
 
@@ -85,7 +84,7 @@ public class SignUpActivity extends AppCompatActivity {
 
                         setLoadingState(false);
                         // Give the user immediate feedback about the result of this action.
-                        Toast.makeText(SignUpActivity.this, "Sign up successful. Please verify your email.", Toast.LENGTH_LONG).show();
+                        MessagePopupHelper.show(SignUpActivity.this, "Sign up successful. Please verify your email.");
                         startActivity(new Intent(SignUpActivity.this, SignUpCompleteActivity.class));
                         finish();
                     }
@@ -93,7 +92,7 @@ public class SignUpActivity extends AppCompatActivity {
                     @Override
                     public void onFailure(String errorMessage) {
                         setLoadingState(false);
-                        Toast.makeText(SignUpActivity.this, errorMessage, Toast.LENGTH_SHORT).show();
+                        MessagePopupHelper.show(SignUpActivity.this, errorMessage);
                     }
 
                     @Override

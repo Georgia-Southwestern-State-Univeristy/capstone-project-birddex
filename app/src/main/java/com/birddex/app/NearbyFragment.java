@@ -20,7 +20,6 @@ import android.widget.EditText;
 import android.widget.ImageButton;
 import android.widget.ProgressBar;
 import android.widget.TextView;
-import android.widget.Toast;
 
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
@@ -678,7 +677,7 @@ public class NearbyFragment extends Fragment {
         // Give the user immediate feedback about the result of this action.
         if (searchableBirds.isEmpty()) {
             primeSearchableBirds();
-            Toast.makeText(requireContext(), "Loading birds...", Toast.LENGTH_SHORT).show();
+            MessagePopupHelper.show(requireContext(), "Loading birds...");
             return;
         }
 

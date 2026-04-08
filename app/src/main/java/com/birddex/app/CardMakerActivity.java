@@ -11,7 +11,6 @@ import android.widget.Button;
 import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.TextView;
-import android.widget.Toast;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
@@ -169,7 +168,7 @@ public class CardMakerActivity extends AppCompatActivity {
         shouldAwardPoints = getIntent().getBooleanExtra(EXTRA_AWARD_POINTS, true);
 
         if (originalImageUri == null) {
-            Toast.makeText(this, "No image passed.", Toast.LENGTH_SHORT).show();
+            MessagePopupHelper.show(this, "No image passed.");
             finish();
             return;
         }
@@ -225,13 +224,13 @@ public class CardMakerActivity extends AppCompatActivity {
 
         FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
         if (user == null) {
-            Toast.makeText(this, "Error: No user logged in. Please log in again.", Toast.LENGTH_LONG).show();
+            MessagePopupHelper.show(this, "Error: No user logged in. Please log in again.");
             return;
         }
 
         viewModel.isSaveInProgress.set(true);
         setSavingUi(true);
-        Toast.makeText(this, "Saving to collection...", Toast.LENGTH_SHORT).show();
+        MessagePopupHelper.show(this, "Saving to collection...");
 
         String userId   = user.getUid();
         String fileName = getOrCreatePendingUploadPath(userId);
@@ -542,7 +541,7 @@ public class CardMakerActivity extends AppCompatActivity {
         viewModel.pendingUploadPath = null;
         viewModel.saveOperationId = null;
         setSavingUi(false);
-        Toast.makeText(this, "Saved to your collection!", Toast.LENGTH_SHORT).show();
+        MessagePopupHelper.show(this, "Saved to your collection!");
         navigateHomeAfterSave();
     }
 
@@ -561,7 +560,7 @@ public class CardMakerActivity extends AppCompatActivity {
         deletePendingCollectionImageIfNeeded();
         viewModel.isSaveInProgress.set(false);
         setSavingUi(false);
-        Toast.makeText(CardMakerActivity.this, userMessage, Toast.LENGTH_LONG).show();
+        MessagePopupHelper.show(CardMakerActivity.this, userMessage);
     }
 
     private void setSavingUi(boolean saving) {

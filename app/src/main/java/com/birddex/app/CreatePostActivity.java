@@ -11,7 +11,6 @@ import android.os.Bundle;
 import android.util.Log;
 import android.view.View;
 import android.view.inputmethod.InputMethodManager;
-import android.widget.Toast;
 import android.text.Editable;
 import android.text.TextWatcher;
 import androidx.activity.result.ActivityResultLauncher;
@@ -292,7 +291,7 @@ public class CreatePostActivity extends AppCompatActivity {
             else {
                 binding.swShowLocation.setChecked(false);
                 // Give the user immediate feedback about the result of this action.
-                Toast.makeText(this, "Permission denied", Toast.LENGTH_SHORT).show();
+                MessagePopupHelper.showBrief(this, "Permission denied");
             }
         }
     }
@@ -436,11 +435,11 @@ public class CreatePostActivity extends AppCompatActivity {
 
         if (msg.isEmpty() && selectedImageUri == null) {
             // Give the user immediate feedback about the result of this action.
-            Toast.makeText(this, "Please add a message or an image", Toast.LENGTH_SHORT).show();
+            MessagePopupHelper.showBrief(this, "Please add a message or an image");
             return;
         }
         if (msg.length() > MAX_POST_LENGTH) {
-            Toast.makeText(this, "Post too long", Toast.LENGTH_SHORT).show();
+            MessagePopupHelper.showBrief(this, "Post too long");
             return;
         }
         if (!ContentFilter.isSafe(this, msg, "Post")) {
@@ -448,7 +447,7 @@ public class CreatePostActivity extends AppCompatActivity {
             return;
         }
         if (ForumSubmissionCooldownHelper.isCoolingDown(this)) {
-            Toast.makeText(this, ForumSubmissionCooldownHelper.buildCooldownMessage(this), Toast.LENGTH_SHORT).show();
+            MessagePopupHelper.showBrief(this, ForumSubmissionCooldownHelper.buildCooldownMessage(this));
             return;
         }
 
@@ -506,11 +505,9 @@ public class CreatePostActivity extends AppCompatActivity {
                 viewModel.isPostInProgress.set(false);
                 setPostingUi(false);
 
-                Toast.makeText(
+                MessagePopupHelper.showBrief(
                         CreatePostActivity.this,
-                        "You can only post with map location 3 times per day.",
-                        Toast.LENGTH_LONG
-                ).show();
+                        "You can only post with map location 3 times per day.");
             }
 
             @Override
@@ -526,13 +523,11 @@ public class CreatePostActivity extends AppCompatActivity {
                     return;
                 }
 
-                Toast.makeText(
+                MessagePopupHelper.showBrief(
                         CreatePostActivity.this,
                         errorMessage != null && !errorMessage.trim().isEmpty()
                                 ? errorMessage
-                                : "Could not verify posting limit. Please try again.",
-                        Toast.LENGTH_SHORT
-                ).show();
+                                : "Could not verify posting limit. Please try again.");
             }
         });
     }
@@ -554,7 +549,7 @@ public class CreatePostActivity extends AppCompatActivity {
         if (uid == null) {
             viewModel.isPostInProgress.set(false);
             setPostingUi(false);
-            Toast.makeText(this, "User not signed in", Toast.LENGTH_SHORT).show();
+            MessagePopupHelper.showBrief(this, "User not signed in");
             return;
         }
 
@@ -575,7 +570,7 @@ public class CreatePostActivity extends AppCompatActivity {
                     viewModel.isPostInProgress.set(false);
                     setPostingUi(false);
                     // Give the user immediate feedback about the result of this action.
-                    Toast.makeText(this, "Image upload failed", Toast.LENGTH_SHORT).show();
+                    MessagePopupHelper.showBrief(this, "Image upload failed");
                 });
     }
 
@@ -612,10 +607,11 @@ public class CreatePostActivity extends AppCompatActivity {
                 viewModel.isPostFinished.set(true);
                 viewModel.isPostInProgress.set(false);
                 // Give the user immediate feedback about the result of this action.
-                Toast.makeText(CreatePostActivity.this, "Post shared!", Toast.LENGTH_SHORT).show();
-                hideKeyboardAndClearFocus();
-                setResult(Activity.RESULT_OK, buildCreatedPostResultIntent(post));
-                finish();
+                MessagePopupHelper.showBrief(CreatePostActivity.this, "Post shared!", () -> {
+                    hideKeyboardAndClearFocus();
+                    setResult(Activity.RESULT_OK, buildCreatedPostResultIntent(post));
+                    finish();
+                });
             }
 
             @Override
@@ -638,11 +634,9 @@ public class CreatePostActivity extends AppCompatActivity {
                     return;
                 }
 
-                Toast.makeText(
+                MessagePopupHelper.showBrief(
                         CreatePostActivity.this,
-                        errorMessage != null ? errorMessage : "Failed to share post",
-                        Toast.LENGTH_SHORT
-                ).show();
+                        errorMessage != null ? errorMessage : "Failed to share post");
             }
         });
     }

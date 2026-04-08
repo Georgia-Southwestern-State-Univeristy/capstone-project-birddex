@@ -15,7 +15,6 @@ import android.widget.ImageButton;
 import android.widget.ImageView;
 import android.widget.ScrollView;
 import android.widget.TextView;
-import android.widget.Toast;
 
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
@@ -171,11 +170,11 @@ public class ViewBirdCardActivity extends AppCompatActivity {
             String refId = data.getStringExtra(ChangeCardImageActivity.RESULT_USER_BIRD_REF_ID);
 
             if (isBlank(url)) {
-                Toast.makeText(this, "Invalid selection.", Toast.LENGTH_SHORT).show();
+                MessagePopupHelper.show(this, "Invalid selection.");
                 return;
             }
             if (url.equals(currentImageUrl)) {
-                Toast.makeText(this, "Already in use.", Toast.LENGTH_SHORT).show();
+                MessagePopupHelper.show(this, "Already in use.");
                 return;
             }
 
@@ -611,12 +610,12 @@ public class ViewBirdCardActivity extends AppCompatActivity {
                     updateFavoriteUi(currentIsFavorite);
                     isSavingFavorite = false;
                     if (btnFavoriteToggle != null) btnFavoriteToggle.setEnabled(true);
-                    Toast.makeText(this, currentIsFavorite ? "Added to favorites." : "Removed from favorites.", Toast.LENGTH_SHORT).show();
+                    MessagePopupHelper.show(this, currentIsFavorite ? "Added to favorites." : "Removed from favorites.");
                 })
                 .addOnFailureListener(e -> {
                     isSavingFavorite = false;
                     if (btnFavoriteToggle != null) btnFavoriteToggle.setEnabled(true);
-                    Toast.makeText(this, "Failed to update favorite.", Toast.LENGTH_SHORT).show();
+                    MessagePopupHelper.show(this, "Failed to update favorite.");
                     Log.e(TAG, "Favorite toggle failed.", e);
                 });
     }
@@ -769,9 +768,9 @@ public class ViewBirdCardActivity extends AppCompatActivity {
             refreshCardUI();
             applyCurrentCardStateToControls();
 
-            Toast.makeText(this, "Updated.", Toast.LENGTH_SHORT).show();
+            MessagePopupHelper.show(this, "Updated.");
         } else {
-            Toast.makeText(this, "Failed to update card.", Toast.LENGTH_SHORT).show();
+            MessagePopupHelper.show(this, "Failed to update card.");
         }
     }
 

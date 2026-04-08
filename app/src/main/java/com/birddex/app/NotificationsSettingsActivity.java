@@ -7,7 +7,6 @@ import android.widget.AdapterView;
 import android.widget.ArrayAdapter;
 import android.widget.ImageView;
 import android.widget.Spinner;
-import android.widget.Toast;
 
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.appcompat.widget.SwitchCompat;
@@ -147,7 +146,7 @@ public class NotificationsSettingsActivity extends AppCompatActivity {
             public void onFailure(Exception e, String message) {
                 Log.e(TAG, "Load settings failed: " + message, e);
                 if (!isFinishing() && !isDestroyed()) {
-                    Toast.makeText(NotificationsSettingsActivity.this, message, Toast.LENGTH_SHORT).show();
+                    MessagePopupHelper.show(NotificationsSettingsActivity.this, message);
                     setupListeners(uid);
                 }
             }

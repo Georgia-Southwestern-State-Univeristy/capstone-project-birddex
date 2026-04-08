@@ -37,6 +37,8 @@ public class AiCompActivity extends AppCompatActivity {
         TextView tvAiStatus2 = findViewById(R.id.tvAiStatus2);
         TextView tvAiAttribution1 = findViewById(R.id.tvAiAttribution1);
         TextView tvAiAttribution2 = findViewById(R.id.tvAiAttribution2);
+        TextView tvReason1 = findViewById(R.id.tvAiReason1);
+        TextView tvReason2 = findViewById(R.id.tvAiReason2);
         TextView tvAiName1 = findViewById(R.id.tvAiName1);
         TextView tvAiName2 = findViewById(R.id.tvAiName2);
         LinearLayout llAiBird1 = findViewById(R.id.llAiBird1);
@@ -74,8 +76,8 @@ public class AiCompActivity extends AppCompatActivity {
             }
         }
 
-        bindCandidate(llAiBird1, ivAiImage1, progressAiBird1, tvAiStatus1, tvAiAttribution1, tvAiName1, getCandidateAt(0));
-        bindCandidate(llAiBird2, ivAiImage2, progressAiBird2, tvAiStatus2, tvAiAttribution2, tvAiName2, getCandidateAt(1));
+        bindCandidate(llAiBird1, ivAiImage1, progressAiBird1, tvAiStatus1, tvAiAttribution1, tvReason1, tvAiName1, getCandidateAt(0));
+        bindCandidate(llAiBird2, ivAiImage2, progressAiBird2, tvAiStatus2, tvAiAttribution2, tvReason2, tvAiName2, getCandidateAt(1));
 
         tvSubmitFeedback.setOnClickListener(v -> IdentificationFeedbackHelper.showFeedbackDialog(
                 this,
@@ -154,6 +156,7 @@ public class AiCompActivity extends AppCompatActivity {
                                View progressView,
                                TextView statusView,
                                TextView attributionView,
+                               TextView reasonView,
                                TextView nameView,
                                @Nullable Bundle candidate) {
         if (candidate == null) {
@@ -169,6 +172,16 @@ public class AiCompActivity extends AppCompatActivity {
         if (attributionView != null) {
             attributionView.setText("");
             attributionView.setVisibility(View.GONE);
+        }
+        if (reasonView != null) {
+            String reasonText = candidate.getString("candidateReasonText");
+            if (reasonText != null && !reasonText.trim().isEmpty()) {
+                reasonView.setText(reasonText);
+                reasonView.setVisibility(View.VISIBLE);
+            } else {
+                reasonView.setText("");
+                reasonView.setVisibility(View.GONE);
+            }
         }
         if (progressView != null) progressView.setVisibility(View.VISIBLE);
         statusView.setText("Loading reference photo...");
@@ -211,7 +224,7 @@ public class AiCompActivity extends AppCompatActivity {
                     "select_openai_alternative",
                     selectedBirdId,
                     source,
-                    null,
+                    candidate.getString("candidateReasonText"),
                     selectedCommonName,
                     selectedScientificName,
                     selectedSpecies,

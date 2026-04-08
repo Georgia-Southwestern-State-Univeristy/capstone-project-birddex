@@ -170,6 +170,7 @@ public class AiCompLoadingActivity extends AppCompatActivity {
             bundle.putString("candidateSpecies", candidate.species);
             bundle.putString("candidateFamily", candidate.family);
             bundle.putString("candidateSource", candidate.source);
+            bundle.putString("candidateReasonText", candidate.alternativeReasonText);
             bundles.add(bundle);
         }
         return bundles;

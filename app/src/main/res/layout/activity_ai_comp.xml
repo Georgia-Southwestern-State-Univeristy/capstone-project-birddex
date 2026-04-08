@@ -134,6 +134,19 @@
         </FrameLayout>
 
         <TextView
+            android:id="@+id/tvAiReason1"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:gravity="center"
+            android:paddingHorizontal="6dp"
+            android:text=""
+            android:textColor="@color/on_page"
+            android:textSize="12sp"
+            android:lineSpacingExtra="1dp"
+            android:visibility="gone" />
+
+        <TextView
             android:id="@+id/tvAiAttribution1"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -209,6 +222,19 @@
         </FrameLayout>
 
         <TextView
+            android:id="@+id/tvAiReason2"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:gravity="center"
+            android:paddingHorizontal="6dp"
+            android:text=""
+            android:textColor="@color/on_page"
+            android:textSize="12sp"
+            android:lineSpacingExtra="1dp"
+            android:visibility="gone" />
+
+        <TextView
             android:id="@+id/tvAiAttribution2"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -222,7 +248,6 @@
             android:textColorLink="@color/nav_brown"
             android:visibility="gone" />
     </LinearLayout>
-
 
     <Button
         android:id="@+id/btnCouldntFindYourBird"

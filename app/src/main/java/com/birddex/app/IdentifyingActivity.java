@@ -36,6 +36,9 @@ import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Locale;
+import java.util.Date;
+import java.text.SimpleDateFormat;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -153,32 +156,28 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
         requestLocationPermissions();
     }
 
-    /**
-     * Runs when the screen returns to the foreground, so it often refreshes UI state or restarts
-     * listeners.
-     */
     @Override
     protected void onResume() {
         super.onResume();
         networkMonitor.register();
     }
 
-    /**
-     * Runs when the screen is leaving the foreground, so it is used to pause work or save
-     * transient state.
-     */
     @Override
     protected void onPause() {
         super.onPause();
         networkMonitor.unregister();
     }
 
-    /**
-     * Main logic block for this part of the feature.
-     * Location values are handled here, so this is part of the logic that decides what area/bird
-     * sightings the user sees.
-     */
     private void requestLocationPermissions() {
+        boolean awardPointsRequested = getIntent().getBooleanExtra("awardPoints", true);
+        CaptureGuardHelper.GuardReport report = CaptureGuardHelper.readReportFromIntent(getIntent(), awardPointsRequested);
+
+        if (CaptureGuardHelper.CAPTURE_SOURCE_GALLERY_IMPORT.equals(report.captureSource)) {
+            Log.d(TAG, "Gallery import detected, using EXIF location if available");
+            startIdentificationFlow(localImageUri, report.exifLatitude, report.exifLongitude, null, null, null);
+            return;
+        }
+
         boolean fineLocationGranted = ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED;
         boolean coarseLocationGranted = ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED;
 
@@ -343,9 +342,10 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
 
         boolean awardPointsRequested = getIntent().getBooleanExtra("awardPoints", true);
         CaptureGuardHelper.GuardReport captureGuardReport = CaptureGuardHelper.readReportFromIntent(getIntent(), awardPointsRequested);
+        String observedAt = buildObservedAtForIdentification();
 
         // We pass the base64 for analysis AND the storage URL for logging AND requestId for idempotency
-        openAiApi.identifyBirdFromImage(base64Image, downloadUrl, latitude, longitude, localityName, requestId, captureGuardReport, new OpenAiApi.IdentifyBirdCallback() {
+        openAiApi.identifyBirdFromImage(base64Image, downloadUrl, latitude, longitude, localityName, requestId, observedAt, captureGuardReport, new OpenAiApi.IdentifyBirdCallback() {
             @Override
             public void onSuccess(OpenAiApi.IdentifyBirdResult result) {
                 if (identificationCompleted.get() || isFinishing() || isDestroyed()) return;
@@ -499,9 +499,29 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
             bundle.putString("candidateSpecies", candidate.species);
             bundle.putString("candidateFamily", candidate.family);
             bundle.putString("candidateSource", candidate.source);
+            bundle.putString("candidateReasonText", candidate.alternativeReasonText);
             bundles.add(bundle);
         }
         return bundles;
+    }
+
+    private String buildObservedAtForIdentification() {
+        boolean awardPointsRequested = getIntent().getBooleanExtra("awardPoints", true);
+        CaptureGuardHelper.GuardReport report = CaptureGuardHelper.readReportFromIntent(getIntent(), awardPointsRequested);
+
+        if (CaptureGuardHelper.CAPTURE_SOURCE_GALLERY_IMPORT.equals(report.captureSource) && report.exifDateTime != null) {
+            try {
+                // EXIF date format is usually yyyy:MM:dd HH:mm:ss
+                SimpleDateFormat exifFormat = new SimpleDateFormat("yyyy:MM:dd", Locale.US);
+                Date date = exifFormat.parse(report.exifDateTime);
+                if (date != null) {
+                    return new SimpleDateFormat("yyyy-MM-dd", Locale.US).format(date);
+                }
+            } catch (Exception e) {
+                Log.w(TAG, "Failed to parse EXIF date: " + report.exifDateTime, e);
+            }
+        }
+        return new SimpleDateFormat("yyyy-MM-dd", Locale.US).format(new Date());
     }
 
     /**

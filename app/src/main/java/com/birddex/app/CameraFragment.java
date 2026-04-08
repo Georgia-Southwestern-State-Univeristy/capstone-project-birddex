@@ -17,7 +17,6 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.widget.CheckBox;
 import android.widget.ImageButton;
-import android.widget.Toast;
 
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
@@ -122,7 +121,7 @@ public class CameraFragment extends Fragment {
         cameraPermissionLauncher = registerForActivityResult(new ActivityResultContracts.RequestPermission(), granted -> {
             if (granted) startCamera();
                 // Give the user immediate feedback about the result of this action.
-            else Toast.makeText(requireContext(), "Camera permission denied.", Toast.LENGTH_LONG).show();
+            else MessagePopupHelper.show(requireContext(), "Camera permission denied.");
         });
 
         if (ActivityCompat.checkSelfPermission(requireContext(), Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) startCamera();
@@ -198,7 +197,7 @@ public class CameraFragment extends Fragment {
             // Kick off an asynchronous one-time read; the callbacks below decide how the UI should react.
             try { cameraProvider = future.get(); bindCameraUseCases(); }
             // Give the user immediate feedback about the result of this action.
-            catch (ExecutionException | InterruptedException e) { Toast.makeText(requireContext(), "Failed to start camera.", Toast.LENGTH_LONG).show(); }
+            catch (ExecutionException | InterruptedException e) { MessagePopupHelper.show(requireContext(), "Failed to start camera."); }
         }, ContextCompat.getMainExecutor(requireContext()));
     }
 
@@ -285,7 +284,7 @@ public class CameraFragment extends Fragment {
         File outputFile = createBurstFrameFile(frameIndex);
         if (outputFile == null) {
             restoreCaptureButton();
-            Toast.makeText(requireContext(), "Capture failed.", Toast.LENGTH_SHORT).show();
+            MessagePopupHelper.show(requireContext(), "Capture failed.");
             return;
         }
 
@@ -312,7 +311,7 @@ public class CameraFragment extends Fragment {
                     finalizeBurstCapture(frameUris, captureTimesMs);
                 } else {
                     restoreCaptureButton();
-                    Toast.makeText(requireContext(), "Capture failed.", Toast.LENGTH_SHORT).show();
+                    MessagePopupHelper.show(requireContext(), "Capture failed.");
                 }
             }
         });

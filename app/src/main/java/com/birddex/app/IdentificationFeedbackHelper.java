@@ -5,7 +5,6 @@ import android.text.InputType;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.LinearLayout;
-import android.widget.Toast;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
@@ -93,7 +92,7 @@ public final class IdentificationFeedbackHelper {
                         if (dialog.isShowing()) {
                             dialog.dismiss();
                         }
-                        Toast.makeText(activity, finalMessage, Toast.LENGTH_SHORT).show();
+                        MessagePopupHelper.showBrief(activity, finalMessage);
                         return;
                     }
 
@@ -101,7 +100,7 @@ public final class IdentificationFeedbackHelper {
                     negativeButton.setEnabled(true);
                     positiveButton.setText(R.string.submit_feedback_send);
                     feedbackInput.setError(finalMessage);
-                    Toast.makeText(activity, finalMessage, Toast.LENGTH_LONG).show();
+                    MessagePopupHelper.showBrief(activity, finalMessage);
                 }));
             });
         });

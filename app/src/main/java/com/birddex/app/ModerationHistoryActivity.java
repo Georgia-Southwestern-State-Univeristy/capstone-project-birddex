@@ -9,7 +9,6 @@ import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.ProgressBar;
 import android.widget.TextView;
-import android.widget.Toast;
 
 import androidx.annotation.NonNull;
 import androidx.appcompat.app.AlertDialog;
@@ -92,7 +91,7 @@ public class ModerationHistoryActivity extends AppCompatActivity {
             @Override
             public void onFailure(String errorMessage) {
                 progressBar.setVisibility(View.GONE);
-                Toast.makeText(ModerationHistoryActivity.this, errorMessage, Toast.LENGTH_SHORT).show();
+                MessagePopupHelper.show(ModerationHistoryActivity.this, errorMessage);
             }
         });
     }
@@ -174,7 +173,7 @@ public class ModerationHistoryActivity extends AppCompatActivity {
         builder.setPositiveButton("Submit", (dialog, which) -> {
             String reason = input.getText().toString().trim();
             if (reason.isEmpty()) {
-                Toast.makeText(this, "Please enter a reason.", Toast.LENGTH_SHORT).show();
+                MessagePopupHelper.show(this, "Please enter a reason.");
                 return;
             }
             submitAppeal(eventId, reason);
@@ -189,14 +188,14 @@ public class ModerationHistoryActivity extends AppCompatActivity {
             @Override
             public void onSuccess() {
                 progressBar.setVisibility(View.GONE);
-                Toast.makeText(ModerationHistoryActivity.this, "Appeal submitted successfully.", Toast.LENGTH_LONG).show();
+                MessagePopupHelper.show(ModerationHistoryActivity.this, "Appeal submitted successfully.");
                 loadModerationState(); // Refresh to show pending appeal
             }
 
             @Override
             public void onFailure(String errorMessage) {
                 progressBar.setVisibility(View.GONE);
-                Toast.makeText(ModerationHistoryActivity.this, errorMessage, Toast.LENGTH_LONG).show();
+                MessagePopupHelper.show(ModerationHistoryActivity.this, errorMessage);
             }
         });
     }

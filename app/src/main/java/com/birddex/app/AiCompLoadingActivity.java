@@ -12,7 +12,6 @@ import android.provider.MediaStore;
 import android.util.Base64;
 import android.util.Log;
 import android.widget.TextView;
-import android.widget.Toast;
 
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
@@ -76,21 +75,24 @@ public class AiCompLoadingActivity extends AppCompatActivity {
         String identificationId = getIntent().getStringExtra("identificationId");
 
         if (imageUriStr == null || imageUriStr.trim().isEmpty()) {
-            Toast.makeText(this, "Could not load your bird photo for AI review.", Toast.LENGTH_LONG).show();
-            finish();
+            MessagePopupHelper.showBrief(this, "Could not load your bird photo for AI review.", () -> {
+                if (!isFinishing() && !isDestroyed()) finish();
+            });
             return;
         }
         if (identificationLogId == null || identificationLogId.trim().isEmpty()) {
-            Toast.makeText(this, "Identification log is missing for AI review.", Toast.LENGTH_LONG).show();
-            finish();
+            MessagePopupHelper.showBrief(this, "Identification log is missing for AI review.", () -> {
+                if (!isFinishing() && !isDestroyed()) finish();
+            });
             return;
         }
 
         Uri imageUri = Uri.parse(imageUriStr);
         String base64Image = encodeImage(imageUri);
         if (base64Image == null || base64Image.trim().isEmpty()) {
-            Toast.makeText(this, "Failed to prepare your image for AI review.", Toast.LENGTH_LONG).show();
-            finish();
+            MessagePopupHelper.showBrief(this, "Failed to prepare your image for AI review.", () -> {
+                if (!isFinishing() && !isDestroyed()) finish();
+            });
             return;
         }
 
@@ -105,12 +107,13 @@ public class AiCompLoadingActivity extends AppCompatActivity {
                         if (isFinishing() || isDestroyed()) return;
 
                         if (isGore) {
-                            Toast.makeText(AiCompLoadingActivity.this,
+                            MessagePopupHelper.showBrief(AiCompLoadingActivity.this,
                                     userMessage != null && !userMessage.trim().isEmpty()
                                             ? userMessage
                                             : "Please take a picture of a non-gore picture of a bird.",
-                                    Toast.LENGTH_LONG).show();
-                            finish();
+                                    () -> {
+                                        if (!isFinishing() && !isDestroyed()) finish();
+                                    });
                             return;
                         }
 
@@ -132,12 +135,13 @@ public class AiCompLoadingActivity extends AppCompatActivity {
                     public void onFailure(Exception e, String message) {
                         if (isFinishing() || isDestroyed()) return;
                         Log.e(TAG, "requestOpenAiReviewCandidates failed", e);
-                        Toast.makeText(AiCompLoadingActivity.this,
+                        MessagePopupHelper.showBrief(AiCompLoadingActivity.this,
                                 message != null && !message.trim().isEmpty()
                                         ? message
                                         : "AI review failed.",
-                                Toast.LENGTH_LONG).show();
-                        finish();
+                                () -> {
+                                    if (!isFinishing() && !isDestroyed()) finish();
+                                });
                     }
                 }
         );

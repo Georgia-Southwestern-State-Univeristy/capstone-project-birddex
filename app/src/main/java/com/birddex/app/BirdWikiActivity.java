@@ -11,7 +11,6 @@ import android.view.View;
 import android.widget.ImageButton;
 import android.widget.ImageView;
 import android.widget.TextView;
-import android.widget.Toast;
 
 
 import androidx.annotation.Nullable;
@@ -121,7 +120,7 @@ public class BirdWikiActivity extends AppCompatActivity {
         currentBirdId = getIntent().getStringExtra(EXTRA_BIRD_ID);
         if (isBlank(currentBirdId)) {
             // Give the user immediate feedback about the result of this action.
-            Toast.makeText(this, "Missing birdId for info page.", Toast.LENGTH_LONG).show();
+            MessagePopupHelper.show(this, "Missing birdId for info page.");
             finish();
             return;
         }
@@ -941,7 +940,7 @@ public class BirdWikiActivity extends AppCompatActivity {
 
     private void toggleTrackedBirdState() {
         if (isBlank(currentBirdId)) {
-            Toast.makeText(this, "Bird info is not ready yet.", Toast.LENGTH_SHORT).show();
+            MessagePopupHelper.show(this, "Bird info is not ready yet.");
             return;
         }
 
@@ -950,9 +949,9 @@ public class BirdWikiActivity extends AppCompatActivity {
                 if (task.isSuccessful()) {
                     isCurrentBirdTracked = false;
                     updateTrackButtonUI();
-                    Toast.makeText(this, "Bird untracked", Toast.LENGTH_SHORT).show();
+                    MessagePopupHelper.show(this, "Bird untracked");
                 } else {
-                    Toast.makeText(this, "Failed to untrack bird.", Toast.LENGTH_SHORT).show();
+                    MessagePopupHelper.show(this, "Failed to untrack bird.");
                 }
             });
         } else {
@@ -965,9 +964,9 @@ public class BirdWikiActivity extends AppCompatActivity {
                         if (task.isSuccessful()) {
                             isCurrentBirdTracked = true;
                             updateTrackButtonUI();
-                            Toast.makeText(this, "Bird tracked", Toast.LENGTH_SHORT).show();
+                            MessagePopupHelper.show(this, "Bird tracked");
                         } else {
-                            Toast.makeText(this, "Failed to track bird.", Toast.LENGTH_SHORT).show();
+                            MessagePopupHelper.show(this, "Failed to track bird.");
                         }
                     }
             );

@@ -12,7 +12,6 @@ import android.widget.ImageButton;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
-import android.widget.Toast;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
@@ -249,7 +248,7 @@ public class UpgradeActivity extends AppCompatActivity {
                     isUpgradeInFlight = false;
                     loadingOverlay.setVisibility(View.GONE);
                     currentRarity = targetRarity;
-                    Toast.makeText(this, "Success: Card rarity updated!", Toast.LENGTH_SHORT).show();
+                    MessagePopupHelper.show(this, "Success: Card rarity updated!");
 
                     Intent resultIntent = new Intent();
                     resultIntent.putExtra(EXTRA_NEW_RARITY, targetRarity);
@@ -263,7 +262,7 @@ public class UpgradeActivity extends AppCompatActivity {
                     isUpgradeInFlight = false;
                     loadingOverlay.setVisibility(View.GONE);
                     Log.e(TAG, "Backend call failed", e);
-                    Toast.makeText(this, "Error: " + e.getMessage(), Toast.LENGTH_SHORT).show();
+                    MessagePopupHelper.show(this, "Error: " + e.getMessage());
                 });
     }
 

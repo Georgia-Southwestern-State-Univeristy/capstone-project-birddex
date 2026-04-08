@@ -8,7 +8,6 @@ import android.view.ViewGroup;
 import android.view.animation.Animation;
 import android.view.animation.AnimationUtils;
 import android.widget.TextView;
-import android.widget.Toast;
 
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.graphics.Insets;
@@ -356,7 +355,7 @@ public class HomeActivity extends AppCompatActivity implements NetworkMonitor.Ne
         boolean hasCachedList = birdCacheManager != null && !birdCacheManager.getCachedCoreGeorgiaBirds().isEmpty();
         if (!networkMonitor.isConnected() && !hasCachedList) {
             Log.w(TAG, "Attempted to fetchCoreGeorgiaBirdList but no network and no cached Georgia list in HomeActivity.");
-            Toast.makeText(this, "No internet to fetch bird list.", Toast.LENGTH_SHORT).show();
+            MessagePopupHelper.show(this, "No internet to fetch bird list.");
             return;
         }
 
@@ -375,7 +374,7 @@ public class HomeActivity extends AppCompatActivity implements NetworkMonitor.Ne
                 isFetchingBirds = false;
                 Log.e(TAG, "Failed to fetch core bird list in HomeActivity: " + e.getMessage(), e);
                 if (allGeorgiaBirds.isEmpty()) {
-                    Toast.makeText(HomeActivity.this, "Failed to load core bird data in background.", Toast.LENGTH_LONG).show();
+                    MessagePopupHelper.show(HomeActivity.this, "Failed to load core bird data in background.");
                 }
             }
         });
@@ -457,7 +456,7 @@ public class HomeActivity extends AppCompatActivity implements NetworkMonitor.Ne
         Log.d(TAG, "Network became available in HomeActivity.");
         runOnUiThread(() -> {
             if (allGeorgiaBirds.isEmpty()) {
-                Toast.makeText(this, "Internet connection restored. Retrying bird list fetch.", Toast.LENGTH_SHORT).show();
+                MessagePopupHelper.show(this, "Internet connection restored. Retrying bird list fetch.");
                 fetchCoreGeorgiaBirdList();
             }
 
@@ -477,7 +476,7 @@ public class HomeActivity extends AppCompatActivity implements NetworkMonitor.Ne
         Log.e(TAG, "Network lost in HomeActivity.");
         runOnUiThread(() ->
                 // Give the user immediate feedback about the result of this action.
-                Toast.makeText(this, "Internet connection lost. Bird data may be incomplete.", Toast.LENGTH_LONG).show()
+                MessagePopupHelper.show(this, "Internet connection lost. Bird data may be incomplete.")
         );
     }
 

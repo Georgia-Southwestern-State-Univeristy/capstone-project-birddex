@@ -12,7 +12,6 @@ import android.widget.EditText;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
-import android.widget.Toast;
 
 import androidx.appcompat.app.AppCompatActivity;
 
@@ -150,7 +149,7 @@ public class SettingsActivity extends AppCompatActivity {
         // Send a password reset link to the current user's email.
         btnChangePassword.setOnClickListener(v -> {
             initiatePasswordReset();
-            Toast.makeText(SettingsActivity.this, "Please check your email to update your password.", Toast.LENGTH_LONG).show();
+            MessagePopupHelper.show(SettingsActivity.this, "Please check your email to update your password.");
         });
 
         btnDeleteAccount.setOnClickListener(v -> showDeleteAccountConfirmation());
@@ -295,7 +294,7 @@ public class SettingsActivity extends AppCompatActivity {
                 if (exception instanceof FirebaseAuthRecentLoginRequiredException) {
                     promptForReauthenticationAndRetry(newEmail);
                 } else {
-                    Toast.makeText(SettingsActivity.this, "Failed: " + (exception != null ? exception.getMessage() : "Unknown error"), Toast.LENGTH_LONG).show();
+                    MessagePopupHelper.show(SettingsActivity.this, "Failed: " + (exception != null ? exception.getMessage() : "Unknown error"));
                 }
             }
         });
@@ -328,7 +327,7 @@ public class SettingsActivity extends AppCompatActivity {
         AuthCredential credential = EmailAuthProvider.getCredential(user.getEmail(), currentPassword);
         user.reauthenticate(credential).addOnCompleteListener(reauthTask -> {
             if (reauthTask.isSuccessful()) attemptUpdateEmail(newEmail);
-            else Toast.makeText(SettingsActivity.this, "Re-authentication failed.", Toast.LENGTH_SHORT).show();
+            else MessagePopupHelper.show(SettingsActivity.this, "Re-authentication failed.");
         });
     }
 
@@ -339,7 +338,7 @@ public class SettingsActivity extends AppCompatActivity {
         FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
         if (user != null && user.getEmail() != null) {
             firebaseManager.sendPasswordResetEmail(user.getEmail(), task -> {
-                if (task.isSuccessful()) Toast.makeText(SettingsActivity.this, "Password reset email sent.", Toast.LENGTH_LONG).show();
+                if (task.isSuccessful()) MessagePopupHelper.show(SettingsActivity.this, "Password reset email sent.");
             });
         }
     }
@@ -384,7 +383,7 @@ public class SettingsActivity extends AppCompatActivity {
         AuthCredential credential = EmailAuthProvider.getCredential(user.getEmail(), password);
         user.reauthenticate(credential).addOnCompleteListener(reauthTask -> {
             if (reauthTask.isSuccessful()) processAccountDeletion(user);
-            else Toast.makeText(SettingsActivity.this, "Re-authentication failed.", Toast.LENGTH_SHORT).show();
+            else MessagePopupHelper.show(SettingsActivity.this, "Re-authentication failed.");
         });
     }
 
@@ -406,7 +405,7 @@ public class SettingsActivity extends AppCompatActivity {
                 if (task.getException() != null && task.getException().getMessage() != null) {
                     message = task.getException().getMessage();
                 }
-                Toast.makeText(SettingsActivity.this, message, Toast.LENGTH_LONG).show();
+                MessagePopupHelper.show(SettingsActivity.this, message);
             }
         });
     }

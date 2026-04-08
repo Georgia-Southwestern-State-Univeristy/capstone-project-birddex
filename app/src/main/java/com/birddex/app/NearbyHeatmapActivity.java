@@ -31,7 +31,6 @@ import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.PopupMenu;
 import android.widget.TextView;
-import android.widget.Toast;
 import java.util.HashSet;
 
 import androidx.annotation.NonNull;
@@ -258,7 +257,7 @@ public class NearbyHeatmapActivity extends AppCompatActivity
             btnBirdSearch.setOnLongClickListener(v -> {
                 if (hasSelectedBirdFilter()) {
                     clearSelectedBirdFilter();
-                    Toast.makeText(this, "Bird filter cleared", Toast.LENGTH_SHORT).show();
+                    MessagePopupHelper.showBrief(this, "Bird filter cleared");
                     return true;
                 }
                 return false;
@@ -295,7 +294,7 @@ public class NearbyHeatmapActivity extends AppCompatActivity
         if (mapFragment != null) mapFragment.getMapAsync(this);
             // Give the user immediate feedback about the result of this action.
         else {
-            Toast.makeText(this, "Map failed to load", Toast.LENGTH_SHORT).show();
+            MessagePopupHelper.showBrief(this, "Map failed to load");
             finish();
         }
     }
@@ -390,7 +389,7 @@ public class NearbyHeatmapActivity extends AppCompatActivity
             loadForumPins();
 
             if (followedUserIds.isEmpty()) {
-                Toast.makeText(this, "You are not following anyone yet.", Toast.LENGTH_SHORT).show();
+                MessagePopupHelper.showBrief(this, "You are not following anyone yet.");
             }
         });
     }
@@ -451,13 +450,13 @@ public class NearbyHeatmapActivity extends AppCompatActivity
     private void openBirdSearchDialog() {
         if (searchableBirds.isEmpty()) {
             primeSearchableBirds();
-            Toast.makeText(this, isSearchDataLoading ? "Loading birds..." : "Bird list is not ready yet.", Toast.LENGTH_SHORT).show();
+            MessagePopupHelper.showBrief(this, isSearchDataLoading ? "Loading birds..." : "Bird list is not ready yet.");
             return;
         }
 
         List<Bird> birds = buildNearbySearchBirdList();
         if (birds.isEmpty()) {
-            Toast.makeText(this, "No birds available yet.", Toast.LENGTH_SHORT).show();
+            MessagePopupHelper.showBrief(this, "No birds available yet.");
             return;
         }
 
@@ -642,9 +641,8 @@ public class NearbyHeatmapActivity extends AppCompatActivity
         googleMap.moveCamera(CameraUpdateFactory.newLatLngZoom(initialCenter, initialZoom));
 
         if (trackedBirdNameFromNotification != null && !trackedBirdNameFromNotification.trim().isEmpty()) {
-            Toast.makeText(this,
-                    "Showing tracked bird location for " + trackedBirdNameFromNotification,
-                    Toast.LENGTH_SHORT).show();
+            MessagePopupHelper.showBrief(this,
+                    "Showing tracked bird location for " + trackedBirdNameFromNotification);
         }
 
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
@@ -1043,7 +1041,7 @@ public class NearbyHeatmapActivity extends AppCompatActivity
                     ((TextView) content.findViewById(R.id.tvLikeCount)).setText(String.valueOf(count));
                     ivLike.setImageResource(liked ? R.drawable.ic_favorite : R.drawable.ic_favorite_border);
                     if (errorMessage != null && !errorMessage.trim().isEmpty()) {
-                        Toast.makeText(NearbyHeatmapActivity.this, errorMessage, Toast.LENGTH_SHORT).show();
+                        MessagePopupHelper.showBrief(NearbyHeatmapActivity.this, errorMessage);
                     }
                 }
             });
@@ -1112,7 +1110,7 @@ public class NearbyHeatmapActivity extends AppCompatActivity
                 return;
             }
             if (ForumSubmissionCooldownHelper.isCoolingDown(this)) {
-                Toast.makeText(this, ForumSubmissionCooldownHelper.buildCooldownMessage(this), Toast.LENGTH_SHORT).show();
+                MessagePopupHelper.showBrief(this, ForumSubmissionCooldownHelper.buildCooldownMessage(this));
                 return;
             }
             sendCommentButton.setEnabled(false);
@@ -1136,7 +1134,7 @@ public class NearbyHeatmapActivity extends AppCompatActivity
                 public void onFailure(String errorMessage) {
                     if (isFinishing() || isDestroyed()) return;
                     sendCommentButton.setEnabled(true);
-                    Toast.makeText(NearbyHeatmapActivity.this, errorMessage, Toast.LENGTH_SHORT).show();
+                    MessagePopupHelper.showBrief(NearbyHeatmapActivity.this, errorMessage);
                 }
             });
         });
@@ -1233,13 +1231,13 @@ public class NearbyHeatmapActivity extends AppCompatActivity
             @Override
             public void onSuccess() {
                 if (isFinishing() || isDestroyed()) return;
-                Toast.makeText(NearbyHeatmapActivity.this, "Post saved", Toast.LENGTH_SHORT).show();
+                MessagePopupHelper.showBrief(NearbyHeatmapActivity.this, "Post saved");
             }
 
             @Override
             public void onFailure(String errorMessage) {
                 if (isFinishing() || isDestroyed()) return;
-                Toast.makeText(NearbyHeatmapActivity.this, errorMessage != null ? errorMessage : "Failed to save post.", Toast.LENGTH_SHORT).show();
+                MessagePopupHelper.showBrief(NearbyHeatmapActivity.this, errorMessage != null ? errorMessage : "Failed to save post.");
             }
         });
     }
@@ -1249,13 +1247,13 @@ public class NearbyHeatmapActivity extends AppCompatActivity
             @Override
             public void onSuccess() {
                 if (isFinishing() || isDestroyed()) return;
-                Toast.makeText(NearbyHeatmapActivity.this, "Post unsaved", Toast.LENGTH_SHORT).show();
+                MessagePopupHelper.showBrief(NearbyHeatmapActivity.this, "Post unsaved");
             }
 
             @Override
             public void onFailure(String errorMessage) {
                 if (isFinishing() || isDestroyed()) return;
-                Toast.makeText(NearbyHeatmapActivity.this, errorMessage != null ? errorMessage : "Failed to unsave post.", Toast.LENGTH_SHORT).show();
+                MessagePopupHelper.showBrief(NearbyHeatmapActivity.this, errorMessage != null ? errorMessage : "Failed to unsave post.");
             }
         });
     }
@@ -1280,7 +1278,7 @@ public class NearbyHeatmapActivity extends AppCompatActivity
                 String error = task.getException() != null && task.getException().getMessage() != null
                         ? task.getException().getMessage()
                         : "Failed to delete post.";
-                Toast.makeText(this, error, Toast.LENGTH_SHORT).show();
+                MessagePopupHelper.showBrief(this, error);
             }
         });
     }
@@ -1396,7 +1394,7 @@ public class NearbyHeatmapActivity extends AppCompatActivity
         if (user == null) return;
         // Give the user immediate feedback about the result of this action.
         firebaseManager.addReport(new Report(type, id, user.getUid(), r, sourceContext, threadId), t -> {
-            if (t.isSuccessful()) Toast.makeText(this, "Reported", Toast.LENGTH_SHORT).show();
+            if (t.isSuccessful()) MessagePopupHelper.showBrief(this, "Reported");
         });
     }
 
@@ -1469,7 +1467,7 @@ public class NearbyHeatmapActivity extends AppCompatActivity
                 else c.getLikedBy().remove(uid);
                 if (popupCommentAdapter != null) popupCommentAdapter.notifyDataSetChanged();
                 if (errorMessage != null && !errorMessage.trim().isEmpty()) {
-                    Toast.makeText(NearbyHeatmapActivity.this, errorMessage, Toast.LENGTH_SHORT).show();
+                    MessagePopupHelper.showBrief(NearbyHeatmapActivity.this, errorMessage);
                 }
             }
         });
@@ -1524,7 +1522,7 @@ public class NearbyHeatmapActivity extends AppCompatActivity
                 String error = task.getException() != null && task.getException().getMessage() != null
                         ? task.getException().getMessage()
                         : "Failed to delete comment.";
-                Toast.makeText(this, error, Toast.LENGTH_SHORT).show();
+                MessagePopupHelper.showBrief(this, error);
             }
         });
     }
@@ -2016,7 +2014,7 @@ public class NearbyHeatmapActivity extends AppCompatActivity
         String scientificName = safeTrim(item.scientificName);
 
         if (commonName == null && scientificName == null) {
-            Toast.makeText(this, "Bird info unavailable for this hotspot entry.", Toast.LENGTH_SHORT).show();
+            MessagePopupHelper.showBrief(this, "Bird info unavailable for this hotspot entry.");
             return;
         }
 
@@ -2037,7 +2035,7 @@ public class NearbyHeatmapActivity extends AppCompatActivity
                         } else if (scientificName != null) {
                             resolveBirdIdByScientificName(scientificName, dialog);
                         } else {
-                            Toast.makeText(this, "Could not open bird info for this entry.", Toast.LENGTH_SHORT).show();
+                            MessagePopupHelper.showBrief(this, "Could not open bird info for this entry.");
                         }
                     })
                     .addOnFailureListener(e -> {
@@ -2045,7 +2043,7 @@ public class NearbyHeatmapActivity extends AppCompatActivity
                         if (scientificName != null) {
                             resolveBirdIdByScientificName(scientificName, dialog);
                         } else {
-                            Toast.makeText(this, "Could not open bird info for this entry.", Toast.LENGTH_SHORT).show();
+                            MessagePopupHelper.showBrief(this, "Could not open bird info for this entry.");
                         }
                     });
             return;
@@ -2057,7 +2055,7 @@ public class NearbyHeatmapActivity extends AppCompatActivity
     private void resolveBirdIdByScientificName(@Nullable String scientificName,
                                                @NonNull BottomSheetDialog dialog) {
         if (scientificName == null) {
-            Toast.makeText(this, "Could not open bird info for this entry.", Toast.LENGTH_SHORT).show();
+            MessagePopupHelper.showBrief(this, "Could not open bird info for this entry.");
             return;
         }
 
@@ -2069,12 +2067,12 @@ public class NearbyHeatmapActivity extends AppCompatActivity
                     if (querySnapshot != null && !querySnapshot.isEmpty()) {
                         launchBirdWiki(querySnapshot.getDocuments().get(0).getId(), dialog);
                     } else {
-                        Toast.makeText(this, "Could not open bird info for this entry.", Toast.LENGTH_SHORT).show();
+                        MessagePopupHelper.showBrief(this, "Could not open bird info for this entry.");
                     }
                 })
                 .addOnFailureListener(e -> {
                     Log.e(TAG, "Failed to resolve bird by scientificName=" + scientificName, e);
-                    Toast.makeText(this, "Could not open bird info for this entry.", Toast.LENGTH_SHORT).show();
+                    MessagePopupHelper.showBrief(this, "Could not open bird info for this entry.");
                 });
     }
 
@@ -2423,7 +2421,7 @@ public class NearbyHeatmapActivity extends AppCompatActivity
         }
 
         if (matches == 0) {
-            Toast.makeText(this, "No nearby sightings for " + safeSelectedBirdLabel() + " in this map area.", Toast.LENGTH_SHORT).show();
+            MessagePopupHelper.showBrief(this, "No nearby sightings for " + safeSelectedBirdLabel() + " in this map area.");
             return;
         }
 

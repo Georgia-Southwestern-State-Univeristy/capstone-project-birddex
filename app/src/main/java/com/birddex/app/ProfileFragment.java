@@ -16,7 +16,6 @@ import android.widget.ImageButton;
 import android.widget.ListView;
 import android.widget.PopupMenu;
 import android.widget.TextView;
-import android.widget.Toast;
 
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
@@ -976,7 +975,7 @@ public class ProfileFragment extends Fragment implements
                 else post.getLikedBy().remove(uid);
                 postsAdapter.notifyDataSetChanged();
                 if (isAdded() && errorMessage != null && !errorMessage.trim().isEmpty()) {
-                    Toast.makeText(requireContext(), errorMessage, Toast.LENGTH_SHORT).show();
+                    MessagePopupHelper.showBrief(requireContext(), errorMessage);
                 }
             }
         });
@@ -1030,14 +1029,14 @@ public class ProfileFragment extends Fragment implements
             @Override
             public void onSuccess() {
                 if (!isAdded()) return;
-                Toast.makeText(requireContext(), "Post saved", Toast.LENGTH_SHORT).show();
+                MessagePopupHelper.showBrief(requireContext(), "Post saved");
                 refreshSavedPosts();
             }
 
             @Override
             public void onFailure(String errorMessage) {
                 if (!isAdded()) return;
-                Toast.makeText(requireContext(), errorMessage != null ? errorMessage : "Failed to save post.", Toast.LENGTH_SHORT).show();
+                MessagePopupHelper.showBrief(requireContext(), errorMessage != null ? errorMessage : "Failed to save post.");
             }
         });
     }
@@ -1047,14 +1046,14 @@ public class ProfileFragment extends Fragment implements
             @Override
             public void onSuccess() {
                 if (!isAdded()) return;
-                Toast.makeText(requireContext(), "Post unsaved", Toast.LENGTH_SHORT).show();
+                MessagePopupHelper.showBrief(requireContext(), "Post unsaved");
                 refreshSavedPosts();
             }
 
             @Override
             public void onFailure(String errorMessage) {
                 if (!isAdded()) return;
-                Toast.makeText(requireContext(), errorMessage != null ? errorMessage : "Failed to unsave post.", Toast.LENGTH_SHORT).show();
+                MessagePopupHelper.showBrief(requireContext(), errorMessage != null ? errorMessage : "Failed to unsave post.");
             }
         });
     }
@@ -1095,10 +1094,10 @@ public class ProfileFragment extends Fragment implements
         firebaseManager.untrackBird(birdId, task -> {
             if (!isAdded()) return;
             if (task.isSuccessful()) {
-                Toast.makeText(requireContext(), "Bird untracked", Toast.LENGTH_SHORT).show();
+                MessagePopupHelper.showBrief(requireContext(), "Bird untracked");
                 refreshTrackedBirds();
             } else {
-                Toast.makeText(requireContext(), "Failed to untrack bird.", Toast.LENGTH_SHORT).show();
+                MessagePopupHelper.showBrief(requireContext(), "Failed to untrack bird.");
             }
         });
     }
@@ -1284,7 +1283,7 @@ public class ProfileFragment extends Fragment implements
         if (u == null) return;
         // Give the user immediate feedback about the result of this action.
         firebaseManager.addReport(new Report("post", post.getId(), u.getUid(), r), t -> {
-            if (isAdded() && t.isSuccessful()) Toast.makeText(getContext(), "Reported", Toast.LENGTH_SHORT).show();
+            if (isAdded() && t.isSuccessful()) MessagePopupHelper.showBrief(getContext(), "Reported");
         });
     }
 

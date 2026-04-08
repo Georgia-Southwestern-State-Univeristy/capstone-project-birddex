@@ -14,7 +14,6 @@ import android.view.ViewGroup;
 import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.PopupMenu;
-import android.widget.Toast;
 
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
@@ -409,7 +408,7 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
                         isFetching = false;
                         if (binding != null) binding.swipeRefreshLayout.setRefreshing(false);
 
-                        Toast.makeText(requireContext(), "You are not following anyone yet.", Toast.LENGTH_SHORT).show();
+                        MessagePopupHelper.showBrief(requireContext(), "You are not following anyone yet.");
                         return;
                     }
 
@@ -582,7 +581,7 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
                 p.setLikeCount(count); if (liked) p.getLikedBy().put(uid, true); else p.getLikedBy().remove(uid);
                 adapter.notifyDataSetChanged();
                 if (isAdded()) {
-                    Toast.makeText(getContext(), (errorMessage != null && !errorMessage.trim().isEmpty()) ? errorMessage : "Failed to update like status.", Toast.LENGTH_SHORT).show();
+                    MessagePopupHelper.showBrief(getContext(), (errorMessage != null && !errorMessage.trim().isEmpty()) ? errorMessage : "Failed to update like status.");
                 }
             }
         });
@@ -628,11 +627,11 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
     private void savePostForLater(ForumPost p) {
         firebaseManager.saveForumPost(p.getId(), new FirebaseManager.ForumWriteListener() {
             @Override public void onSuccess() {
-                if (isAdded()) Toast.makeText(requireContext(), "Post saved", Toast.LENGTH_SHORT).show();
+                if (isAdded()) MessagePopupHelper.showBrief(requireContext(), "Post saved");
             }
 
             @Override public void onFailure(String errorMessage) {
-                if (isAdded()) Toast.makeText(requireContext(), errorMessage != null ? errorMessage : "Failed to save post.", Toast.LENGTH_SHORT).show();
+                if (isAdded()) MessagePopupHelper.showBrief(requireContext(), errorMessage != null ? errorMessage : "Failed to save post.");
             }
         });
     }
@@ -640,11 +639,11 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
     private void unsavePost(ForumPost p) {
         firebaseManager.unsaveForumPost(p.getId(), new FirebaseManager.ForumWriteListener() {
             @Override public void onSuccess() {
-                if (isAdded()) Toast.makeText(requireContext(), "Post unsaved", Toast.LENGTH_SHORT).show();
+                if (isAdded()) MessagePopupHelper.showBrief(requireContext(), "Post unsaved");
             }
 
             @Override public void onFailure(String errorMessage) {
-                if (isAdded()) Toast.makeText(requireContext(), errorMessage != null ? errorMessage : "Failed to unsave post.", Toast.LENGTH_SHORT).show();
+                if (isAdded()) MessagePopupHelper.showBrief(requireContext(), errorMessage != null ? errorMessage : "Failed to unsave post.");
             }
         });
     }
@@ -686,7 +685,7 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
                 String error = task.getException() != null && task.getException().getMessage() != null
                         ? task.getException().getMessage()
                         : "Failed to delete post.";
-                Toast.makeText(requireContext(), error, Toast.LENGTH_SHORT).show();
+                MessagePopupHelper.showBrief(requireContext(), error);
             }
         });
     }
@@ -781,7 +780,7 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
     private void submitReport(ForumPost p, String r) {
         FirebaseUser u = mAuth.getCurrentUser(); if (u == null) return;
         // Give the user immediate feedback about the result of this action.
-        firebaseManager.addReport(new Report("post", p.getId(), u.getUid(), r), t -> { if (isAdded() && t.isSuccessful()) Toast.makeText(getContext(), "Reported", Toast.LENGTH_SHORT).show(); });
+        firebaseManager.addReport(new Report("post", p.getId(), u.getUid(), r), t -> { if (isAdded() && t.isSuccessful()) MessagePopupHelper.showBrief(getContext(), "Reported"); });
     }
 
     /**

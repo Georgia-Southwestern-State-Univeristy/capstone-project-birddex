@@ -6,7 +6,6 @@ import android.view.View;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.TextView;
-import android.widget.Toast;
 
 import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
@@ -57,7 +56,7 @@ public class LoginActivity extends AppCompatActivity {
                     public void onSuccess(FirebaseUser user) {
                         if (user == null) {
                             setLoadingState(false);
-                            Toast.makeText(LoginActivity.this, "Login failed.", Toast.LENGTH_SHORT).show();
+                            MessagePopupHelper.show(LoginActivity.this, "Login failed.");
                             return;
                         }
 
@@ -71,7 +70,7 @@ public class LoginActivity extends AppCompatActivity {
 
                             if (refreshedUser == null) {
                                 setLoadingState(false);
-                                Toast.makeText(LoginActivity.this, "Login failed.", Toast.LENGTH_SHORT).show();
+                                MessagePopupHelper.show(LoginActivity.this, "Login failed.");
                                 return;
                             }
 
@@ -110,7 +109,7 @@ public class LoginActivity extends AppCompatActivity {
                     @Override
                     public void onFailure(String errorMessage) {
                         setLoadingState(false);
-                        Toast.makeText(LoginActivity.this, errorMessage, Toast.LENGTH_SHORT).show();
+                        MessagePopupHelper.show(LoginActivity.this, errorMessage);
                     }
 
                     @Override
@@ -157,11 +156,10 @@ public class LoginActivity extends AppCompatActivity {
                         ? task.getException().getMessage()
                         : "Failed to start session.";
 
-                Toast.makeText(
+                MessagePopupHelper.showBrief(
                         LoginActivity.this,
-                        "Login failed: " + msg,
-                        Toast.LENGTH_LONG
-                ).show();
+                        "Login failed: " + msg
+                );
             }
         });
     }

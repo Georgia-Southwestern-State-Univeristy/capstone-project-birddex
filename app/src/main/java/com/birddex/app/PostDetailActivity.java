@@ -15,7 +15,6 @@ import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.PopupMenu;
 import android.widget.TextView;
-import android.widget.Toast;
 import android.text.Editable;
 import android.text.TextWatcher;
 import android.view.View;
@@ -253,8 +252,9 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
                     if (originalPost != null) {
                         originalPost.setId(doc.getId());
                         if (!isForumPostVisible(originalPost)) {
-                            Toast.makeText(this, "This post is not currently visible.", Toast.LENGTH_SHORT).show();
-                            finish();
+                            MessagePopupHelper.showBrief(this, "This post is not currently visible.", () -> {
+                                if (!isFinishing() && !isDestroyed()) finish();
+                            });
                             return;
                         }
                         FirebaseUser user = mAuth.getCurrentUser();
@@ -419,13 +419,13 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
             @Override
             public void onSuccess() {
                 if (isFinishing() || isDestroyed()) return;
-                Toast.makeText(PostDetailActivity.this, "Post saved", Toast.LENGTH_SHORT).show();
+                MessagePopupHelper.showBrief(PostDetailActivity.this, "Post saved");
             }
 
             @Override
             public void onFailure(String errorMessage) {
                 if (isFinishing() || isDestroyed()) return;
-                Toast.makeText(PostDetailActivity.this, errorMessage != null ? errorMessage : "Failed to save post.", Toast.LENGTH_SHORT).show();
+                MessagePopupHelper.showBrief(PostDetailActivity.this, errorMessage != null ? errorMessage : "Failed to save post.");
             }
         });
     }
@@ -435,13 +435,13 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
             @Override
             public void onSuccess() {
                 if (isFinishing() || isDestroyed()) return;
-                Toast.makeText(PostDetailActivity.this, "Post unsaved", Toast.LENGTH_SHORT).show();
+                MessagePopupHelper.showBrief(PostDetailActivity.this, "Post unsaved");
             }
 
             @Override
             public void onFailure(String errorMessage) {
                 if (isFinishing() || isDestroyed()) return;
-                Toast.makeText(PostDetailActivity.this, errorMessage != null ? errorMessage : "Failed to unsave post.", Toast.LENGTH_SHORT).show();
+                MessagePopupHelper.showBrief(PostDetailActivity.this, errorMessage != null ? errorMessage : "Failed to unsave post.");
             }
         });
     }
@@ -483,13 +483,13 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
             @Override
             public void onSuccess() {
                 if (isFinishing()) return;
-                Toast.makeText(PostDetailActivity.this, "Updated", Toast.LENGTH_SHORT).show();
+                MessagePopupHelper.showBrief(PostDetailActivity.this, "Updated");
             }
 
             @Override
             public void onFailure(String errorMessage) {
                 if (isFinishing()) return;
-                Toast.makeText(PostDetailActivity.this, errorMessage != null ? errorMessage : "Failed to update post", Toast.LENGTH_SHORT).show();
+                MessagePopupHelper.showBrief(PostDetailActivity.this, errorMessage != null ? errorMessage : "Failed to update post");
             }
         });
     }
@@ -508,13 +508,14 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
         firebaseManager.deleteForumPost(post.getId(), task -> {
             if (isFinishing() || isDestroyed()) return;
             if (task.isSuccessful()) {
-                Toast.makeText(this, "Deleted", Toast.LENGTH_SHORT).show();
-                finish();
+                MessagePopupHelper.showBrief(this, "Deleted", () -> {
+                    if (!isFinishing() && !isDestroyed()) finish();
+                });
             } else {
                 String error = task.getException() != null && task.getException().getMessage() != null
                         ? task.getException().getMessage()
                         : "Failed to delete post.";
-                Toast.makeText(this, error, Toast.LENGTH_SHORT).show();
+                MessagePopupHelper.showBrief(this, error);
             }
         });
     }
@@ -541,7 +542,13 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
             Map<String, Object> p = new HashMap<>(); p.put("type", "post"); p.put("originalId", post.getId()); p.put("data", post); p.put("deletedBy", uid); p.put("deletedAt", FieldValue.serverTimestamp());
             b.set(db.collection("deletedforum_backlog").document(), p); b.delete(db.collection("forumThreads").document(post.getId()));
             // Give the user immediate feedback about the result of this action.
-            b.commit().addOnSuccessListener(v -> { if (!isFinishing()) { Toast.makeText(this, "Deleted", Toast.LENGTH_SHORT).show(); finish(); } });
+            b.commit().addOnSuccessListener(v -> {
+                if (!isFinishing()) {
+                    MessagePopupHelper.showBrief(this, "Deleted", () -> {
+                        if (!isFinishing()) finish();
+                    });
+                }
+            });
         }).addOnFailureListener(e -> savePostToBacklogAndFirestore(uid, post));
     }
 
@@ -599,7 +606,7 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
     private void submitReport(ForumPost post, String reason) {
         FirebaseUser u = mAuth.getCurrentUser(); if (u == null) return;
         // Give the user immediate feedback about the result of this action.
-        firebaseManager.addReport(new Report("post", post.getId(), u.getUid(), reason, "post_detail", post.getId()), t -> { if (t.isSuccessful()) Toast.makeText(this, "Reported", Toast.LENGTH_SHORT).show(); });
+        firebaseManager.addReport(new Report("post", post.getId(), u.getUid(), reason, "post_detail", post.getId()), t -> { if (t.isSuccessful()) MessagePopupHelper.showBrief(this, "Reported"); });
     }
 
     /**
@@ -631,7 +638,7 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
                 if (liked) originalPost.getLikedBy().put(uid, true); else originalPost.getLikedBy().remove(uid);
                 bindPostToLayout(originalPost);
                 if (errorMessage != null && !errorMessage.trim().isEmpty()) {
-                    Toast.makeText(PostDetailActivity.this, errorMessage, Toast.LENGTH_SHORT).show();
+                    MessagePopupHelper.showBrief(PostDetailActivity.this, errorMessage);
                 }
             }
         });
@@ -775,7 +782,7 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
             return;
         }
         if (ForumSubmissionCooldownHelper.isCoolingDown(this)) {
-            Toast.makeText(this, ForumSubmissionCooldownHelper.buildCooldownMessage(this), Toast.LENGTH_SHORT).show();
+            MessagePopupHelper.showBrief(this, ForumSubmissionCooldownHelper.buildCooldownMessage(this));
             return;
         }
         FirebaseUser user = mAuth.getCurrentUser(); if (user == null) return;
@@ -804,7 +811,7 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
             public void onFailure(String errorMessage) {
                 if (isFinishing()) return;
                 binding.btnSendComment.setEnabled(true);
-                Toast.makeText(PostDetailActivity.this, errorMessage != null ? errorMessage : "Failed", Toast.LENGTH_SHORT).show();
+                MessagePopupHelper.showBrief(PostDetailActivity.this, errorMessage != null ? errorMessage : "Failed");
             }
         });
     }
@@ -842,7 +849,7 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
                 commentLikeInFlight.remove(comment.getId());
                 comment.setLikeCount(count); if (liked) comment.getLikedBy().put(uid, true); else comment.getLikedBy().remove(uid); adapter.notifyDataSetChanged();
                 if (errorMessage != null && !errorMessage.trim().isEmpty()) {
-                    Toast.makeText(PostDetailActivity.this, errorMessage, Toast.LENGTH_SHORT).show();
+                    MessagePopupHelper.showBrief(PostDetailActivity.this, errorMessage);
                 }
             }
         });
@@ -903,13 +910,13 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
             @Override
             public void onSuccess() {
                 if (isFinishing()) return;
-                Toast.makeText(PostDetailActivity.this, "Updated", Toast.LENGTH_SHORT).show();
+                MessagePopupHelper.showBrief(PostDetailActivity.this, "Updated");
             }
 
             @Override
             public void onFailure(String errorMessage) {
                 if (isFinishing()) return;
-                Toast.makeText(PostDetailActivity.this, errorMessage != null ? errorMessage : "Failed to update comment", Toast.LENGTH_SHORT).show();
+                MessagePopupHelper.showBrief(PostDetailActivity.this, errorMessage != null ? errorMessage : "Failed to update comment");
             }
         });
     }
@@ -943,7 +950,7 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
                 String error = task.getException() != null && task.getException().getMessage() != null
                         ? task.getException().getMessage()
                         : "Failed to delete comment.";
-                Toast.makeText(this, error, Toast.LENGTH_SHORT).show();
+                MessagePopupHelper.showBrief(this, error);
             }
         });
     }
@@ -980,7 +987,7 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
     private void submitCommentReport(ForumComment c, String reason) {
         FirebaseUser u = mAuth.getCurrentUser(); if (u == null) return;
         // Give the user immediate feedback about the result of this action.
-        firebaseManager.addReport(new Report(c.getParentCommentId() != null ? "reply" : "comment", c.getId(), u.getUid(), reason, "post_detail", postId), t -> { if (t.isSuccessful()) Toast.makeText(this, "Reported", Toast.LENGTH_SHORT).show(); });
+        firebaseManager.addReport(new Report(c.getParentCommentId() != null ? "reply" : "comment", c.getId(), u.getUid(), reason, "post_detail", postId), t -> { if (t.isSuccessful()) MessagePopupHelper.showBrief(this, "Reported"); });
     }
 
     /**

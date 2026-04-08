@@ -8,8 +8,6 @@ import android.widget.Button;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
-import android.widget.Toast;
-
 import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatActivity;
 
@@ -118,7 +116,7 @@ public class AiCompActivity extends AppCompatActivity {
                             String finalMessage = (userMessage != null && !userMessage.trim().isEmpty())
                                     ? userMessage
                                     : getString(R.string.couldnt_find_your_bird_thanks);
-                            Toast.makeText(AiCompActivity.this, finalMessage, Toast.LENGTH_SHORT).show();
+                            MessagePopupHelper.showBrief(AiCompActivity.this, finalMessage);
                         }
 
                         @Override
@@ -126,11 +124,10 @@ public class AiCompActivity extends AppCompatActivity {
                             couldntFindBirdSubmitting = false;
                             btnCouldntFindYourBird.setEnabled(true);
                             btnCouldntFindYourBird.setAlpha(1f);
-                            Toast.makeText(AiCompActivity.this,
+                            MessagePopupHelper.showBrief(AiCompActivity.this,
                                     (message != null && !message.trim().isEmpty())
                                             ? message
-                                            : getString(R.string.couldnt_find_your_bird_failed),
-                                    Toast.LENGTH_LONG).show();
+                                            : getString(R.string.couldnt_find_your_bird_failed));
                         }
                     }
             );

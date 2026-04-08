@@ -81,6 +81,7 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
     private DocumentSnapshot lastCommentVisible;
     private boolean isFetchingComments = false;
     private boolean isLastCommentsPage = false;
+    private boolean shouldAutoScrollToNewestComment = false;
     private int commentFetchGeneration = 0;
     private boolean postLikeInFlight = false;
 
@@ -756,7 +757,26 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
     }
 
     private void finishCommentsFetch(int generation) {
-        if (generation == commentFetchGeneration) isFetchingComments = false;
+        if (generation != commentFetchGeneration) return;
+        isFetchingComments = false;
+        if (!shouldAutoScrollToNewestComment) return;
+        if (!isLastCommentsPage) {
+            fetchComments();
+            return;
+        }
+        shouldAutoScrollToNewestComment = false;
+        scrollCommentsToBottom();
+    }
+
+    private void scrollCommentsToBottom() {
+        if (isFinishing() || isDestroyed()) return;
+        final int count = adapter != null ? adapter.getItemCount() : 0;
+        if (count <= 0) return;
+        binding.nsvContent.post(() -> {
+            if (isFinishing() || isDestroyed()) return;
+            binding.rvComments.scrollToPosition(count - 1);
+            binding.nsvContent.fullScroll(View.FOCUS_DOWN);
+        });
     }
 
     /**
@@ -800,6 +820,7 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
                 binding.etComment.setHint("Write a comment...");
                 replyingToComment = null;
                 binding.btnSendComment.setEnabled(true);
+                shouldAutoScrollToNewestComment = true;
                 commentFetchGeneration++;
                 lastCommentVisible = null;
                 isLastCommentsPage = false;

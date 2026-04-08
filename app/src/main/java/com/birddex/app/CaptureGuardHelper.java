@@ -46,6 +46,9 @@ public final class CaptureGuardHelper {
     public static final String EXTRA_CAPTURE_GUARD_EDITED_SOFTWARE = "captureGuardEditedSoftwareTagPresent";
     public static final String EXTRA_CAPTURE_GUARD_MAKE_MODEL_MISSING = "captureGuardCameraMakeModelMissing";
     public static final String EXTRA_CAPTURE_GUARD_DATETIME_ORIGINAL_MISSING = "captureGuardDateTimeOriginalMissing";
+    public static final String EXTRA_CAPTURE_GUARD_EXIF_LATITUDE = "captureGuardExifLatitude";
+    public static final String EXTRA_CAPTURE_GUARD_EXIF_LONGITUDE = "captureGuardExifLongitude";
+    public static final String EXTRA_CAPTURE_GUARD_EXIF_DATETIME = "captureGuardExifDateTime";
     public static final String EXTRA_CAPTURE_GUARD_REASONS = "captureGuardReasons";
 
     private static final String ANALYZER_VERSION = "capture_guard_v3";
@@ -72,6 +75,9 @@ public final class CaptureGuardHelper {
         public boolean editedSoftwareTagPresent;
         public boolean cameraMakeModelMissing;
         public boolean dateTimeOriginalMissing;
+        @Nullable public Double exifLatitude;
+        @Nullable public Double exifLongitude;
+        @Nullable public String exifDateTime;
         @NonNull public ArrayList<String> reasons = new ArrayList<>();
     }
 
@@ -81,6 +87,9 @@ public final class CaptureGuardHelper {
         boolean editedSoftwareTagPresent;
         boolean cameraMakeModelMissing;
         boolean dateTimeOriginalMissing;
+        @Nullable Double exifLatitude;
+        @Nullable Double exifLongitude;
+        @Nullable String exifDateTime;
         @NonNull ArrayList<String> reasons = new ArrayList<>();
     }
 
@@ -208,6 +217,9 @@ public final class CaptureGuardHelper {
         report.editedSoftwareTagPresent = metadata.editedSoftwareTagPresent;
         report.cameraMakeModelMissing = metadata.cameraMakeModelMissing;
         report.dateTimeOriginalMissing = metadata.dateTimeOriginalMissing;
+        report.exifLatitude = metadata.exifLatitude;
+        report.exifLongitude = metadata.exifLongitude;
+        report.exifDateTime = metadata.exifDateTime;
         for (String reason : metadata.reasons) {
             if (!report.reasons.contains(reason)) {
                 report.reasons.add(reason);
@@ -278,6 +290,9 @@ public final class CaptureGuardHelper {
         intent.putExtra(EXTRA_CAPTURE_GUARD_EDITED_SOFTWARE, report.editedSoftwareTagPresent);
         intent.putExtra(EXTRA_CAPTURE_GUARD_MAKE_MODEL_MISSING, report.cameraMakeModelMissing);
         intent.putExtra(EXTRA_CAPTURE_GUARD_DATETIME_ORIGINAL_MISSING, report.dateTimeOriginalMissing);
+        if (report.exifLatitude != null) intent.putExtra(EXTRA_CAPTURE_GUARD_EXIF_LATITUDE, report.exifLatitude);
+        if (report.exifLongitude != null) intent.putExtra(EXTRA_CAPTURE_GUARD_EXIF_LONGITUDE, report.exifLongitude);
+        if (report.exifDateTime != null) intent.putExtra(EXTRA_CAPTURE_GUARD_EXIF_DATETIME, report.exifDateTime);
         intent.putStringArrayListExtra(EXTRA_CAPTURE_GUARD_REASONS, report.reasons);
     }
 
@@ -339,6 +354,15 @@ public final class CaptureGuardHelper {
         if (intent.hasExtra(EXTRA_CAPTURE_GUARD_DATETIME_ORIGINAL_MISSING)) {
             report.dateTimeOriginalMissing = intent.getBooleanExtra(EXTRA_CAPTURE_GUARD_DATETIME_ORIGINAL_MISSING, report.dateTimeOriginalMissing);
         }
+        if (intent.hasExtra(EXTRA_CAPTURE_GUARD_EXIF_LATITUDE)) {
+            report.exifLatitude = intent.getDoubleExtra(EXTRA_CAPTURE_GUARD_EXIF_LATITUDE, 0.0);
+        }
+        if (intent.hasExtra(EXTRA_CAPTURE_GUARD_EXIF_LONGITUDE)) {
+            report.exifLongitude = intent.getDoubleExtra(EXTRA_CAPTURE_GUARD_EXIF_LONGITUDE, 0.0);
+        }
+        if (intent.hasExtra(EXTRA_CAPTURE_GUARD_EXIF_DATETIME)) {
+            report.exifDateTime = intent.getStringExtra(EXTRA_CAPTURE_GUARD_EXIF_DATETIME);
+        }
 
         ArrayList<String> reasons = intent.getStringArrayListExtra(EXTRA_CAPTURE_GUARD_REASONS);
         if (reasons != null) {
@@ -385,6 +409,13 @@ public final class CaptureGuardHelper {
 
             signals.cameraMakeModelMissing = make == null && model == null;
             signals.dateTimeOriginalMissing = dateTimeOriginal == null;
+            signals.exifDateTime = dateTimeOriginal;
+
+            float[] latLong = new float[2];
+            if (exif.getLatLong(latLong)) {
+                signals.exifLatitude = (double) latLong[0];
+                signals.exifLongitude = (double) latLong[1];
+            }
 
             if (software != null && containsSuspiciousSoftwareTag(software)) {
                 signals.editedSoftwareTagPresent = true;

@@ -32,6 +32,7 @@ public class OpenAiApi {
         @Nullable public Double locationPlausibilityScore;
         @Nullable public Double distanceMilesFromUser;
         @Nullable public Double daysSinceLastSeenGeorgia;
+        @Nullable public String alternativeReasonText;
     }
 
     public static class IdentifyBirdResult {
@@ -76,6 +77,7 @@ public class OpenAiApi {
                                       @Nullable Double longitude,
                                       @Nullable String localityName,
                                       String requestId,
+                                      @Nullable String observedAt,
                                       @Nullable CaptureGuardHelper.GuardReport captureGuardReport,
                                       IdentifyBirdCallback callback) {
         Map<String, Object> data = new HashMap<>();
@@ -115,6 +117,7 @@ public class OpenAiApi {
         if (latitude != null) data.put("latitude", latitude);
         if (longitude != null) data.put("longitude", longitude);
         if (localityName != null) data.put("localityName", localityName);
+        if (observedAt != null && !observedAt.trim().isEmpty()) data.put("observedAt", observedAt);
 
         FirebaseFunctions.getInstance()
                 .getHttpsCallable("identifyBird")
@@ -364,6 +367,7 @@ public class OpenAiApi {
         choice.locationPlausibilityScore = getDouble(map, "locationPlausibilityScore");
         choice.distanceMilesFromUser = getDouble(map, "distanceMilesFromUser");
         choice.daysSinceLastSeenGeorgia = getDouble(map, "daysSinceLastSeenGeorgia");
+        choice.alternativeReasonText = getString(map, "alternativeReasonText");
         return choice;
     }
 

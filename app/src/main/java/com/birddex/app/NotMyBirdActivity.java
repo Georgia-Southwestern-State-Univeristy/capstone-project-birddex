@@ -53,6 +53,8 @@ public class NotMyBirdActivity extends AppCompatActivity {
         TextView tvStatus2 = findViewById(R.id.tvStatus2);
         TextView tvAttribution1 = findViewById(R.id.tvAttribution1);
         TextView tvAttribution2 = findViewById(R.id.tvAttribution2);
+        TextView tvReason1 = findViewById(R.id.tvReason1);
+        TextView tvReason2 = findViewById(R.id.tvReason2);
         TextView tvName1 = findViewById(R.id.tvName1);
         TextView tvName2 = findViewById(R.id.tvName2);
         TextView tvInstruction = findViewById(R.id.tvInstruction);
@@ -79,8 +81,8 @@ public class NotMyBirdActivity extends AppCompatActivity {
                     .into(ivMain);
         }
 
-        bindCandidate(llBird1, iv1, progressBird1, tvStatus1, tvAttribution1, tvName1, getCandidateAt(0));
-        bindCandidate(llBird2, iv2, progressBird2, tvStatus2, tvAttribution2, tvName2, getCandidateAt(1));
+        bindCandidate(llBird1, iv1, progressBird1, tvStatus1, tvAttribution1, tvReason1, tvName1, getCandidateAt(0));
+        bindCandidate(llBird2, iv2, progressBird2, tvStatus2, tvAttribution2, tvReason2, tvName2, getCandidateAt(1));
 
         if (modelAlternatives.isEmpty()) {
             tvInstruction.setText("No other BirdDex matches were available. Tap below to ask AI for two more options.");
@@ -114,6 +116,7 @@ public class NotMyBirdActivity extends AppCompatActivity {
                                View progressView,
                                TextView statusView,
                                TextView attributionView,
+                               TextView reasonView,
                                TextView nameView,
                                @Nullable Bundle candidate) {
         if (candidate == null) {
@@ -127,6 +130,16 @@ public class NotMyBirdActivity extends AppCompatActivity {
         if (attributionView != null) {
             attributionView.setText("");
             attributionView.setVisibility(View.GONE);
+        }
+        if (reasonView != null) {
+            String reasonText = candidate.getString("candidateReasonText");
+            if (reasonText != null && !reasonText.trim().isEmpty()) {
+                reasonView.setText(reasonText);
+                reasonView.setVisibility(View.VISIBLE);
+            } else {
+                reasonView.setText("");
+                reasonView.setVisibility(View.GONE);
+            }
         }
         if (progressView != null) progressView.setVisibility(View.VISIBLE);
         statusView.setText("Loading reference photo...");
@@ -164,7 +177,7 @@ public class NotMyBirdActivity extends AppCompatActivity {
                     "select_model_alternative",
                     selectedBirdId,
                     "model_alternative",
-                    null,
+                    candidate.getString("candidateReasonText"),
                     candidate.getString("candidateCommonName"),
                     candidate.getString("candidateScientificName"),
                     candidate.getString("candidateSpecies"),

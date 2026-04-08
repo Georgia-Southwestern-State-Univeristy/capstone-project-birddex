@@ -135,6 +135,18 @@
         </FrameLayout>
 
         <TextView
+            android:id="@+id/tvReason1"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:gravity="center"
+            android:text=""
+            android:textColor="@color/on_page"
+            android:textSize="12sp"
+            android:lineSpacingExtra="1dp"
+            android:visibility="gone" />
+
+        <TextView
             android:id="@+id/tvAttribution1"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -209,6 +221,18 @@
                 android:textSize="14sp"
                 android:visibility="gone" />
         </FrameLayout>
+
+        <TextView
+            android:id="@+id/tvReason2"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:gravity="center"
+            android:text=""
+            android:textColor="@color/on_page"
+            android:textSize="12sp"
+            android:lineSpacingExtra="1dp"
+            android:visibility="gone" />
 
         <TextView
             android:id="@+id/tvAttribution2"

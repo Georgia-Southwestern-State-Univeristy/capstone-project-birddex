@@ -47,6 +47,7 @@ const {
   generateAndSaveBirdFacts,
   generateAndSaveHunterFacts,
   getOrCreateAndSaveBirdFacts,
+  haversineMiles,
   functions,
   auth,
   admin,
@@ -117,21 +118,14 @@ Family: ${birdData.family || "Unknown"}`;
  * Helper: Looks up a supported bird document by common name.
  */
 async function findBirdByCommonName(commonName) {
-    if (!commonName || typeof commonName !== "string") return null;
-    const snapshot = await db.collection("birds")
-        .where("commonName", "==", commonName.trim())
-        .limit(1)
-        .get();
-
-    if (snapshot.empty) return null;
-    const doc = snapshot.docs[0];
-    return normalizeBirdData(doc.data(), doc.id);
+    const raw = await findBirdRecordByCommonName(commonName);
+    return raw ? normalizeBirdData(raw, raw.id) : null;
 }
 
 /**
  * Helper: Calls the BirdDex model service running on Cloud Run.
  */
-async function callBirdModelApi(base64Image) {
+async function callBirdModelApi({ imageBase64, latitude = null, longitude = null, observedAt = null, topK = HYBRID_ID_CONFIG.MODEL_TOP_K }) {
     const serviceUrl = CONFIG.BIRDDEX_MODEL_BASE_URL;
     const targetUrl = HYBRID_ID_CONFIG.BIRDDEX_MODEL_URL;
 
@@ -146,13 +140,18 @@ async function callBirdModelApi(base64Image) {
         headers["X-Internal-Api-Key"] = internalKey;
     }
 
+    const requestData = {
+        imageBase64,
+        topK,
+    };
+    if (typeof latitude === "number" && Number.isFinite(latitude)) requestData.latitude = latitude;
+    if (typeof longitude === "number" && Number.isFinite(longitude)) requestData.longitude = longitude;
+    if (typeof observedAt === "string" && observedAt.trim()) requestData.observedAt = observedAt.trim();
+
     const response = await authClient.request({
         url: targetUrl,
         method: "POST",
-        data: {
-            imageBase64: base64Image,
-            topK: HYBRID_ID_CONFIG.MODEL_TOP_K,
-        },
+        data: requestData,
         headers,
         timeout: 30000,
     });
@@ -172,11 +171,32 @@ async function callBirdModelApi(base64Image) {
         throw new HttpsError("internal", "Bird model returned no predictions.");
     }
 
+    const rawGeo = responseData?.geo && typeof responseData.geo === "object" ? responseData.geo : null;
+
     return {
         topPredictions,
         mainModelTopPredictions: mainModelTopPredictions.length ? mainModelTopPredictions : topPredictions,
         reranker: buildRerankerResultPayload(responseData?.reranker, rawMainPredictions, rawTopPredictions),
         filename: typeof responseData?.filename === "string" ? responseData.filename : null,
+        geo: rawGeo ? {
+            used: rawGeo.used === true,
+            available: rawGeo.available !== false,
+            fusionLam: typeof rawGeo.fusion_lam === "number" ? rawGeo.fusion_lam : null,
+            imageTop1Confidence: typeof rawGeo.image_top1_confidence === "number" ? rawGeo.image_top1_confidence : null,
+            observedAt: typeof rawGeo.observedAt === "string" ? rawGeo.observedAt : (requestData.observedAt || null),
+            latitude: typeof rawGeo.latitude === "number" ? rawGeo.latitude : (requestData.latitude ?? null),
+            longitude: typeof rawGeo.longitude === "number" ? rawGeo.longitude : (requestData.longitude ?? null),
+            reason: typeof rawGeo.reason === "string" ? rawGeo.reason : null,
+            imageTopPredictions: Array.isArray(rawGeo.image_top_predictions)
+                ? rawGeo.image_top_predictions.map(normalizeModelPrediction).filter(Boolean)
+                : [],
+            geoTopPredictions: Array.isArray(rawGeo.geo_top_predictions)
+                ? rawGeo.geo_top_predictions.map(normalizeModelPrediction).filter(Boolean)
+                : [],
+            fullGeoTopPredictions: Array.isArray(rawGeo.full_geo_top_predictions)
+                ? rawGeo.full_geo_top_predictions.map(normalizeModelPrediction).filter(Boolean)
+                : [],
+        } : null,
     };
 }
 
@@ -510,13 +530,36 @@ function normalizeBirdData(birdData, explicitId = null) {
 }
 
 /**
- * Helper: Loads a bird document by id with normalization/safety checks.
+ * Helper: Loads the raw bird document by id.
  */
-async function getBirdById(birdId) {
+async function getBirdRecordById(birdId) {
     if (!birdId || typeof birdId !== "string") return null;
     const doc = await db.collection("birds").doc(birdId.trim()).get();
     if (!doc.exists) return null;
-    return normalizeBirdData(doc.data(), doc.id);
+    return { id: doc.id, ...(doc.data() || {}) };
+}
+
+/**
+ * Helper: Looks up the raw bird document by common name.
+ */
+async function findBirdRecordByCommonName(commonName) {
+    if (!commonName || typeof commonName !== "string") return null;
+    const snapshot = await db.collection("birds")
+        .where("commonName", "==", commonName.trim())
+        .limit(1)
+        .get();
+
+    if (snapshot.empty) return null;
+    const doc = snapshot.docs[0];
+    return { id: doc.id, ...(doc.data() || {}) };
+}
+
+/**
+ * Helper: Loads a bird document by id with normalization/safety checks.
+ */
+async function getBirdById(birdId) {
+    const raw = await getBirdRecordById(birdId);
+    return raw ? normalizeBirdData(raw, raw.id) : null;
 }
 
 /**
@@ -563,14 +606,17 @@ function buildOpenAiLooseChoicePayload(choice, source, extra = {}) {
 /**
  * Helper: Builds a structured payload/default/response object used by later logic.
  */
-function buildModelAlternativeChoices(topBirdMatches) {
+function buildModelAlternativeChoices(topBirdMatches, userLocation, captureSource = null) {
     return (topBirdMatches || [])
         .slice(1, 3)
         .map((birdData, index) => {
             const normalized = normalizeBirdData(birdData);
             if (!normalized || !normalized.id) return null;
+            const plausibility = buildBirdLocationPlausibility(birdData, userLocation);
             return buildBirdChoicePayload(normalized, "model_alternative", {
                 rank: index + 2,
+                ...plausibility,
+                alternativeReasonText: buildAlternativeReasonText(plausibility, "model_alternative", captureSource),
             });
         })
         .filter(Boolean);
@@ -703,9 +749,29 @@ function buildBirdLocationPlausibility(birdData, userLocation) {
 }
 
 /**
+ * Helper: Builds a short user-facing explanation for why a candidate is shown.
+ */
+function buildAlternativeReasonText(choice, source = null, captureSource = null) {
+    const isGallery = captureSource === "gallery_import";
+    const looksLikePrefix = source === "openai_review"
+        ? (isGallery ? "This bird looks kind of similar to the one in your uploaded photo" : "This bird looks kind of similar to your photo")
+        : (isGallery ? "This bird is extremely close to the one in your uploaded photo" : "This bird is extremely close to your picture");
+
+    if (choice?.locationPlausible === false) {
+        return `${looksLikePrefix}, but isn't usually around that area this time of year.`;
+    }
+
+    if (choice?.locationPlausibilityReason === "missing_user_location") {
+        return `${looksLikePrefix} and is another strong BirdDex match to consider.`;
+    }
+
+    return `${looksLikePrefix} and is usually in that area this time of year.`;
+}
+
+/**
  * Helper: Builds the list of review candidates that make sense for the user to pick from.
  */
-async function buildPlausibleReviewChoices(rawChoices, userLocation, excludedTokens = new Set(), limit = 2) {
+async function buildPlausibleReviewChoices(rawChoices, userLocation, excludedTokens = new Set(), limit = 2, captureSource = null) {
     const responseChoices = [];
     const seenChoiceTokens = new Set();
 
@@ -745,6 +811,7 @@ async function buildPlausibleReviewChoices(rawChoices, userLocation, excludedTok
         const responseChoice = buildBirdChoicePayload(matchedBird, rawChoice?.source || "openai_review", {
             isSupportedInDatabase: true,
             ...plausibility,
+            alternativeReasonText: buildAlternativeReasonText(plausibility, rawChoice?.source || "openai_review", captureSource),
         });
         if (responseChoice) {
             responseChoices.push(responseChoice);
@@ -827,11 +894,11 @@ function tryParseRankedBirdChoicesJson(rawText) {
 async function resolveBirdChoiceToSupportedBird(choice) {
     if (!choice) return null;
 
-    const byId = await getBirdById(choice.birdId);
+    const byId = await getBirdRecordById(choice.birdId);
     if (byId) return byId;
 
-    const byCommonName = await findBirdByCommonName(choice.commonName);
-    if (byCommonName) return normalizeBirdData(byCommonName, byCommonName.id || null);
+    const byCommonName = await findBirdRecordByCommonName(choice.commonName);
+    if (byCommonName) return byCommonName;
 
     return null;
 }
@@ -868,6 +935,16 @@ function buildExcludedBirdChoiceTokens(birds) {
  */
 async function callOpenAiBirdReviewCandidates(base64Image, candidateA, candidateB, excludedBirds = [], options = {}) {
     const strictJsonOnly = options?.strictJsonOnly === true;
+    const geoHintChoices = Array.isArray(options?.geoHintChoices) ? options.geoHintChoices : [];
+    const geoHintLines = geoHintChoices
+        .slice(0, 5)
+        .map((choice, index) => `${index + 1}. ${choice.commonName || choice.species || "Unknown"}`)
+        .filter(Boolean);
+    const geoHintBlock = geoHintLines.length > 0
+        ? `BirdDex location/date plausibility hints:
+${geoHintLines.join("\n")}
+`
+        : "";
     const locationContextBlock = options?.locationContextBlock
         ? `Prefer birds that are plausible for this BirdDex user context:
 ${options.locationContextBlock}
@@ -916,7 +993,7 @@ ${strictInstructionBlock}
 }
 Return up to 6 ranked choices from most likely to less likely so BirdDex can filter excluded birds and keep two fresh options.
 Prefer returning birds that BirdDex is likely to support in its birds collection.
-${locationContextBlock}
+${locationContextBlock}${geoHintBlock}
 BirdDex model hint 1:
 ID: ${candidateA?.id || "Unknown"}
 Common Name: ${candidateA?.commonName || "Unknown"}
@@ -1154,7 +1231,7 @@ async function persistHybridIdentification({
     const birdMatch1 = normalizeBirdData(topBirdMatches[0] || null);
     const birdMatch2 = normalizeBirdData(topBirdMatches[1] || null);
     const birdMatch3 = normalizeBirdData(topBirdMatches[2] || null);
-    const modelAlternativeChoices = buildModelAlternativeChoices(topBirdMatches);
+    const modelAlternativeChoices = buildModelAlternativeChoices(topBirdMatches, await getLocationContext(locationId || null), captureSource);
 
     const identificationLogData = {
         userId,
@@ -1210,6 +1287,19 @@ async function persistHybridIdentification({
             mainTopPredictionCount: Array.isArray(modelApiDiagnostics?.mainModelTopPredictions)
                 ? modelApiDiagnostics.mainModelTopPredictions.length
                 : 0,
+            geo: modelApiDiagnostics?.geo ? {
+                used: modelApiDiagnostics.geo.used === true,
+                available: modelApiDiagnostics.geo.available !== false,
+                fusionLam: modelApiDiagnostics.geo.fusionLam ?? null,
+                imageTop1Confidence: modelApiDiagnostics.geo.imageTop1Confidence ?? null,
+                observedAt: modelApiDiagnostics.geo.observedAt || null,
+                latitude: modelApiDiagnostics.geo.latitude ?? null,
+                longitude: modelApiDiagnostics.geo.longitude ?? null,
+                reason: modelApiDiagnostics.geo.reason || null,
+                imageTopPredictions: Array.isArray(modelApiDiagnostics.geo.imageTopPredictions) ? modelApiDiagnostics.geo.imageTopPredictions : [],
+                geoTopPredictions: Array.isArray(modelApiDiagnostics.geo.geoTopPredictions) ? modelApiDiagnostics.geo.geoTopPredictions : [],
+                fullGeoTopPredictions: Array.isArray(modelApiDiagnostics.geo.fullGeoTopPredictions) ? modelApiDiagnostics.geo.fullGeoTopPredictions : [],
+            } : null,
         },
         openAi: {
             used: usedOpenAi,
@@ -1425,6 +1515,7 @@ exports.identifyBird = secureOnCall({ secrets: [OPENAI_API_KEY, BIRDDEX_MODEL_AP
         latitude,
         longitude,
         localityName,
+        observedAt,
         requestId,
         captureSource,
         captureGuard,
@@ -1466,7 +1557,13 @@ exports.identifyBird = secureOnCall({ secrets: [OPENAI_API_KEY, BIRDDEX_MODEL_AP
 
         const locationId = await getOrCreateLocation(latitude, longitude, localityName, db, { userId });
         const userLocationContext = await getLocationContext(locationId);
-        const modelApiResult = await callBirdModelApi(image);
+        const modelApiResult = await callBirdModelApi({
+            imageBase64: image,
+            latitude,
+            longitude,
+            observedAt: typeof observedAt === "string" ? observedAt : null,
+            topK: HYBRID_ID_CONFIG.MODEL_TOP_K,
+        });
         const mainModelPredictions = Array.isArray(modelApiResult?.mainModelTopPredictions)
             ? modelApiResult.mainModelTopPredictions
             : [];
@@ -1476,7 +1573,7 @@ exports.identifyBird = secureOnCall({ secrets: [OPENAI_API_KEY, BIRDDEX_MODEL_AP
         const rerankerResult = modelApiResult?.reranker || { used: false };
 
         const topBirdMatches = await Promise.all(
-            mainModelPredictions.slice(0, 3).map((prediction) => findBirdByCommonName(prediction.commonName))
+            mainModelPredictions.slice(0, 3).map((prediction) => findBirdRecordByCommonName(prediction.commonName))
         );
 
         const top1 = mainModelPredictions[0] || null;
@@ -1686,7 +1783,9 @@ exports.identifyBird = secureOnCall({ secrets: [OPENAI_API_KEY, BIRDDEX_MODEL_AP
                 isGore: false,
                 isInDatabase: false,
                 userMessage: decisionReason === "openai_location_gate_blocked"
-                    ? "BirdDex could not verify an AI result that looks plausible for your location and date."
+                    ? (captureSource === "gallery_import"
+                        ? "BirdDex could not verify an AI result that looks plausible for the location and date in your uploaded photo."
+                        : "BirdDex could not verify an AI result that looks plausible for your location and date.")
                     : "Sorry, this bird is not in our database just yet.",
                 reasonCode: decisionReason === "openai_location_gate_blocked"
                     ? "OPENAI_LOCATION_NOT_PLAUSIBLE"
@@ -1795,18 +1894,21 @@ exports.reviewBirdAlternatives = secureOnCall({ secrets: [OPENAI_API_KEY], timeo
         const excludedTokens = buildExcludedBirdChoiceTokens(excludedBirds);
 
         const cachedReviewResponse = identificationLogData.openAi?.reviewCachedResponse;
+        const logCaptureSource = identificationLogData.captureGuard?.captureSource || null;
         if (cachedReviewResponse && typeof cachedReviewResponse === "object") {
             const cachedAlternatives = Array.isArray(cachedReviewResponse.openAiAlternatives)
                 ? cachedReviewResponse.openAiAlternatives
                 : [];
-            const filteredCachedAlternatives = await buildPlausibleReviewChoices(cachedAlternatives, reviewLocation, excludedTokens, 2);
+            const filteredCachedAlternatives = await buildPlausibleReviewChoices(cachedAlternatives, reviewLocation, excludedTokens, 2, logCaptureSource);
             const cachedResult = {
                 isVerified: filteredCachedAlternatives.length > 0,
                 isGore: !!cachedReviewResponse.isGore,
                 isInDatabase: filteredCachedAlternatives.length > 0,
                 userMessage: filteredCachedAlternatives.length > 0
                     ? (cachedReviewResponse.userMessage || null)
-                    : "Sorry, AI could not find more BirdDex birds that look plausible for your location and date.",
+                    : (logCaptureSource === "gallery_import"
+                        ? "Sorry, AI could not find more BirdDex birds that look plausible for the location and date in your uploaded photo."
+                        : "Sorry, AI could not find more BirdDex birds that look plausible for your location and date."),
                 openAiAlternatives: filteredCachedAlternatives,
                 identificationLogId,
                 imageUrl: cachedReviewResponse.imageUrl || imageUrl || identificationLogData.imageUrl || "",
@@ -1860,8 +1962,15 @@ exports.reviewBirdAlternatives = secureOnCall({ secrets: [OPENAI_API_KEY], timeo
 
         await reserveOpenAiQuota(userRef, eventLogRef, userId);
 
+        const geoHintChoices = Array.isArray(identificationLogData?.modelApiDiagnostics?.geo?.fullGeoTopPredictions)
+            ? identificationLogData.modelApiDiagnostics.geo.fullGeoTopPredictions
+            : (Array.isArray(identificationLogData?.modelApiDiagnostics?.geo?.geoTopPredictions)
+                ? identificationLogData.modelApiDiagnostics.geo.geoTopPredictions
+                : []);
+
         const reviewAttempt = await callOpenAiBirdReviewCandidatesWithRetry(image, reviewHintA, reviewHintB, excludedBirds, {
             locationContextBlock,
+            geoHintChoices,
         });
         const openAiRawResponse = reviewAttempt.responseText;
         if (openAiRawResponse.includes("GORE")) {
@@ -1907,7 +2016,7 @@ exports.reviewBirdAlternatives = secureOnCall({ secrets: [OPENAI_API_KEY], timeo
             ...choice,
             source: "openai_review",
         }));
-        const responseChoices = await buildPlausibleReviewChoices(parsedChoicesWithSource, reviewLocation, excludedTokens, 2);
+        const responseChoices = await buildPlausibleReviewChoices(parsedChoicesWithSource, reviewLocation, excludedTokens, 2, logCaptureSource);
 
         const response = {
             isVerified: responseChoices.length > 0,
@@ -1916,7 +2025,9 @@ exports.reviewBirdAlternatives = secureOnCall({ secrets: [OPENAI_API_KEY], timeo
             userMessage: responseChoices.length > 0
                 ? null
                 : (reviewAttempt.parseSucceeded
-                    ? "Sorry, AI could not find more BirdDex birds that look plausible for your location and date."
+                    ? (logCaptureSource === "gallery_import"
+                        ? "Sorry, AI could not find more BirdDex birds that look plausible for the location and date in your uploaded photo."
+                        : "Sorry, AI could not find more BirdDex birds that look plausible for your location and date.")
                     : "Sorry, AI could not return usable alternatives right now. Please try again."),
             openAiAlternatives: responseChoices,
             identificationLogId,

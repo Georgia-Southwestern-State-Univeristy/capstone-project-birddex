@@ -373,17 +373,28 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
                     return;
                 }
 
+                if ("OPENAI_LOCATION_NOT_PLAUSIBLE".equals(result.reasonCode)) {
+                    deleteUploadedIdentificationImageIfUnused();
+                    deleteLocalTempImageIfNeeded(localImageUri);
+                    showFailureDialog("Location Match Issue", result.userMessage != null && !result.userMessage.trim().isEmpty()
+                            ? result.userMessage
+                            : "This bird doesn't usually appear in this location at this time of year based on the photo's metadata.");
+                    return;
+                }
+
                 if (!result.isInDatabase || "NOT_IN_DATABASE".equals(result.reasonCode)) {
                     deleteUploadedIdentificationImageIfUnused();
                     deleteLocalTempImageIfNeeded(localImageUri);
-                    finishActivityWithToast("Sorry, this bird is not in our database just yet.");
+                    showFailureDialog("Not in Database", result.userMessage != null && !result.userMessage.trim().isEmpty()
+                            ? result.userMessage
+                            : "Sorry, this bird is not in our database just yet.");
                     return;
                 }
 
                 if (!result.isVerified || result.primaryBird == null || result.primaryBird.birdId == null || result.primaryBird.birdId.trim().isEmpty()) {
                     deleteUploadedIdentificationImageIfUnused();
                     deleteLocalTempImageIfNeeded(localImageUri);
-                    finishActivityWithToast(result.userMessage != null && !result.userMessage.trim().isEmpty()
+                    showFailureDialog("Identification Failed", result.userMessage != null && !result.userMessage.trim().isEmpty()
                             ? result.userMessage
                             : "Identification could not be verified.");
                     return;
@@ -461,6 +472,7 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
             intent.putExtra("imageUrl", downloadUrl);
             intent.putExtra("identificationLogId", result.identificationLogId);
             intent.putExtra("identificationId", result.identificationId);
+            if (result.qualityAssessment != null) intent.putExtra("qualityAssessment", result.qualityAssessment);
             intent.putExtra("selectionSource", primary.source != null ? primary.source : "initial_result");
             intent.putParcelableArrayListExtra("modelAlternatives", toCandidateBundles(result.modelAlternatives));
             intent.putExtra("notMyBirdAllowed", result.notMyBirdAllowed);
@@ -645,6 +657,16 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
      */
     private void finishActivityWithToast(String message) {
         finishWithDialog(message);
+    }
+
+    private void showFailureDialog(String title, String message) {
+        if (isFinishing() || isDestroyed()) return;
+        new androidx.appcompat.app.AlertDialog.Builder(this)
+                .setTitle(title)
+                .setMessage(message)
+                .setPositiveButton("OK", (dialog, which) -> finish())
+                .setCancelable(false)
+                .show();
     }
 
     @Override protected void onStop() { super.onStop(); if (locationHelper != null) locationHelper.stopLocationUpdates(); }

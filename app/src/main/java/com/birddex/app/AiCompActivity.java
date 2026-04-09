@@ -8,8 +8,10 @@ import android.widget.Button;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
+
 import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.constraintlayout.widget.ConstraintLayout;
 
 import com.bumptech.glide.Glide;
 
@@ -76,8 +78,13 @@ public class AiCompActivity extends AppCompatActivity {
             }
         }
 
-        bindCandidate(llAiBird1, ivAiImage1, progressAiBird1, tvAiStatus1, tvAiAttribution1, tvReason1, tvAiName1, getCandidateAt(0));
-        bindCandidate(llAiBird2, ivAiImage2, progressAiBird2, tvAiStatus2, tvAiAttribution2, tvReason2, tvAiName2, getCandidateAt(1));
+        Bundle candidate1 = getCandidateAt(0);
+        Bundle candidate2 = getCandidateAt(1);
+
+        bindCandidate(llAiBird1, ivAiImage1, progressAiBird1, tvAiStatus1, tvAiAttribution1, tvReason1, tvAiName1, candidate1);
+        bindCandidate(llAiBird2, ivAiImage2, progressAiBird2, tvAiStatus2, tvAiAttribution2, tvReason2, tvAiName2, candidate2);
+
+        applySingleVisibleLayoutIfNeeded(llAiBird1, llAiBird2);
 
         tvSubmitFeedback.setOnClickListener(v -> IdentificationFeedbackHelper.showFeedbackDialog(
                 this,
@@ -92,7 +99,6 @@ public class AiCompActivity extends AppCompatActivity {
                 )
         ));
 
-
         btnCouldntFindYourBird.setOnClickListener(v -> {
             if (couldntFindBirdSubmitting) {
                 return;
@@ -100,6 +106,7 @@ public class AiCompActivity extends AppCompatActivity {
             couldntFindBirdSubmitting = true;
             btnCouldntFindYourBird.setEnabled(false);
             btnCouldntFindYourBird.setAlpha(0.6f);
+
             openAiApi.syncIdentificationFeedback(
                     identificationLogId,
                     identificationId,
@@ -160,7 +167,7 @@ public class AiCompActivity extends AppCompatActivity {
                                TextView nameView,
                                @Nullable Bundle candidate) {
         if (candidate == null) {
-            container.setVisibility(View.INVISIBLE);
+            container.setVisibility(View.GONE);
             container.setClickable(false);
             return;
         }
@@ -169,10 +176,12 @@ public class AiCompActivity extends AppCompatActivity {
 
         container.setVisibility(View.VISIBLE);
         nameView.setText(candidate.getString("candidateCommonName", "Unknown Bird"));
+
         if (attributionView != null) {
             attributionView.setText("");
             attributionView.setVisibility(View.GONE);
         }
+
         if (reasonView != null) {
             String reasonText = candidate.getString("candidateReasonText");
             if (reasonText != null && !reasonText.trim().isEmpty()) {
@@ -183,9 +192,14 @@ public class AiCompActivity extends AppCompatActivity {
                 reasonView.setVisibility(View.GONE);
             }
         }
-        if (progressView != null) progressView.setVisibility(View.VISIBLE);
+
+        if (progressView != null) {
+            progressView.setVisibility(View.VISIBLE);
+        }
+
         statusView.setText("Loading reference photo...");
         statusView.setVisibility(View.VISIBLE);
+
         BirdImageLoader.loadBirdImageIntoWithFetch(
                 this,
                 imageView,
@@ -197,7 +211,9 @@ public class AiCompActivity extends AppCompatActivity {
                 new BirdImageLoader.MetadataLoadCallback() {
                     @Override
                     public void onLoaded(@Nullable BirdImageLoader.ImageMetadata metadata) {
-                        if (attributionView == null || isFinishing() || isDestroyed()) return;
+                        if (attributionView == null || isFinishing() || isDestroyed()) {
+                            return;
+                        }
                         BirdImageLoader.applyAttributionText(attributionView, metadata);
                     }
 
@@ -239,8 +255,10 @@ public class AiCompActivity extends AppCompatActivity {
             resultIntent.putExtra("selectedFamily", selectedFamily);
             resultIntent.putExtra("selectedSource", source);
 
-            // Anti-cheat: Forward CaptureGuard report back to BirdInfo
-            CaptureGuardHelper.putGuardExtras(resultIntent, CaptureGuardHelper.readReportFromIntent(getIntent(), true));
+            CaptureGuardHelper.putGuardExtras(
+                    resultIntent,
+                    CaptureGuardHelper.readReportFromIntent(getIntent(), true)
+            );
 
             setResult(RESULT_OK, resultIntent);
             finish();
@@ -249,6 +267,67 @@ public class AiCompActivity extends AppCompatActivity {
         container.setOnClickListener(clickListener);
         imageView.setOnClickListener(clickListener);
         nameView.setOnClickListener(clickListener);
+    }
+
+    private void applySingleVisibleLayoutIfNeeded(LinearLayout llAiBird1, LinearLayout llAiBird2) {
+        boolean bird1Visible = llAiBird1.getVisibility() == View.VISIBLE;
+        boolean bird2Visible = llAiBird2.getVisibility() == View.VISIBLE;
+
+        resetCardLayout(llAiBird1, true);
+        resetCardLayout(llAiBird2, false);
+
+        if (bird1Visible && !bird2Visible) {
+            centerCard(llAiBird1);
+        } else if (!bird1Visible && bird2Visible) {
+            centerCard(llAiBird2);
+        }
+    }
+
+    private void resetCardLayout(LinearLayout card, boolean isLeftCard) {
+        ConstraintLayout.LayoutParams params =
+                (ConstraintLayout.LayoutParams) card.getLayoutParams();
+
+        params.width = 0;
+        params.topToBottom = R.id.viewDivider;
+        params.topToTop = ConstraintLayout.LayoutParams.UNSET;
+        params.bottomToBottom = ConstraintLayout.LayoutParams.UNSET;
+
+        if (isLeftCard) {
+            params.startToStart = ConstraintLayout.LayoutParams.PARENT_ID;
+            params.endToStart = R.id.llAiBird2;
+            params.startToEnd = ConstraintLayout.LayoutParams.UNSET;
+            params.endToEnd = ConstraintLayout.LayoutParams.UNSET;
+            params.setMarginStart(0);
+            params.setMarginEnd(dpToPx(8));
+        } else {
+            params.startToEnd = R.id.llAiBird1;
+            params.endToEnd = ConstraintLayout.LayoutParams.PARENT_ID;
+            params.startToStart = ConstraintLayout.LayoutParams.UNSET;
+            params.endToStart = ConstraintLayout.LayoutParams.UNSET;
+            params.setMarginStart(dpToPx(8));
+            params.setMarginEnd(0);
+        }
+
+        card.setLayoutParams(params);
+    }
+
+    private void centerCard(LinearLayout card) {
+        ConstraintLayout.LayoutParams params =
+                (ConstraintLayout.LayoutParams) card.getLayoutParams();
+
+        params.width = 0;
+        params.startToStart = ConstraintLayout.LayoutParams.PARENT_ID;
+        params.endToEnd = ConstraintLayout.LayoutParams.PARENT_ID;
+        params.startToEnd = ConstraintLayout.LayoutParams.UNSET;
+        params.endToStart = ConstraintLayout.LayoutParams.UNSET;
+        params.setMarginStart(0);
+        params.setMarginEnd(0);
+
+        card.setLayoutParams(params);
+    }
+
+    private int dpToPx(int dp) {
+        return Math.round(dp * getResources().getDisplayMetrics().density);
     }
 
     @Nullable

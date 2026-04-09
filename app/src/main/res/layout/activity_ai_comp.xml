@@ -1,283 +1,318 @@
 <?xml version="1.0" encoding="utf-8"?>
-<androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<androidx.core.widget.NestedScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="@color/page_cream"
-    android:padding="16dp"
-    tools:context=".AiCompActivity">
+    android:fillViewport="true">
 
-    <TextView
-        android:id="@+id/tvSubmitFeedback"
-        android:layout_width="wrap_content"
+    <androidx.constraintlayout.widget.ConstraintLayout
+        android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginTop="8dp"
-        android:layout_marginEnd="8dp"
-        android:clickable="true"
-        android:focusable="true"
-        android:text="@string/submit_feedback"
-        android:textColor="@color/nav_brown"
-        android:textSize="12sp"
-        android:textStyle="bold"
-        app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintTop_toTopOf="parent" />
-
-    <TextView
-        android:id="@+id/tvUserImageLabel"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="Your photo"
-        android:textColor="@color/on_page"
-        android:textSize="18sp"
-        android:textStyle="bold"
-        app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toTopOf="parent" />
-
-    <ImageView
-        android:id="@+id/ivMain"
-        android:layout_width="220dp"
-        android:layout_height="220dp"
-        android:layout_marginTop="8dp"
-        android:adjustViewBounds="true"
-        android:contentDescription="@string/bird_image"
-        android:scaleType="centerCrop"
-        app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toBottomOf="@id/tvUserImageLabel"
-        tools:srcCompat="@tools:sample/backgrounds/scenic" />
-
-    <TextView
-        android:id="@+id/tvInstruction"
-        android:layout_width="0dp"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="12dp"
-        android:gravity="center"
-        android:text="AI found two more supported matches. Select the bird that looks most like your photo."
-        android:textAllCaps="false"
-        android:textColor="@color/on_page"
-        android:textSize="14sp"
-        app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toBottomOf="@id/ivMain" />
-
-    <View
-        android:id="@+id/viewDivider"
-        android:layout_width="0dp"
-        android:layout_height="1dp"
-        android:layout_marginTop="10dp"
-        android:background="@android:color/black"
-        app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toBottomOf="@id/tvInstruction" />
-
-    <LinearLayout
-        android:id="@+id/llAiBird1"
-        android:layout_width="0dp"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="20dp"
-        android:layout_marginEnd="8dp"
-        android:background="@android:color/transparent"
-        android:clickable="true"
-        android:focusable="true"
-        android:gravity="center_horizontal"
-        android:orientation="vertical"
-        android:padding="4dp"
-        app:layout_constraintEnd_toStartOf="@+id/llAiBird2"
-        app:layout_constraintHorizontal_chainStyle="spread"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toBottomOf="@id/viewDivider">
+        android:background="@color/page_cream"
+        android:padding="16dp"
+        tools:context=".AiCompActivity">
 
         <TextView
-            android:id="@+id/tvAiName1"
-            android:layout_width="match_parent"
+            android:id="@+id/tvSubmitFeedback"
+            android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:gravity="center"
-            android:text="@string/placeholder_name"
+            android:layout_marginTop="2dp"
+            android:layout_marginEnd="2dp"
+            android:clickable="true"
+            android:focusable="true"
+            android:text="@string/submit_feedback"
+            android:textColor="@color/nav_brown"
+            android:textSize="11sp"
+            android:textStyle="bold"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintTop_toTopOf="parent" />
+
+        <TextView
+            android:id="@+id/tvUserImageLabel"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Your photo"
             android:textColor="@color/on_page"
             android:textSize="18sp"
-            android:textStyle="bold" />
+            android:textStyle="bold"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toTopOf="parent" />
 
-        <FrameLayout
-            android:layout_width="match_parent"
-            android:layout_height="180dp"
-            android:layout_marginTop="8dp">
+        <ImageView
+            android:id="@+id/ivMain"
+            android:layout_width="220dp"
+            android:layout_height="220dp"
+            android:layout_marginTop="8dp"
+            android:contentDescription="@string/bird_image"
+            android:scaleType="centerCrop"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toBottomOf="@id/tvUserImageLabel"
+            tools:srcCompat="@tools:sample/backgrounds/scenic" />
 
-            <ImageView
-                android:id="@+id/ivAiImage1"
+        <TextView
+            android:id="@+id/tvInstruction"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:gravity="center"
+            android:text="AI found two more supported matches. Select the bird that looks most like your photo."
+            android:textAllCaps="false"
+            android:textColor="@color/on_page"
+            android:textSize="14sp"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toBottomOf="@id/ivMain" />
+
+        <View
+            android:id="@+id/viewDivider"
+            android:layout_width="0dp"
+            android:layout_height="1dp"
+            android:layout_marginTop="10dp"
+            android:background="@android:color/black"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toBottomOf="@id/tvInstruction" />
+
+        <LinearLayout
+            android:id="@+id/llAiBird1"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="20dp"
+            android:layout_marginEnd="8dp"
+            android:background="@android:color/transparent"
+            android:clickable="true"
+            android:focusable="true"
+            android:gravity="center_horizontal"
+            android:orientation="vertical"
+            android:padding="4dp"
+            app:layout_constraintEnd_toStartOf="@+id/llAiBird2"
+            app:layout_constraintHorizontal_chainStyle="spread"
+            app:layout_constraintHorizontal_weight="1"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toBottomOf="@id/viewDivider">
+
+            <TextView
+                android:id="@+id/tvAiName1"
                 android:layout_width="match_parent"
-                android:layout_height="match_parent"
-                android:adjustViewBounds="true"
-                android:contentDescription="@string/bird_image"
-                android:scaleType="centerCrop"
-                tools:srcCompat="@tools:sample/avatars" />
+                android:layout_height="56dp"
+                android:autoSizeMaxTextSize="18sp"
+                android:autoSizeMinTextSize="14sp"
+                android:autoSizeStepGranularity="1sp"
+                android:autoSizeTextType="uniform"
+                android:breakStrategy="balanced"
+                android:gravity="center"
+                android:hyphenationFrequency="full"
+                android:includeFontPadding="false"
+                android:maxLines="2"
+                android:text="@string/placeholder_name"
+                android:textAlignment="center"
+                android:textColor="@color/on_page"
+                android:textStyle="bold" />
 
-            <ProgressBar
-                android:id="@+id/progressAiBird1"
-                style="?android:attr/progressBarStyle"
-                android:layout_width="36dp"
-                android:layout_height="36dp"
-                android:layout_gravity="center"
+            <FrameLayout
+                android:layout_width="150dp"
+                android:layout_height="150dp"
+                android:layout_marginTop="6dp">
+
+                <ImageView
+                    android:id="@+id/ivAiImage1"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:contentDescription="@string/bird_image"
+                    android:scaleType="centerCrop"
+                    tools:srcCompat="@tools:sample/avatars" />
+
+                <ProgressBar
+                    android:id="@+id/progressAiBird1"
+                    style="?android:attr/progressBarStyle"
+                    android:layout_width="36dp"
+                    android:layout_height="36dp"
+                    android:layout_gravity="center"
+                    android:visibility="gone" />
+
+                <TextView
+                    android:id="@+id/tvAiStatus1"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:gravity="center"
+                    android:padding="16dp"
+                    android:text=""
+                    android:textColor="@color/on_page"
+                    android:textSize="14sp"
+                    android:visibility="gone" />
+            </FrameLayout>
+
+            <TextView
+                android:id="@+id/tvAiReason1"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:gravity="center"
+                android:lineSpacingExtra="1dp"
+                android:paddingHorizontal="6dp"
+                android:text=""
+                android:textColor="@color/on_page"
+                android:textSize="12sp"
                 android:visibility="gone" />
 
             <TextView
-                android:id="@+id/tvAiStatus1"
+                android:id="@+id/tvAiAttribution1"
                 android:layout_width="match_parent"
-                android:layout_height="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
                 android:gravity="center"
-                android:padding="16dp"
+                android:lineSpacingExtra="1dp"
+                android:linksClickable="true"
                 android:text=""
                 android:textColor="@color/on_page"
-                android:textSize="14sp"
+                android:textColorLink="@color/nav_brown"
+                android:textSize="11sp"
                 android:visibility="gone" />
-        </FrameLayout>
+        </LinearLayout>
 
-        <TextView
-            android:id="@+id/tvAiReason1"
-            android:layout_width="match_parent"
+        <LinearLayout
+            android:id="@+id/llAiBird2"
+            android:layout_width="0dp"
             android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
-            android:gravity="center"
-            android:paddingHorizontal="6dp"
-            android:text=""
-            android:textColor="@color/on_page"
-            android:textSize="12sp"
-            android:lineSpacingExtra="1dp"
-            android:visibility="gone" />
+            android:layout_marginTop="20dp"
+            android:layout_marginStart="8dp"
+            android:background="@android:color/transparent"
+            android:clickable="true"
+            android:focusable="true"
+            android:gravity="center_horizontal"
+            android:orientation="vertical"
+            android:padding="4dp"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintHorizontal_weight="1"
+            app:layout_constraintStart_toEndOf="@+id/llAiBird1"
+            app:layout_constraintTop_toBottomOf="@id/viewDivider">
 
-        <TextView
-            android:id="@+id/tvAiAttribution1"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="6dp"
-            android:gravity="center"
-            android:text=""
-            android:textColor="@color/on_page"
-            android:textSize="11sp"
-            android:lineSpacingExtra="1dp"
-            android:linksClickable="true"
-            android:textColorLink="@color/nav_brown"
-            android:visibility="gone" />
-    </LinearLayout>
-
-    <LinearLayout
-        android:id="@+id/llAiBird2"
-        android:layout_width="0dp"
-        android:layout_height="wrap_content"
-        android:layout_marginStart="8dp"
-        android:background="@android:color/transparent"
-        android:clickable="true"
-        android:focusable="true"
-        android:gravity="center_horizontal"
-        android:orientation="vertical"
-        android:padding="4dp"
-        app:layout_constraintBottom_toBottomOf="@+id/llAiBird1"
-        app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintStart_toEndOf="@+id/llAiBird1"
-        app:layout_constraintTop_toTopOf="@+id/llAiBird1">
-
-        <TextView
-            android:id="@+id/tvAiName2"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:gravity="center"
-            android:text="@string/placeholder_name"
-            android:textColor="@color/on_page"
-            android:textSize="18sp"
-            android:textStyle="bold" />
-
-        <FrameLayout
-            android:layout_width="match_parent"
-            android:layout_height="180dp"
-            android:layout_marginTop="8dp">
-
-            <ImageView
-                android:id="@+id/ivAiImage2"
+            <TextView
+                android:id="@+id/tvAiName2"
                 android:layout_width="match_parent"
-                android:layout_height="match_parent"
-                android:adjustViewBounds="true"
-                android:contentDescription="@string/bird_image"
-                android:scaleType="centerCrop"
-                tools:srcCompat="@tools:sample/avatars" />
+                android:layout_height="56dp"
+                android:autoSizeMaxTextSize="18sp"
+                android:autoSizeMinTextSize="14sp"
+                android:autoSizeStepGranularity="1sp"
+                android:autoSizeTextType="uniform"
+                android:breakStrategy="balanced"
+                android:gravity="center"
+                android:hyphenationFrequency="full"
+                android:includeFontPadding="false"
+                android:maxLines="2"
+                android:text="@string/placeholder_name"
+                android:textAlignment="center"
+                android:textColor="@color/on_page"
+                android:textStyle="bold" />
 
-            <ProgressBar
-                android:id="@+id/progressAiBird2"
-                style="?android:attr/progressBarStyle"
-                android:layout_width="36dp"
-                android:layout_height="36dp"
-                android:layout_gravity="center"
+            <FrameLayout
+                android:layout_width="150dp"
+                android:layout_height="150dp"
+                android:layout_marginTop="6dp">
+
+                <ImageView
+                    android:id="@+id/ivAiImage2"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:contentDescription="@string/bird_image"
+                    android:scaleType="centerCrop"
+                    tools:srcCompat="@tools:sample/avatars" />
+
+                <ProgressBar
+                    android:id="@+id/progressAiBird2"
+                    style="?android:attr/progressBarStyle"
+                    android:layout_width="36dp"
+                    android:layout_height="36dp"
+                    android:layout_gravity="center"
+                    android:visibility="gone" />
+
+                <TextView
+                    android:id="@+id/tvAiStatus2"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:gravity="center"
+                    android:padding="16dp"
+                    android:text=""
+                    android:textColor="@color/on_page"
+                    android:textSize="14sp"
+                    android:visibility="gone" />
+            </FrameLayout>
+
+            <TextView
+                android:id="@+id/tvAiReason2"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:gravity="center"
+                android:lineSpacingExtra="1dp"
+                android:paddingHorizontal="6dp"
+                android:text=""
+                android:textColor="@color/on_page"
+                android:textSize="12sp"
                 android:visibility="gone" />
 
             <TextView
-                android:id="@+id/tvAiStatus2"
+                android:id="@+id/tvAiAttribution2"
                 android:layout_width="match_parent"
-                android:layout_height="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
                 android:gravity="center"
-                android:padding="16dp"
+                android:lineSpacingExtra="1dp"
+                android:linksClickable="true"
                 android:text=""
                 android:textColor="@color/on_page"
-                android:textSize="14sp"
+                android:textColorLink="@color/nav_brown"
+                android:textSize="11sp"
                 android:visibility="gone" />
-        </FrameLayout>
+        </LinearLayout>
 
-        <TextView
-            android:id="@+id/tvAiReason2"
-            android:layout_width="match_parent"
+        <androidx.constraintlayout.widget.Barrier
+            android:id="@+id/aiBirdsBottomBarrier"
+            android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
-            android:gravity="center"
-            android:paddingHorizontal="6dp"
-            android:text=""
-            android:textColor="@color/on_page"
-            android:textSize="12sp"
-            android:lineSpacingExtra="1dp"
-            android:visibility="gone" />
+            app:barrierDirection="bottom"
+            app:constraint_referenced_ids="llAiBird1,llAiBird2" />
 
-        <TextView
-            android:id="@+id/tvAiAttribution2"
-            android:layout_width="match_parent"
+        <Button
+            android:id="@+id/btnCouldntFindYourBird"
+            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+            android:layout_width="0dp"
             android:layout_height="wrap_content"
-            android:layout_marginTop="6dp"
-            android:gravity="center"
-            android:text=""
-            android:textColor="@color/on_page"
-            android:textSize="11sp"
-            android:lineSpacingExtra="1dp"
-            android:linksClickable="true"
-            android:textColorLink="@color/nav_brown"
-            android:visibility="gone" />
-    </LinearLayout>
+            android:layout_marginStart="24dp"
+            android:layout_marginTop="34dp"
+            android:layout_marginEnd="24dp"
+            android:text="@string/couldnt_find_your_bird"
+            android:textAllCaps="false"
+            android:textSize="16sp"
+            app:cornerRadius="32dp"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toBottomOf="@id/aiBirdsBottomBarrier" />
 
-    <Button
-        android:id="@+id/btnCouldntFindYourBird"
-        style="@style/Widget.MaterialComponents.Button.OutlinedButton"
-        android:layout_width="0dp"
-        android:layout_height="wrap_content"
-        android:layout_marginHorizontal="24dp"
-        android:layout_marginBottom="12dp"
-        android:text="@string/couldnt_find_your_bird"
-        android:textAllCaps="false"
-        android:textSize="16sp"
-        app:cornerRadius="32dp"
-        app:layout_constraintBottom_toTopOf="@id/btnRetake"
-        app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintStart_toStartOf="parent" />
+        <Button
+            android:id="@+id/btnRetake"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="24dp"
+            android:layout_marginTop="14dp"
+            android:layout_marginEnd="24dp"
+            android:layout_marginBottom="16dp"
+            android:backgroundTint="@color/nav_brown"
+            android:text="@string/retake_image"
+            android:textAllCaps="false"
+            android:textColor="@color/white"
+            android:textSize="18sp"
+            app:cornerRadius="32dp"
+            app:layout_constraintBottom_toBottomOf="parent"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintHorizontal_bias="1.0"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toBottomOf="@id/btnCouldntFindYourBird"
+            app:layout_constraintVertical_bias="1.0" />
 
-    <Button
-        android:id="@+id/btnRetake"
-        android:layout_width="0dp"
-        android:layout_height="wrap_content"
-        android:layout_marginHorizontal="24dp"
-        android:layout_marginBottom="24dp"
-        android:backgroundTint="@color/nav_brown"
-        android:text="@string/retake_image"
-        android:textAllCaps="false"
-        android:textColor="@color/white"
-        android:textSize="18sp"
-        app:cornerRadius="32dp"
-        app:layout_constraintBottom_toBottomOf="parent"
-        app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintStart_toStartOf="parent" />
-
-</androidx.constraintlayout.widget.ConstraintLayout>
+    </androidx.constraintlayout.widget.ConstraintLayout>
+</androidx.core.widget.NestedScrollView>

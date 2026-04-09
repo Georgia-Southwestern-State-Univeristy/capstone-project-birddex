@@ -42,6 +42,7 @@ public class OpenAiApi {
         public boolean isInDatabase = true;
         @Nullable public String reasonCode;
         @Nullable public String userMessage;
+        @Nullable public String qualityAssessment;
         @Nullable public String identificationLogId;
         @Nullable public String identificationId;
         @Nullable public BirdChoice primaryBird;
@@ -132,6 +133,7 @@ public class OpenAiApi {
                         parsed.isInDatabase = !resMap.containsKey("isInDatabase") || Boolean.TRUE.equals(resMap.get("isInDatabase"));
                         parsed.reasonCode = getString(resMap, "reasonCode");
                         parsed.userMessage = getString(resMap, "userMessage");
+                        parsed.qualityAssessment = getString(resMap, "qualityAssessment");
                         parsed.identificationLogId = getString(resMap, "identificationLogId");
                         parsed.identificationId = getString(resMap, "identificationId");
                         parsed.primaryBird = parseBirdChoice(resMap.get("primaryBird"));

@@ -39,6 +39,7 @@ public class BirdInfoActivity extends AppCompatActivity {
     private String currentScientificName;
     private String currentSpecies;
     private String currentFamily;
+    private String currentQualityAssessment;
     private String identificationLogId;
     private String identificationId;
     private String currentSelectionSource;
@@ -143,6 +144,7 @@ public class BirdInfoActivity extends AppCompatActivity {
         currentScientificName = getIntent().getStringExtra("scientificName");
         currentSpecies = getIntent().getStringExtra("species");
         currentFamily = getIntent().getStringExtra("family");
+        currentQualityAssessment = getIntent().getStringExtra("qualityAssessment");
         identificationLogId = getIntent().getStringExtra("identificationLogId");
         identificationId = getIntent().getStringExtra("identificationId");
         currentSelectionSource = getIntent().getStringExtra("selectionSource");
@@ -186,6 +188,14 @@ public class BirdInfoActivity extends AppCompatActivity {
         configureQuantityUi();
         applyNotMyBirdButtonState(btnNotMyBird);
         showPointAwardStatusPopupIfNeeded();
+
+        TextView tvQuality = findViewById(R.id.tvQualityAssessment);
+        if (currentQualityAssessment != null && !currentQualityAssessment.trim().isEmpty() && !"clear".equalsIgnoreCase(currentQualityAssessment)) {
+            tvQuality.setText("AI Feedback: " + currentQualityAssessment);
+            tvQuality.setVisibility(View.VISIBLE);
+        } else {
+            tvQuality.setVisibility(View.GONE);
+        }
 
         tvSubmitFeedback.setOnClickListener(v -> IdentificationFeedbackHelper.showFeedbackDialog(
                 this,

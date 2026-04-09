@@ -197,6 +197,7 @@ async function callBirdModelApi({ imageBase64, latitude = null, longitude = null
             fullGeoTopPredictions: Array.isArray(rawGeo.full_geo_top_predictions)
                 ? rawGeo.full_geo_top_predictions.map(normalizeModelPrediction).filter(Boolean)
                 : [],
+            plausibilityByCommonName: buildGeoPlausibilityMap(rawGeo),
         } : null,
     };
 }
@@ -212,6 +213,89 @@ function normalizeModelPrediction(prediction) {
         commonName,
         confidence: Number(prediction.confidence || 0),
     };
+}
+
+
+/**
+ * Helper: Normalizes a single Cloud Run plausibility entry so Firebase can consume it safely.
+ */
+function normalizeGeoPlausibilityEntry(entry) {
+    if (!entry || typeof entry !== "object") return null;
+
+    const commonName = sanitizeText(
+        entry.commonName || entry.species || entry.label || entry.name || "",
+        200
+    ).trim() || null;
+
+    if (!commonName) return null;
+
+    const scoreRaw = typeof entry.score === "number"
+        ? entry.score
+        : (typeof entry.plausibilityScore === "number" ? entry.plausibilityScore : null);
+
+    const distanceMiles = safeFiniteNumber(
+        typeof entry.distanceMilesFromUser === "number"
+            ? entry.distanceMilesFromUser
+            : entry.nearestSightingDistanceMiles
+    );
+
+    return {
+        commonName,
+        locationPlausible: entry.locationPlausible === true
+            || entry.plausible === true
+            || entry.isPlausible === true,
+        locationPlausibilityScore: scoreRaw === null ? null : Number(Number(scoreRaw).toFixed(3)),
+        locationPlausibilityReason: sanitizeText(
+            entry.reason || entry.locationPlausibilityReason || "cloud_run_geo_plausibility",
+            200
+        ).trim() || "cloud_run_geo_plausibility",
+        distanceMilesFromUser: distanceMiles,
+        daysSinceLastSeenGeorgia: Number.isFinite(Number(entry.daysSinceLastSeenGeorgia))
+            ? Number(entry.daysSinceLastSeenGeorgia)
+            : null,
+        nearestSightingDistanceMiles: distanceMiles,
+        daysSinceNearestNearbySighting: Number.isFinite(Number(entry.daysSinceNearestNearbySighting))
+            ? Number(entry.daysSinceNearestNearbySighting)
+            : null,
+        sightingsWithin25Miles: Number.isFinite(Number(entry.sightingsWithin25Miles))
+            ? Number(entry.sightingsWithin25Miles)
+            : null,
+        sightingsWithin50Miles: Number.isFinite(Number(entry.sightingsWithin50Miles))
+            ? Number(entry.sightingsWithin50Miles)
+            : null,
+        sightingsWithin100Miles: Number.isFinite(Number(entry.sightingsWithin100Miles))
+            ? Number(entry.sightingsWithin100Miles)
+            : null,
+        sightingsWithin200Miles: Number.isFinite(Number(entry.sightingsWithin200Miles))
+            ? Number(entry.sightingsWithin200Miles)
+            : null,
+        monthlyPresenceScore: safeFiniteNumber(entry.monthlyPresenceScore),
+        countyPresenceScore: safeFiniteNumber(entry.countyPresenceScore),
+        statewideCommonnessScore: safeFiniteNumber(entry.statewideCommonnessScore),
+        statewideRecentSightingsScore: safeFiniteNumber(entry.statewideRecentSightingsScore),
+        plausibilitySource: "cloud_run_geo",
+    };
+}
+
+/**
+ * Helper: Builds a lookup map from bird common name -> Cloud Run geo plausibility entry.
+ */
+function buildGeoPlausibilityMap(rawGeo) {
+    if (!rawGeo || typeof rawGeo !== "object") return {};
+
+    const candidates = []
+        .concat(Array.isArray(rawGeo?.plausibility) ? rawGeo.plausibility : [])
+        .concat(Array.isArray(rawGeo?.plausibility_by_common_name) ? rawGeo.plausibility_by_common_name : [])
+        .concat(Array.isArray(rawGeo?.plausibilityByCommonName) ? rawGeo.plausibilityByCommonName : [])
+        .concat(Array.isArray(rawGeo?.candidate_plausibility) ? rawGeo.candidate_plausibility : []);
+
+    const map = {};
+    for (const candidate of candidates) {
+        const normalized = normalizeGeoPlausibilityEntry(candidate);
+        if (!normalized?.commonName) continue;
+        map[normalized.commonName] = normalized;
+    }
+    return map;
 }
 
 /**
@@ -492,6 +576,21 @@ async function findBirdRecordByCommonName(commonName) {
 }
 
 /**
+ * Helper: Looks up the raw bird document by scientific name.
+ */
+async function findBirdRecordByScientificName(scientificName) {
+    if (!scientificName || typeof scientificName !== "string") return null;
+    const snapshot = await db.collection("birds")
+        .where("scientificName", "==", scientificName.trim())
+        .limit(1)
+        .get();
+
+    if (snapshot.empty) return null;
+    const doc = snapshot.docs[0];
+    return { id: doc.id, ...(doc.data() || {}) };
+}
+
+/**
  * Helper: Loads a bird document by id with normalization/safety checks.
  */
 async function getBirdById(birdId) {
@@ -543,20 +642,36 @@ function buildOpenAiLooseChoicePayload(choice, source, extra = {}) {
 /**
  * Helper: Builds a structured payload/default/response object used by later logic.
  */
-function buildModelAlternativeChoices(topBirdMatches, userLocation, captureSource = null) {
-    return (topBirdMatches || [])
-        .slice(1, 3)
-        .map((birdData, index) => {
-            const normalized = normalizeBirdData(birdData);
-            if (!normalized || !normalized.id) return null;
-            const plausibility = buildBirdLocationPlausibility(birdData, userLocation);
-            return buildBirdChoicePayload(normalized, "model_alternative", {
-                rank: index + 2,
-                ...plausibility,
-                alternativeReasonText: buildAlternativeReasonText(plausibility, "model_alternative", captureSource),
-            });
-        })
-        .filter(Boolean);
+async function buildModelAlternativeChoices(
+    topBirdMatches,
+    userLocation,
+    captureSource = null,
+    observedAt = null,
+    geoPlausibilityMap = null
+) {
+    const results = [];
+
+    for (const [index, birdData] of (topBirdMatches || []).slice(1, 3).entries()) {
+        const normalized = normalizeBirdData(birdData);
+        if (!normalized || !normalized.id) continue;
+
+        const plausibility = await buildBirdLocationPlausibility(
+            birdData,
+            userLocation,
+            observedAt,
+            geoPlausibilityMap
+        );
+
+        const choice = buildBirdChoicePayload(normalized, "model_alternative", {
+            rank: index + 2,
+            ...plausibility,
+            alternativeReasonText: buildAlternativeReasonText(plausibility, "model_alternative", captureSource),
+        });
+
+        if (choice) results.push(choice);
+    }
+
+    return results;
 }
 
 /**
@@ -627,7 +742,14 @@ function buildNotMyBirdGate(top1Confidence, top2Confidence) {
 /**
  * Helper: Builds a structured payload/default/response object used by later logic.
  */
-function buildBirdLocationPlausibility(birdData, userLocation) {
+function buildBirdLocationPlausibility(birdData, userLocation, observedAt = null, geoPlausibilityMap = null) {
+    const normalizedBird = normalizeBirdData(birdData, birdData?.id || birdData?.birdId || null);
+    const commonName = normalizedBird?.commonName || birdData?.commonName || null;
+
+    if (geoPlausibilityMap && typeof geoPlausibilityMap === "object" && commonName && geoPlausibilityMap[commonName]) {
+        return geoPlausibilityMap[commonName];
+    }
+
     const userLat = safeFiniteNumber(userLocation?.latitude);
     const userLng = safeFiniteNumber(userLocation?.longitude);
     const lastLat = safeFiniteNumber(birdData?.lastSeenLatitudeGeorgia);
@@ -641,6 +763,17 @@ function buildBirdLocationPlausibility(birdData, userLocation) {
             locationPlausibilityReason: "missing_user_location",
             distanceMilesFromUser: null,
             daysSinceLastSeenGeorgia: null,
+            nearestSightingDistanceMiles: null,
+            daysSinceNearestNearbySighting: null,
+            sightingsWithin25Miles: null,
+            sightingsWithin50Miles: null,
+            sightingsWithin100Miles: null,
+            sightingsWithin200Miles: null,
+            monthlyPresenceScore: null,
+            countyPresenceScore: null,
+            statewideCommonnessScore: null,
+            statewideRecentSightingsScore: null,
+            plausibilitySource: "missing_user_location",
         };
     }
 
@@ -651,6 +784,17 @@ function buildBirdLocationPlausibility(birdData, userLocation) {
             locationPlausibilityReason: "missing_bird_location_data",
             distanceMilesFromUser: null,
             daysSinceLastSeenGeorgia: null,
+            nearestSightingDistanceMiles: null,
+            daysSinceNearestNearbySighting: null,
+            sightingsWithin25Miles: null,
+            sightingsWithin50Miles: null,
+            sightingsWithin100Miles: null,
+            sightingsWithin200Miles: null,
+            monthlyPresenceScore: null,
+            countyPresenceScore: null,
+            statewideCommonnessScore: null,
+            statewideRecentSightingsScore: null,
+            plausibilitySource: "legacy_missing_data",
         };
     }
 
@@ -682,6 +826,17 @@ function buildBirdLocationPlausibility(birdData, userLocation) {
             : "too_far_or_not_recent_for_user_location_date",
         distanceMilesFromUser: Number(distanceMiles.toFixed(1)),
         daysSinceLastSeenGeorgia: Math.round(daysSinceLastSeen),
+        nearestSightingDistanceMiles: Number(distanceMiles.toFixed(1)),
+        daysSinceNearestNearbySighting: Math.round(daysSinceLastSeen),
+        sightingsWithin25Miles: null,
+        sightingsWithin50Miles: null,
+        sightingsWithin100Miles: null,
+        sightingsWithin200Miles: null,
+        monthlyPresenceScore: null,
+        countyPresenceScore: null,
+        statewideCommonnessScore: null,
+        statewideRecentSightingsScore: null,
+        plausibilitySource: "legacy_last_seen_point",
     };
 }
 
@@ -712,7 +867,15 @@ function buildAlternativeReasonText(choice, source = null, captureSource = null)
 /**
  * Helper: Builds the list of review candidates that make sense for the user to pick from.
  */
-async function buildPlausibleReviewChoices(rawChoices, userLocation, excludedTokens = new Set(), limit = 2, captureSource = null) {
+async function buildPlausibleReviewChoices(
+    rawChoices,
+    userLocation,
+    excludedTokens = new Set(),
+    limit = 2,
+    captureSource = null,
+    observedAt = null,
+    geoPlausibilityMap = null
+) {
     const responseChoices = [];
     const seenChoiceTokens = new Set();
 
@@ -744,7 +907,12 @@ async function buildPlausibleReviewChoices(rawChoices, userLocation, excludedTok
             seenChoiceTokens.add(dedupeToken);
         }
 
-        const plausibility = buildBirdLocationPlausibility(matchedBird, userLocation);
+        const plausibility = await buildBirdLocationPlausibility(
+            matchedBird,
+            userLocation,
+            observedAt,
+            geoPlausibilityMap
+        );
         if (!plausibility.locationPlausible) {
             continue;
         }
@@ -829,17 +997,79 @@ function tryParseRankedBirdChoicesJson(rawText) {
     }
 }
 
+let supportedBirdsCache = null;
+let lastCacheUpdate = 0;
+const CACHE_TTL = 30 * 60 * 1000; // 30 minutes
+
+/**
+ * Helper: Normalizes text for comparison by lowercasing and removing non-alphanumeric chars.
+ */
+function normalizeForMatch(text) {
+    return (text || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+/**
+ * Helper: Fetches and caches the list of supported birds for fuzzy matching.
+ */
+async function getSupportedBirds() {
+    const now = Date.now();
+    if (supportedBirdsCache && (now - lastCacheUpdate < CACHE_TTL)) {
+        return supportedBirdsCache;
+    }
+    try {
+        const snapshot = await db.collection("birds").get();
+        supportedBirdsCache = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        lastCacheUpdate = now;
+        return supportedBirdsCache;
+    } catch (error) {
+        logger.error("Failed to fetch birds for cache:", error);
+        return supportedBirdsCache || [];
+    }
+}
+
+/**
+ * Helper: Performs a fuzzy match against the cached bird list.
+ */
+async function findBirdRecordFuzzy(choice) {
+    if (!choice) return null;
+    const birds = await getSupportedBirds();
+
+    const normCommon = normalizeForMatch(choice.commonName);
+    const normSci = normalizeForMatch(choice.scientificName);
+    const normId = normalizeForMatch(choice.birdId);
+
+    if (!normCommon && !normSci && !normId) return null;
+
+    const match = birds.find(b =>
+        (normId && normalizeForMatch(b.id) === normId) ||
+        (normCommon && normalizeForMatch(b.commonName) === normCommon) ||
+        (normSci && normalizeForMatch(b.scientificName) === normSci)
+    );
+
+    return match ? { id: match.id, ...match } : null;
+}
+
 /**
  * Helper: Maps a user/review bird choice back to a supported BirdDex bird record.
  */
 async function resolveBirdChoiceToSupportedBird(choice) {
     if (!choice) return null;
 
+    // 1. Try exact ID match
     const byId = await getBirdRecordById(choice.birdId);
     if (byId) return byId;
 
+    // 2. Try exact Common Name match
     const byCommonName = await findBirdRecordByCommonName(choice.commonName);
     if (byCommonName) return byCommonName;
+
+    // 3. Try exact Scientific Name match
+    const byScientificName = await findBirdRecordByScientificName(choice.scientificName);
+    if (byScientificName) return byScientificName;
+
+    // 4. Fallback to fuzzy matching (case-insensitive, ignores punctuation)
+    const fuzzy = await findBirdRecordFuzzy(choice);
+    if (fuzzy) return fuzzy;
 
     return null;
 }
@@ -1163,6 +1393,7 @@ async function persistHybridIdentification({
     pointAwardDecision,
     rerankerResult,
     modelApiDiagnostics,
+    observedAt = null,
 }) {
     const identificationLogRef = db.collection("identificationLogs").doc();
 
@@ -1172,7 +1403,13 @@ async function persistHybridIdentification({
     const birdMatch1 = normalizeBirdData(topBirdMatches[0] || null);
     const birdMatch2 = normalizeBirdData(topBirdMatches[1] || null);
     const birdMatch3 = normalizeBirdData(topBirdMatches[2] || null);
-    const modelAlternativeChoices = buildModelAlternativeChoices(topBirdMatches, await getLocationContext(locationId || null), captureSource);
+    const modelAlternativeChoices = await buildModelAlternativeChoices(
+        topBirdMatches,
+        await getLocationContext(locationId || null),
+        captureSource,
+        observedAt,
+        modelApiDiagnostics?.geo?.plausibilityByCommonName || null
+    );
 
     const identificationLogData = {
         userId,
@@ -1240,6 +1477,9 @@ async function persistHybridIdentification({
                 imageTopPredictions: Array.isArray(modelApiDiagnostics.geo.imageTopPredictions) ? modelApiDiagnostics.geo.imageTopPredictions : [],
                 geoTopPredictions: Array.isArray(modelApiDiagnostics.geo.geoTopPredictions) ? modelApiDiagnostics.geo.geoTopPredictions : [],
                 fullGeoTopPredictions: Array.isArray(modelApiDiagnostics.geo.fullGeoTopPredictions) ? modelApiDiagnostics.geo.fullGeoTopPredictions : [],
+                plausibilityByCommonName: modelApiDiagnostics.geo.plausibilityByCommonName && typeof modelApiDiagnostics.geo.plausibilityByCommonName === "object"
+                    ? modelApiDiagnostics.geo.plausibilityByCommonName
+                    : {},
             } : null,
         },
         openAi: {
@@ -1402,6 +1642,7 @@ function buildIdentifyBirdResponse({
     modelTop2Confidence,
     pointAwardDecision,
     userMessage = null,
+    qualityAssessment = null,
 }) {
     const notMyBirdGate = buildNotMyBirdGate(modelTop1Confidence, modelTop2Confidence);
     return {
@@ -1410,6 +1651,7 @@ function buildIdentifyBirdResponse({
         isGore: !!isGore,
         isInDatabase: !!isVerified,
         userMessage,
+        qualityAssessment,
         imageUrl: imageUrl || "",
         identificationLogId: identificationLogId || null,
         identificationId: identificationId || null,
@@ -1536,6 +1778,7 @@ exports.identifyBird = secureOnCall({ secrets: [OPENAI_API_KEY, BIRDDEX_MODEL_AP
         let openAiRawResponse = null;
         let openAiCandidates = [];
         let decisionReason = "model_confident";
+        let parsedOpenAi = null;
 
         const needsFullFallback = !top1Bird || top1Confidence < HYBRID_ID_CONFIG.MODEL_FULL_FALLBACK_CONFIDENCE_THRESHOLD;
         const shouldPreferModelDirect = !!top1Bird
@@ -1653,24 +1896,24 @@ exports.identifyBird = secureOnCall({ secrets: [OPENAI_API_KEY, BIRDDEX_MODEL_AP
                 return goreResult;
             }
 
-            const parsedOpenAi = parseBirdIdentificationText(openAiRawResponse);
+            parsedOpenAi = parseBirdIdentificationText(openAiRawResponse);
             const matchedBird = await resolveBirdChoiceToSupportedBird(parsedOpenAi);
 
             if (matchedBird) {
-                const openAiWinnerPlausibility = buildBirdLocationPlausibility(matchedBird, userLocationContext);
-                if (openAiWinnerPlausibility.locationPlausible) {
-                    finalBirdData = matchedBird;
-                    finalBirdId = matchedBird.id;
-                    finalSource = "openai_full";
-                    isVerified = true;
-                    finalIdentification = buildBirdIdentificationText(finalBirdId, finalBirdData);
-                } else {
-                    decisionReason = "openai_location_gate_blocked";
-                    finalBirdData = null;
-                    finalBirdId = null;
-                    finalSource = "openai_full_location_blocked";
-                    isVerified = false;
-                    finalIdentification = null;
+                finalBirdData = matchedBird;
+                finalBirdId = matchedBird.id;
+                finalSource = "openai_full";
+                isVerified = true;
+                finalIdentification = buildBirdIdentificationText(finalBirdId, finalBirdData);
+
+                const openAiWinnerPlausibility = await buildBirdLocationPlausibility(
+                    matchedBird,
+                    userLocationContext,
+                    typeof observedAt === "string" ? observedAt : null,
+                    modelApiResult?.geo?.plausibilityByCommonName || null
+                );
+                if (!openAiWinnerPlausibility.locationPlausible) {
+                    decisionReason = "openai_low_plausibility";
                 }
             } else {
                 finalBirdData = null;
@@ -1709,6 +1952,7 @@ exports.identifyBird = secureOnCall({ secrets: [OPENAI_API_KEY, BIRDDEX_MODEL_AP
             pointAwardDecision,
             rerankerResult,
             modelApiDiagnostics: modelApiResult,
+            observedAt: typeof observedAt === "string" ? observedAt : null,
         });
 
         const finalResult = isVerified
@@ -1725,21 +1969,23 @@ exports.identifyBird = secureOnCall({ secrets: [OPENAI_API_KEY, BIRDDEX_MODEL_AP
                 modelTop1Confidence: top1Confidence,
                 modelTop2Confidence: top2Confidence,
                 pointAwardDecision,
+                qualityAssessment: (usedOpenAi && parsedOpenAi?.qualityAssessment) ? parsedOpenAi.qualityAssessment : null,
             })
             : {
                 result: null,
                 isVerified: false,
                 isGore: false,
-                isInDatabase: false,
+                isInDatabase: decisionReason !== "openai_bird_not_in_database",
                 userMessage: decisionReason === "openai_location_gate_blocked"
                     ? (captureSource === "gallery_import"
                         ? "BirdDex could not verify an AI result that looks plausible for the location and date in your uploaded photo."
                         : "BirdDex could not verify an AI result that looks plausible for your location and date.")
                     : (decisionReason === "openai_bird_not_in_database"
-                        ? "Sorry, this bird is not in our database just yet."
+                        ? `Sorry, ${parsedOpenAi?.commonName || "this bird"} is not in our database just yet.`
                         : (decisionReason.startsWith("openai_quality_")
-                            ? `We couldn't identify the bird because the photo is ${decisionReason.replace("openai_quality_", "").replace(/_/g, " ")}. Try to get a clearer shot!`
+                            ? (parsedOpenAi?.qualityAssessment || `We couldn't identify the bird because the photo is ${decisionReason.replace("openai_quality_", "").replace(/_/g, " ")}. Try to get a clearer shot!`)
                             : "We couldn't identify the bird in this photo. For the best results, try to get a clear, close-up shot with the bird centered and plenty of light!")),
+                qualityAssessment: (usedOpenAi && parsedOpenAi?.qualityAssessment) ? parsedOpenAi.qualityAssessment : null,
                 reasonCode: decisionReason === "openai_location_gate_blocked"
                     ? "OPENAI_LOCATION_NOT_PLAUSIBLE"
                     : (decisionReason === "openai_bird_not_in_database" ? "NOT_IN_DATABASE" : "IMAGE_QUALITY_ISSUE"),
@@ -1848,11 +2094,20 @@ exports.reviewBirdAlternatives = secureOnCall({ secrets: [OPENAI_API_KEY], timeo
 
         const cachedReviewResponse = identificationLogData.openAi?.reviewCachedResponse;
         const logCaptureSource = identificationLogData.captureGuard?.captureSource || null;
+        const reviewGeoPlausibilityMap = identificationLogData?.modelApiDiagnostics?.geo?.plausibilityByCommonName || null;
         if (cachedReviewResponse && typeof cachedReviewResponse === "object") {
             const cachedAlternatives = Array.isArray(cachedReviewResponse.openAiAlternatives)
                 ? cachedReviewResponse.openAiAlternatives
                 : [];
-            const filteredCachedAlternatives = await buildPlausibleReviewChoices(cachedAlternatives, reviewLocation, excludedTokens, 2, logCaptureSource);
+            const filteredCachedAlternatives = await buildPlausibleReviewChoices(
+                cachedAlternatives,
+                reviewLocation,
+                excludedTokens,
+                2,
+                logCaptureSource,
+                identificationLogData?.modelApiDiagnostics?.geo?.observedAt || null,
+                reviewGeoPlausibilityMap
+            );
             const cachedResult = {
                 isVerified: filteredCachedAlternatives.length > 0,
                 isGore: !!cachedReviewResponse.isGore,
@@ -1969,7 +2224,15 @@ exports.reviewBirdAlternatives = secureOnCall({ secrets: [OPENAI_API_KEY], timeo
             ...choice,
             source: "openai_review",
         }));
-        const responseChoices = await buildPlausibleReviewChoices(parsedChoicesWithSource, reviewLocation, excludedTokens, 2, logCaptureSource);
+        const responseChoices = await buildPlausibleReviewChoices(
+            parsedChoicesWithSource,
+            reviewLocation,
+            excludedTokens,
+            2,
+            logCaptureSource,
+            identificationLogData?.modelApiDiagnostics?.geo?.observedAt || null,
+            reviewGeoPlausibilityMap
+        );
 
         const response = {
             isVerified: responseChoices.length > 0,

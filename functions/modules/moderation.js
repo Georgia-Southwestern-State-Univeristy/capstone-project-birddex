@@ -48,6 +48,8 @@ const {
   generateAndSaveHunterFacts,
   getOrCreateAndSaveBirdFacts,
   timestampToMillis,
+  getModerationReviewerIdentityOrThrow,
+  normalizeReportSourceContext,
   createModerationAppealRef,
   functions,
   auth,

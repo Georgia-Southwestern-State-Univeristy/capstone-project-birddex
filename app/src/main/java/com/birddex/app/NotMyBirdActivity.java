@@ -8,11 +8,13 @@ import android.widget.Button;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
+import android.view.ViewGroup;
 
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.constraintlayout.widget.ConstraintLayout;
 
 import com.bumptech.glide.Glide;
 
@@ -81,8 +83,15 @@ public class NotMyBirdActivity extends AppCompatActivity {
                     .into(ivMain);
         }
 
-        bindCandidate(llBird1, iv1, progressBird1, tvStatus1, tvAttribution1, tvReason1, tvName1, getCandidateAt(0));
-        bindCandidate(llBird2, iv2, progressBird2, tvStatus2, tvAttribution2, tvReason2, tvName2, getCandidateAt(1));
+        Bundle candidate1 = getCandidateAt(0);
+        Bundle candidate2 = getCandidateAt(1);
+
+        bindCandidate(llBird1, iv1, progressBird1, tvStatus1, tvAttribution1, tvReason1, tvName1, candidate1);
+        bindCandidate(llBird2, iv2, progressBird2, tvStatus2, tvAttribution2, tvReason2, tvName2, candidate2);
+
+        if (candidate1 != null && candidate2 == null) {
+            expandSingleCandidateCard(llBird1);
+        }
 
         if (modelAlternatives.isEmpty()) {
             tvInstruction.setText("No other BirdDex matches were available. Tap below to ask AI for two more options.");
@@ -120,7 +129,7 @@ public class NotMyBirdActivity extends AppCompatActivity {
                                TextView nameView,
                                @Nullable Bundle candidate) {
         if (candidate == null) {
-            container.setVisibility(View.INVISIBLE);
+            container.setVisibility(View.GONE);
             container.setClickable(false);
             return;
         }
@@ -193,6 +202,20 @@ public class NotMyBirdActivity extends AppCompatActivity {
         nameView.setOnClickListener(clickListener);
     }
 
+    private void expandSingleCandidateCard(LinearLayout container) {
+        ViewGroup.LayoutParams rawParams = container.getLayoutParams();
+        if (!(rawParams instanceof ConstraintLayout.LayoutParams)) {
+            return;
+        }
+
+        ConstraintLayout.LayoutParams params = (ConstraintLayout.LayoutParams) rawParams;
+        params.startToStart = ConstraintLayout.LayoutParams.PARENT_ID;
+        params.endToEnd = ConstraintLayout.LayoutParams.PARENT_ID;
+        params.width = 0;
+        params.setMarginEnd(0);
+        container.setLayoutParams(params);
+    }
+
     @Nullable
     private Bundle getCandidateAt(int index) {
         if (modelAlternatives == null || index < 0 || index >= modelAlternatives.size()) {
@@ -241,7 +264,6 @@ public class NotMyBirdActivity extends AppCompatActivity {
     private String normalize(@Nullable String value) {
         return value == null ? "" : value.trim().toLowerCase(Locale.US);
     }
-
 
     private Intent buildSelectionIntent(Bundle candidate, String source) {
         Intent resultIntent = new Intent();

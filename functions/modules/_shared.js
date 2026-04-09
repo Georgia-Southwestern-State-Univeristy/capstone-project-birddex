@@ -1440,6 +1440,43 @@ function timestampToMillis(value) {
     return null;
 }
 
+function getModerationReviewerIdentityOrThrow(request) {
+    if (!request.auth) {
+        throw new HttpsError("unauthenticated", "Auth required.");
+    }
+
+    const token = request.auth.token || {};
+    const isReviewer = token.admin === true || token.moderator === true || token.staff === true;
+    if (!isReviewer) {
+        throw new HttpsError("permission-denied", "Moderator access required.");
+    }
+
+    const reviewerId = request.auth.uid;
+    const reviewedBy = sanitizeText(token.email || request.auth.uid || "moderator", 200);
+
+    return {
+        reviewerId,
+        reviewedBy,
+        moderatorSourceMeta: {
+            uid: reviewerId,
+            email: sanitizeText(token.email || "", 200),
+            username: sanitizeText(token.name || token.displayName || "", 120),
+        },
+    };
+}
+
+function normalizeReportSourceContext(value) {
+    const normalized = sanitizeText(value || "", 80).trim().toLowerCase();
+    if (!normalized) return null;
+
+    if (normalized === "heatmap" || normalized === "nearby_heatmap") return "heatmap";
+    if (normalized === "post_detail" || normalized === "postdetail" || normalized === "post-detail") return "post_detail";
+    if (normalized === "forum_feed" || normalized === "forum" || normalized === "forum_fragment") return "forum_feed";
+    if (normalized === "profile" || normalized === "user_profile" || normalized === "profile_posts") return "profile";
+
+    return normalized;
+}
+
 function createModerationAppealRef(userId, moderationEventId) {
     return db.collection("moderationAppeals").doc(`${userId}_${moderationEventId}`);
 }
@@ -1513,6 +1550,8 @@ module.exports = {
   MODERATION_STATUS_REMOVED,
   timestampToMillis,
   haversineMiles,
+  getModerationReviewerIdentityOrThrow,
+  normalizeReportSourceContext,
   createModerationAppealRef,
   functions,
   auth,

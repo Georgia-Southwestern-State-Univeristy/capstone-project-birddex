@@ -32,6 +32,7 @@ import android.widget.LinearLayout;
 import android.widget.PopupMenu;
 import android.widget.TextView;
 import java.util.HashSet;
+import java.util.Iterator;
 
 import androidx.annotation.NonNull;
 import androidx.appcompat.app.AlertDialog;
@@ -730,13 +731,7 @@ public class NearbyHeatmapActivity extends AppCompatActivity
     private void fetchHeatmapData() {
         final int gen = ++fetchGeneration;
         pendingLoads = 4;
-        userHeatPoints.clear();
-        eBirdHeatPoints.clear();
-        userHotspotSightings.clear();
-        eBirdHotspotSightings.clear();
-        hotspotBuckets.clear();
-        clearHotspotCircles();
-        tvMapSubtitle.setText("Loading heatmap...");
+        tvMapSubtitle.setText("Updating heatmap...");
 
         loadUserBirdSightings(gen);
         loadEbirdApiSightings(gen);
@@ -796,42 +791,71 @@ public class NearbyHeatmapActivity extends AppCompatActivity
      * Location values are handled here, so this is part of the logic that decides what area/bird
      * sightings the user sees.
      */
+    private final Map<Integer, BitmapDescriptor> pinCache = new java.util.HashMap<>();
+    private BitmapDescriptor dualColorPinCache = null;
+    private final Map<String, Marker> forumMarkerMap = new java.util.HashMap<>();
+
     private void processForumPins(com.google.firebase.firestore.QuerySnapshot snap) {
-        clearForumMarkers();
-        boolean showGraphic = getSharedPreferences(PREFS_NAME, MODE_PRIVATE).getBoolean(KEY_GRAPHIC_CONTENT, false);
+        new Thread(() -> {
+            boolean showGraphic = getSharedPreferences(PREFS_NAME, MODE_PRIVATE).getBoolean(KEY_GRAPHIC_CONTENT, false);
+            List<ForumPost> visiblePosts = new ArrayList<>();
 
-        ForumPost pendingPostToOpen = null;
+            for (DocumentSnapshot doc : snap.getDocuments()) {
+                ForumPost p = doc.toObject(ForumPost.class);
+                if (p == null) continue;
+                p.setId(doc.getId());
 
-        for (DocumentSnapshot doc : snap.getDocuments()) {
-            ForumPost p = doc.toObject(ForumPost.class);
-            if (p == null) continue;
+                if (!isHeatmapPinVisible(p)) continue;
+                if (showFollowingPinsOnly) {
+                    String postUserId = p.getUserId();
+                    if (postUserId == null || !followedUserIds.contains(postUserId)) continue;
+                }
 
-            p.setId(doc.getId());
+                boolean inBounds = currentVisibleBounds == null
+                        || currentVisibleBounds.contains(new LatLng(p.getLatitude(), p.getLongitude()));
 
-            if (!isHeatmapPinVisible(p)) continue;
-
-            if (showFollowingPinsOnly) {
-                String postUserId = p.getUserId();
-                if (postUserId == null || !followedUserIds.contains(postUserId)) {
-                    continue;
+                if (inBounds && (showGraphic || !p.isHunted())) {
+                    visiblePosts.add(p);
                 }
             }
 
-            boolean inBounds = currentVisibleBounds == null
-                    || currentVisibleBounds.contains(new LatLng(p.getLatitude(), p.getLongitude()));
+            runOnUiThread(() -> {
+                if (isFinishing()) return;
+                updateForumMarkers(visiblePosts);
+            });
+        }).start();
+    }
 
-            if (inBounds && (showGraphic || !p.isHunted())) {
-                addPinToMap(p);
+    private void updateForumMarkers(List<ForumPost> visiblePosts) {
+        Set<String> newPostIds = new HashSet<>();
+        for (ForumPost p : visiblePosts) newPostIds.add(p.getId());
 
-                if (!pendingOpenPostHandled
-                        && pendingOpenPostId != null
-                        && pendingOpenPostId.equals(p.getId())) {
-                    pendingPostToOpen = p;
-                }
+        // Remove markers no longer visible
+        Iterator<Map.Entry<String, Marker>> it = forumMarkerMap.entrySet().iterator();
+        while (it.hasNext()) {
+            Map.Entry<String, Marker> entry = it.next();
+            if (!newPostIds.contains(entry.getKey())) {
+                entry.getValue().remove();
+                it.remove();
             }
         }
 
-        maybeOpenRequestedPost(pendingPostToOpen);
+        // Add or update markers
+        for (ForumPost p : visiblePosts) {
+            if (!forumMarkerMap.containsKey(p.getId())) {
+                addPinToMap(p);
+            }
+        }
+
+        // Handle pending post open if requested
+        if (!pendingOpenPostHandled && pendingOpenPostId != null) {
+            for (ForumPost p : visiblePosts) {
+                if (pendingOpenPostId.equals(p.getId())) {
+                    maybeOpenRequestedPost(p);
+                    break;
+                }
+            }
+        }
     }
 
     /**
@@ -850,13 +874,13 @@ public class NearbyHeatmapActivity extends AppCompatActivity
 
         BitmapDescriptor icon;
         if (p.isSpotted() && p.isHunted()) {
-            icon = createDualColorPin();
+            icon = getCachedDualColorPin();
         } else if (p.isHunted()) {
-            icon = createColoredPin(Color.parseColor("#F44336")); // red
+            icon = getCachedColoredPin(Color.parseColor("#F44336")); // red
         } else if (p.isSpotted()) {
-            icon = createColoredPin(Color.parseColor("#4CAF50")); // green
+            icon = getCachedColoredPin(Color.parseColor("#4CAF50")); // green
         } else {
-            icon = createColoredPin(Color.parseColor("#8A6240")); // brown map-only pin
+            icon = getCachedColoredPin(Color.parseColor("#8A6240")); // brown
         }
 
         Marker m = googleMap.addMarker(
@@ -868,8 +892,22 @@ public class NearbyHeatmapActivity extends AppCompatActivity
         );
         if (m != null) {
             m.setTag(p);
-            forumMarkers.add(m);
+            forumMarkerMap.put(p.getId(), m);
         }
+    }
+
+    private BitmapDescriptor getCachedColoredPin(int color) {
+        if (!pinCache.containsKey(color)) {
+            pinCache.put(color, createColoredPin(color));
+        }
+        return pinCache.get(color);
+    }
+
+    private BitmapDescriptor getCachedDualColorPin() {
+        if (dualColorPinCache == null) {
+            dualColorPinCache = createDualColorPin();
+        }
+        return dualColorPinCache;
     }
 
     /**
@@ -919,8 +957,8 @@ public class NearbyHeatmapActivity extends AppCompatActivity
     }
 
     private void clearForumMarkers() {
-        for (Marker m : forumMarkers) m.remove();
-        forumMarkers.clear();
+        for (Marker m : forumMarkerMap.values()) m.remove();
+        forumMarkerMap.clear();
     }
 
     private void maybeOpenRequestedPost(@Nullable ForumPost post) {
@@ -1599,28 +1637,43 @@ public class NearbyHeatmapActivity extends AppCompatActivity
      */
     private void processSightings(com.google.firebase.firestore.QuerySnapshot snap, boolean user, int gen) {
         if (fetchGeneration != gen) return;
-        List<WeightedLatLng> hl = user ? userHeatPoints : eBirdHeatPoints;
-        List<HotspotSighting> hsl = user ? userHotspotSightings : eBirdHotspotSightings;
-        hl.clear();
-        hsl.clear();
-        for (DocumentSnapshot d : snap.getDocuments()) {
-            // Anti-cheat: Skip sightings marked as suspicious
-            Boolean suspicious = d.getBoolean("suspicious");
-            if (suspicious != null && suspicious) continue;
 
-            Double lat = getAnyDouble(d, "location.latitude", "lastSeenLatitudeGeorgia", "latitude", "lat"), lng = getAnyDouble(d, "location.longitude", "lastSeenLongitudeGeorgia", "longitude", "lng");
-            if (lat == null || lng == null || shouldBeFiltered(lat, lng, getAnyTimeMillis(d, user ? "timestamp" : "observationDate")))
-                continue;
-            hl.add(new WeightedLatLng(new LatLng(lat, lng), user ? 1.8 : 1.0));
-            hsl.add(buildHotspotSighting(d, lat, lng, user));
-        }
-        rebuildHotspotBuckets();
-        onCollectionFinished(gen);
+        // Run processing in background to prevent UI stutter
+        new Thread(() -> {
+            List<WeightedLatLng> hl = new ArrayList<>();
+            List<HotspotSighting> hsl = new ArrayList<>();
+
+            for (DocumentSnapshot d : snap.getDocuments()) {
+                if (fetchGeneration != gen) return;
+
+                Boolean suspicious = d.getBoolean("suspicious");
+                if (suspicious != null && suspicious) continue;
+
+                Double lat = getAnyDouble(d, "location.latitude", "lastSeenLatitudeGeorgia", "latitude", "lat");
+                Double lng = getAnyDouble(d, "location.longitude", "lastSeenLongitudeGeorgia", "longitude", "lng");
+
+                if (lat == null || lng == null || shouldBeFiltered(lat, lng, getAnyTimeMillis(d, user ? "timestamp" : "observationDate")))
+                    continue;
+
+                hl.add(new WeightedLatLng(new LatLng(lat, lng), user ? 1.8 : 1.0));
+                hsl.add(buildHotspotSighting(d, lat, lng, user));
+            }
+
+            runOnUiThread(() -> {
+                if (fetchGeneration != gen) return;
+                List<WeightedLatLng> targetHl = user ? userHeatPoints : eBirdHeatPoints;
+                List<HotspotSighting> targetHsl = user ? userHotspotSightings : eBirdHotspotSightings;
+
+                targetHl.clear();
+                targetHl.addAll(hl);
+                targetHsl.clear();
+                targetHsl.addAll(hsl);
+
+                rebuildHotspotBuckets(gen);
+            });
+        }).start();
     }
 
-    /**
-     * Main logic block for this part of the feature.
-     */
     private void onCollectionFinished(int gen) {
         if (fetchGeneration != gen) return;
         pendingLoads--;
@@ -1647,81 +1700,28 @@ public class NearbyHeatmapActivity extends AppCompatActivity
      */
     private void renderHeatmaps() {
         if (googleMap == null) return;
-        if (eBirdOverlay != null) {
-            eBirdOverlay.remove();
-            eBirdOverlay = null;
-        }
-        if (userUnverifiedOverlay != null) {
-            userUnverifiedOverlay.remove();
-            userUnverifiedOverlay = null;
-        }
-        if (userMixedOverlay != null) {
-            userMixedOverlay.remove();
-            userMixedOverlay = null;
-        }
-        if (userVerifiedOverlay != null) {
-            userVerifiedOverlay.remove();
-            userVerifiedOverlay = null;
-        }
-        clearHotspotCircles();
 
         List<WeightedLatLng> displayEBirdHeatPoints = buildDisplayHeatPoints(false);
         List<WeightedLatLng> displayUserUnverifiedHeatPoints = buildUserHeatPointsForStatus(HotspotVerificationState.UNVERIFIED);
         List<WeightedLatLng> displayUserMixedHeatPoints = buildUserHeatPointsForStatus(HotspotVerificationState.MIXED);
         List<WeightedLatLng> displayUserVerifiedHeatPoints = buildUserHeatPointsForStatus(HotspotVerificationState.VERIFIED);
 
-        if (!displayEBirdHeatPoints.isEmpty()) {
-            eBirdOverlay = googleMap.addTileOverlay(
-                    new TileOverlayOptions().tileProvider(
-                            new HeatmapTileProvider.Builder()
-                                    .weightedData(displayEBirdHeatPoints)
-                                    .radius(45)
-                                    .opacity(0.65)
-                                    .gradient(EBIRD_GRADIENT)
-                                    .build()
-                    ).zIndex(1f)
-            );
-        }
+        TileOverlay previousEBirdOverlay = eBirdOverlay;
+        TileOverlay previousUserUnverifiedOverlay = userUnverifiedOverlay;
+        TileOverlay previousUserMixedOverlay = userMixedOverlay;
+        TileOverlay previousUserVerifiedOverlay = userVerifiedOverlay;
 
-        if (!displayUserUnverifiedHeatPoints.isEmpty()) {
-            userUnverifiedOverlay = googleMap.addTileOverlay(
-                    new TileOverlayOptions().tileProvider(
-                            new HeatmapTileProvider.Builder()
-                                    .weightedData(displayUserUnverifiedHeatPoints)
-                                    .radius(45)
-                                    .opacity(0.70)
-                                    .gradient(USER_UNVERIFIED_GRADIENT)
-                                    .build()
-                    ).zIndex(2f)
-            );
-        }
+        eBirdOverlay = buildHeatOverlay(displayEBirdHeatPoints, EBIRD_GRADIENT, 45, 0.65, 1f);
+        userUnverifiedOverlay = buildHeatOverlay(displayUserUnverifiedHeatPoints, USER_UNVERIFIED_GRADIENT, 45, 0.70, 2f);
+        userMixedOverlay = buildHeatOverlay(displayUserMixedHeatPoints, USER_MIXED_GRADIENT, 45, 0.70, 2.1f);
+        userVerifiedOverlay = buildHeatOverlay(displayUserVerifiedHeatPoints, USER_VERIFIED_GRADIENT, 45, 0.72, 2.2f);
 
-        if (!displayUserMixedHeatPoints.isEmpty()) {
-            userMixedOverlay = googleMap.addTileOverlay(
-                    new TileOverlayOptions().tileProvider(
-                            new HeatmapTileProvider.Builder()
-                                    .weightedData(displayUserMixedHeatPoints)
-                                    .radius(45)
-                                    .opacity(0.70)
-                                    .gradient(USER_MIXED_GRADIENT)
-                                    .build()
-                    ).zIndex(2.1f)
-            );
-        }
+        removeOverlayIfPresent(previousEBirdOverlay);
+        removeOverlayIfPresent(previousUserUnverifiedOverlay);
+        removeOverlayIfPresent(previousUserMixedOverlay);
+        removeOverlayIfPresent(previousUserVerifiedOverlay);
 
-        if (!displayUserVerifiedHeatPoints.isEmpty()) {
-            userVerifiedOverlay = googleMap.addTileOverlay(
-                    new TileOverlayOptions().tileProvider(
-                            new HeatmapTileProvider.Builder()
-                                    .weightedData(displayUserVerifiedHeatPoints)
-                                    .radius(45)
-                                    .opacity(0.72)
-                                    .gradient(USER_VERIFIED_GRADIENT)
-                                    .build()
-                    ).zIndex(2.2f)
-            );
-        }
-
+        clearHotspotCircles();
         renderHotspotCircles();
 
         int userUnverifiedHotspots = countUserHotspotsByState(HotspotVerificationState.UNVERIFIED);
@@ -1768,6 +1768,35 @@ public class NearbyHeatmapActivity extends AppCompatActivity
             maybeOpenTrackedBirdHotspot();
         }
     }
+
+    @Nullable
+    private TileOverlay buildHeatOverlay(@NonNull List<WeightedLatLng> points,
+                                         @NonNull Gradient gradient,
+                                         int radius,
+                                         double opacity,
+                                         float zIndex) {
+        if (googleMap == null || points.isEmpty()) return null;
+
+        HeatmapTileProvider provider = new HeatmapTileProvider.Builder()
+                .weightedData(points)
+                .radius(radius)
+                .opacity(opacity)
+                .gradient(gradient)
+                .build();
+
+        return googleMap.addTileOverlay(
+                new TileOverlayOptions()
+                        .tileProvider(provider)
+                        .zIndex(zIndex)
+        );
+    }
+
+    private void removeOverlayIfPresent(@Nullable TileOverlay overlay) {
+        if (overlay != null) {
+            overlay.remove();
+        }
+    }
+
 
     private void maybeOpenTrackedBirdHotspot() {
         if (trackedBirdNotificationHandled) return;
@@ -2126,20 +2155,51 @@ public class NearbyHeatmapActivity extends AppCompatActivity
         }
         b.add(sighting, user);
     }
-    private void rebuildHotspotBuckets() {
-        for (ListenerRegistration lr : activeListeners) {
-            if (lr != null) lr.remove();
-        }
-        activeListeners.clear();
-        hotspotBuckets.clear();
+    private void rebuildHotspotBuckets(int gen) {
+        new Thread(() -> {
+            Map<String, HotspotBucket> newBuckets = new LinkedHashMap<>();
+            List<ListenerRegistration> newListeners = new ArrayList<>();
 
-        for (HotspotSighting sighting : userHotspotSightings) {
-            addToHotspotBucket(sighting, true);
-        }
+            // We use local copies of the sightings lists to avoid ConcurrentModificationException
+            List<HotspotSighting> userList = new ArrayList<>(userHotspotSightings);
+            List<HotspotSighting> eBirdList = new ArrayList<>(eBirdHotspotSightings);
 
-        for (HotspotSighting sighting : eBirdHotspotSightings) {
-            addToHotspotBucket(sighting, false);
+            for (HotspotSighting sighting : userList) {
+                if (fetchGeneration != gen) return;
+                addToTempBuckets(newBuckets, sighting, true);
+            }
+
+            for (HotspotSighting sighting : eBirdList) {
+                if (fetchGeneration != gen) return;
+                addToTempBuckets(newBuckets, sighting, false);
+            }
+
+            runOnUiThread(() -> {
+                if (fetchGeneration != gen) return;
+
+                for (ListenerRegistration lr : activeListeners) {
+                    if (lr != null) lr.remove();
+                }
+                activeListeners.clear();
+
+                hotspotBuckets.clear();
+                hotspotBuckets.putAll(newBuckets);
+                onCollectionFinished(gen);
+            });
+        }).start();
+    }
+
+    private void addToTempBuckets(Map<String, HotspotBucket> buckets, HotspotSighting sighting, boolean user) {
+        double bucketLat = Math.floor(sighting.lat / HOTSPOT_BUCKET_SIZE) * HOTSPOT_BUCKET_SIZE;
+        double bucketLng = Math.floor(sighting.lng / HOTSPOT_BUCKET_SIZE) * HOTSPOT_BUCKET_SIZE;
+        String key = String.format(java.util.Locale.US, "%.4f_%.4f", bucketLat, bucketLng);
+
+        HotspotBucket b = buckets.get(key);
+        if (b == null) {
+            b = new HotspotBucket();
+            buckets.put(key, b);
         }
+        b.add(sighting, user);
     }
 
     private String cleanBirdText(String value) {

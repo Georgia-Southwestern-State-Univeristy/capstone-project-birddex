@@ -88,6 +88,155 @@ const {
   Timestamp
 } = require('./_shared');
 
+
+// ======================================================
+// HELPER: Core Georgia Birds Sync (shared logic)
+// NOTE: This helper lives in data.js because getGeorgiaBirds and the scheduled sync
+// both call it from this module. If it only exists in auth.js, data.js will throw
+// "_syncGeorgiaBirdsCore is not defined" at runtime.
+// ======================================================
+async function _syncGeorgiaBirdsCore() {
+    logger.info("Executing _syncGeorgiaBirdsCore...");
+    const ebirdCacheDocRef = db.collection("ebird_ga_cache").doc("data");
+
+    const lockRef = db.collection("schedulerLocks").doc("syncGeorgiaBirds");
+    const STALE_LOCK_MS = 15 * 60 * 1000;
+    const lockAcquired = await db.runTransaction(async (t) => {
+        const lockDoc = await t.get(lockRef);
+        if (lockDoc.exists) {
+            const startedAt = lockDoc.data().startedAt?.toDate();
+            if (startedAt && (Date.now() - startedAt.getTime()) < STALE_LOCK_MS) {
+                return false;
+            }
+        }
+        t.set(lockRef, { startedAt: admin.firestore.FieldValue.serverTimestamp() });
+        return true;
+    });
+
+    if (!lockAcquired) {
+        logger.info("_syncGeorgiaBirdsCore: Another instance is already running. Skipping.");
+        return { status: "skipped", message: "Sync already in progress." };
+    }
+
+    try {
+        let cachedBirdIds = [];
+        const currentCacheDoc = await ebirdCacheDocRef.get();
+        if (currentCacheDoc.exists && currentCacheDoc.data().birdIds) {
+            cachedBirdIds = currentCacheDoc.data().birdIds;
+        }
+
+        const cacheIsFresh = currentCacheDoc.exists &&
+            (Date.now() - currentCacheDoc.data().lastUpdated < CONFIG.EBIRD_CACHE_TTL_MS) &&
+            cachedBirdIds.length > 0;
+
+        if (cacheIsFresh) {
+            logger.info("Georgia bird cache is fresh. Skipping sync.");
+            return { status: "success", message: "Cache is fresh." };
+        }
+
+        logger.info("Syncing Georgia birds from eBird API...");
+        const [codesRes, taxonomyRes, observationsRes] = await Promise.all([
+            axios.get("https://api.ebird.org/v2/product/spplist/US-GA", {
+                headers: { "X-eBirdApiToken": EBIRD_API_KEY.value() },
+                timeout: 15000
+            }),
+            axios.get("https://api.ebird.org/v2/ref/taxonomy/ebird?fmt=json", { timeout: 15000 }),
+            axios.get("https://api.ebird.org/v2/data/obs/US-GA/recent", {
+                headers: { "X-eBirdApiToken": EBIRD_API_KEY.value() },
+                timeout: 15000
+            })
+        ]);
+
+        const gaCodes = codesRes.data;
+        const recentObservations = observationsRes.data;
+
+        const lastSeenMap = new Map();
+        for (const obs of recentObservations) {
+            const ts = new Date(obs.obsDt).getTime();
+            const code = obs.speciesCode;
+            if (typeof obs.lat === "number" && typeof obs.lng === "number" &&
+                (!lastSeenMap.has(code) || ts > lastSeenMap.get(code).lastSeenTimestampGeorgia)) {
+                lastSeenMap.set(code, {
+                    lastSeenTimestampGeorgia: ts,
+                    lastSeenLatitudeGeorgia: obs.lat,
+                    lastSeenLongitudeGeorgia: obs.lng,
+                    obsLocName: obs.locName
+                });
+            }
+        }
+
+        const newBirdsFromEbird = taxonomyRes.data
+            .filter(bird => gaCodes.includes(bird.speciesCode))
+            .map(bird => {
+                const ls = lastSeenMap.get(bird.speciesCode);
+                return {
+                    id: bird.speciesCode,
+                    commonName: bird.comName,
+                    scientificName: bird.sciName,
+                    family: bird.familyComName,
+                    species: bird.sciName,
+                    isEndangered: false,
+                    canHunt: false,
+                    lastSeenTimestampGeorgia: ls?.lastSeenTimestampGeorgia || null,
+                    lastSeenLatitudeGeorgia: ls?.lastSeenLatitudeGeorgia || null,
+                    lastSeenLongitudeGeorgia: ls?.lastSeenLongitudeGeorgia || null,
+                    lastSeenLocationIdGeorgia: null
+                };
+            });
+
+        newBirdsFromEbird.sort((a, b) => a.commonName.localeCompare(b.commonName));
+        const birdIdsToCache = newBirdsFromEbird.map(bird => bird.id);
+
+        const removedBirdIds = cachedBirdIds.filter(id => !birdIdsToCache.includes(id));
+        if (removedBirdIds.length > 0) {
+            const deleteBatch = db.batch();
+            removedBirdIds.forEach(birdId => deleteBatch.delete(db.collection("birds").doc(birdId)));
+            await deleteBatch.commit();
+            logger.info(`Removed ${removedBirdIds.length} birds.`);
+        }
+
+        for (let i = 0; i < newBirdsFromEbird.length; i += CONFIG.FIRESTORE_BATCH_SIZE) {
+            const batch = db.batch();
+            const chunk = newBirdsFromEbird.slice(i, i + CONFIG.FIRESTORE_BATCH_SIZE);
+            chunk.forEach(bird => {
+                const birdCoreData = { ...bird };
+                delete birdCoreData.lastSeenLocationIdGeorgia;
+                batch.set(db.collection("birds").doc(bird.id), birdCoreData, { merge: true });
+            });
+            await batch.commit();
+        }
+
+        await ebirdCacheDocRef.set({
+            lastUpdated: Date.now(),
+            lastUpdatedReadable: new Date().toLocaleString("en-US", { timeZone: "America/New_York" }),
+            birdIds: birdIdsToCache
+        }, { merge: true });
+
+        await Promise.all(newBirdsFromEbird.map(async (bird) => {
+            if (bird.lastSeenLatitudeGeorgia !== null && bird.lastSeenLongitudeGeorgia !== null) {
+                const ls = lastSeenMap.get(bird.id);
+                const locationId = await getOrCreateLocation(
+                    bird.lastSeenLatitudeGeorgia,
+                    bird.lastSeenLongitudeGeorgia,
+                    ls?.obsLocName || null,
+                    db
+                );
+                await db.collection("birds").doc(bird.id).update({ lastSeenLocationIdGeorgia: locationId });
+            }
+        }));
+
+        logger.info("Georgia birds sync complete.");
+        return { status: "success", count: newBirdsFromEbird.length };
+    } catch (error) {
+        logger.error("Error in _syncGeorgiaBirdsCore:", error);
+        throw error;
+    } finally {
+        await lockRef.delete().catch(e =>
+            logger.warn("Failed to release syncGeorgiaBirds lock:", e)
+        );
+    }
+}
+
 // ======================================================
 // getGeorgiaBirds (Callable version)
 // ======================================================
@@ -237,6 +386,37 @@ exports.triggerEbirdDataFetch = secureOnCall({ secrets: [EBIRD_API_KEY], timeout
         logger.error("Callable eBird fetch failed:", error);
         throw error;
     }
+});
+
+
+// ======================================================
+// backfillEbirdSightingsOnce (callable, one-time manual bootstrap)
+// ======================================================
+/**
+ * Export: One-time/manual bootstrap for the eBird sightings collection. This forces
+ * one live pull from the same notable-sightings endpoint used by the scheduled job
+ * and also records a sync marker doc so you can confirm the pipeline ran even if the
+ * API happened to return zero sightings.
+ */
+exports.backfillEbirdSightingsOnce = secureOnCall({ secrets: [EBIRD_API_KEY], timeoutSeconds: 120 }, async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Authentication required.");
+
+    logger.info("Callable one-time eBird sightings bootstrap triggered.", {
+        uid: request.auth.uid,
+    });
+
+    const result = await _fetchAndStoreEBirdDataCore();
+
+    await db.collection("eBirdApiSightingsSync").doc("latest").set({
+        lastRunAt: admin.firestore.FieldValue.serverTimestamp(),
+        triggeredBy: request.auth.uid,
+        result,
+    }, { merge: true });
+
+    return {
+        success: true,
+        ...result,
+    };
 });
 
 // ======================================================

@@ -173,8 +173,16 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
         CaptureGuardHelper.GuardReport report = CaptureGuardHelper.readReportFromIntent(getIntent(), awardPointsRequested);
 
         if (CaptureGuardHelper.CAPTURE_SOURCE_GALLERY_IMPORT.equals(report.captureSource)) {
-            Log.d(TAG, "Gallery import detected, using EXIF location if available");
-            startIdentificationFlow(localImageUri, report.exifLatitude, report.exifLongitude, null, null, null);
+            boolean hasTrustedExifLocation = report.exifLatitude != null && report.exifLongitude != null;
+            Log.d(TAG, "Gallery import detected, using trusted EXIF location only. hasTrustedExifLocation=" + hasTrustedExifLocation);
+            startIdentificationFlow(
+                    localImageUri,
+                    hasTrustedExifLocation ? report.exifLatitude : null,
+                    hasTrustedExifLocation ? report.exifLongitude : null,
+                    null,
+                    null,
+                    null
+            );
             return;
         }
 
@@ -611,18 +619,32 @@ public class IdentifyingActivity extends AppCompatActivity implements LocationHe
     }
 
     /**
+     * Shows a dialog with a message and finishes the activity when the user clicks OK.
+     */
+    private void finishWithDialog(String message) {
+        if (identificationCompleted.compareAndSet(false, true)) {
+            Log.d(TAG, "finishWithDialog: " + message);
+            if (timeoutHandler != null) timeoutHandler.removeCallbacks(timeoutRunnable);
+
+            new androidx.appcompat.app.AlertDialog.Builder(this)
+                    .setTitle("Identification Feedback")
+                    .setMessage(message)
+                    .setPositiveButton("OK", (dialog, which) -> {
+                        dialog.dismiss();
+                        finish();
+                    })
+                    .setCancelable(false)
+                    .show();
+        }
+    }
+
+    /**
      * Main logic block for this part of the feature.
      * User-facing feedback is shown here so the user knows whether the action succeeded, failed,
      * or needs attention.
      */
     private void finishActivityWithToast(String message) {
-        if (identificationCompleted.compareAndSet(false, true)) {
-            Log.d(TAG, "finishActivityWithToast: " + message);
-            if (timeoutHandler != null) timeoutHandler.removeCallbacks(timeoutRunnable);
-            // Give the user immediate feedback about the result of this action.
-            Toast.makeText(this, message, Toast.LENGTH_LONG).show();
-            finish();
-        }
+        finishWithDialog(message);
     }
 
     @Override protected void onStop() { super.onStop(); if (locationHelper != null) locationHelper.stopLocationUpdates(); }

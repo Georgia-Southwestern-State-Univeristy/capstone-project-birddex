@@ -369,6 +369,9 @@ public class CameraFragment extends Fragment {
             int selectedIndex = Math.max(0, Math.min(guardReport.selectedFrameIndex, frameUris.size() - 1));
             Uri selectedFrameUri = frameUris.get(selectedIndex);
 
+            // Save the original photo to the device gallery immediately
+            saveImageToGallery(appContext, selectedFrameUri);
+
             if (!isAdded()) return;
 
             requireActivity().runOnUiThread(() -> {
@@ -382,6 +385,48 @@ public class CameraFragment extends Fragment {
                 restoreCaptureButton();
             });
         }).start();
+    }
+
+    /**
+     * Saves the captured image to the public gallery so the user has a copy of it.
+     */
+    private void saveImageToGallery(Context context, Uri sourceUri) {
+        try {
+            String fileName = "BirdDex_" + System.currentTimeMillis() + ".jpg";
+            android.content.ContentValues values = new android.content.ContentValues();
+            values.put(android.provider.MediaStore.Images.Media.DISPLAY_NAME, fileName);
+            values.put(android.provider.MediaStore.Images.Media.MIME_TYPE, "image/jpeg");
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                values.put(android.provider.MediaStore.Images.Media.RELATIVE_PATH, android.os.Environment.DIRECTORY_PICTURES + "/BirdDex");
+                values.put(android.provider.MediaStore.Images.Media.IS_PENDING, 1);
+            }
+
+            android.content.ContentResolver resolver = context.getContentResolver();
+            Uri collection = android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI;
+            Uri itemUri = resolver.insert(collection, values);
+
+            if (itemUri != null) {
+                try (java.io.InputStream inputStream = resolver.openInputStream(sourceUri);
+                     java.io.OutputStream outputStream = resolver.openOutputStream(itemUri)) {
+                    if (inputStream != null && outputStream != null) {
+                        byte[] buffer = new byte[8192];
+                        int bytesRead;
+                        while ((bytesRead = inputStream.read(buffer)) != -1) {
+                            outputStream.write(buffer, 0, bytesRead);
+                        }
+                    }
+                }
+
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                    values.clear();
+                    values.put(android.provider.MediaStore.Images.Media.IS_PENDING, 0);
+                    resolver.update(itemUri, values, null, null);
+                }
+                Log.d(TAG, "Image saved to gallery: " + itemUri);
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to save image to gallery", e);
+        }
     }
 
     private void restoreCaptureButton() {

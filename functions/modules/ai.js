@@ -100,6 +100,7 @@ function parseBirdIdentificationText(identificationText) {
         scientificName: safeText.split("Scientific Name:")[1]?.split("\n")[0]?.trim() || null,
         species: safeText.split("Species:")[1]?.split("\n")[0]?.trim() || null,
         family: safeText.split("Family:")[1]?.split("\n")[0]?.trim() || null,
+        qualityAssessment: safeText.split("Quality:")[1]?.split("\n")[0]?.trim() || null,
     };
 }
 
@@ -356,71 +357,6 @@ async function writeRerankerAccuracyMetrics({
 }
 
 /**
- * Helper: Uses OpenAI only as a tiebreaker when model candidates are close/confusing.
- */
-async function callOpenAiBirdTieBreak(base64Image, candidateA, candidateB) {
-    const aiResponse = await axios.post(
-        "https://api.openai.com/v1/chat/completions",
-        {
-            model: "gpt-4o",
-            messages: [{
-                role: "user",
-                content: [
-                    {
-                        type: "text",
-                        text: `You are identifying a bird from an image.
-If the image contains a dead bird, gore, or graphic violence, respond ONLY with 'GORE'.
-Choose ONLY between these two BirdDex candidates and return exactly one winner in this exact format:
-ID: [bird_id]
-Common Name: [name]
-Scientific Name: [name]
-Species: [name]
-Family: [name]
-
-Candidate 1:
-ID: ${candidateA.id}
-Common Name: ${candidateA.commonName}
-Scientific Name: ${candidateA.scientificName}
-Species: ${candidateA.species}
-Family: ${candidateA.family}
-
-Candidate 2:
-ID: ${candidateB.id}
-Common Name: ${candidateB.commonName}
-Scientific Name: ${candidateB.scientificName}
-Species: ${candidateB.species}
-Family: ${candidateB.family}`
-                    },
-                    {
-                        type: "image_url",
-                        image_url: {
-                            url: `data:image/jpeg;base64,${base64Image}`,
-                            detail: "high"
-                        }
-                    }
-                ]
-            }],
-            max_tokens: 250
-        },
-        {
-            headers: { "Authorization": `Bearer ${OPENAI_API_KEY.value()}` },
-            timeout: 25000
-        }
-    );
-
-    if (!aiResponse.data?.choices?.[0]) {
-        throw new HttpsError("internal", "OpenAI tie-break returned invalid response format.");
-    }
-
-    const identification = aiResponse.data.choices[0].message?.content;
-    if (!identification) {
-        throw new HttpsError("internal", "OpenAI tie-break returned empty response.");
-    }
-
-    return identification;
-}
-
-/**
  * Helper: Uses OpenAI as the broader fallback when the model is not confident enough.
  */
 async function callOpenAiBirdFullFallback(base64Image) {
@@ -438,7 +374,8 @@ ID: [ebird_species_code]
 Common Name: [name]
 Scientific Name: [name]
 Species: [name]
-Family: [name]`
+Family: [name]
+Quality: [A one-sentence feedback on image quality if it's hard to identify, e.g., 'too blurry', 'too far away', 'obscured by branches', 'low lighting'. If good, leave as 'clear'.]`
                     },
                     {
                         type: "image_url",
@@ -758,14 +695,18 @@ function buildAlternativeReasonText(choice, source = null, captureSource = null)
         : (isGallery ? "This bird is extremely close to the one in your uploaded photo" : "This bird is extremely close to your picture");
 
     if (choice?.locationPlausible === false) {
-        return `${looksLikePrefix}, but isn't usually around that area this time of year.`;
+        return isGallery
+            ? `${looksLikePrefix}, but isn't usually around your area in your uploaded photo this time of year.`
+            : `${looksLikePrefix}, but isn't usually around that area this time of year.`;
     }
 
     if (choice?.locationPlausibilityReason === "missing_user_location") {
         return `${looksLikePrefix} and is another strong BirdDex match to consider.`;
     }
 
-    return `${looksLikePrefix} and is usually in that area this time of year.`;
+    return isGallery
+        ? `${looksLikePrefix} and is usually around your area in your uploaded photo this time of year.`
+        : `${looksLikePrefix} and is usually in that area this time of year.`;
 }
 
 /**
@@ -1527,9 +1468,9 @@ exports.identifyBird = secureOnCall({ secrets: [OPENAI_API_KEY, BIRDDEX_MODEL_AP
     if (!image || typeof image !== "string") {
         throw new HttpsError("invalid-argument", "Image Base64 data is required.");
     }
-    if (typeof latitude !== "number" || typeof longitude !== "number") {
-        throw new HttpsError("invalid-argument", "Latitude and longitude are required numbers.");
-    }
+    const safeLat = typeof latitude === "number" && Number.isFinite(latitude) ? latitude : null;
+    const safeLng = typeof longitude === "number" && Number.isFinite(longitude) ? longitude : null;
+
 
     const normalizedCaptureSource = sanitizeCaptureSource(captureSource);
     const normalizedCaptureGuard = sanitizeCaptureGuardPayload(captureGuard);
@@ -1555,14 +1496,14 @@ exports.identifyBird = secureOnCall({ secrets: [OPENAI_API_KEY, BIRDDEX_MODEL_AP
             });
         });
 
-        const locationId = await getOrCreateLocation(latitude, longitude, localityName, db, { userId });
+        const locationId = await getOrCreateLocation(safeLat, safeLng, localityName, db, { userId });
         const userLocationContext = await getLocationContext(locationId);
         const modelApiResult = await callBirdModelApi({
-            imageBase64: image,
-            latitude,
-            longitude,
-            observedAt: typeof observedAt === "string" ? observedAt : null,
-            topK: HYBRID_ID_CONFIG.MODEL_TOP_K,
+                    imageBase64: image,
+                    latitude: safeLat,
+                    longitude: safeLng,
+                    observedAt: typeof observedAt === "string" ? observedAt : null,
+                    topK: HYBRID_ID_CONFIG.MODEL_TOP_K,
         });
         const mainModelPredictions = Array.isArray(modelApiResult?.mainModelTopPredictions)
             ? modelApiResult.mainModelTopPredictions
@@ -1737,6 +1678,14 @@ exports.identifyBird = secureOnCall({ secrets: [OPENAI_API_KEY, BIRDDEX_MODEL_AP
                 finalSource = "openai_full_unverified";
                 isVerified = false;
                 finalIdentification = null;
+
+                // Check if it's because the bird isn't in our database or because of image quality
+                if (parsedOpenAi.commonName && parsedOpenAi.commonName !== "Unknown") {
+                    // OpenAI identified a bird, but we don't support it yet
+                    decisionReason = "openai_bird_not_in_database";
+                } else if (parsedOpenAi.qualityAssessment && parsedOpenAi.qualityAssessment.toLowerCase() !== "clear") {
+                    decisionReason = `openai_quality_${parsedOpenAi.qualityAssessment.replace(/\s+/g, "_").toLowerCase()}`;
+                }
             }
         }
         const persisted = await persistHybridIdentification({
@@ -1786,10 +1735,14 @@ exports.identifyBird = secureOnCall({ secrets: [OPENAI_API_KEY, BIRDDEX_MODEL_AP
                     ? (captureSource === "gallery_import"
                         ? "BirdDex could not verify an AI result that looks plausible for the location and date in your uploaded photo."
                         : "BirdDex could not verify an AI result that looks plausible for your location and date.")
-                    : "Sorry, this bird is not in our database just yet.",
+                    : (decisionReason === "openai_bird_not_in_database"
+                        ? "Sorry, this bird is not in our database just yet."
+                        : (decisionReason.startsWith("openai_quality_")
+                            ? `We couldn't identify the bird because the photo is ${decisionReason.replace("openai_quality_", "").replace(/_/g, " ")}. Try to get a clearer shot!`
+                            : "We couldn't identify the bird in this photo. For the best results, try to get a clear, close-up shot with the bird centered and plenty of light!")),
                 reasonCode: decisionReason === "openai_location_gate_blocked"
                     ? "OPENAI_LOCATION_NOT_PLAUSIBLE"
-                    : "NOT_IN_DATABASE",
+                    : (decisionReason === "openai_bird_not_in_database" ? "NOT_IN_DATABASE" : "IMAGE_QUALITY_ISSUE"),
                 imageUrl: imageUrl || "",
                 identificationLogId: persisted.identificationLogId,
                 identificationId: persisted.identificationId,

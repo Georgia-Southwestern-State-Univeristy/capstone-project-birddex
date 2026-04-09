@@ -211,21 +211,28 @@ public class CameraFragment extends Fragment {
 
         CameraSelector selector = new CameraSelector.Builder().requireLensFacing(lensFacing).build();
 
-        // Use 4:3 Aspect Ratio and Highest Available Resolution for maximum sensor data
-        ResolutionSelector resolutionSelector = new ResolutionSelector.Builder()
+        // Use 4:3 Aspect Ratio. We use a more stable resolution strategy for the preview
+        // to prevent overheating during long sessions (5-10 mins).
+        ResolutionSelector previewResolutionSelector = new ResolutionSelector.Builder()
+                .setAspectRatioStrategy(AspectRatioStrategy.RATIO_4_3_FALLBACK_AUTO_STRATEGY)
+                .setResolutionStrategy(new ResolutionStrategy(new android.util.Size(1280, 720), ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER))
+                .build();
+
+        ResolutionSelector captureResolutionSelector = new ResolutionSelector.Builder()
                 .setAspectRatioStrategy(AspectRatioStrategy.RATIO_4_3_FALLBACK_AUTO_STRATEGY)
                 .setResolutionStrategy(ResolutionStrategy.HIGHEST_AVAILABLE_STRATEGY)
                 .build();
 
         Preview preview = new Preview.Builder()
-                .setResolutionSelector(resolutionSelector)
+                .setResolutionSelector(previewResolutionSelector)
                 .build();
         preview.setSurfaceProvider(previewView.getSurfaceProvider());
 
-        // ZERO_SHUTTER_LAG provides high quality without breaking the speed of the anti-cheat burst
+        // Changed from ZERO_SHUTTER_LAG to MINIMIZE_LATENCY for better long-term stability.
+        // ZSL keeps a constant high-res ring buffer that can cause freezes/overheating after 5+ minutes.
         imageCapture = new ImageCapture.Builder()
-                .setCaptureMode(ImageCapture.CAPTURE_MODE_ZERO_SHUTTER_LAG)
-                .setResolutionSelector(resolutionSelector)
+                .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
+                .setResolutionSelector(captureResolutionSelector)
                 .setJpegQuality(100)
                 .build();
 

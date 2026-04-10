@@ -45,7 +45,6 @@
     <color name="legendary_gold">#FFC107</color>         <!-- main gold -->
     <color name="legendary_gold_dark">#FF8F00</color>    <!-- deep border -->
     <color name="legendary_gold_accent">#FFD54F</color>  <!-- highlight -->
-    <color name="legendary_card_frame_orange">#FF8F00</color>
 
     <!-- Mythic (Red / Fire Theme) -->
     <color name="legendary_red_light">#FF8A65</color>   <!-- soft orange-red -->
@@ -55,7 +54,8 @@
     <!-- Mythic card face (viewer mockup: coral → peach, maroon frame) -->
     <color name="mythic_coral">#FF5C4D</color>
     <color name="mythic_peach">#FFD4C4</color>
-    <color name="mythic_maroon_frame">#5C1010</color>
+    <!-- Mythic rim: slightly deeper than face mid-tones so the edge reads, still on-palette -->
+    <color name="mythic_card_stroke">#B84A1F</color>
 
     <color name="tan_highlight">#C79663</color>
 

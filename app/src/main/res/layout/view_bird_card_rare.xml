@@ -52,7 +52,7 @@
                     android:layout_marginTop="14dp"
                     android:background="@android:color/transparent"
                     android:contentDescription="Bird photo"
-                    android:scaleType="centerCrop"
+                    android:scaleType="fitCenter"
                     app:layout_constraintDimensionRatio="W,4:3"
                     app:layout_constraintTop_toBottomOf="@id/txtBirdName"
                     app:layout_constraintStart_toStartOf="parent"

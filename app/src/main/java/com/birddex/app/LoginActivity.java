@@ -145,6 +145,9 @@ public class LoginActivity extends AppCompatActivity {
             setLoadingState(false);
 
             if (task.isSuccessful()) {
+                // Warm up the BirdDex model API as soon as the user logs in.
+                BirdDexApiWarmupHelper.maybeWarmup(LoginActivity.this, "login_success");
+
                 startActivity(new Intent(LoginActivity.this, HomeActivity.class));
                 finish();
             } else {

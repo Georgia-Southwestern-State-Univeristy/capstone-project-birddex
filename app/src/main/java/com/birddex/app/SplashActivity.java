@@ -47,6 +47,9 @@ public class SplashActivity extends AppCompatActivity {
         // Start entrance animation
         splashRoot.startAnimation(splashEnter);
 
+        // Warm up the BirdDex model API as soon as the app starts to hide cold starts.
+        BirdDexApiWarmupHelper.maybeWarmup(this, "app_launch");
+
         splashEnter.setAnimationListener(new Animation.AnimationListener() {
             @Override
             public void onAnimationStart(Animation animation) {}

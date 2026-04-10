@@ -187,8 +187,19 @@ public class SettingsActivity extends AppCompatActivity {
 
         FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
         if (user != null) {
-            loadUserProfile(user);
-            fetchIdentificationsRemaining();
+            // Avoid visual "popping" on every back navigation. Refresh only if the screen
+            // does not already have loaded values.
+            boolean needsProfileReload = tvUserName.getText() == null
+                    || tvUserName.getText().toString().trim().isEmpty();
+            boolean needsQuotaReload = tvIdentificationsRemaining.getText() == null
+                    || tvIdentificationsRemaining.getText().toString().trim().isEmpty();
+
+            if (needsProfileReload) {
+                loadUserProfile(user);
+            }
+            if (needsQuotaReload) {
+                fetchIdentificationsRemaining();
+            }
         }
     }
 

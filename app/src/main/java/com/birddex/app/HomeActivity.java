@@ -43,6 +43,10 @@ public class HomeActivity extends AppCompatActivity implements NetworkMonitor.Ne
     private static final String TAG = "HomeActivity";
     private static final long GEORGIA_SYNC_CHECK_TTL_MS = 24L * 60L * 60L * 1000L;
     private static final int GEORGIA_BIRD_DATA_REFRESH_VERSION = 1;
+    private static final String TAG_FORUM = "tab_forum";
+    private static final String TAG_COLLECTION = "tab_collection";
+    private static final String TAG_NEARBY = "tab_nearby";
+    private static final String TAG_PROFILE = "tab_profile";
 
     private BottomNavigationView bottomNav;
     private View bottomNavContainer;
@@ -60,6 +64,7 @@ public class HomeActivity extends AppCompatActivity implements NetworkMonitor.Ne
     private boolean isFetchingBirds = false; // Flag to prevent redundant fetches
     private boolean isNavigating = false;
     private boolean welcomeCheckedThisResume = false;
+    private String currentFragmentTag = null;
 
     /**
      * Android calls this when the Activity is first created. This is where the screen usually
@@ -108,7 +113,7 @@ public class HomeActivity extends AppCompatActivity implements NetworkMonitor.Ne
         if (getSupportFragmentManager().findFragmentById(R.id.fragmentContainer) == null) {
             lastNonCameraTabId = R.id.nav_forum;
             bottomNav.setSelectedItemId(R.id.nav_forum);
-            switchFragment(new ForumFragment());
+            switchFragmentForTab(R.id.nav_forum);
         }
 
         // Set up the listener for navigation item selection.
@@ -130,19 +135,19 @@ public class HomeActivity extends AppCompatActivity implements NetworkMonitor.Ne
                 return false;
             } else if (id == R.id.nav_search_collection) {
                 lastNonCameraTabId = id;
-                switchFragment(new SearchCollectionFragment());
+                switchFragmentForTab(id);
                 return true;
             } else if (id == R.id.nav_forum) {
                 lastNonCameraTabId = id;
-                switchFragment(new ForumFragment());
+                switchFragmentForTab(id);
                 return true;
             } else if (id == R.id.nav_nearby) {
                 lastNonCameraTabId = id;
-                switchFragment(new NearbyFragment());
+                switchFragmentForTab(id);
                 return true;
             } else if (id == R.id.nav_profile) {
                 lastNonCameraTabId = id;
-                switchFragment(new ProfileFragment());
+                switchFragmentForTab(id);
                 return true;
             }
 
@@ -282,7 +287,7 @@ public class HomeActivity extends AppCompatActivity implements NetworkMonitor.Ne
             String targetUserId = intent.getStringExtra("target_user_id");
             lastNonCameraTabId = R.id.nav_profile;
             bottomNav.setSelectedItemId(R.id.nav_profile);
-            switchFragment(ProfileFragment.newInstance(targetUserId));
+            switchFragment(ProfileFragment.newInstance(targetUserId), TAG_PROFILE + ":" + targetUserId);
         }
     }
 
@@ -426,13 +431,49 @@ public class HomeActivity extends AppCompatActivity implements NetworkMonitor.Ne
     /**
      * Main logic block for this part of the feature.
      */
-    private void switchFragment(Fragment fragment) {
+    private void switchFragment(Fragment fragment, String tag) {
         if (isFinishing() || isDestroyed()) return;
 
-        getSupportFragmentManager()
-                .beginTransaction()
-                .replace(R.id.fragmentContainer, fragment)
-                .commitAllowingStateLoss();
+        if (tag != null && tag.equals(currentFragmentTag)) {
+            return;
+        }
+
+        androidx.fragment.app.FragmentTransaction tx = getSupportFragmentManager().beginTransaction();
+
+        Fragment current = currentFragmentTag == null
+                ? null
+                : getSupportFragmentManager().findFragmentByTag(currentFragmentTag);
+        if (current != null) {
+            tx.hide(current);
+        }
+
+        Fragment target = getSupportFragmentManager().findFragmentByTag(tag);
+        if (target == null) {
+            tx.add(R.id.fragmentContainer, fragment, tag);
+        } else {
+            tx.show(target);
+        }
+
+        currentFragmentTag = tag;
+        tx.commitAllowingStateLoss();
+    }
+
+    private void switchFragmentForTab(int tabId) {
+        if (tabId == R.id.nav_search_collection) {
+            switchFragment(new SearchCollectionFragment(), TAG_COLLECTION);
+            return;
+        }
+        if (tabId == R.id.nav_forum) {
+            switchFragment(new ForumFragment(), TAG_FORUM);
+            return;
+        }
+        if (tabId == R.id.nav_nearby) {
+            switchFragment(new NearbyFragment(), TAG_NEARBY);
+            return;
+        }
+        if (tabId == R.id.nav_profile) {
+            switchFragment(new ProfileFragment(), TAG_PROFILE);
+        }
     }
 
     // You can add a method here to provide the allGeorgiaBirds list to fragments if they need it

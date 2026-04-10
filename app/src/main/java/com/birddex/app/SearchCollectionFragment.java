@@ -148,8 +148,16 @@ public class SearchCollectionFragment extends Fragment {
         super.onResume();
         isNavigating = false;
         if (cardAdapter != null) cardAdapter.setNavigating(false);
-        fetchUserCollection();
-        if (currentViewMode == ViewMode.RECENT_PHOTOS) fetchRecentPhotos();
+        // Keep loaded data when coming back to this tab; only fetch if we have nothing yet.
+        if (rawSlots.isEmpty()) {
+            fetchUserCollection();
+        } else {
+            applyCurrentFilter();
+        }
+
+        if (currentViewMode == ViewMode.RECENT_PHOTOS && recentPhotoEntries.isEmpty()) {
+            fetchRecentPhotos();
+        }
     }
 
     /**

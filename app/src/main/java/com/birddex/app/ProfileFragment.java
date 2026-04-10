@@ -207,10 +207,19 @@ public class ProfileFragment extends Fragment implements
         super.onResume();
         isNavigating = false;
         if (profileListener == null) fetchUserProfile();
-        refreshPosts();
+
+        // Keep tab content in place when returning from child screens. Only fetch if we
+        // truly have no local content yet.
+        if (postList.isEmpty() && !isFetching && !isLastPage) {
+            refreshPosts();
+        }
         if (isCurrentUser) {
-            refreshTrackedBirds();
-            refreshSavedPosts();
+            if (trackedBirdList.isEmpty()) {
+                refreshTrackedBirds();
+            }
+            if (savedPostList.isEmpty() && !isFetchingSaved && !isSavedLastPage) {
+                refreshSavedPosts();
+            }
         }
     }
 

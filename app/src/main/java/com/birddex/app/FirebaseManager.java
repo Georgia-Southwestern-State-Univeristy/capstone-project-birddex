@@ -1494,13 +1494,9 @@ public class FirebaseManager {
      */
     public void getAllBirds(OnCompleteListener<QuerySnapshot> listener) {
         Log.d(TAG, "Fetching all birds.");
-        db.collection("birds").get(Source.CACHE).addOnCompleteListener(cacheTask -> {
-            if (cacheTask.isSuccessful() && cacheTask.getResult() != null && !cacheTask.getResult().isEmpty()) {
-                listener.onComplete(cacheTask);
-                return;
-            }
-            db.collection("birds").get(Source.SERVER).addOnCompleteListener(listener);
-        });
+        // Do not short-circuit on a non-empty persistent cache: a partial cache (e.g. only a few
+        // birds ever synced locally) would skip the server and cap the Near Me search list.
+        db.collection("birds").get().addOnCompleteListener(listener);
     }
 
     /**

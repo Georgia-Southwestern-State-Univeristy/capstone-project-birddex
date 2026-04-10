@@ -441,6 +441,8 @@ public class ModerationHistoryActivity extends AppCompatActivity {
                     if (eventIdStr != null) appealClickListener.onAppealClick(eventIdStr);
                 });
             }
+
+            ModerationCardTheming.styleModerationEventCard((CardView) holder.itemView, status, actionType);
         }
 
         @Override
@@ -532,6 +534,8 @@ public class ModerationHistoryActivity extends AppCompatActivity {
             } else if ("approved".equals(status)) {
                 holder.tvStatus.setText("Status: Approved");
             }
+
+            ModerationCardTheming.styleUserAppealCard((CardView) holder.itemView, status);
         }
 
         @Override

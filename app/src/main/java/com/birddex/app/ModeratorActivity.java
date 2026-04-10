@@ -569,6 +569,8 @@ public class ModeratorActivity extends AppCompatActivity {
 
             holder.btnAppeal.setVisibility(View.VISIBLE);
             holder.btnAppeal.setOnClickListener(v -> listener.onReview(item));
+
+            ModerationCardTheming.styleModeratorQueueCard((CardView) holder.itemView, queueType);
         }
 
         private void bindAppeal(@NonNull ViewHolder holder, Map<String, Object> appeal) {

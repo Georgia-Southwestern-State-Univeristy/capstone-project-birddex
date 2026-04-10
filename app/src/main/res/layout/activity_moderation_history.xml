@@ -160,7 +160,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginBottom="16dp"
-                android:text="Moderation cards show the text or image tied to each decision. Tap an image to enlarge it."
+                android:text="@string/moderation_history_cards_hint"
                 android:textColor="@color/on_page_variant"
                 android:textSize="12sp" />
 

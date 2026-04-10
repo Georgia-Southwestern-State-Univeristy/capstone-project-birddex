@@ -54,4 +54,18 @@
 
     <color name="tan_highlight">#C79663</color>
 
+    <!-- Moderation cards: translucent fills (~20% alpha) for status / queue cues -->
+    <color name="moderation_tint_reversed">#332E7D32</color>
+    <color name="moderation_tint_expired">#336E6E6E</color>
+    <color name="moderation_tint_warning">#33F9A825</color>
+    <color name="moderation_tint_suspension">#33EF6C00</color>
+    <color name="moderation_tint_severe">#33C62828</color>
+    <color name="moderation_tint_content">#331565C0</color>
+    <color name="moderation_tint_neutral">#33BCAAA4</color>
+    <color name="moderation_tint_appeal_pending">#331568C8</color>
+    <color name="moderation_tint_appeal_approved">#332E7D32</color>
+    <color name="moderation_tint_appeal_denied">#33B71C1C</color>
+    <color name="moderation_tint_queue_appeal">#333949AB</color>
+    <color name="moderation_tint_queue_report">#33E65100</color>
+
 </resources>

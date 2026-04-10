@@ -81,7 +81,9 @@
     <string name="label_warnings">Warnings</string>
     <string name="label_strikes">Strikes</string>
     <string name="label_moderation_history">MODERATION HISTORY</string>
+    <string name="moderation_history_cards_hint">Moderation cards show the text or image tied to each decision. Tap an image to enlarge it.\n\nColor cues — History: green = reversed, gray = expired, amber = warning, orange = forum suspension, red = strike or ban, blue = content removed/hidden. Your appeals: blue = pending, green = approved, red = denied.</string>
     <string name="no_moderation_history">You have no moderation events.</string>
+    <string name="moderator_dashboard_subtitle">Review pending moderation appeals and reports. Cards show the reported text and any rejected image. Tap an image to enlarge it.\n\nColor cues: indigo tint = appeal queue, orange tint = user report.</string>
     <string name="forum_restricted_title">Forum Access Restricted</string>
     <string name="forum_restricted_desc">Your account is currently restricted from posting on the forum.</string>
     <string name="btn_appeal_decision">Appeal Decision</string>

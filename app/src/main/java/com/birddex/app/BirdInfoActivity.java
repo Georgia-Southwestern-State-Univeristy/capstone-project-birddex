@@ -6,6 +6,7 @@ import android.os.Bundle;
 import android.util.Log;
 import android.view.View;
 import android.widget.Button;
+import android.widget.ImageButton;
 import android.widget.ImageView;
 import android.widget.RadioButton;
 import android.widget.RadioGroup;
@@ -44,6 +45,24 @@ public class BirdInfoActivity extends AppCompatActivity {
     private String identificationId;
     private String currentSelectionSource;
 
+    private String originalBirdId;
+    private String originalCommonName;
+    private String originalScientificName;
+    private String originalSpecies;
+    private String originalFamily;
+    private String originalSelectionSource;
+    private boolean originalUseReferenceNameLookupOnly = false;
+
+    private String updatedBirdId;
+    private String updatedCommonName;
+    private String updatedScientificName;
+    private String updatedSpecies;
+    private String updatedFamily;
+    private String updatedSelectionSource;
+    private boolean updatedUseReferenceNameLookupOnly = false;
+    private boolean hasUpdatedBird = false;
+    private boolean showingOriginalBird = false;
+
     private Double currentLatitude;
     private Double currentLongitude;
     private String currentLocalityName;
@@ -62,6 +81,8 @@ public class BirdInfoActivity extends AppCompatActivity {
     private View referenceImageProgressBar;
     private ImageView birdImageView;
     private ImageView referenceBirdImageView;
+    private ImageButton btnToggleReferenceBird;
+    private TextView tvReferenceToggleStatus;
     private boolean awardPoints = true;
     private boolean useReferenceNameLookupOnly = false;
     private boolean notMyBirdAllowed = true;
@@ -94,21 +115,19 @@ public class BirdInfoActivity extends AppCompatActivity {
                     String selectedSource = result.getData().getStringExtra("selectedSource");
 
                     if (selectedCommon != null) {
-                        currentCommonName = selectedCommon;
-                        currentScientificName = selectedSci;
-                        currentSpecies = selectedSpec;
-                        currentFamily = selectedFam;
-                        currentSelectionSource = selectedSource;
+                        boolean selectedUsesNameLookupOnly = selectedBirdId == null || selectedBirdId.trim().isEmpty();
 
-                        if (selectedBirdId != null && !selectedBirdId.trim().isEmpty()) {
-                            currentBirdId = selectedBirdId;
-                            useReferenceNameLookupOnly = false;
-                        } else {
-                            currentBirdId = null;
-                            useReferenceNameLookupOnly = true;
-                        }
+                        setUpdatedBirdSnapshot(
+                                selectedBirdId,
+                                selectedCommon,
+                                selectedSci,
+                                selectedSpec,
+                                selectedFam,
+                                selectedSource,
+                                selectedUsesNameLookupOnly
+                        );
 
-                        updateBirdUi();
+                        applyUpdatedBirdAsActive();
                         showUpdatePopup(selectedCommon);
                     }
                 }
@@ -126,6 +145,8 @@ public class BirdInfoActivity extends AppCompatActivity {
         referenceAttributionTextView = findViewById(R.id.referenceAttributionTextView);
         notMyBirdLockedHintTextView = findViewById(R.id.tvNotMyBirdLockedHint);
         referenceImageProgressBar = findViewById(R.id.referenceImageProgressBar);
+        btnToggleReferenceBird = findViewById(R.id.btnToggleReferenceBird);
+        tvReferenceToggleStatus = findViewById(R.id.tvReferenceToggleStatus);
         commonNameTextView = findViewById(R.id.commonNameTextView);
         scientificNameTextView = findViewById(R.id.scientificNameTextView);
         speciesTextView = findViewById(R.id.speciesTextView);
@@ -149,10 +170,39 @@ public class BirdInfoActivity extends AppCompatActivity {
         identificationId = getIntent().getStringExtra("identificationId");
         currentSelectionSource = getIntent().getStringExtra("selectionSource");
         awardPoints = getIntent().getBooleanExtra("awardPoints", true);
+
+        useReferenceNameLookupOnly = currentBirdId == null || currentBirdId.trim().isEmpty();
+        setOriginalBirdSnapshot(
+                currentBirdId,
+                currentCommonName,
+                currentScientificName,
+                currentSpecies,
+                currentFamily,
+                currentSelectionSource,
+                useReferenceNameLookupOnly
+        );
         pointAwardBlockReason = getIntent().getStringExtra("pointAwardBlockReason");
         pointAwardUserMessage = getIntent().getStringExtra("pointAwardUserMessage");
         if (savedInstanceState != null) {
             pointAwardStatusPopupShown = savedInstanceState.getBoolean("pointAwardStatusPopupShown", false);
+            hasUpdatedBird = savedInstanceState.getBoolean("hasUpdatedBird", false);
+            showingOriginalBird = savedInstanceState.getBoolean("showingOriginalBird", false);
+
+            originalBirdId = savedInstanceState.getString("originalBirdId");
+            originalCommonName = savedInstanceState.getString("originalCommonName");
+            originalScientificName = savedInstanceState.getString("originalScientificName");
+            originalSpecies = savedInstanceState.getString("originalSpecies");
+            originalFamily = savedInstanceState.getString("originalFamily");
+            originalSelectionSource = savedInstanceState.getString("originalSelectionSource");
+            originalUseReferenceNameLookupOnly = savedInstanceState.getBoolean("originalUseReferenceNameLookupOnly", originalUseReferenceNameLookupOnly);
+
+            updatedBirdId = savedInstanceState.getString("updatedBirdId");
+            updatedCommonName = savedInstanceState.getString("updatedCommonName");
+            updatedScientificName = savedInstanceState.getString("updatedScientificName");
+            updatedSpecies = savedInstanceState.getString("updatedSpecies");
+            updatedFamily = savedInstanceState.getString("updatedFamily");
+            updatedSelectionSource = savedInstanceState.getString("updatedSelectionSource");
+            updatedUseReferenceNameLookupOnly = savedInstanceState.getBoolean("updatedUseReferenceNameLookupOnly", false);
         }
 
         currentLatitude = getIntent().hasExtra("latitude") ? getIntent().getDoubleExtra("latitude", 0.0) : null;
@@ -177,7 +227,21 @@ public class BirdInfoActivity extends AppCompatActivity {
                     .into(birdImageView);
         }
 
-        updateBirdUi();
+        if (btnToggleReferenceBird != null) {
+            btnToggleReferenceBird.setOnClickListener(v -> toggleActiveBird());
+        }
+
+        if (hasUpdatedBird) {
+            if (showingOriginalBird) {
+                applyOriginalBirdAsActive();
+            } else {
+                applyUpdatedBirdAsActive();
+            }
+        } else {
+            applyOriginalBirdAsActive();
+        }
+
+        updateReferenceToggleUi();
 
         rgQuantity.setOnCheckedChangeListener((group, checkedId) -> {
             if (awardPoints) {
@@ -191,7 +255,7 @@ public class BirdInfoActivity extends AppCompatActivity {
 
         TextView tvQuality = findViewById(R.id.tvQualityAssessment);
         if (currentQualityAssessment != null && !currentQualityAssessment.trim().isEmpty() && !"clear".equalsIgnoreCase(currentQualityAssessment)) {
-            tvQuality.setText("AI Feedback: " + currentQualityAssessment);
+            tvQuality.setText("Image Feedback: " + currentQualityAssessment);
             tvQuality.setVisibility(View.VISIBLE);
         } else {
             tvQuality.setVisibility(View.GONE);
@@ -386,7 +450,144 @@ public class BirdInfoActivity extends AppCompatActivity {
         scientificNameTextView.setText("Scientific Name: " + (currentScientificName != null ? currentScientificName : "N/A"));
         speciesTextView.setText("Species: " + (currentSpecies != null ? currentSpecies : "N/A"));
         familyTextView.setText("Family: " + (currentFamily != null ? currentFamily : "N/A"));
+        updateReferenceToggleUi();
         loadReferenceBirdImage();
+    }
+
+    private void setOriginalBirdSnapshot(
+            @Nullable String birdId,
+            @Nullable String commonName,
+            @Nullable String scientificName,
+            @Nullable String species,
+            @Nullable String family,
+            @Nullable String selectionSource,
+            boolean usesReferenceNameLookupOnly
+    ) {
+        originalBirdId = birdId;
+        originalCommonName = commonName;
+        originalScientificName = scientificName;
+        originalSpecies = species;
+        originalFamily = family;
+        originalSelectionSource = selectionSource;
+        originalUseReferenceNameLookupOnly = usesReferenceNameLookupOnly;
+    }
+
+    private void setUpdatedBirdSnapshot(
+            @Nullable String birdId,
+            @Nullable String commonName,
+            @Nullable String scientificName,
+            @Nullable String species,
+            @Nullable String family,
+            @Nullable String selectionSource,
+            boolean usesReferenceNameLookupOnly
+    ) {
+        updatedBirdId = birdId;
+        updatedCommonName = commonName;
+        updatedScientificName = scientificName;
+        updatedSpecies = species;
+        updatedFamily = family;
+        updatedSelectionSource = selectionSource;
+        updatedUseReferenceNameLookupOnly = usesReferenceNameLookupOnly;
+        hasUpdatedBird = !isSameBirdAsOriginal(
+                birdId,
+                commonName,
+                scientificName,
+                selectionSource,
+                usesReferenceNameLookupOnly
+        );
+    }
+
+    private boolean isSameBirdAsOriginal(
+            @Nullable String birdId,
+            @Nullable String commonName,
+            @Nullable String scientificName,
+            @Nullable String selectionSource,
+            boolean usesReferenceNameLookupOnly
+    ) {
+        return safeEquals(trimToNull(originalBirdId), trimToNull(birdId))
+                && safeEquals(trimToNull(originalCommonName), trimToNull(commonName))
+                && safeEquals(trimToNull(originalScientificName), trimToNull(scientificName))
+                && safeEquals(trimToNull(originalSelectionSource), trimToNull(selectionSource))
+                && originalUseReferenceNameLookupOnly == usesReferenceNameLookupOnly;
+    }
+
+    private void applyOriginalBirdAsActive() {
+        showingOriginalBird = true;
+        currentBirdId = originalBirdId;
+        currentCommonName = originalCommonName;
+        currentScientificName = originalScientificName;
+        currentSpecies = originalSpecies;
+        currentFamily = originalFamily;
+        currentSelectionSource = originalSelectionSource;
+        useReferenceNameLookupOnly = originalUseReferenceNameLookupOnly;
+        updateBirdUi();
+    }
+
+    private void applyUpdatedBirdAsActive() {
+        if (!hasUpdatedBird) {
+            applyOriginalBirdAsActive();
+            return;
+        }
+
+        showingOriginalBird = false;
+        currentBirdId = updatedBirdId;
+        currentCommonName = updatedCommonName;
+        currentScientificName = updatedScientificName;
+        currentSpecies = updatedSpecies;
+        currentFamily = updatedFamily;
+        currentSelectionSource = updatedSelectionSource;
+        useReferenceNameLookupOnly = updatedUseReferenceNameLookupOnly;
+        updateBirdUi();
+    }
+
+    private void toggleActiveBird() {
+        if (!hasUpdatedBird) {
+            return;
+        }
+
+        if (showingOriginalBird) {
+            applyUpdatedBirdAsActive();
+        } else {
+            applyOriginalBirdAsActive();
+        }
+    }
+
+    private void updateReferenceToggleUi() {
+        if (btnToggleReferenceBird == null || tvReferenceToggleStatus == null) {
+            return;
+        }
+
+        if (!hasUpdatedBird) {
+            btnToggleReferenceBird.setVisibility(View.GONE);
+            tvReferenceToggleStatus.setVisibility(View.GONE);
+            return;
+        }
+
+        btnToggleReferenceBird.setVisibility(View.VISIBLE);
+        tvReferenceToggleStatus.setVisibility(View.VISIBLE);
+
+        if (showingOriginalBird) {
+            btnToggleReferenceBird.setContentDescription("Switch to updated bird");
+            tvReferenceToggleStatus.setText("Tap to Swap Between Original Bird and Your Chosen Bird");
+        } else {
+            btnToggleReferenceBird.setContentDescription("Switch to original AI bird");
+            tvReferenceToggleStatus.setText("Tap to Swap Between Original Bird and Your Chosen Bird");        }
+    }
+
+    @Nullable
+    private String trimToNull(@Nullable String value) {
+        if (value == null) {
+            return null;
+        }
+        String trimmed = value.trim();
+        return trimmed.isEmpty() ? null : trimmed;
+    }
+
+    private boolean safeEquals(@Nullable String left, @Nullable String right) {
+        if (left == null) {
+            return right == null;
+        }
+        return left.equals(right);
     }
 
     private void loadReferenceBirdImage() {
@@ -520,6 +721,24 @@ public class BirdInfoActivity extends AppCompatActivity {
     protected void onSaveInstanceState(@NonNull Bundle outState) {
         super.onSaveInstanceState(outState);
         outState.putBoolean("pointAwardStatusPopupShown", pointAwardStatusPopupShown);
+        outState.putBoolean("hasUpdatedBird", hasUpdatedBird);
+        outState.putBoolean("showingOriginalBird", showingOriginalBird);
+
+        outState.putString("originalBirdId", originalBirdId);
+        outState.putString("originalCommonName", originalCommonName);
+        outState.putString("originalScientificName", originalScientificName);
+        outState.putString("originalSpecies", originalSpecies);
+        outState.putString("originalFamily", originalFamily);
+        outState.putString("originalSelectionSource", originalSelectionSource);
+        outState.putBoolean("originalUseReferenceNameLookupOnly", originalUseReferenceNameLookupOnly);
+
+        outState.putString("updatedBirdId", updatedBirdId);
+        outState.putString("updatedCommonName", updatedCommonName);
+        outState.putString("updatedScientificName", updatedScientificName);
+        outState.putString("updatedSpecies", updatedSpecies);
+        outState.putString("updatedFamily", updatedFamily);
+        outState.putString("updatedSelectionSource", updatedSelectionSource);
+        outState.putBoolean("updatedUseReferenceNameLookupOnly", updatedUseReferenceNameLookupOnly);
     }
 
     @Override

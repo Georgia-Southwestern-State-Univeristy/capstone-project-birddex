@@ -73,6 +73,9 @@ public class AiCompLoadingActivity extends AppCompatActivity {
         String imageUrl = getIntent().getStringExtra("imageUrl");
         String identificationLogId = getIntent().getStringExtra("identificationLogId");
         String identificationId = getIntent().getStringExtra("identificationId");
+        String currentBirdId = getIntent().getStringExtra("birdId");
+        String currentCommonName = getIntent().getStringExtra("commonName");
+        String currentScientificName = getIntent().getStringExtra("scientificName");
 
         if (imageUriStr == null || imageUriStr.trim().isEmpty()) {
             MessagePopupHelper.showBrief(this, "Could not load your bird photo for AI review.", () -> {
@@ -122,6 +125,9 @@ public class AiCompLoadingActivity extends AppCompatActivity {
                         intent.putExtra("imageUrl", imageUrl);
                         intent.putExtra("identificationLogId", identificationLogId);
                         intent.putExtra("identificationId", identificationId);
+                        intent.putExtra("birdId", currentBirdId);
+                        intent.putExtra("commonName", currentCommonName);
+                        intent.putExtra("scientificName", currentScientificName);
                         intent.putExtra("openAiUserMessage", userMessage);
                         intent.putParcelableArrayListExtra("openAiAlternatives", toCandidateBundles(candidates));
 

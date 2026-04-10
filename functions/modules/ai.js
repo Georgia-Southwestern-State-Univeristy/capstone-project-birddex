@@ -1376,6 +1376,8 @@ async function persistHybridIdentification({
     userId,
     imageUrl,
     locationId,
+    latitude,
+    longitude,
     modelPredictions,
     topBirdMatches,
     decisionReason,
@@ -1403,9 +1405,10 @@ async function persistHybridIdentification({
     const birdMatch1 = normalizeBirdData(topBirdMatches[0] || null);
     const birdMatch2 = normalizeBirdData(topBirdMatches[1] || null);
     const birdMatch3 = normalizeBirdData(topBirdMatches[2] || null);
+    const sightingLocationContext = await getLocationContext(locationId || null);
     const modelAlternativeChoices = await buildModelAlternativeChoices(
         topBirdMatches,
-        await getLocationContext(locationId || null),
+        sightingLocationContext,
         captureSource,
         observedAt,
         modelApiDiagnostics?.geo?.plausibilityByCommonName || null
@@ -1615,6 +1618,25 @@ async function persistHybridIdentification({
 
         await identificationRef.set(identificationData);
         identificationId = identificationRef.id;
+
+        if (typeof latitude === "number" && typeof longitude === "number") {
+            await upsertUserBirdSightingWithDailyCooldown({
+                userId,
+                birdId: finalBirdId,
+                commonName: finalBirdData.commonName || null,
+                scientificName: finalBirdData.scientificName || null,
+                locationId: locationId || null,
+                latitude,
+                longitude,
+                locality: sightingLocationContext.locality || null,
+                state: sightingLocationContext.state === "GA" ? "Georgia" : (sightingLocationContext.state || null),
+                country: sightingLocationContext.country === "US" ? "United States" : (sightingLocationContext.country || null),
+                quantity: "1-3",
+                identificationId,
+                suspicious: captureGuard?.suspicious === true,
+            });
+        }
+
         await identificationLogRef.set({ identificationId }, { merge: true });
     }
 
@@ -1669,6 +1691,132 @@ function buildIdentifyBirdResponse({
         modelAlternatives: Array.isArray(modelAlternativeChoices) ? modelAlternativeChoices : [],
         openAiAlternatives: [],
     };
+}
+
+
+/**
+ * Helper: Writes or updates the user's map/nearby sighting while enforcing the same
+ * 1 sighting per user per species per 24 hours cooldown used by recordBirdSighting.
+ * If a sighting for the same bird already exists inside the 24-hour window, it is
+ * updated to the newest identification/location instead of creating a second pin.
+ */
+async function upsertUserBirdSightingWithDailyCooldown({
+    userId,
+    birdId,
+    commonName,
+    scientificName,
+    locationId,
+    latitude,
+    longitude,
+    locality,
+    state,
+    country,
+    quantity = "1",
+    timestampMs = Date.now(),
+    userBirdId = "",
+    identificationId = null,
+    suspicious = false,
+}) {
+    const roundedLatitude = roundCoordinateForStorage(latitude);
+    const roundedLongitude = roundCoordinateForStorage(longitude);
+    if (roundedLatitude === null || roundedLongitude === null) {
+        return { recorded: false, reason: "missing_coordinates" };
+    }
+
+    const hotspotId = calculateHotspotBucketId(roundedLatitude, roundedLongitude);
+    const birdKey = buildHotspotBirdKey({ birdId, commonName, userBirdId });
+    const COOLDOWN_MS = 24 * 60 * 60 * 1000;
+    const now = Date.now();
+    const sightingTimestampMs = Number.isFinite(Number(timestampMs)) ? Number(timestampMs) : now;
+    const cutoffDate = new Date(now - COOLDOWN_MS);
+
+    const cooldownRef = db.collection("users").doc(userId)
+        .collection("settings").doc("heatmapCooldowns");
+    const sightingsQuery = db.collection("userBirdSightings")
+        .where("userId", "==", userId)
+        .where("birdId", "==", birdId)
+        .where("timestamp", ">=", cutoffDate)
+        .limit(5);
+
+    const result = await db.runTransaction(async (transaction) => {
+        const [cooldownSnap, recentSightingsSnap] = await Promise.all([
+            transaction.get(cooldownRef),
+            transaction.get(sightingsQuery),
+        ]);
+
+        const speciesCooldowns = {};
+        if (cooldownSnap.exists) {
+            const raw = cooldownSnap.data()?.speciesCooldowns;
+            if (raw && typeof raw === "object") {
+                Object.assign(speciesCooldowns, raw);
+            }
+        }
+
+        const lastUploadMs = typeof speciesCooldowns[birdId] === "number"
+            ? speciesCooldowns[birdId]
+            : 0;
+
+        let existingDoc = null;
+        if (!recentSightingsSnap.empty) {
+            existingDoc = recentSightingsSnap.docs.sort((a, b) => {
+                const av = a.get("timestamp");
+                const bv = b.get("timestamp");
+                const ams = av && typeof av.toMillis === "function" ? av.toMillis() : (av instanceof Date ? av.getTime() : 0);
+                const bms = bv && typeof bv.toMillis === "function" ? bv.toMillis() : (bv instanceof Date ? bv.getTime() : 0);
+                return bms - ams;
+            })[0];
+        }
+
+        const withinCooldown = (now - lastUploadMs) < COOLDOWN_MS;
+        const sightingRef = existingDoc ? existingDoc.ref : db.collection("userBirdSightings").doc();
+        const sightingId = existingDoc ? existingDoc.id : sightingRef.id;
+        const payload = {
+            id: sightingId,
+            userId,
+            birdId,
+            birdKey,
+            hotspotId,
+            locationId: locationId || null,
+            identificationId: identificationId || null,
+            commonName: commonName || "",
+            scientificName: scientificName || "",
+            userBirdId: userBirdId || "",
+            timestamp: new Date(sightingTimestampMs),
+            latitude: roundedLatitude,
+            longitude: roundedLongitude,
+            state: state || "",
+            locality: locality || "",
+            country: country || "US",
+            quantity: quantity || "1",
+            suspicious: suspicious === true,
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        };
+
+        if (!existingDoc) {
+            payload.createdAt = admin.firestore.FieldValue.serverTimestamp();
+        }
+
+        transaction.set(sightingRef, payload, { merge: true });
+
+        // Keep the original 24-hour cooldown behavior, but let a new identification
+        // update the existing same-day sighting instead of creating a hidden duplicate.
+        speciesCooldowns[birdId] = now;
+        transaction.set(cooldownRef, {
+            speciesCooldowns,
+            updatedAt: now,
+        }, { merge: true });
+
+        return {
+            recorded: !withinCooldown || !existingDoc,
+            updatedExisting: withinCooldown && !!existingDoc,
+            sightingId,
+            hotspotId,
+            birdKey,
+        };
+    });
+
+    await recomputeHotspotVoteSummaryForHotspot(result.hotspotId);
+    return result;
 }
 
 // ======================================================
@@ -1935,6 +2083,8 @@ exports.identifyBird = secureOnCall({ secrets: [OPENAI_API_KEY, BIRDDEX_MODEL_AP
             userId,
             imageUrl,
             locationId,
+            latitude: safeLat,
+            longitude: safeLng,
             modelPredictions,
             topBirdMatches,
             decisionReason,
@@ -2626,8 +2776,34 @@ exports.syncIdentificationFeedback = secureOnCall(async (request) => {
             finalSelectionSupportedInDatabase: !!selectedBird,
             finalConfirmedAt: admin.firestore.FieldValue.serverTimestamp(),
         }, { merge: true });
-    }
 
+        const locationContext = await getLocationContext(identificationLogData.locationId);
+        if (locationContext.latitude !== null && locationContext.longitude !== null) {
+            const lat = locationContext.latitude;
+            const lng = locationContext.longitude;
+            const birdId = selectedBird?.id || identificationLogData.finalResult?.birdId || null;
+            const commonName = selectedBird?.commonName || normalizedSelectedCommonName || identificationLogData.finalResult?.commonName || null;
+            const scientificName = selectedBird?.scientificName || normalizedSelectedScientificName || identificationLogData.finalResult?.scientificName || null;
+
+            if (birdId) {
+                await upsertUserBirdSightingWithDailyCooldown({
+                    userId,
+                    birdId,
+                    commonName,
+                    scientificName,
+                    locationId: identificationLogData.locationId || null,
+                    latitude: lat,
+                    longitude: lng,
+                    locality: locationContext.locality || null,
+                    state: locationContext.state === "GA" ? "Georgia" : (locationContext.state || null),
+                    country: locationContext.country === "US" ? "United States" : (locationContext.country || null),
+                    quantity: "1-3",
+                    identificationId: identificationRef.id,
+                    suspicious: identificationLogData.captureGuard?.suspicious === true,
+                });
+            }
+        }
+    }
 
     if (["select_model_alternative", "select_openai_alternative", "confirm_final_choice"].includes(action)) {
         const resolvedChosenBirdId = selectedBird?.id

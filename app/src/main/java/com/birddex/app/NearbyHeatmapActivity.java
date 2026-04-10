@@ -72,6 +72,7 @@ import com.google.firebase.firestore.MetadataChanges;
 import com.google.firebase.firestore.Query;
 import com.google.firebase.firestore.Source;
 import com.google.firebase.firestore.WriteBatch;
+import com.google.firebase.Timestamp;
 import com.google.firebase.storage.FirebaseStorage;
 import com.google.firebase.storage.StorageReference;
 import com.google.maps.android.heatmaps.Gradient;
@@ -664,6 +665,19 @@ public class NearbyHeatmapActivity extends AppCompatActivity
     protected void onResume() {
         super.onResume();
         isNavigating = false;
+
+        // Force a fresh reload when returning to this screen so newly saved identifications
+        // show up right away in the heatmap instead of waiting for another camera move.
+        if (googleMap != null) {
+            currentVisibleBounds = googleMap.getProjection().getVisibleRegion().latLngBounds;
+            CameraPosition cp = googleMap.getCameraPosition();
+            centerLat = cp.target.latitude;
+            centerLng = cp.target.longitude;
+            lastAppliedTarget = cp.target;
+            lastAppliedZoom = cp.zoom;
+            fetchHeatmapData();
+            loadForumPins();
+        }
     }
 
     /**
@@ -783,7 +797,7 @@ public class NearbyHeatmapActivity extends AppCompatActivity
      */
     private void fetchHeatmapData() {
         final int gen = ++fetchGeneration;
-        pendingLoads = 4;
+        pendingLoads = 2;
         tvMapSubtitle.setText("Updating heatmap...");
 
         loadUserBirdSightings(gen);
@@ -1668,6 +1682,14 @@ public class NearbyHeatmapActivity extends AppCompatActivity
      * changes.
      */
     private void loadUserBirdSightings(int gen) {
+        // Log authentication state for debugging PERMISSION_DENIED issues.
+        com.google.firebase.auth.FirebaseUser user = com.google.firebase.auth.FirebaseAuth.getInstance().getCurrentUser();
+        if (user == null) {
+            Log.w(TAG, "loadUserBirdSightings: No authenticated user found.");
+        } else {
+            Log.d(TAG, "loadUserBirdSightings: Authenticated as " + user.getUid());
+        }
+
         // Set up or query the Firebase layer that supplies/stores this feature's data.
         db.collection("userBirdSightings").get(Source.CACHE).addOnSuccessListener(snap -> {
             if (snap != null && !snap.isEmpty()) processSightings(snap, true, gen);
@@ -1681,7 +1703,13 @@ public class NearbyHeatmapActivity extends AppCompatActivity
 
     private void fetchUserBirdSightingsFromServer(int gen) {
         // Set up or query the Firebase layer that supplies/stores this feature's data.
-        db.collection("userBirdSightings").get(Source.SERVER).addOnSuccessListener(snap -> processSightings(snap, true, gen)).addOnFailureListener(e -> onCollectionFinished(gen));
+        db.collection("userBirdSightings").get(Source.SERVER).addOnSuccessListener(snap -> {
+            Log.d(TAG, "fetchUserBirdSightingsFromServer: Success. Found " + (snap != null ? snap.size() : 0) + " sightings.");
+            processSightings(snap, true, gen);
+        }).addOnFailureListener(e -> {
+            Log.e(TAG, "fetchUserBirdSightingsFromServer: Error fetching user sightings", e);
+            onCollectionFinished(gen);
+        });
     }
 
     private void loadEbirdApiSightings(int gen) {
@@ -2670,6 +2698,7 @@ public class NearbyHeatmapActivity extends AppCompatActivity
     private Long getAnyTimeMillis(DocumentSnapshot d, String... paths) {
         for (String p : paths) {
             Object v = d.get(p);
+            if (v instanceof Timestamp) return ((Timestamp) v).toDate().getTime();
             if (v instanceof Date) return ((Date) v).getTime();
             if (v instanceof Number) return ((Number) v).longValue();
         }

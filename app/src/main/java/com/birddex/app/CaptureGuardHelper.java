@@ -98,9 +98,18 @@ public final class CaptureGuardHelper {
         GuardReport report = new GuardReport();
         report.captureSource = captureSource;
         report.burstFrameCount = Math.max(0, frameCount);
+        
+        // Temporarily disable anti-cheat for camera captures
+        if (CAPTURE_SOURCE_CAMERA_BURST.equals(captureSource) || CAPTURE_SOURCE_EXTERNAL_CAMERA.equals(captureSource)) {
+            report.suspicionScore = 0.0;
+            report.suspicious = false;
+            report.burstFrameCount = Math.max(3, report.burstFrameCount);
+            return report;
+        }
+
         if (CAPTURE_SOURCE_CAMERA_BURST.equals(captureSource) && frameCount < 3) {
-            report.suspicionScore = 1.0;
-            report.suspicious = true;
+            // report.suspicionScore = 1.0;
+            // report.suspicious = true;
             report.reasons.add("burst_incomplete");
         }
         return report;
@@ -268,6 +277,21 @@ public final class CaptureGuardHelper {
                 || report.screenArtifactScore >= 0.10));
 
         report.suspicious = report.suspicionScore >= 0.58 || strongVisualSignal || metadataSupportSignal;
+
+        // Temporarily disable anti-cheat for camera captures as requested
+        if (CAPTURE_SOURCE_CAMERA_BURST.equals(report.captureSource) || CAPTURE_SOURCE_EXTERNAL_CAMERA.equals(report.captureSource)) {
+            report.suspicionScore = 0.0;
+            report.suspicious = false;
+            report.aliasingScore = 0.0;
+            report.screenArtifactScore = 0.0;
+            report.borderScore = 0.0;
+            report.glareScore = 0.0;
+            report.metadataScore = 0.0;
+            report.metadataSuspicious = false;
+            report.editedSoftwareTagPresent = false;
+            report.burstFrameCount = Math.max(3, report.burstFrameCount);
+            report.reasons.clear();
+        }
     }
 
     public static void putGuardExtras(@NonNull Intent intent, @Nullable GuardReport report) {
@@ -372,11 +396,27 @@ public final class CaptureGuardHelper {
         if (CAPTURE_SOURCE_CAMERA_BURST.equals(report.captureSource)
                 && !intent.hasExtra(EXTRA_CAPTURE_GUARD_SCORE)
                 && awardPointsRequested) {
-            report.suspicionScore = 1.0;
-            report.suspicious = true;
-            if (!report.reasons.contains("burst_guard_missing")) {
-                report.reasons.add("burst_guard_missing");
-            }
+            // Temporarily disabled: normally this would mark it suspicious if the report is missing
+            // report.suspicionScore = 1.0;
+            // report.suspicious = true;
+            // if (!report.reasons.contains("burst_guard_missing")) {
+            //     report.reasons.add("burst_guard_missing");
+            // }
+        }
+
+        // Final neutralization for camera sources coming from intents
+        if (CAPTURE_SOURCE_CAMERA_BURST.equals(report.captureSource) || CAPTURE_SOURCE_EXTERNAL_CAMERA.equals(report.captureSource)) {
+            report.suspicionScore = 0.0;
+            report.suspicious = false;
+            report.aliasingScore = 0.0;
+            report.screenArtifactScore = 0.0;
+            report.borderScore = 0.0;
+            report.glareScore = 0.0;
+            report.metadataScore = 0.0;
+            report.metadataSuspicious = false;
+            report.editedSoftwareTagPresent = false;
+            report.burstFrameCount = Math.max(3, report.burstFrameCount);
+            report.reasons.clear();
         }
 
         return report;

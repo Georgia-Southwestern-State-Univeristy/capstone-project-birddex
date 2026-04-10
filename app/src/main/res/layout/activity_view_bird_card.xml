@@ -58,65 +58,92 @@
                 <include layout="@layout/view_bird_card" />
             </FrameLayout>
 
-            <Button
-                android:id="@+id/btnUpgradeCard"
-                android:layout_width="0dp"
-                android:layout_height="48dp"
-                android:layout_marginTop="12dp"
-                android:backgroundTint="@color/nav_brown"
-                android:gravity="center"
-                android:minHeight="48dp"
-                android:text="Upgrade Card"
-                android:textAllCaps="false"
-                android:textColor="@color/white"
-                android:textSize="16sp"
-                android:textStyle="bold"
-                app:layout_constraintEnd_toEndOf="@id/cardPlaceholder"
-                app:layout_constraintStart_toStartOf="@id/cardPlaceholder"
-                app:layout_constraintTop_toBottomOf="@id/cardPlaceholder" />
-
+            <!-- Stacked actions: tight group with deliberate gaps so pills don’t touch -->
             <LinearLayout
-                android:id="@+id/rowCardActions"
+                android:id="@+id/cardActionStack"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="8dp"
-                android:layout_marginBottom="24dp"
-                android:orientation="horizontal"
-                android:weightSum="2"
+                android:orientation="vertical"
+                android:showDividers="none"
                 app:layout_constraintBottom_toBottomOf="parent"
                 app:layout_constraintEnd_toEndOf="@id/cardPlaceholder"
                 app:layout_constraintStart_toStartOf="@id/cardPlaceholder"
-                app:layout_constraintTop_toBottomOf="@id/btnUpgradeCard">
+                app:layout_constraintTop_toBottomOf="@id/cardPlaceholder">
 
-                <Button
-                    android:id="@+id/btnChangeCardImage"
-                    android:layout_width="0dp"
-                    android:layout_height="48dp"
-                    android:layout_weight="1"
-                    android:layout_marginEnd="6dp"
-                    android:backgroundTint="@color/nav_brown"
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnUpgradeCard"
+                    style="@style/Widget.Material3.Button"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
                     android:gravity="center"
-                    android:lines="1"
+                    android:insetLeft="0dp"
+                    android:insetTop="0dp"
+                    android:insetRight="0dp"
+                    android:insetBottom="0dp"
                     android:minHeight="48dp"
-                    android:text="Change Image"
+                    android:text="Upgrade Card"
                     android:textAllCaps="false"
                     android:textColor="@color/white"
-                    android:textSize="14sp" />
+                    android:textSize="16sp"
+                    android:textStyle="bold"
+                    app:backgroundTint="@color/nav_brown"
+                    app:cornerRadius="24dp"
+                    app:elevation="0dp" />
 
-                <Button
-                    android:id="@+id/btnBirdInfo"
-                    android:layout_width="0dp"
-                    android:layout_height="48dp"
-                    android:layout_weight="1"
-                    android:layout_marginStart="6dp"
-                    android:backgroundTint="@color/nav_brown"
-                    android:gravity="center"
-                    android:lines="1"
-                    android:minHeight="48dp"
-                    android:text="Bird Info"
-                    android:textAllCaps="false"
-                    android:textColor="@color/white"
-                    android:textSize="14sp" />
+                <LinearLayout
+                    android:id="@+id/rowCardActions"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="10dp"
+                    android:layout_marginBottom="16dp"
+                    android:orientation="horizontal"
+                    android:weightSum="2">
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnChangeCardImage"
+                        style="@style/Widget.Material3.Button"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_marginEnd="6dp"
+                        android:layout_weight="1"
+                        android:gravity="center"
+                        android:insetLeft="0dp"
+                        android:insetTop="0dp"
+                        android:insetRight="0dp"
+                        android:insetBottom="0dp"
+                        android:lines="1"
+                        android:minHeight="48dp"
+                        android:text="Change Image"
+                        android:textAllCaps="false"
+                        android:textColor="@color/white"
+                        android:textSize="14sp"
+                        app:backgroundTint="@color/nav_brown"
+                        app:cornerRadius="24dp"
+                        app:elevation="0dp" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnBirdInfo"
+                        style="@style/Widget.Material3.Button"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="6dp"
+                        android:layout_weight="1"
+                        android:gravity="center"
+                        android:insetLeft="0dp"
+                        android:insetTop="0dp"
+                        android:insetRight="0dp"
+                        android:insetBottom="0dp"
+                        android:lines="1"
+                        android:minHeight="48dp"
+                        android:text="Bird Info"
+                        android:textAllCaps="false"
+                        android:textColor="@color/white"
+                        android:textSize="14sp"
+                        app:backgroundTint="@color/nav_brown"
+                        app:cornerRadius="24dp"
+                        app:elevation="0dp" />
+                </LinearLayout>
             </LinearLayout>
         </androidx.constraintlayout.widget.ConstraintLayout>
     </ScrollView>

@@ -43,6 +43,7 @@ public class BirdInfoActivity extends AppCompatActivity {
     private String identificationLogId;
     private String identificationId;
     private String currentSelectionSource;
+    private String currentCaptureSource;
 
     private Double currentLatitude;
     private Double currentLongitude;
@@ -149,6 +150,9 @@ public class BirdInfoActivity extends AppCompatActivity {
         identificationId = getIntent().getStringExtra("identificationId");
         currentSelectionSource = getIntent().getStringExtra("selectionSource");
         awardPoints = getIntent().getBooleanExtra("awardPoints", true);
+        currentCaptureSource = CaptureGuardHelper
+                .readReportFromIntent(getIntent(), awardPoints)
+                .captureSource;
         pointAwardBlockReason = getIntent().getStringExtra("pointAwardBlockReason");
         pointAwardUserMessage = getIntent().getStringExtra("pointAwardUserMessage");
         if (savedInstanceState != null) {
@@ -529,6 +533,19 @@ public class BirdInfoActivity extends AppCompatActivity {
     }
 
     private void configureQuantityUi() {
+        if (isGalleryImportFlow()) {
+            // Collection-upload flow: hide quantity chooser completely.
+            if (layoutQuantity != null) {
+                layoutQuantity.setVisibility(View.GONE);
+            }
+            btnStore.setEnabled(true);
+            return;
+        }
+
+        if (layoutQuantity != null) {
+            layoutQuantity.setVisibility(View.VISIBLE);
+        }
+
         if (awardPoints) {
             if (layoutQuantity != null) layoutQuantity.setAlpha(1f);
             setQuantityOptionsEnabled(true);
@@ -561,5 +578,9 @@ public class BirdInfoActivity extends AppCompatActivity {
             return rb.getText().toString();
         }
         return "1-3";
+    }
+
+    private boolean isGalleryImportFlow() {
+        return CaptureGuardHelper.CAPTURE_SOURCE_GALLERY_IMPORT.equals(currentCaptureSource);
     }
 }

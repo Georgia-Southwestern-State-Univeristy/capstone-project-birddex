@@ -39,11 +39,27 @@
                 app:layout_constraintTop_toTopOf="parent" />
 
             <TextView
+                android:id="@+id/tvQualityAssessment"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="16dp"
+                android:layout_marginTop="16dp"
+                android:gravity="start"
+                android:textColor="@color/nav_brown"
+                android:textSize="13sp"
+                android:textStyle="bold"
+                android:visibility="gone"
+                app:layout_constraintStart_toStartOf="parent"
+                app:layout_constraintTop_toTopOf="parent"
+                tools:text="Image Feedback: Too blurry"
+                tools:visibility="visible" />
+
+            <TextView
                 android:id="@+id/tvComparePrompt"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="20dp"
                 android:layout_marginHorizontal="24dp"
+                android:layout_marginTop="20dp"
                 android:gravity="center"
                 android:text="Is this your bird?"
                 android:textColor="?attr/colorOnSurface"
@@ -57,8 +73,8 @@
                 android:id="@+id/tvCompareSubtitle"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="8dp"
                 android:layout_marginHorizontal="24dp"
+                android:layout_marginTop="8dp"
                 android:gravity="center"
                 android:text="Compare your photo with BirdDex's reference photo before you save it."
                 android:textColor="?attr/colorOnSurface"
@@ -68,29 +84,12 @@
                 app:layout_constraintTop_toBottomOf="@id/tvComparePrompt" />
 
             <TextView
-                android:id="@+id/tvQualityAssessment"
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="8dp"
-                android:layout_marginHorizontal="24dp"
-                android:gravity="center"
-                android:textColor="@color/nav_brown"
-                android:textSize="13sp"
-                android:textStyle="italic"
-                android:visibility="gone"
-                app:layout_constraintEnd_toEndOf="parent"
-                app:layout_constraintStart_toStartOf="parent"
-                app:layout_constraintTop_toBottomOf="@id/tvCompareSubtitle"
-                tools:text="AI Feedback: Too blurry"
-                tools:visibility="visible" />
-
-            <TextView
                 android:id="@+id/tvYourPhotoLabel"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_marginStart="16dp"
-                android:layout_marginEnd="8dp"
                 android:layout_marginTop="18dp"
+                android:layout_marginEnd="8dp"
                 android:gravity="center"
                 android:text="Your Photo"
                 android:textColor="?attr/colorOnSurface"
@@ -105,8 +104,8 @@
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_marginStart="8dp"
-                android:layout_marginEnd="16dp"
                 android:layout_marginTop="18dp"
+                android:layout_marginEnd="16dp"
                 android:gravity="center"
                 android:text="Reference Photo"
                 android:textColor="?attr/colorOnSurface"
@@ -121,8 +120,8 @@
                 android:layout_width="0dp"
                 android:layout_height="0dp"
                 android:layout_marginStart="16dp"
-                android:layout_marginEnd="8dp"
                 android:layout_marginTop="8dp"
+                android:layout_marginEnd="8dp"
                 android:adjustViewBounds="true"
                 android:background="@drawable/bg_image_placeholder"
                 android:padding="2dp"
@@ -130,7 +129,7 @@
                 app:layout_constraintDimensionRatio="1:1"
                 app:layout_constraintEnd_toStartOf="@id/comparisonGuideline"
                 app:layout_constraintStart_toStartOf="parent"
-                app:layout_constraintTop_toBottomOf="@id/tvQualityAssessment"
+                app:layout_constraintTop_toBottomOf="@id/tvYourPhotoLabel"
                 tools:srcCompat="@tools:sample/avatars" />
 
             <FrameLayout
@@ -138,14 +137,14 @@
                 android:layout_width="0dp"
                 android:layout_height="0dp"
                 android:layout_marginStart="8dp"
-                android:layout_marginEnd="16dp"
                 android:layout_marginTop="8dp"
+                android:layout_marginEnd="16dp"
                 android:background="@drawable/bg_image_placeholder"
                 android:padding="2dp"
                 app:layout_constraintDimensionRatio="1:1"
                 app:layout_constraintEnd_toEndOf="parent"
                 app:layout_constraintStart_toStartOf="@id/comparisonGuideline"
-                app:layout_constraintTop_toBottomOf="@id/tvQualityAssessment">
+                app:layout_constraintTop_toBottomOf="@id/tvReferencePhotoLabel">
 
                 <ImageView
                     android:id="@+id/referenceBirdImageView"
@@ -174,45 +173,84 @@
                     android:textSize="14sp" />
 
             </FrameLayout>
+
             <TextView
                 android:id="@+id/referenceAttributionTextView"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_marginStart="8dp"
-                android:layout_marginEnd="16dp"
                 android:layout_marginTop="6dp"
+                android:layout_marginEnd="16dp"
                 android:gravity="center"
-                android:text=""
-                android:textColor="?attr/colorOnSurface"
-                android:textSize="11sp"
                 android:lineSpacingExtra="1dp"
                 android:linksClickable="true"
+                android:text=""
+                android:textColor="?attr/colorOnSurface"
                 android:textColorLink="@color/nav_brown"
+                android:textSize="11sp"
                 android:visibility="gone"
                 app:layout_constraintEnd_toEndOf="parent"
                 app:layout_constraintStart_toStartOf="@id/comparisonGuideline"
                 app:layout_constraintTop_toBottomOf="@id/referenceBirdFrame" />
 
+            <LinearLayout
+                android:id="@+id/referenceToggleContainer"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:gravity="center"
+                android:orientation="vertical"
+                app:layout_constraintEnd_toEndOf="parent"
+                app:layout_constraintStart_toStartOf="parent"
+                app:layout_constraintTop_toBottomOf="@id/referenceAttributionTextView">
+
+                <ImageButton
+                    android:id="@+id/btnToggleReferenceBird"
+                    android:layout_width="44dp"
+                    android:layout_height="44dp"
+                    android:adjustViewBounds="true"
+                    android:background="@drawable/bg_white_rounded"
+                    android:contentDescription="Switch reference bird"
+                    android:padding="10dp"
+                    android:scaleType="centerInside"
+                    android:src="@android:drawable/ic_menu_rotate"
+                    android:visibility="gone"
+                    app:tint="@color/nav_brown" />
+
+                <TextView
+                    android:id="@+id/tvReferenceToggleStatus"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="6dp"
+                    android:gravity="center"
+                    android:textColor="@color/nav_brown"
+                    android:textSize="12sp"
+                    android:textStyle="bold"
+                    android:visibility="gone"
+                    tools:text="Tap to Swap Between Original Bird and Your Chosen Bird" />
+
+            </LinearLayout>
+
             <TextView
                 android:id="@+id/commonNameTextView"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="18dp"
                 android:layout_marginHorizontal="24dp"
+                android:layout_marginTop="18dp"
                 android:gravity="center"
                 android:text="Common Name: "
                 android:textSize="18sp"
                 android:textStyle="bold"
                 app:layout_constraintEnd_toEndOf="parent"
                 app:layout_constraintStart_toStartOf="parent"
-                app:layout_constraintTop_toBottomOf="@id/referenceAttributionTextView" />
+                app:layout_constraintTop_toBottomOf="@id/referenceToggleContainer" />
 
             <TextView
                 android:id="@+id/scientificNameTextView"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="8dp"
                 android:layout_marginHorizontal="24dp"
+                android:layout_marginTop="8dp"
                 android:gravity="center"
                 android:text="Scientific Name: "
                 android:textSize="16sp"
@@ -224,8 +262,8 @@
                 android:id="@+id/speciesTextView"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="8dp"
                 android:layout_marginHorizontal="24dp"
+                android:layout_marginTop="8dp"
                 android:gravity="center"
                 android:text="Species: "
                 android:textSize="16sp"
@@ -237,8 +275,8 @@
                 android:id="@+id/familyTextView"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="8dp"
                 android:layout_marginHorizontal="24dp"
+                android:layout_marginTop="8dp"
                 android:gravity="center"
                 android:text="Family: "
                 android:textSize="16sp"
@@ -250,8 +288,8 @@
                 android:id="@+id/divider"
                 android:layout_width="0dp"
                 android:layout_height="1dp"
-                android:layout_marginTop="16dp"
                 android:layout_marginHorizontal="32dp"
+                android:layout_marginTop="16dp"
                 android:background="#CCCCCC"
                 app:layout_constraintEnd_toEndOf="parent"
                 app:layout_constraintStart_toStartOf="parent"
@@ -261,8 +299,8 @@
                 android:id="@+id/layoutQuantity"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="16dp"
                 android:layout_marginHorizontal="24dp"
+                android:layout_marginTop="16dp"
                 android:gravity="center"
                 android:orientation="vertical"
                 app:layout_constraintEnd_toEndOf="parent"
@@ -314,8 +352,8 @@
                 android:id="@+id/tvHeatmapDisclaimer"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="16dp"
                 android:layout_marginHorizontal="24dp"
+                android:layout_marginTop="16dp"
                 android:gravity="center"
                 android:text='Saving this image can add one heatmap sighting for this species. Heatmap uploads for the same bird are limited to once every 24 hours per user.'
                 android:textColor="?attr/colorOnSurface"

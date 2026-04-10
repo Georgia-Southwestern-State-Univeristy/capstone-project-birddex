@@ -12,7 +12,9 @@ import android.os.Looper;
 import android.util.Log;
 import android.view.LayoutInflater;
 import android.view.MotionEvent;
+import android.view.OrientationEventListener;
 import android.view.ScaleGestureDetector;
+import android.view.Surface;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.CheckBox;
@@ -72,6 +74,11 @@ public class CameraFragment extends Fragment {
     private ActivityResultLauncher<String> cameraPermissionLauncher;
     private final Handler burstHandler = new Handler(Looper.getMainLooper());
 
+    // This tracks the PHYSICAL device orientation, not the display rotation.
+    // That matters because the app UI can stay portrait while the phone is held sideways.
+    private OrientationEventListener orientationEventListener;
+    private int currentTargetRotation = Surface.ROTATION_0;
+
     private enum FlashState { OFF, ON, AUTO }
     private FlashState flashState = FlashState.OFF;
 
@@ -90,7 +97,6 @@ public class CameraFragment extends Fragment {
     @Nullable
     @Override
     public View onCreateView(@NonNull LayoutInflater inflater, @Nullable ViewGroup container, @Nullable Bundle savedInstanceState) {
-        // Bind or inflate the UI pieces this method needs before it can update the screen.
         View v = inflater.inflate(R.layout.fragment_camera, container, false);
         previewView = v.findViewById(R.id.previewView);
         btnFlip = v.findViewById(R.id.btnFlip);
@@ -98,13 +104,18 @@ public class CameraFragment extends Fragment {
         btnFlash = v.findViewById(R.id.btnFlash);
         btnBack = v.findViewById(R.id.btnBack);
 
+        setupOrientationTracking();
+
         scaleGestureDetector = new ScaleGestureDetector(requireContext(), new ScaleGestureDetector.SimpleOnScaleGestureListener() {
             @Override
             public boolean onScale(ScaleGestureDetector detector) {
                 if (camera == null) return false;
                 ZoomState zs = camera.getCameraInfo().getZoomState().getValue();
                 if (zs == null) return false;
-                float newZoom = Math.max(zs.getMinZoomRatio(), Math.min(zs.getZoomRatio() * detector.getScaleFactor(), zs.getMaxZoomRatio()));
+                float newZoom = Math.max(
+                        zs.getMinZoomRatio(),
+                        Math.min(zs.getZoomRatio() * detector.getScaleFactor(), zs.getMaxZoomRatio())
+                );
                 camera.getCameraControl().setZoomRatio(newZoom);
                 return true;
             }
@@ -119,33 +130,42 @@ public class CameraFragment extends Fragment {
         });
 
         cameraPermissionLauncher = registerForActivityResult(new ActivityResultContracts.RequestPermission(), granted -> {
-            if (granted) startCamera();
-                // Give the user immediate feedback about the result of this action.
-            else MessagePopupHelper.show(requireContext(), "Camera permission denied.");
+            if (granted) {
+                startCamera();
+            } else {
+                MessagePopupHelper.show(requireContext(), "Camera permission denied.");
+            }
         });
 
-        if (ActivityCompat.checkSelfPermission(requireContext(), Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) startCamera();
-        else cameraPermissionLauncher.launch(Manifest.permission.CAMERA);
+        if (ActivityCompat.checkSelfPermission(requireContext(), Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+            startCamera();
+        } else {
+            cameraPermissionLauncher.launch(Manifest.permission.CAMERA);
+        }
 
-        // Attach the user interaction that should run when this control is tapped.
         btnFlip.setOnClickListener(view -> {
             btnFlip.setEnabled(false);
-            lensFacing = (lensFacing == CameraSelector.LENS_FACING_BACK) ? CameraSelector.LENS_FACING_FRONT : CameraSelector.LENS_FACING_BACK;
+            lensFacing = (lensFacing == CameraSelector.LENS_FACING_BACK)
+                    ? CameraSelector.LENS_FACING_FRONT
+                    : CameraSelector.LENS_FACING_BACK;
             bindCameraUseCases();
         });
 
         if (btnFlash != null) {
             btnFlash.setOnClickListener(view -> {
-                if (flashState == FlashState.OFF) flashState = FlashState.ON;
-                else if (flashState == FlashState.ON) flashState = FlashState.AUTO;
-                else flashState = FlashState.OFF;
+                if (flashState == FlashState.OFF) {
+                    flashState = FlashState.ON;
+                } else if (flashState == FlashState.ON) {
+                    flashState = FlashState.AUTO;
+                } else {
+                    flashState = FlashState.OFF;
+                }
                 applyFlashState();
             });
         }
 
         if (btnCapture != null) {
             btnCapture.setOnClickListener(view -> {
-                // FIX: Disable button to prevent multiple captures in rapid succession
                 btnCapture.setEnabled(false);
                 btnCapture.setAlpha(0.4f);
                 takePhoto();
@@ -163,6 +183,60 @@ public class CameraFragment extends Fragment {
         showCameraTipIfNeeded();
 
         return v;
+    }
+
+    @Override
+    public void onResume() {
+        super.onResume();
+        if (orientationEventListener != null && orientationEventListener.canDetectOrientation()) {
+            orientationEventListener.enable();
+        }
+    }
+
+    @Override
+    public void onPause() {
+        super.onPause();
+        if (orientationEventListener != null) {
+            orientationEventListener.disable();
+        }
+    }
+
+    private void setupOrientationTracking() {
+        currentTargetRotation = getFallbackDisplayRotation();
+
+        orientationEventListener = new OrientationEventListener(requireContext(), android.hardware.SensorManager.SENSOR_DELAY_UI) {
+            @Override
+            public void onOrientationChanged(int orientation) {
+                if (orientation == ORIENTATION_UNKNOWN) return;
+
+                int newRotation = toSurfaceRotation(orientation);
+                if (newRotation != currentTargetRotation) {
+                    currentTargetRotation = newRotation;
+                    if (imageCapture != null) {
+                        imageCapture.setTargetRotation(currentTargetRotation);
+                    }
+                }
+            }
+        };
+    }
+
+    private int toSurfaceRotation(int orientationDegrees) {
+        if (orientationDegrees >= 315 || orientationDegrees < 45) {
+            return Surface.ROTATION_0;
+        } else if (orientationDegrees < 135) {
+            return Surface.ROTATION_270;
+        } else if (orientationDegrees < 225) {
+            return Surface.ROTATION_180;
+        } else {
+            return Surface.ROTATION_90;
+        }
+    }
+
+    private int getFallbackDisplayRotation() {
+        if (previewView != null && previewView.getDisplay() != null) {
+            return previewView.getDisplay().getRotation();
+        }
+        return Surface.ROTATION_0;
     }
 
     private void showCameraTipIfNeeded() {
@@ -184,38 +258,35 @@ public class CameraFragment extends Fragment {
         }
     }
 
-    /**
-     * Main logic block for this part of the feature.
-     * There is also one-time async data loading here, so success/failure callbacks are important
-     * for the final UI state.
-     * User-facing feedback is shown here so the user knows whether the action succeeded, failed,
-     * or needs attention.
-     */
     private void startCamera() {
         ListenableFuture<ProcessCameraProvider> future = ProcessCameraProvider.getInstance(requireContext());
         future.addListener(() -> {
-            // Kick off an asynchronous one-time read; the callbacks below decide how the UI should react.
-            try { cameraProvider = future.get(); bindCameraUseCases(); }
-            // Give the user immediate feedback about the result of this action.
-            catch (ExecutionException | InterruptedException e) { MessagePopupHelper.show(requireContext(), "Failed to start camera."); }
+            try {
+                cameraProvider = future.get();
+                bindCameraUseCases();
+            } catch (ExecutionException | InterruptedException e) {
+                MessagePopupHelper.show(requireContext(), "Failed to start camera.");
+            }
         }, ContextCompat.getMainExecutor(requireContext()));
     }
 
-    /**
-     * Connects already-fetched data to views so the user can see the current state.
-     */
     @androidx.annotation.OptIn(markerClass = androidx.camera.core.ExperimentalZeroShutterLag.class)
     private void bindCameraUseCases() {
         if (cameraProvider == null) return;
         cameraProvider.unbindAll();
 
-        CameraSelector selector = new CameraSelector.Builder().requireLensFacing(lensFacing).build();
+        CameraSelector selector = new CameraSelector.Builder()
+                .requireLensFacing(lensFacing)
+                .build();
 
-        // Use 4:3 Aspect Ratio. We use a more stable resolution strategy for the preview
-        // to prevent overheating during long sessions (5-10 mins).
         ResolutionSelector previewResolutionSelector = new ResolutionSelector.Builder()
                 .setAspectRatioStrategy(AspectRatioStrategy.RATIO_4_3_FALLBACK_AUTO_STRATEGY)
-                .setResolutionStrategy(new ResolutionStrategy(new android.util.Size(1280, 720), ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER))
+                .setResolutionStrategy(
+                        new ResolutionStrategy(
+                                new android.util.Size(1280, 720),
+                                ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER
+                        )
+                )
                 .build();
 
         ResolutionSelector captureResolutionSelector = new ResolutionSelector.Builder()
@@ -224,59 +295,88 @@ public class CameraFragment extends Fragment {
                 .build();
 
         Preview preview = new Preview.Builder()
+                .setTargetRotation(currentTargetRotation)
                 .setResolutionSelector(previewResolutionSelector)
                 .build();
         preview.setSurfaceProvider(previewView.getSurfaceProvider());
 
-        // Changed from ZERO_SHUTTER_LAG to MINIMIZE_LATENCY for better long-term stability.
-        // ZSL keeps a constant high-res ring buffer that can cause freezes/overheating after 5+ minutes.
         imageCapture = new ImageCapture.Builder()
+                .setTargetRotation(currentTargetRotation)
                 .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
                 .setResolutionSelector(captureResolutionSelector)
                 .setJpegQuality(100)
                 .build();
 
         camera = cameraProvider.bindToLifecycle(this, selector, preview, imageCapture);
-        if (btnFlash != null) btnFlash.setEnabled(camera.getCameraInfo().hasFlashUnit());
+
+        if (btnFlash != null) {
+            btnFlash.setEnabled(camera.getCameraInfo().hasFlashUnit());
+        }
         applyFlashState();
-        if (btnFlip != null) btnFlip.setEnabled(true);
+
+        if (btnFlip != null) {
+            btnFlip.setEnabled(true);
+        }
+    }
+
+    private void updateImageCaptureRotation() {
+        if (imageCapture != null) {
+            imageCapture.setTargetRotation(currentTargetRotation);
+        }
     }
 
     private void tapToFocus(float x, float y) {
         if (camera == null) return;
+
         MeteringPointFactory factory = new SurfaceOrientedMeteringPointFactory(
-                (float) previewView.getWidth(), (float) previewView.getHeight());
+                (float) previewView.getWidth(),
+                (float) previewView.getHeight()
+        );
         MeteringPoint point = factory.createPoint(x, y);
-        FocusMeteringAction action = new FocusMeteringAction.Builder(point, FocusMeteringAction.FLAG_AF | FocusMeteringAction.FLAG_AE).build();
+        FocusMeteringAction action = new FocusMeteringAction.Builder(
+                point,
+                FocusMeteringAction.FLAG_AF | FocusMeteringAction.FLAG_AE
+        ).build();
         camera.getCameraControl().startFocusAndMetering(action);
     }
 
-    /**
-     * Main logic block for this part of the feature.
-     */
     private void applyFlashState() {
         if (camera == null || imageCapture == null) return;
-        if (!camera.getCameraInfo().hasFlashUnit()) { flashState = FlashState.OFF; camera.getCameraControl().enableTorch(false); imageCapture.setFlashMode(ImageCapture.FLASH_MODE_OFF); return; }
+
+        if (!camera.getCameraInfo().hasFlashUnit()) {
+            flashState = FlashState.OFF;
+            camera.getCameraControl().enableTorch(false);
+            imageCapture.setFlashMode(ImageCapture.FLASH_MODE_OFF);
+            return;
+        }
+
         switch (flashState) {
-            case OFF: camera.getCameraControl().enableTorch(false); imageCapture.setFlashMode(ImageCapture.FLASH_MODE_OFF); break;
-            case ON: camera.getCameraControl().enableTorch(true); imageCapture.setFlashMode(ImageCapture.FLASH_MODE_ON); break;
-            case AUTO: camera.getCameraControl().enableTorch(false); imageCapture.setFlashMode(ImageCapture.FLASH_MODE_AUTO); break;
+            case OFF:
+                camera.getCameraControl().enableTorch(false);
+                imageCapture.setFlashMode(ImageCapture.FLASH_MODE_OFF);
+                break;
+
+            case ON:
+                camera.getCameraControl().enableTorch(true);
+                imageCapture.setFlashMode(ImageCapture.FLASH_MODE_ON);
+                break;
+
+            case AUTO:
+                camera.getCameraControl().enableTorch(false);
+                imageCapture.setFlashMode(ImageCapture.FLASH_MODE_AUTO);
+                break;
         }
     }
 
-    /**
-     * Main logic block for this part of the feature.
-     * It also packages extras into an Intent when this flow needs to open another Activity.
-     * User-facing feedback is shown here so the user knows whether the action succeeded, failed,
-     * or needs attention.
-     */
     private void takePhoto() {
         cleanupBurstFrameCache();
+
         if (imageCapture == null) {
             restoreCaptureButton();
             return;
         }
 
+        updateImageCaptureRotation();
         captureBurstFrame(new ArrayList<>(), new ArrayList<>(), 0);
     }
 
@@ -295,35 +395,43 @@ public class CameraFragment extends Fragment {
             return;
         }
 
+        updateImageCaptureRotation();
+
         ImageCapture.OutputFileOptions options = new ImageCapture.OutputFileOptions.Builder(outputFile).build();
         final Uri outputUri = Uri.fromFile(outputFile);
 
-        imageCapture.takePicture(options, ContextCompat.getMainExecutor(requireContext()), new ImageCapture.OnImageSavedCallback() {
-            @Override
-            public void onImageSaved(@NonNull ImageCapture.OutputFileResults output) {
-                frameUris.add(outputUri);
-                captureTimesMs.add(System.currentTimeMillis());
+        imageCapture.takePicture(
+                options,
+                ContextCompat.getMainExecutor(requireContext()),
+                new ImageCapture.OnImageSavedCallback() {
+                    @Override
+                    public void onImageSaved(@NonNull ImageCapture.OutputFileResults output) {
+                        frameUris.add(outputUri);
+                        captureTimesMs.add(System.currentTimeMillis());
 
-                if (frameUris.size() < BURST_FRAME_COUNT) {
-                    burstHandler.postDelayed(() -> captureBurstFrame(frameUris, captureTimesMs, frameIndex + 1), BURST_FRAME_DELAY_MS);
-                } else {
-                    finalizeBurstCapture(frameUris, captureTimesMs);
-                }
-            }
+                        if (frameUris.size() < BURST_FRAME_COUNT) {
+                            burstHandler.postDelayed(
+                                    () -> captureBurstFrame(frameUris, captureTimesMs, frameIndex + 1),
+                                    BURST_FRAME_DELAY_MS
+                            );
+                        } else {
+                            finalizeBurstCapture(frameUris, captureTimesMs);
+                        }
+                    }
 
-            @Override
-            public void onError(@NonNull ImageCaptureException exc) {
-                Log.w(TAG, "Burst frame capture failed at index " + frameIndex, exc);
-                if (!frameUris.isEmpty()) {
-                    finalizeBurstCapture(frameUris, captureTimesMs);
-                } else {
-                    restoreCaptureButton();
-                    MessagePopupHelper.show(requireContext(), "Capture failed.");
+                    @Override
+                    public void onError(@NonNull ImageCaptureException exc) {
+                        Log.w(TAG, "Burst frame capture failed at index " + frameIndex, exc);
+                        if (!frameUris.isEmpty()) {
+                            finalizeBurstCapture(frameUris, captureTimesMs);
+                        } else {
+                            restoreCaptureButton();
+                            MessagePopupHelper.show(requireContext(), "Capture failed.");
+                        }
+                    }
                 }
-            }
-        });
+        );
     }
-
 
     private void cleanupBurstFrameCache() {
         if (!isAdded()) return;
@@ -344,7 +452,6 @@ public class CameraFragment extends Fragment {
             Log.w(TAG, "Failed to clear burst frame cache.", e);
         }
     }
-
 
     @Nullable
     private File createBurstFrameFile(int frameIndex) {
@@ -371,12 +478,14 @@ public class CameraFragment extends Fragment {
         new Thread(() -> {
             CaptureGuardHelper.GuardReport guardReport = frameUris.size() >= 2
                     ? CaptureGuardHelper.analyzeBurst(appContext, frameUris, captureTimesMs)
-                    : CaptureGuardHelper.buildFallbackReport(CaptureGuardHelper.CAPTURE_SOURCE_CAMERA_BURST, frameUris.size());
+                    : CaptureGuardHelper.buildFallbackReport(
+                    CaptureGuardHelper.CAPTURE_SOURCE_CAMERA_BURST,
+                    frameUris.size()
+            );
 
             int selectedIndex = Math.max(0, Math.min(guardReport.selectedFrameIndex, frameUris.size() - 1));
             Uri selectedFrameUri = frameUris.get(selectedIndex);
 
-            // Save the original photo to the device gallery immediately
             saveImageToGallery(appContext, selectedFrameUri);
 
             if (!isAdded()) return;
@@ -386,25 +495,26 @@ public class CameraFragment extends Fragment {
                         .putExtra(CropActivity.EXTRA_IMAGE_URI, selectedFrameUri.toString())
                         .putExtra(CropActivity.EXTRA_AWARD_POINTS, true)
                         .putExtra(CaptureGuardHelper.EXTRA_CAPTURE_SOURCE, CaptureGuardHelper.CAPTURE_SOURCE_CAMERA_BURST);
+
                 CaptureGuardHelper.putGuardExtras(cropIntent, guardReport);
-                // Move into the next screen and pass the identifiers/data that screen needs.
                 startActivity(cropIntent);
                 restoreCaptureButton();
             });
         }).start();
     }
 
-    /**
-     * Saves the captured image to the public gallery so the user has a copy of it.
-     */
     private void saveImageToGallery(Context context, Uri sourceUri) {
         try {
             String fileName = "BirdDex_" + System.currentTimeMillis() + ".jpg";
             android.content.ContentValues values = new android.content.ContentValues();
             values.put(android.provider.MediaStore.Images.Media.DISPLAY_NAME, fileName);
             values.put(android.provider.MediaStore.Images.Media.MIME_TYPE, "image/jpeg");
+
             if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
-                values.put(android.provider.MediaStore.Images.Media.RELATIVE_PATH, android.os.Environment.DIRECTORY_PICTURES + "/BirdDex");
+                values.put(
+                        android.provider.MediaStore.Images.Media.RELATIVE_PATH,
+                        android.os.Environment.DIRECTORY_PICTURES + "/BirdDex"
+                );
                 values.put(android.provider.MediaStore.Images.Media.IS_PENDING, 1);
             }
 
@@ -429,6 +539,7 @@ public class CameraFragment extends Fragment {
                     values.put(android.provider.MediaStore.Images.Media.IS_PENDING, 0);
                     resolver.update(itemUri, values, null, null);
                 }
+
                 Log.d(TAG, "Image saved to gallery: " + itemUri);
             }
         } catch (Exception e) {

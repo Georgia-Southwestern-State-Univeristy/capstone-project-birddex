@@ -104,5 +104,6 @@ dependencies {
     testImplementation(libs.junit)
     androidTestImplementation(libs.ext.junit)
     androidTestImplementation(libs.espresso.core)
+    implementation("androidx.exifinterface:exifinterface:1.3.7")
 
 }

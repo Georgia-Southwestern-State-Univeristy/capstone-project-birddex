@@ -81,7 +81,22 @@ public final class CardFormatUtils {
      */
     public static String formatLocation(@Nullable String state, @Nullable String locality) {
         String cleanLocality = clean(locality);
-        String stateAbbrev = abbreviateState(state);
+        String cleanState = clean(state);
+
+        // Uploaded-only cards may still carry fallback coordinate strings like
+        // "Lat: 0.00, Lng: 0.00". Treat those as missing location.
+        if (isZeroCoordinateLocationText(cleanLocality) || isZeroCoordinateLocationText(cleanState)) {
+            return "Location: Uploaded";
+        }
+
+        if (isPlaceholderLocationToken(cleanLocality)) {
+            cleanLocality = "";
+        }
+        if (isPlaceholderLocationToken(cleanState)) {
+            cleanState = "";
+        }
+
+        String stateAbbrev = cleanState.isEmpty() ? "" : abbreviateState(cleanState);
 
         if (!cleanLocality.isEmpty() && !stateAbbrev.isEmpty()) {
             return "Location: " + cleanLocality + ", " + stateAbbrev;
@@ -95,7 +110,7 @@ public final class CardFormatUtils {
             return "Location: " + stateAbbrev;
         }
 
-        return "Location: --";
+        return "Location: Uploaded";
     }
 
     /**
@@ -137,5 +152,41 @@ public final class CardFormatUtils {
     private static String clean(@Nullable String value) {
         if (value == null) return "";
         return value.trim().replaceAll("\\s+", " ");
+    }
+
+    private static boolean isPlaceholderLocationToken(String value) {
+        String normalized = value == null ? "" : value.trim().toLowerCase(Locale.US);
+        if (normalized.isEmpty()) return true;
+        return "--".equals(normalized)
+                || "0".equals(normalized)
+                || "0.0".equals(normalized)
+                || "0,0".equals(normalized)
+                || "0, 0".equals(normalized)
+                || "unknown".equals(normalized)
+                || "null".equals(normalized)
+                || "n/a".equals(normalized);
+    }
+
+    private static boolean isZeroCoordinateLocationText(String value) {
+        if (value == null) return false;
+        String normalized = value.trim().toLowerCase(Locale.US);
+        if (normalized.isEmpty()) return false;
+
+        if (!(normalized.contains("lat") && normalized.contains("lng"))) {
+            return false;
+        }
+
+        // Keep only characters that can appear in numeric coordinates, then parse.
+        String compact = normalized.replaceAll("[^0-9,\\.\\-]+", "");
+        String[] pieces = compact.split(",");
+        if (pieces.length < 2) return false;
+
+        try {
+            double lat = Double.parseDouble(pieces[0]);
+            double lng = Double.parseDouble(pieces[1]);
+            return Math.abs(lat) < 0.000001d && Math.abs(lng) < 0.000001d;
+        } catch (NumberFormatException ignored) {
+            return false;
+        }
     }
 }

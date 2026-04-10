@@ -118,6 +118,8 @@ public class NearbyHeatmapActivity extends AppCompatActivity
     private String trackedBirdNameFromNotification;
     private static final String KEY_GRAPHIC_CONTENT = "show_graphic_content";
     private static final int VOTE_NONE = 0;
+    private final Map<String, Boolean> savedPostStateCache = new ConcurrentHashMap<>();
+    private final Set<String> savedPostStateInFlight = ConcurrentHashMap.newKeySet();
     private static final int VOTE_UP = 1;
     private static final int VOTE_DOWN = -1;
     private View legendHeader;
@@ -1091,6 +1093,7 @@ public class NearbyHeatmapActivity extends AppCompatActivity
             startActivity(new Intent(this, PostDetailActivity.class).putExtra(PostDetailActivity.EXTRA_POST_ID, p.getId()));
             dialog.dismiss();
         });
+        primeSavedPostState(p);
         content.findViewById(R.id.btnPostOptions).setOnClickListener(v -> showPostOptions(p, v, dialog));
 
         RecyclerView rv = view.findViewById(R.id.rvComments);
@@ -1231,27 +1234,42 @@ public class NearbyHeatmapActivity extends AppCompatActivity
         }).addOnFailureListener(e -> isFetchingPopupComments = false);
     }
 
+    private void primeSavedPostState(@Nullable ForumPost post) {
+        if (post == null || post.getId() == null) return;
+
+        FirebaseUser user = mAuth.getCurrentUser();
+        if (user == null) {
+            savedPostStateCache.put(post.getId(), false);
+            return;
+        }
+
+        if (savedPostStateCache.containsKey(post.getId())) return;
+        if (!savedPostStateInFlight.add(post.getId())) return;
+
+        firebaseManager.isForumPostSaved(post.getId(), task -> {
+            savedPostStateInFlight.remove(post.getId());
+            if (isFinishing() || isDestroyed()) return;
+
+            boolean isSaved = task.isSuccessful()
+                    && task.getResult() != null
+                    && task.getResult();
+
+            savedPostStateCache.put(post.getId(), isSaved);
+        });
+    }
+
     /**
      * Takes prepared data and presents it on screen or in a dialog/menu.
      */
     private void showPostOptions(ForumPost p, View v, BottomSheetDialog dialog) {
-        FirebaseUser user = mAuth.getCurrentUser();
-        if (user == null) {
-            showResolvedPostOptions(p, v, dialog, false);
-            return;
-        }
-
-        firebaseManager.isForumPostSaved(p.getId(), task -> {
-            boolean isSaved = task.isSuccessful() && task.getResult() != null && task.getResult();
-            if (isFinishing() || isDestroyed()) return;
-            showResolvedPostOptions(p, v, dialog, isSaved);
-        });
+        showInstantPostOptions(p, v, dialog);
     }
 
-    private void showResolvedPostOptions(ForumPost p, View v, BottomSheetDialog dialog, boolean isSaved) {
+    private void showInstantPostOptions(ForumPost p, View v, BottomSheetDialog dialog) {
         PopupMenu popup = new PopupMenu(this, v);
         FirebaseUser user = mAuth.getCurrentUser();
         if (user != null && p.getUserId().equals(user.getUid())) popup.getMenu().add("Delete");
+        boolean isSaved = Boolean.TRUE.equals(savedPostStateCache.get(p.getId()));
         popup.getMenu().add(isSaved ? "Unsave Post" : "Save Post");
         if (user != null && !p.getUserId().equals(user.getUid())) popup.getMenu().add("Report");
         popup.setOnMenuItemClickListener(item -> {
@@ -1269,6 +1287,7 @@ public class NearbyHeatmapActivity extends AppCompatActivity
             @Override
             public void onSuccess() {
                 if (isFinishing() || isDestroyed()) return;
+                savedPostStateCache.put(p.getId(), true);
                 MessagePopupHelper.showBrief(NearbyHeatmapActivity.this, "Post saved");
             }
 
@@ -1285,6 +1304,7 @@ public class NearbyHeatmapActivity extends AppCompatActivity
             @Override
             public void onSuccess() {
                 if (isFinishing() || isDestroyed()) return;
+                savedPostStateCache.put(p.getId(), false);
                 MessagePopupHelper.showBrief(NearbyHeatmapActivity.this, "Post unsaved");
             }
 

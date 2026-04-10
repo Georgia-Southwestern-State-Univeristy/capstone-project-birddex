@@ -101,6 +101,8 @@ public class ProfileFragment extends Fragment implements
     private String currentUsername, currentBio, currentProfilePictureUrl;
     private boolean isCurrentUser = true;
     private boolean isFollowing = false;
+    private final Map<String, Boolean> savedPostStateCache = new ConcurrentHashMap<>();
+    private final Set<String> savedPostStateInFlight = ConcurrentHashMap.newKeySet();
 
     private final List<String> favoriteCardKeys = new ArrayList<>();
     private final List<CollectionSlot> allCollectionSlots = new ArrayList<>();
@@ -307,6 +309,7 @@ public class ProfileFragment extends Fragment implements
         if (isCurrentUser && position == getSavedTabPosition()) {
             if (savedPostList.isEmpty() && !isFetchingSaved && !isSavedLastPage) fetchSavedPosts();
             postsAdapter.setPosts(new ArrayList<>(savedPostList));
+            primeSavedPostStates(savedPostList);
             rvProfilePosts.setVisibility(savedPostList.isEmpty() ? View.GONE : View.VISIBLE);
             tvProfileTabEmpty.setVisibility(savedPostList.isEmpty() ? View.VISIBLE : View.GONE);
             if (savedPostList.isEmpty()) tvProfileTabEmpty.setText("No saved posts yet.");
@@ -316,6 +319,7 @@ public class ProfileFragment extends Fragment implements
 
         if (postList.isEmpty() && !isFetching && !isLastPage) fetchPosts();
         postsAdapter.setPosts(new ArrayList<>(postList));
+        primeSavedPostStates(postList);
         rvProfilePosts.setVisibility(postList.isEmpty() ? View.GONE : View.VISIBLE);
         tvProfileTabEmpty.setVisibility(postList.isEmpty() ? View.VISIBLE : View.GONE);
         if (postList.isEmpty()) tvProfileTabEmpty.setText("No posts yet.");
@@ -757,7 +761,7 @@ public class ProfileFragment extends Fragment implements
             isLastPage = true;
         }
 
-        if (!isSavedTabSelected()) postsAdapter.setPosts(new ArrayList<>(postList));
+        if (!isSavedTabSelected()) { postsAdapter.setPosts(new ArrayList<>(postList)); primeSavedPostStates(postList); }
         applyTabState(profileTabLayout.getSelectedTabPosition());
     }
 
@@ -776,7 +780,7 @@ public class ProfileFragment extends Fragment implements
         } else {
             isLastPage = true;
         }
-        if (!isSavedTabSelected()) postsAdapter.setPosts(new ArrayList<>(postList));
+        if (!isSavedTabSelected()) { postsAdapter.setPosts(new ArrayList<>(postList)); primeSavedPostStates(postList); }
         applyTabState(profileTabLayout.getSelectedTabPosition());
     }
 
@@ -839,7 +843,7 @@ public class ProfileFragment extends Fragment implements
             if (fromServer) {
                 isSavedLastPage = true;
                 isFetchingSaved = false;
-                if (isSavedTabSelected()) postsAdapter.setPosts(new ArrayList<>(savedPostList));
+                if (isSavedTabSelected()) { postsAdapter.setPosts(new ArrayList<>(savedPostList)); primeSavedPostStates(savedPostList); }
                 applyTabState(profileTabLayout.getSelectedTabPosition());
             }
             return;
@@ -858,7 +862,7 @@ public class ProfileFragment extends Fragment implements
             lastSavedVisible = pageLastVisible;
             if (value.size() < PAGE_SIZE) isSavedLastPage = true;
             if (fromServer) isFetchingSaved = false;
-            if (isSavedTabSelected()) postsAdapter.setPosts(new ArrayList<>(savedPostList));
+            if (isSavedTabSelected()) { postsAdapter.setPosts(new ArrayList<>(savedPostList)); primeSavedPostStates(savedPostList); }
             applyTabState(profileTabLayout.getSelectedTabPosition());
             return;
         }
@@ -884,7 +888,7 @@ public class ProfileFragment extends Fragment implements
             lastSavedVisible = pageLastVisible;
             if (value.size() < PAGE_SIZE) isSavedLastPage = true;
             if (fromServer) isFetchingSaved = false;
-            if (isSavedTabSelected()) postsAdapter.setPosts(new ArrayList<>(savedPostList));
+            if (isSavedTabSelected()) { postsAdapter.setPosts(new ArrayList<>(savedPostList)); primeSavedPostStates(savedPostList); }
             applyTabState(profileTabLayout.getSelectedTabPosition());
         }).addOnFailureListener(e -> {
             if (generation == savedFetchGeneration && fromServer) isFetchingSaved = false;
@@ -900,7 +904,7 @@ public class ProfileFragment extends Fragment implements
         lastVisible = null;
         isLastPage = false;
         postList.clear();
-        if (postsAdapter != null && !isSavedTabSelected()) postsAdapter.setPosts(new ArrayList<>());
+        if (postsAdapter != null && !isSavedTabSelected()) { postsAdapter.setPosts(new ArrayList<>()); primeSavedPostStates(postList); }
         fetchPosts();
     }
 
@@ -911,7 +915,7 @@ public class ProfileFragment extends Fragment implements
         lastSavedVisible = null;
         isSavedLastPage = false;
         savedPostList.clear();
-        if (postsAdapter != null && isSavedTabSelected()) postsAdapter.setPosts(new ArrayList<>());
+        if (postsAdapter != null && isSavedTabSelected()) { postsAdapter.setPosts(new ArrayList<>()); primeSavedPostStates(savedPostList); }
         fetchSavedPosts();
     }
 
@@ -981,6 +985,37 @@ public class ProfileFragment extends Fragment implements
         });
     }
 
+    private void primeSavedPostState(@Nullable ForumPost post) {
+        if (post == null || post.getId() == null) return;
+
+        FirebaseUser user = mAuth.getCurrentUser();
+        if (user == null) {
+            savedPostStateCache.put(post.getId(), false);
+            return;
+        }
+
+        if (savedPostStateCache.containsKey(post.getId())) return;
+        if (!savedPostStateInFlight.add(post.getId())) return;
+
+        firebaseManager.isForumPostSaved(post.getId(), task -> {
+            savedPostStateInFlight.remove(post.getId());
+            if (!isAdded()) return;
+
+            boolean isSaved = task.isSuccessful()
+                    && task.getResult() != null
+                    && task.getResult();
+
+            savedPostStateCache.put(post.getId(), isSaved);
+        });
+    }
+
+    private void primeSavedPostStates(@Nullable List<ForumPost> posts) {
+        if (posts == null || posts.isEmpty()) return;
+        for (ForumPost post : posts) {
+            primeSavedPostState(post);
+        }
+    }
+
     @Override
     public void onCommentClick(ForumPost post) {
         onPostClick(post);
@@ -996,22 +1031,14 @@ public class ProfileFragment extends Fragment implements
 
     @Override
     public void onOptionsClick(ForumPost post, View view) {
-        if (mAuth.getCurrentUser() == null) {
-            showResolvedPostOptions(post, view, false);
-            return;
-        }
-
-        firebaseManager.isForumPostSaved(post.getId(), task -> {
-            boolean isSaved = task.isSuccessful() && task.getResult() != null && task.getResult();
-            if (!isAdded()) return;
-            showResolvedPostOptions(post, view, isSaved);
-        });
+        showInstantPostOptions(post, view);
     }
 
-    private void showResolvedPostOptions(ForumPost post, View view, boolean isSaved) {
+    private void showInstantPostOptions(ForumPost post, View view) {
         PopupMenu popup = new PopupMenu(requireContext(), view);
         FirebaseUser user = mAuth.getCurrentUser();
         if (user != null && post.getUserId().equals(user.getUid())) popup.getMenu().add("Delete");
+        boolean isSaved = Boolean.TRUE.equals(savedPostStateCache.get(post.getId()));
         popup.getMenu().add(isSaved ? "Unsave Post" : "Save Post");
         if (user != null && !post.getUserId().equals(user.getUid())) popup.getMenu().add("Report");
         popup.setOnMenuItemClickListener(item -> {

@@ -77,6 +77,8 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
     private int fetchGeneration = 0;
 
     private final Set<String> postLikeInFlight = Collections.newSetFromMap(new ConcurrentHashMap<>());
+    private final Map<String, Boolean> savedPostStateCache = new ConcurrentHashMap<>();
+    private final Set<String> savedPostStateInFlight = ConcurrentHashMap.newKeySet();
 
     // FIX: Navigation guard
     private boolean isNavigating = false;
@@ -220,6 +222,7 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
                 lastVisible = null;
                 isLastPage = false;
                 adapter.setPosts(new ArrayList<>());
+                primeSavedPostStates(postList);
 
                 refreshPosts();
             }
@@ -405,6 +408,7 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
                         lastVisible = null;
                         isLastPage = true;
                         adapter.setPosts(new ArrayList<>());
+                        primeSavedPostStates(postList);
                         isFetching = false;
                         if (binding != null) binding.swipeRefreshLayout.setRefreshing(false);
 
@@ -519,6 +523,7 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
         }
 
         adapter.setPosts(new ArrayList<>(postList));
+        primeSavedPostStates(postList);
     }
 
     private void appendForumPageSnapshot(com.google.firebase.firestore.QuerySnapshot value, boolean showGraphic, int generation) {
@@ -533,6 +538,7 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
                 }
             }
             adapter.setPosts(new ArrayList<>(postList));
+            primeSavedPostStates(postList);
             if (value.size() < PAGE_SIZE) isLastPage = true;
         } else {
             isLastPage = true;
@@ -587,6 +593,37 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
         });
     }
 
+    private void primeSavedPostState(@Nullable ForumPost post) {
+        if (post == null || post.getId() == null) return;
+
+        FirebaseUser user = mAuth.getCurrentUser();
+        if (user == null) {
+            savedPostStateCache.put(post.getId(), false);
+            return;
+        }
+
+        if (savedPostStateCache.containsKey(post.getId())) return;
+        if (!savedPostStateInFlight.add(post.getId())) return;
+
+        firebaseManager.isForumPostSaved(post.getId(), task -> {
+            savedPostStateInFlight.remove(post.getId());
+            if (!isAdded()) return;
+
+            boolean isSaved = task.isSuccessful()
+                    && task.getResult() != null
+                    && task.getResult();
+
+            savedPostStateCache.put(post.getId(), isSaved);
+        });
+    }
+
+    private void primeSavedPostStates(@Nullable List<ForumPost> posts) {
+        if (posts == null || posts.isEmpty()) return;
+        for (ForumPost post : posts) {
+            primeSavedPostState(post);
+        }
+    }
+
     @Override public void onCommentClick(ForumPost p) { onPostClick(p); }
     @Override public void onPostClick(ForumPost p) {
         if (isNavigating) return;
@@ -595,23 +632,14 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
     }
 
     @Override public void onOptionsClick(ForumPost p, View v) {
-        FirebaseUser u = mAuth.getCurrentUser();
-        if (u == null) {
-            showResolvedPostOptions(p, v, false);
-            return;
-        }
-
-        firebaseManager.isForumPostSaved(p.getId(), task -> {
-            boolean isSaved = task.isSuccessful() && task.getResult() != null && task.getResult();
-            if (!isAdded()) return;
-            showResolvedPostOptions(p, v, isSaved);
-        });
+        showInstantPostOptions(p, v);
     }
 
-    private void showResolvedPostOptions(ForumPost p, View v, boolean isSaved) {
+    private void showInstantPostOptions(ForumPost p, View v) {
         PopupMenu popup = new PopupMenu(getContext(), v);
         FirebaseUser u = mAuth.getCurrentUser();
         if (u != null && p.getUserId().equals(u.getUid())) popup.getMenu().add("Delete");
+        boolean isSaved = Boolean.TRUE.equals(savedPostStateCache.get(p.getId()));
         popup.getMenu().add(isSaved ? "Unsave Post" : "Save Post");
         if (u != null && !p.getUserId().equals(u.getUid())) popup.getMenu().add("Report");
         popup.setOnMenuItemClickListener(item -> {
@@ -627,6 +655,7 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
     private void savePostForLater(ForumPost p) {
         firebaseManager.saveForumPost(p.getId(), new FirebaseManager.ForumWriteListener() {
             @Override public void onSuccess() {
+                savedPostStateCache.put(p.getId(), true);
                 if (isAdded()) MessagePopupHelper.showBrief(requireContext(), "Post saved");
             }
 
@@ -639,6 +668,7 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
     private void unsavePost(ForumPost p) {
         firebaseManager.unsaveForumPost(p.getId(), new FirebaseManager.ForumWriteListener() {
             @Override public void onSuccess() {
+                savedPostStateCache.put(p.getId(), false);
                 if (isAdded()) MessagePopupHelper.showBrief(requireContext(), "Post unsaved");
             }
 

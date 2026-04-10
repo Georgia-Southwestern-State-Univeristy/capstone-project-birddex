@@ -44,6 +44,7 @@ import com.google.firebase.Timestamp;
 import com.google.firebase.firestore.DocumentSnapshot;
 import com.google.firebase.firestore.FirebaseFirestore;
 import com.google.firebase.firestore.Source;
+import com.google.firebase.firestore.Query;
 
 import org.json.JSONObject;
 
@@ -125,7 +126,7 @@ public class NearbyFragment extends Fragment {
     private static final long SIGHTING_RECENCY_MS = 72L * 60 * 60 * 1000;
 
     private static final float MIN_DISTANCE_FOR_FETCH = 1000f;
-    private static final int MAX_USER_SIGHTINGS = 500;
+    private static final int MAX_USER_SIGHTINGS = 1000;
     private static final float TRACKED_BIRD_LOCATION_SAVE_MIN_DISTANCE_METERS = 1609.34f; // ~1 mile
     private static final long TRACKED_BIRD_LOCATION_SAVE_MIN_INTERVAL_MS = 30L * 60L * 1000L; // 30 minutes
     private static final long NEARBY_LOCAL_CACHE_MAX_AGE_MS = BirdCacheManager.NEARBY_CACHE_TTL_MS;
@@ -208,7 +209,10 @@ public class NearbyFragment extends Fragment {
         isNavigating = false;
         if (adapter != null) adapter.setNavigating(false);
         if (geoExecutor == null || geoExecutor.isShutdown()) geoExecutor = Executors.newSingleThreadExecutor();
-        requestLocationOrLoad(false);
+
+        // Force a fresh reload when returning to this screen so newly saved identifications
+        // appear immediately instead of being hidden behind the local nearby cache.
+        requestLocationOrLoad(true);
         primeSearchableBirds();
 
         if (reopenBirdSearchOnResume) {
@@ -438,8 +442,17 @@ public class NearbyFragment extends Fragment {
      * for the final UI state.
      */
     private void loadUserSightingsNearby(final int gen) {
+        // Log authentication state for debugging PERMISSION_DENIED issues.
+        com.google.firebase.auth.FirebaseUser user = com.google.firebase.auth.FirebaseAuth.getInstance().getCurrentUser();
+        if (user == null) {
+            Log.w(TAG, "loadUserSightingsNearby: No authenticated user found.");
+        } else {
+            Log.d(TAG, "loadUserSightingsNearby: Authenticated as " + user.getUid());
+        }
+
         // Set up or query the Firebase layer that supplies/stores this feature's data.
         db.collection("userBirdSightings")
+                .orderBy("timestamp", Query.Direction.DESCENDING)
                 .limit(MAX_USER_SIGHTINGS)
                 .get(Source.CACHE)
                 .addOnSuccessListener(querySnapshot -> {
@@ -471,11 +484,13 @@ public class NearbyFragment extends Fragment {
      */
     private void fetchUserSightingsFromServer(final int gen) {
         db.collection("userBirdSightings")
+                .orderBy("timestamp", Query.Direction.DESCENDING)
                 .limit(MAX_USER_SIGHTINGS)
                 .get(Source.SERVER)
                 .addOnSuccessListener(querySnapshot -> {
                     if (gen != fetchGeneration) return;
                     latestFirestoreResults.clear();
+                    Log.d(TAG, "fetchUserSightingsFromServer: Success. Found " + (querySnapshot != null ? querySnapshot.size() : 0) + " sightings.");
                     for (DocumentSnapshot d : querySnapshot.getDocuments()) {
                         Bird b = mapUserSightingToBird(d);
                         if (isValidSighting(b)) {
@@ -486,6 +501,7 @@ public class NearbyFragment extends Fragment {
                     checkIfAllFetched(gen);
                 })
                 .addOnFailureListener(e -> {
+                    Log.e(TAG, "fetchUserSightingsFromServer: Error fetching user sightings", e);
                     if (gen == fetchGeneration) checkIfAllFetched(gen);
                 });
     }

@@ -16,6 +16,7 @@ import androidx.constraintlayout.widget.ConstraintLayout;
 import com.bumptech.glide.Glide;
 
 import java.util.ArrayList;
+import java.util.Locale;
 
 public class AiCompActivity extends AppCompatActivity {
 
@@ -23,6 +24,9 @@ public class AiCompActivity extends AppCompatActivity {
     private String identificationLogId;
     private String identificationId;
     private String currentCaptureSource;
+    private String currentBirdId;
+    private String currentCommonName;
+    private String currentScientificName;
     private boolean couldntFindBirdSubmitting = false;
     private final OpenAiApi openAiApi = new OpenAiApi();
 
@@ -54,10 +58,13 @@ public class AiCompActivity extends AppCompatActivity {
         identificationLogId = getIntent().getStringExtra("identificationLogId");
         identificationId = getIntent().getStringExtra("identificationId");
         currentCaptureSource = CaptureGuardHelper.readReportFromIntent(getIntent(), true).captureSource;
+        currentBirdId = getIntent().getStringExtra("birdId");
+        currentCommonName = getIntent().getStringExtra("commonName");
+        currentScientificName = getIntent().getStringExtra("scientificName");
 
         ArrayList<Bundle> incomingAlternatives = getIntent().getParcelableArrayListExtra("openAiAlternatives");
         if (incomingAlternatives != null) {
-            openAiAlternatives = incomingAlternatives;
+            openAiAlternatives = filterOutCurrentBird(incomingAlternatives);
         }
 
         String reviewUserMessage = getIntent().getStringExtra("openAiUserMessage");
@@ -345,6 +352,49 @@ public class AiCompActivity extends AppCompatActivity {
 
     private int dpToPx(int dp) {
         return Math.round(dp * getResources().getDisplayMetrics().density);
+    }
+
+
+    private ArrayList<Bundle> filterOutCurrentBird(@Nullable ArrayList<Bundle> incomingAlternatives) {
+        ArrayList<Bundle> filtered = new ArrayList<>();
+        if (incomingAlternatives == null) {
+            return filtered;
+        }
+
+        for (Bundle candidate : incomingAlternatives) {
+            if (candidate == null || isSameAsCurrentBird(candidate)) {
+                continue;
+            }
+            filtered.add(candidate);
+        }
+        return filtered;
+    }
+
+    private boolean isSameAsCurrentBird(@Nullable Bundle candidate) {
+        if (candidate == null) {
+            return false;
+        }
+
+        String candidateBirdId = normalize(candidate.getString("candidateBirdId"));
+        String candidateCommonName = normalize(candidate.getString("candidateCommonName"));
+        String candidateScientificName = normalize(candidate.getString("candidateScientificName"));
+
+        String normalizedCurrentBirdId = normalize(currentBirdId);
+        String normalizedCurrentCommonName = normalize(currentCommonName);
+        String normalizedCurrentScientificName = normalize(currentScientificName);
+
+        if (!normalizedCurrentBirdId.isEmpty() && normalizedCurrentBirdId.equals(candidateBirdId)) {
+            return true;
+        }
+        if (!normalizedCurrentCommonName.isEmpty() && normalizedCurrentCommonName.equals(candidateCommonName)) {
+            return true;
+        }
+        return !normalizedCurrentScientificName.isEmpty()
+                && normalizedCurrentScientificName.equals(candidateScientificName);
+    }
+
+    private String normalize(@Nullable String value) {
+        return value == null ? "" : value.trim().toLowerCase(Locale.US);
     }
 
     @Nullable

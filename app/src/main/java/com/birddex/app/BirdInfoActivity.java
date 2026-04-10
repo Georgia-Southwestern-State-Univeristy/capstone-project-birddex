@@ -56,6 +56,7 @@ public class BirdInfoActivity extends AppCompatActivity {
     private RadioGroup rgQuantity;
     private View layoutQuantity;
     private Button btnStore;
+    private TextView tvHeatmapDisclaimer;
     private TextView commonNameTextView, scientificNameTextView, speciesTextView, familyTextView;
     private TextView referenceImageStatusTextView;
     private TextView referenceAttributionTextView;
@@ -136,6 +137,7 @@ public class BirdInfoActivity extends AppCompatActivity {
         Button btnDiscard = findViewById(R.id.btnDiscard);
         rgQuantity = findViewById(R.id.rgQuantity);
         layoutQuantity = findViewById(R.id.layoutQuantity);
+        tvHeatmapDisclaimer = findViewById(R.id.tvHeatmapDisclaimer);
         TextView tvSubmitFeedback = findViewById(R.id.tvSubmitFeedback);
 
         currentImageUriStr = getIntent().getStringExtra("imageUri");
@@ -538,12 +540,18 @@ public class BirdInfoActivity extends AppCompatActivity {
             if (layoutQuantity != null) {
                 layoutQuantity.setVisibility(View.GONE);
             }
+            if (tvHeatmapDisclaimer != null) {
+                tvHeatmapDisclaimer.setVisibility(View.GONE);
+            }
             btnStore.setEnabled(true);
             return;
         }
 
         if (layoutQuantity != null) {
             layoutQuantity.setVisibility(View.VISIBLE);
+        }
+        if (tvHeatmapDisclaimer != null) {
+            tvHeatmapDisclaimer.setVisibility(View.VISIBLE);
         }
 
         if (awardPoints) {

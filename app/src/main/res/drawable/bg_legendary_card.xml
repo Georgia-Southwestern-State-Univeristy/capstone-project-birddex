@@ -34,8 +34,8 @@
     <item>
         <shape android:shape="rectangle">
             <stroke
-                android:width="5dp"
-                android:color="@color/legendary_card_frame_orange" />
+                android:width="2dp"
+                android:color="@color/legendary_gold_dark" />
             <corners android:radius="18dp" />
             <solid android:color="@android:color/transparent" />
         </shape>

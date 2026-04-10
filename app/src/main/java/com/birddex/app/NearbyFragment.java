@@ -155,7 +155,17 @@ public class NearbyFragment extends Fragment {
 
         rvNearby.setLayoutManager(new LinearLayoutManager(requireContext()));
         // Hook the data source to the list/grid adapter so model objects can render as UI rows/cards.
-        adapter = new NearbyAdapter(new ArrayList<>());
+        adapter = new NearbyAdapter(new ArrayList<>(), new NearbyAdapter.OnNearbyBirdActionListener() {
+            @Override
+            public void onOpenBirdInfo(@NonNull Bird bird) {
+                openBirdWikiPage(bird != null ? bird.getId() : null);
+            }
+
+            @Override
+            public void onShowBirdOnMap(@NonNull Bird bird) {
+                openHeatmapScreenForBird(bird);
+            }
+        });
         rvNearby.setAdapter(adapter);
 
         // Set up or query the Firebase layer that supplies/stores this feature's data.
@@ -928,6 +938,29 @@ public class NearbyFragment extends Fragment {
             i.putExtra(NearbyHeatmapActivity.EXTRA_CENTER_LAT, currentLocation.getLatitude());
             i.putExtra(NearbyHeatmapActivity.EXTRA_CENTER_LNG, currentLocation.getLongitude());
         }
+        // Move into the next screen and pass the identifiers/data that screen needs.
+        startActivity(i);
+    }
+
+    private void openHeatmapScreenForBird(@Nullable Bird bird) {
+        if (!isAdded() || isNavigating || bird == null) return;
+
+        Double lat = bird.getLastSeenLatitudeGeorgia();
+        Double lng = bird.getLastSeenLongitudeGeorgia();
+        if (lat == null || lng == null) {
+            MessagePopupHelper.showBrief(requireContext(), "This sighting has no map location yet.");
+            isNavigating = false;
+            if (adapter != null) adapter.setNavigating(false);
+            return;
+        }
+
+        isNavigating = true;
+        Intent i = new Intent(requireContext(), NearbyHeatmapActivity.class);
+        i.putExtra(NearbyHeatmapActivity.EXTRA_CENTER_LAT, lat);
+        i.putExtra(NearbyHeatmapActivity.EXTRA_CENTER_LNG, lng);
+        i.putExtra(NearbyHeatmapActivity.EXTRA_EXACT_SIGHTING_LAT, lat);
+        i.putExtra(NearbyHeatmapActivity.EXTRA_EXACT_SIGHTING_LNG, lng);
+        i.putExtra(NearbyHeatmapActivity.EXTRA_EXACT_SIGHTING_BIRD_NAME, bird.getCommonName());
         // Move into the next screen and pass the identifiers/data that screen needs.
         startActivity(i);
     }

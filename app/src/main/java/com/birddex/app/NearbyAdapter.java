@@ -4,11 +4,14 @@ import android.content.Intent;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.ImageView;
+import android.widget.LinearLayout;
 import android.widget.TextView;
 
 import androidx.annotation.NonNull;
 import androidx.recyclerview.widget.RecyclerView;
 
+import com.google.android.material.bottomsheet.BottomSheetDialog;
 import com.google.android.material.imageview.ShapeableImageView;
 
 import java.text.SimpleDateFormat;
@@ -29,15 +32,22 @@ import java.util.Locale;
  */
 public class NearbyAdapter extends RecyclerView.Adapter<NearbyAdapter.NearbyViewHolder> {
 
+    public interface OnNearbyBirdActionListener {
+        void onOpenBirdInfo(@NonNull Bird bird);
+        void onShowBirdOnMap(@NonNull Bird bird);
+    }
+
     private List<Bird> birdList;
     private boolean isNavigating = false;
+    private final OnNearbyBirdActionListener actionListener;
 
     /**
      * Constructor that stores incoming dependencies/values so this object starts in a usable
      * state.
      */
-    public NearbyAdapter(List<Bird> birdList) {
+    public NearbyAdapter(List<Bird> birdList, OnNearbyBirdActionListener actionListener) {
         this.birdList = birdList;
+        this.actionListener = actionListener;
     }
 
     /**
@@ -87,12 +97,72 @@ public class NearbyAdapter extends RecyclerView.Adapter<NearbyAdapter.NearbyView
         // Attach the user interaction that should run when this control is tapped.
         holder.itemView.setOnClickListener(v -> {
             if (isNavigating) return;
-            isNavigating = true;
-            Intent intent = new Intent(v.getContext(), BirdWikiActivity.class);
-            intent.putExtra(BirdWikiActivity.EXTRA_BIRD_ID, bird.getId());
-            // Move into the next screen and pass the identifiers/data that screen needs.
-            v.getContext().startActivity(intent);
+
+            BottomSheetDialog bottomSheetDialog = new BottomSheetDialog(v.getContext(), R.style.BirdDexNearbyBottomSheetDialog);
+            View sheetView = LayoutInflater.from(v.getContext())
+                    .inflate(R.layout.bottom_sheet_nearby_bird_actions, null, false);
+
+            TextView tvBirdName = sheetView.findViewById(R.id.tvBirdName);
+            TextView tvBirdSubtitle = sheetView.findViewById(R.id.tvBirdSubtitle);
+            LinearLayout btnBirdInfo = sheetView.findViewById(R.id.btnBirdInfo);
+            LinearLayout btnViewOnMap = sheetView.findViewById(R.id.btnViewOnMap);
+            TextView tvMapHelper = sheetView.findViewById(R.id.tvMapHelper);
+            ImageView ivMapAction = sheetView.findViewById(R.id.ivMapAction);
+
+            String commonName = safeText(bird.getCommonName(), "Unknown Bird");
+            String scientificName = safeText(bird.getScientificName(), null);
+            tvBirdName.setText(commonName);
+            if (scientificName != null && !scientificName.equalsIgnoreCase(commonName)) {
+                tvBirdSubtitle.setVisibility(View.VISIBLE);
+                tvBirdSubtitle.setText(scientificName);
+            } else {
+                tvBirdSubtitle.setVisibility(View.GONE);
+            }
+
+            boolean hasCoordinates = bird.getLastSeenLatitudeGeorgia() != null
+                    && bird.getLastSeenLongitudeGeorgia() != null;
+
+            btnViewOnMap.setEnabled(hasCoordinates);
+            btnViewOnMap.setAlpha(hasCoordinates ? 1f : 0.45f);
+            ivMapAction.setAlpha(hasCoordinates ? 1f : 0.45f);
+            tvMapHelper.setText(hasCoordinates
+                    ? "Open the heatmap to this specific bird's sighting."
+                    : "Map unavailable because this sighting has no saved coordinates.");
+            tvMapHelper.setAlpha(hasCoordinates ? 0.90f : 0.65f);
+
+            btnBirdInfo.setOnClickListener(view -> {
+                bottomSheetDialog.dismiss();
+                isNavigating = true;
+
+                if (actionListener != null) {
+                    actionListener.onOpenBirdInfo(bird);
+                } else {
+                    Intent intent = new Intent(v.getContext(), BirdWikiActivity.class);
+                    intent.putExtra(BirdWikiActivity.EXTRA_BIRD_ID, bird.getId());
+                    // Move into the next screen and pass the identifiers/data that screen needs.
+                    v.getContext().startActivity(intent);
+                }
+            });
+
+            btnViewOnMap.setOnClickListener(view -> {
+                if (!hasCoordinates) return;
+
+                bottomSheetDialog.dismiss();
+                isNavigating = true;
+
+                if (actionListener != null) {
+                    actionListener.onShowBirdOnMap(bird);
+                }
+            });
+
+            bottomSheetDialog.setContentView(sheetView);
+            bottomSheetDialog.show();
         });
+    }
+
+    private String safeText(String value, String fallback) {
+        if (value == null || value.trim().isEmpty()) return fallback;
+        return value.trim();
     }
 
     /**

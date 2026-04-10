@@ -108,6 +108,9 @@ public class NearbyHeatmapActivity extends AppCompatActivity
     private static final String TAG = "NearbyHeatmapActivity";
     public static final String EXTRA_CENTER_LAT = "extra_center_lat";
     public static final String EXTRA_CENTER_LNG = "extra_center_lng";
+    public static final String EXTRA_EXACT_SIGHTING_LAT = "extra_exact_sighting_lat";
+    public static final String EXTRA_EXACT_SIGHTING_LNG = "extra_exact_sighting_lng";
+    public static final String EXTRA_EXACT_SIGHTING_BIRD_NAME = "extra_exact_sighting_bird_name";
     public static final String EXTRA_OPEN_POST_ID = "extra_post_id";
     private static final String PREFS_NAME = "BirdDexPrefs";
     public static final String EXTRA_TRACKED_SIGHTING_ID = "extra_tracked_sighting_id";
@@ -175,6 +178,10 @@ public class NearbyHeatmapActivity extends AppCompatActivity
     private TextView tvMapSubtitle;
     private ImageButton btnBirdSearch;
     private ImageButton btnPinFilter;
+    public static final String EXTRA_SELECTED_BIRD_ID = "extra_selected_bird_id";
+    public static final String EXTRA_SELECTED_BIRD_NAME = "extra_selected_bird_name";
+    public static final String EXTRA_SELECTED_BIRD_SCIENTIFIC_NAME = "extra_selected_bird_scientific_name";
+    public static final String EXTRA_FOCUS_SELECTED_BIRD = "extra_focus_selected_bird";
 
     private final Set<String> followedUserIds = new HashSet<>();
     private boolean showFollowingPinsOnly = false;
@@ -222,6 +229,14 @@ public class NearbyHeatmapActivity extends AppCompatActivity
     private boolean trackedBirdNotificationHandled = false;
     private String pendingOpenPostId;
     private boolean pendingOpenPostHandled = false;
+    private boolean shouldFocusSelectedBirdFromIntent = false;
+    private boolean selectedBirdFocusHandled = false;
+    private Double exactSightingLatFromIntent = null;
+    private Double exactSightingLngFromIntent = null;
+    private String exactSightingBirdNameFromIntent = null;
+    private boolean shouldFocusExactSightingFromIntent = false;
+    private boolean exactSightingFocusHandled = false;
+    private Marker exactSightingMarker;
     private static final int POPUP_COMMENTS_PAGE_SIZE = 25;
 
     // --- FIXES ---
@@ -291,6 +306,32 @@ public class NearbyHeatmapActivity extends AppCompatActivity
             trackedBirdIdFromNotification = getIntent().getStringExtra(EXTRA_TRACKED_BIRD_ID);
             trackedBirdNameFromNotification = getIntent().getStringExtra(EXTRA_TRACKED_BIRD_NAME);
             pendingOpenPostId = getIntent().getStringExtra(EXTRA_OPEN_POST_ID);
+
+            String selectedBirdIdFromIntent = safeTrim(getIntent().getStringExtra(EXTRA_SELECTED_BIRD_ID));
+            String selectedBirdNameFromIntent = safeTrim(cleanBirdText(getIntent().getStringExtra(EXTRA_SELECTED_BIRD_NAME)));
+            String selectedBirdScientificNameFromIntent = safeTrim(cleanBirdText(getIntent().getStringExtra(EXTRA_SELECTED_BIRD_SCIENTIFIC_NAME)));
+            String selectedBirdLabelFromIntent = firstNonBlank(selectedBirdNameFromIntent, selectedBirdScientificNameFromIntent, null, null);
+            if (selectedBirdIdFromIntent != null
+                    || selectedBirdNameFromIntent != null
+                    || selectedBirdScientificNameFromIntent != null
+                    || selectedBirdLabelFromIntent != null) {
+                selectedBirdId = selectedBirdIdFromIntent;
+                selectedBirdCommonName = selectedBirdNameFromIntent;
+                selectedBirdScientificName = selectedBirdScientificNameFromIntent;
+                selectedBirdLabel = selectedBirdLabelFromIntent;
+                shouldFocusSelectedBirdFromIntent = getIntent().getBooleanExtra(EXTRA_FOCUS_SELECTED_BIRD, true);
+            }
+
+            if (getIntent().hasExtra(EXTRA_EXACT_SIGHTING_LAT) && getIntent().hasExtra(EXTRA_EXACT_SIGHTING_LNG)) {
+                double exactLat = getIntent().getDoubleExtra(EXTRA_EXACT_SIGHTING_LAT, Double.NaN);
+                double exactLng = getIntent().getDoubleExtra(EXTRA_EXACT_SIGHTING_LNG, Double.NaN);
+                if (!Double.isNaN(exactLat) && !Double.isNaN(exactLng)) {
+                    exactSightingLatFromIntent = exactLat;
+                    exactSightingLngFromIntent = exactLng;
+                    exactSightingBirdNameFromIntent = safeTrim(cleanBirdText(getIntent().getStringExtra(EXTRA_EXACT_SIGHTING_BIRD_NAME)));
+                    shouldFocusExactSightingFromIntent = true;
+                }
+            }
         }
 
         SupportMapFragment mapFragment = (SupportMapFragment) getSupportFragmentManager().findFragmentById(R.id.map);
@@ -639,8 +680,18 @@ public class NearbyHeatmapActivity extends AppCompatActivity
         googleMap.setOnCircleClickListener(this);
         googleMap.setOnMarkerClickListener(this);
 
-        LatLng initialCenter = !Double.isNaN(centerLat) ? new LatLng(centerLat, centerLng) : new LatLng(DEFAULT_LAT, DEFAULT_LNG);
-        float initialZoom = !Double.isNaN(centerLat) ? NEARBY_ZOOM : DEFAULT_ZOOM;
+        LatLng initialCenter;
+        float initialZoom;
+        if (exactSightingLatFromIntent != null && exactSightingLngFromIntent != null) {
+            initialCenter = new LatLng(exactSightingLatFromIntent, exactSightingLngFromIntent);
+            initialZoom = 15f;
+        } else if (!Double.isNaN(centerLat)) {
+            initialCenter = new LatLng(centerLat, centerLng);
+            initialZoom = NEARBY_ZOOM;
+        } else {
+            initialCenter = new LatLng(DEFAULT_LAT, DEFAULT_LNG);
+            initialZoom = DEFAULT_ZOOM;
+        }
         googleMap.moveCamera(CameraUpdateFactory.newLatLngZoom(initialCenter, initialZoom));
 
         if (trackedBirdNameFromNotification != null && !trackedBirdNameFromNotification.trim().isEmpty()) {
@@ -1784,7 +1835,11 @@ public class NearbyHeatmapActivity extends AppCompatActivity
             );
         }
 
-        if (!hasSelectedBirdFilter()) {
+        if (shouldFocusExactSightingFromIntent) {
+            maybeFocusExactSightingFromIntent();
+        } else if (hasSelectedBirdFilter()) {
+            maybeFocusSelectedBirdFromIntent();
+        } else {
             maybeOpenTrackedBirdHotspot();
         }
     }
@@ -1817,6 +1872,74 @@ public class NearbyHeatmapActivity extends AppCompatActivity
         }
     }
 
+
+    private void maybeFocusExactSightingFromIntent() {
+        if (!shouldFocusExactSightingFromIntent || exactSightingFocusHandled) return;
+        if (googleMap == null || exactSightingLatFromIntent == null || exactSightingLngFromIntent == null) return;
+
+        exactSightingFocusHandled = true;
+        shouldFocusExactSightingFromIntent = false;
+
+        LatLng target = new LatLng(exactSightingLatFromIntent, exactSightingLngFromIntent);
+
+        if (exactSightingMarker != null) {
+            exactSightingMarker.remove();
+        }
+
+        String markerTitle = firstNonBlank(
+                exactSightingBirdNameFromIntent,
+                "Selected nearby sighting",
+                null,
+                "Selected nearby sighting"
+        );
+
+        exactSightingMarker = googleMap.addMarker(
+                new MarkerOptions()
+                        .position(target)
+                        .title(markerTitle)
+                        .snippet("Exact sighting from Nearby Sightings")
+                        .icon(BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_YELLOW))
+                        .zIndex(8f)
+        );
+
+        googleMap.animateCamera(
+                CameraUpdateFactory.newLatLngZoom(
+                        target,
+                        Math.max(googleMap.getCameraPosition().zoom, 15f)
+                )
+        );
+
+        if (exactSightingMarker != null) {
+            exactSightingMarker.showInfoWindow();
+        }
+    }
+
+    private void maybeFocusSelectedBirdFromIntent() {
+        if (!shouldFocusSelectedBirdFromIntent || selectedBirdFocusHandled || !hasSelectedBirdFilter()) return;
+        if (googleMap == null) return;
+
+        List<LatLng> matches = new ArrayList<>();
+        for (HotspotBucket bucket : hotspotBuckets.values()) {
+            if (!bucketMatchesSelectedBird(bucket)) continue;
+            matches.add(new LatLng(bucket.getCenterLat(), bucket.getCenterLng()));
+        }
+
+        if (matches.isEmpty()) return;
+
+        selectedBirdFocusHandled = true;
+        shouldFocusSelectedBirdFromIntent = false;
+
+        if (matches.size() == 1) {
+            googleMap.animateCamera(CameraUpdateFactory.newLatLngZoom(matches.get(0), Math.max(googleMap.getCameraPosition().zoom, 12.5f)));
+            return;
+        }
+
+        LatLngBounds.Builder builder = new LatLngBounds.Builder();
+        for (LatLng point : matches) {
+            builder.include(point);
+        }
+        googleMap.animateCamera(CameraUpdateFactory.newLatLngBounds(builder.build(), dpToPx(72)));
+    }
 
     private void maybeOpenTrackedBirdHotspot() {
         if (trackedBirdNotificationHandled) return;

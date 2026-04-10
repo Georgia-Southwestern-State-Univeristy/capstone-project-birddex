@@ -154,7 +154,7 @@ async function callBirdModelApi({ imageBase64, latitude = null, longitude = null
         method: "POST",
         data: requestData,
         headers,
-        timeout: 30000,
+        timeout: 50000,
     });
 
     const responseData = response.data || {};

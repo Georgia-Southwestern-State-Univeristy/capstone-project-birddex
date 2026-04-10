@@ -524,19 +524,29 @@ exports.createUserDocument = auth.user().onCreate(async (user) => {
 
 async function invokeBirdDexCloudRunWarmup({ reason, uid }) {
     const serviceUrl = CONFIG.BIRDDEX_MODEL_BASE_URL;
+    const targetUrl = HYBRID_ID_CONFIG.BIRDDEX_MODEL_URL;
     const authClient = await new GoogleAuth().getIdTokenClient(serviceUrl);
-    const warmupUrl = `${serviceUrl}/`;
-    const authHeaders = await authClient.getRequestHeaders(warmupUrl);
 
-    return axios.get(warmupUrl, {
-        headers: {
-            ...authHeaders,
-            "X-BirdDex-Warmup": "1",
-            "X-BirdDex-Warmup-Reason": sanitizeText(reason || "unknown", 80),
-            "X-BirdDex-Warmup-Uid": sanitizeText(uid || "unknown", 128),
+    const headers = {
+        "Content-Type": "application/json",
+        "X-BirdDex-Warmup": "1",
+        "X-BirdDex-Warmup-Reason": sanitizeText(reason || "unknown", 80),
+        "X-BirdDex-Warmup-Uid": sanitizeText(uid || "unknown", 128),
+    };
+
+    const internalKey = BIRDDEX_MODEL_API_KEY.value();
+    if (internalKey) {
+        headers["X-Internal-Api-Key"] = internalKey;
+    }
+
+    return authClient.request({
+        url: targetUrl,
+        method: "POST",
+        data: {
+            warmup: true,
         },
-        timeout: 5000,
-        validateStatus: (status) => status >= 200 && status < 500,
+        headers,
+        timeout: 25000,
     });
 }
 

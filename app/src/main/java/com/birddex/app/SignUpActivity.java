@@ -83,6 +83,9 @@ public class SignUpActivity extends AppCompatActivity {
                         isNavigating = true;
 
                         setLoadingState(false);
+                        // Warm up the BirdDex model API as soon as the user signs up.
+                        BirdDexApiWarmupHelper.maybeWarmup(SignUpActivity.this, "signup_success");
+
                         // Give the user immediate feedback about the result of this action.
                         MessagePopupHelper.show(SignUpActivity.this, "Sign up successful. Please verify your email.");
                         startActivity(new Intent(SignUpActivity.this, SignUpCompleteActivity.class));

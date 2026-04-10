@@ -101,6 +101,9 @@ public class HomeActivity extends AppCompatActivity implements NetworkMonitor.Ne
         // Initialize NetworkMonitor
         networkMonitor = new NetworkMonitor(this, this);
 
+        // Warm up the BirdDex model API early to avoid cold starts when the user opens the camera.
+        BirdDexApiWarmupHelper.maybeWarmup(this, "home_activity_created");
+
         // Load the cached Georgia bird list immediately, then refresh only when needed.
         loadCachedGeorgiaBirdListImmediately();
         fetchCoreGeorgiaBirdList();

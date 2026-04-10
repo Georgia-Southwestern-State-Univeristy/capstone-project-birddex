@@ -16,7 +16,7 @@ import com.google.firebase.auth.FirebaseUser;
 
 /**
  * NotificationsSettingsActivity: Manages user notification preferences.
- * 
+ *
  * This activity allows users to toggle general notifications, reply alerts,
  * and tracked bird alerts. It also allows configuring cooldowns and distance
  * filters for these notifications.
@@ -24,6 +24,7 @@ import com.google.firebase.auth.FirebaseUser;
 public class NotificationsSettingsActivity extends AppCompatActivity {
 
     private static final String TAG = "NotificationsSettings";
+    private boolean isApplyingToggleState = false;
     private SwitchCompat switchNotifications, switchReplies, switchTrackedBirds;
     private Spinner spinnerCooldown, spinnerTrackedCooldown, spinnerTrackedDistance;
     private ImageView btnBack;
@@ -102,20 +103,11 @@ public class NotificationsSettingsActivity extends AppCompatActivity {
                 if (isFinishing() || isDestroyed()) return;
 
                 // Sync toggle states with user preferences.
-                if (switchNotifications != null) {
-                    switchNotifications.setOnCheckedChangeListener(null);
-                    switchNotifications.setChecked(settings.notificationsEnabled);
-                }
-                
-                if (switchReplies != null) {
-                    switchReplies.setOnCheckedChangeListener(null);
-                    switchReplies.setChecked(settings.repliesEnabled);
-                }
-
-                if (switchTrackedBirds != null) {
-                    switchTrackedBirds.setOnCheckedChangeListener(null);
-                    switchTrackedBirds.setChecked(settings.trackedBirdsNotificationsEnabled);
-                }
+                applyToggleState(
+                        settings.notificationsEnabled,
+                        settings.repliesEnabled,
+                        settings.trackedBirdsNotificationsEnabled
+                );
 
                 // Sync spinner selections with user preferences.
                 if (spinnerCooldown != null) {
@@ -153,6 +145,25 @@ public class NotificationsSettingsActivity extends AppCompatActivity {
         });
     }
 
+    private void applyToggleState(boolean notificationsEnabled,
+                                  boolean repliesEnabled,
+                                  boolean trackedBirdsEnabled) {
+        isApplyingToggleState = true;
+        try {
+            if (switchNotifications != null) {
+                switchNotifications.setChecked(notificationsEnabled);
+            }
+            if (switchReplies != null) {
+                switchReplies.setChecked(repliesEnabled);
+            }
+            if (switchTrackedBirds != null) {
+                switchTrackedBirds.setChecked(trackedBirdsEnabled);
+            }
+        } finally {
+            isApplyingToggleState = false;
+        }
+    }
+
     /**
      * Wires user interaction for all toggles and spinners.
      * Each change triggers an update back to the persistence layer.
@@ -160,18 +171,23 @@ public class NotificationsSettingsActivity extends AppCompatActivity {
     private void setupListeners(String uid) {
         if (switchNotifications != null) {
             switchNotifications.setOnCheckedChangeListener((buttonView, isChecked) -> {
-                settingsApi.setNotificationsEnabled(uid, isChecked, null);
+                if (isApplyingToggleState) return;
+
+                applyToggleState(isChecked, isChecked, isChecked);
+                settingsApi.setAllNotificationsState(uid, isChecked, null);
             });
         }
 
         if (switchReplies != null) {
             switchReplies.setOnCheckedChangeListener((buttonView, isChecked) -> {
+                if (isApplyingToggleState) return;
                 settingsApi.setRepliesEnabled(uid, isChecked, null);
             });
         }
 
         if (switchTrackedBirds != null) {
             switchTrackedBirds.setOnCheckedChangeListener((buttonView, isChecked) -> {
+                if (isApplyingToggleState) return;
                 settingsApi.setTrackedBirdsNotificationsEnabled(uid, isChecked, null);
             });
         }

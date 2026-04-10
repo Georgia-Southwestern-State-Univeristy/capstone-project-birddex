@@ -101,6 +101,8 @@ public class UserSocialProfileActivity extends AppCompatActivity implements
     private boolean isNavigating = false;
     private int favoriteFetchGeneration = 0;
     private boolean isFollowActionInProgress = false;
+    private final Map<String, Boolean> savedPostStateCache = new ConcurrentHashMap<>();
+    private final Set<String> savedPostStateInFlight = ConcurrentHashMap.newKeySet();
 
     /**
      * Android calls this when the Activity is first created. This is where the screen usually
@@ -509,6 +511,7 @@ public class UserSocialProfileActivity extends AppCompatActivity implements
                 Log.d(TAG, "fetchUserPosts: " + value.size() + " posts loaded. Total: " + postList.size());
                 tvPostCount.setText(String.valueOf(postList.size()));
                 adapter.setPosts(new ArrayList<>(postList));
+                primeSavedPostStates(postList);
                 if (value.size() < PAGE_SIZE) isLastPage = true;
             } else {
                 Log.d(TAG, "fetchUserPosts: No more posts.");
@@ -565,6 +568,37 @@ public class UserSocialProfileActivity extends AppCompatActivity implements
         });
     }
 
+    private void primeSavedPostState(@Nullable ForumPost post) {
+        if (post == null || post.getId() == null) return;
+
+        FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
+        if (user == null) {
+            savedPostStateCache.put(post.getId(), false);
+            return;
+        }
+
+        if (savedPostStateCache.containsKey(post.getId())) return;
+        if (!savedPostStateInFlight.add(post.getId())) return;
+
+        firebaseManager.isForumPostSaved(post.getId(), task -> {
+            savedPostStateInFlight.remove(post.getId());
+            if (isFinishing() || isDestroyed()) return;
+
+            boolean isSaved = task.isSuccessful()
+                    && task.getResult() != null
+                    && task.getResult();
+
+            savedPostStateCache.put(post.getId(), isSaved);
+        });
+    }
+
+    private void primeSavedPostStates(@Nullable List<ForumPost> posts) {
+        if (posts == null || posts.isEmpty()) return;
+        for (ForumPost post : posts) {
+            primeSavedPostState(post);
+        }
+    }
+
     @Override public void onCommentClick(ForumPost post) { onPostClick(post); }
 
     /**
@@ -583,25 +617,16 @@ public class UserSocialProfileActivity extends AppCompatActivity implements
     }
 
     @Override public void onOptionsClick(ForumPost post, View view) {
-        FirebaseUser currentUser = FirebaseAuth.getInstance().getCurrentUser();
-        if (currentUser == null) {
-            showResolvedPostOptions(post, view, false);
-            return;
-        }
-
-        firebaseManager.isForumPostSaved(post.getId(), task -> {
-            boolean isSaved = task.isSuccessful() && task.getResult() != null && task.getResult();
-            if (isFinishing() || isDestroyed()) return;
-            showResolvedPostOptions(post, view, isSaved);
-        });
+        showInstantPostOptions(post, view);
     }
 
-    private void showResolvedPostOptions(ForumPost post, View view, boolean isSaved) {
+    private void showInstantPostOptions(ForumPost post, View view) {
         PopupMenu popup = new PopupMenu(this, view);
         FirebaseUser currentUser = FirebaseAuth.getInstance().getCurrentUser();
         if (currentUser != null && post.getUserId().equals(currentUser.getUid())) {
             popup.getMenu().add("Delete");
         }
+        boolean isSaved = Boolean.TRUE.equals(savedPostStateCache.get(post.getId()));
         popup.getMenu().add(isSaved ? "Unsave Post" : "Save Post");
         if (currentUser != null && !post.getUserId().equals(currentUser.getUid())) popup.getMenu().add("Report");
         popup.setOnMenuItemClickListener(item -> {
@@ -614,6 +639,7 @@ public class UserSocialProfileActivity extends AppCompatActivity implements
                                 if (task.isSuccessful()) {
                                     postList.remove(post);
                                     adapter.setPosts(new ArrayList<>(postList));
+                                    primeSavedPostStates(postList);
                                     tvPostCount.setText(String.valueOf(postList.size()));
                                     MessagePopupHelper.showBrief(this, "Post deleted");
                                 } else if (task.getException() != null) {
@@ -639,6 +665,7 @@ public class UserSocialProfileActivity extends AppCompatActivity implements
         firebaseManager.saveForumPost(post.getId(), new FirebaseManager.ForumWriteListener() {
             @Override public void onSuccess() {
                 if (isFinishing() || isDestroyed()) return;
+                savedPostStateCache.put(post.getId(), true);
                 MessagePopupHelper.showBrief(UserSocialProfileActivity.this, "Post saved");
             }
 
@@ -653,6 +680,7 @@ public class UserSocialProfileActivity extends AppCompatActivity implements
         firebaseManager.unsaveForumPost(post.getId(), new FirebaseManager.ForumWriteListener() {
             @Override public void onSuccess() {
                 if (isFinishing() || isDestroyed()) return;
+                savedPostStateCache.put(post.getId(), false);
                 MessagePopupHelper.showBrief(UserSocialProfileActivity.this, "Post unsaved");
             }
 

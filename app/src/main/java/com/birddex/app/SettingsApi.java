@@ -1,8 +1,8 @@
 package com.birddex.app;
 
 import android.util.Log;
+
 import com.google.firebase.firestore.FirebaseFirestore;
-import com.google.firebase.firestore.SetOptions;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -22,7 +22,7 @@ public class SettingsApi {
 
     public void getSettings(String uid, SettingsCallback callback) {
         if (uid == null) return;
-        
+
         db.collection("users").document(uid).get()
                 .addOnSuccessListener(doc -> {
                     boolean enabled = false;
@@ -35,10 +35,10 @@ public class SettingsApi {
                     if (doc != null && doc.exists()) {
                         Boolean val = doc.getBoolean("notificationsEnabled");
                         if (val != null) enabled = val;
-                        
+
                         Boolean replyVal = doc.getBoolean("repliesEnabled");
                         if (replyVal != null) replies = replyVal;
-                        
+
                         Long cooldownVal = doc.getLong("notificationCooldownHours");
                         if (cooldownVal != null) cooldown = cooldownVal.intValue();
 
@@ -66,7 +66,15 @@ public class SettingsApi {
         updates.put("notificationsEnabled", enabled);
         saveToFirestore(uid, updates, callback);
     }
-    
+
+    public void setAllNotificationsState(String uid, boolean enabled, SettingsCallback callback) {
+        Map<String, Object> updates = new HashMap<>();
+        updates.put("notificationsEnabled", enabled);
+        updates.put("repliesEnabled", enabled);
+        updates.put("trackedBirdsNotificationsEnabled", enabled);
+        saveToFirestore(uid, updates, callback);
+    }
+
     public void setRepliesEnabled(String uid, boolean enabled, SettingsCallback callback) {
         Map<String, Object> updates = new HashMap<>();
         updates.put("repliesEnabled", enabled);

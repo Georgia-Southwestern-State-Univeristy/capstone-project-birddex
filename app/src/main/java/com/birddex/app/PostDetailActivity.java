@@ -84,6 +84,8 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
     private boolean shouldAutoScrollToNewestComment = false;
     private int commentFetchGeneration = 0;
     private boolean postLikeInFlight = false;
+    private final Map<String, Boolean> savedPostStateCache = new HashMap<>();
+    private final Map<String, Boolean> savedPostStateInFlight = new HashMap<>();
 
     private ForumComment replyingToComment = null;
     private boolean hasMarkedAsViewed = false;
@@ -354,6 +356,7 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
         FirebaseUser user = mAuth.getCurrentUser();
         ((ImageView) v.findViewById(R.id.ivLikeIcon)).setImageResource((user != null && post.getLikedBy() != null && post.getLikedBy().containsKey(user.getUid())) ? R.drawable.ic_favorite : R.drawable.ic_favorite_border);
         v.findViewById(R.id.btnLike).setOnClickListener(view -> toggleLike());
+        primeSavedPostState(post);
         v.findViewById(R.id.btnPostOptions).setOnClickListener(view -> showPostOptions(post, view));
 
         v.findViewById(R.id.ivPostUserProfilePicture).setOnClickListener(view -> openProfile(post.getUserId()));
@@ -378,30 +381,47 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
         startActivity(ForumImageViewerActivity.createIntent(this, imageUrl));
     }
 
+    private void primeSavedPostState(@NonNull ForumPost post) {
+        if (post.getId() == null) return;
+
+        FirebaseUser user = mAuth.getCurrentUser();
+        if (user == null) {
+            savedPostStateCache.put(post.getId(), false);
+            return;
+        }
+
+        if (savedPostStateCache.containsKey(post.getId())) return;
+        if (Boolean.TRUE.equals(savedPostStateInFlight.get(post.getId()))) return;
+
+        savedPostStateInFlight.put(post.getId(), true);
+
+        firebaseManager.isForumPostSaved(post.getId(), task -> {
+            savedPostStateInFlight.remove(post.getId());
+            if (isFinishing() || isDestroyed()) return;
+
+            boolean isSaved = task.isSuccessful()
+                    && task.getResult() != null
+                    && task.getResult();
+
+            savedPostStateCache.put(post.getId(), isSaved);
+        });
+    }
+
     /**
      * Takes prepared data and presents it on screen or in a dialog/menu.
      */
     private void showPostOptions(ForumPost post, View view) {
-        FirebaseUser user = mAuth.getCurrentUser();
-        if (user == null) {
-            showResolvedPostOptions(post, view, false);
-            return;
-        }
-
-        firebaseManager.isForumPostSaved(post.getId(), task -> {
-            boolean isSaved = task.isSuccessful() && task.getResult() != null && task.getResult();
-            if (isFinishing() || isDestroyed()) return;
-            showResolvedPostOptions(post, view, isSaved);
-        });
+        showInstantPostOptions(post, view);
     }
 
-    private void showResolvedPostOptions(ForumPost post, View view, boolean isSaved) {
+    private void showInstantPostOptions(ForumPost post, View view) {
         PopupMenu popup = new PopupMenu(this, view);
         FirebaseUser user = mAuth.getCurrentUser();
         if (user != null && post.getUserId().equals(user.getUid())) {
             if (post.getTimestamp() != null && (System.currentTimeMillis() - post.getTimestamp().toDate().getTime() <= EDIT_WINDOW_MS)) popup.getMenu().add("Edit");
             popup.getMenu().add("Delete");
         }
+        boolean isSaved = Boolean.TRUE.equals(savedPostStateCache.get(post.getId()));
         popup.getMenu().add(isSaved ? "Unsave Post" : "Save Post");
         if (user != null && !post.getUserId().equals(user.getUid())) popup.getMenu().add("Report");
         popup.setOnMenuItemClickListener(item -> {
@@ -420,6 +440,7 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
             @Override
             public void onSuccess() {
                 if (isFinishing() || isDestroyed()) return;
+                savedPostStateCache.put(post.getId(), true);
                 MessagePopupHelper.showBrief(PostDetailActivity.this, "Post saved");
             }
 
@@ -436,6 +457,7 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
             @Override
             public void onSuccess() {
                 if (isFinishing() || isDestroyed()) return;
+                savedPostStateCache.put(post.getId(), false);
                 MessagePopupHelper.showBrief(PostDetailActivity.this, "Post unsaved");
             }
 

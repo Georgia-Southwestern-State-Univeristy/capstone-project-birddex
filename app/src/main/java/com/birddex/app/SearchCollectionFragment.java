@@ -3,6 +3,7 @@ package com.birddex.app;
 import android.content.Intent;
 import android.net.Uri;
 import android.os.Bundle;
+import android.os.SystemClock;
 import android.text.Editable;
 import android.text.TextWatcher;
 import android.util.Log;
@@ -58,6 +59,7 @@ import java.util.Map;
 public class SearchCollectionFragment extends Fragment {
 
     private static final String TAG = "SearchCollectionFragment";
+    private static final long IMAGE_UPLOAD_CLICK_DEBOUNCE_MS = 900L;
 
     private enum SortMode { DEFAULT, NAME_A_TO_Z, NAME_Z_TO_A, NEWEST, OLDEST }
     private enum ViewMode { SPECIES_CARDS, RECENT_PHOTOS }
@@ -95,6 +97,8 @@ public class SearchCollectionFragment extends Fragment {
     private RarityFilter currentRarityFilter = RarityFilter.ALL;
 
     private boolean isNavigating = false;
+    private boolean isImagePickerOpen = false;
+    private long lastImageUploadTapAtMs = 0L;
 
     /**
      * Android calls this when the Activity is first created. This is where the screen usually
@@ -147,6 +151,8 @@ public class SearchCollectionFragment extends Fragment {
     public void onResume() {
         super.onResume();
         isNavigating = false;
+        isImagePickerOpen = false;
+        setAddBirdButtonBusy(false);
         if (cardAdapter != null) cardAdapter.setNavigating(false);
         // Keep loaded data when coming back to this tab; only fetch if we have nothing yet.
         if (rawSlots.isEmpty()) {
@@ -200,7 +206,16 @@ public class SearchCollectionFragment extends Fragment {
     }
 
     private void openImagePicker() {
-        if (imagePickerLauncher != null) imagePickerLauncher.launch("image/*");
+        if (imagePickerLauncher == null || isNavigating || isImagePickerOpen) return;
+
+        long now = SystemClock.elapsedRealtime();
+        if (now - lastImageUploadTapAtMs < IMAGE_UPLOAD_CLICK_DEBOUNCE_MS) {
+            return;
+        }
+        lastImageUploadTapAtMs = now;
+        isImagePickerOpen = true;
+        setAddBirdButtonBusy(true);
+        imagePickerLauncher.launch("image/*");
     }
 
     /**
@@ -209,14 +224,28 @@ public class SearchCollectionFragment extends Fragment {
      * It also packages extras into an Intent when this flow needs to open another Activity.
      */
     private void handleSelectedImage(@Nullable Uri uri) {
-        if (uri != null && getContext() != null) {
+        if (uri == null) {
+            isImagePickerOpen = false;
+            setAddBirdButtonBusy(false);
+            return;
+        }
+
+        if (getContext() != null) {
             if (isNavigating) return;
             isNavigating = true;
+            // Keep the upload button locked until the user returns to this screen.
             // Move into the next screen and pass the identifiers/data that screen needs.
             startActivity(new Intent(getContext(), CropActivity.class)
                     .putExtra(CropActivity.EXTRA_IMAGE_URI, uri.toString())
                     .putExtra(CropActivity.EXTRA_AWARD_POINTS, false));
         }
+    }
+
+    private void setAddBirdButtonBusy(boolean busy) {
+        if (btnAddBird == null) return;
+        btnAddBird.setEnabled(!busy);
+        btnAddBird.setClickable(!busy);
+        btnAddBird.setAlpha(busy ? 0.6f : 1f);
     }
 
     private boolean isThreeButtonNavigationMode() {

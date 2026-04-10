@@ -22,6 +22,7 @@ public class AiCompActivity extends AppCompatActivity {
     private ArrayList<Bundle> openAiAlternatives = new ArrayList<>();
     private String identificationLogId;
     private String identificationId;
+    private String currentCaptureSource;
     private boolean couldntFindBirdSubmitting = false;
     private final OpenAiApi openAiApi = new OpenAiApi();
 
@@ -52,6 +53,7 @@ public class AiCompActivity extends AppCompatActivity {
 
         identificationLogId = getIntent().getStringExtra("identificationLogId");
         identificationId = getIntent().getStringExtra("identificationId");
+        currentCaptureSource = CaptureGuardHelper.readReportFromIntent(getIntent(), true).captureSource;
 
         ArrayList<Bundle> incomingAlternatives = getIntent().getParcelableArrayListExtra("openAiAlternatives");
         if (incomingAlternatives != null) {
@@ -85,6 +87,10 @@ public class AiCompActivity extends AppCompatActivity {
         bindCandidate(llAiBird2, ivAiImage2, progressAiBird2, tvAiStatus2, tvAiAttribution2, tvReason2, tvAiName2, candidate2);
 
         applySingleVisibleLayoutIfNeeded(llAiBird1, llAiBird2);
+
+        if (isGalleryImportFlow()) {
+            btnRetake.setText(R.string.retry_upload);
+        }
 
         tvSubmitFeedback.setOnClickListener(v -> IdentificationFeedbackHelper.showFeedbackDialog(
                 this,
@@ -151,11 +157,22 @@ public class AiCompActivity extends AppCompatActivity {
                     null,
                     null
             );
-            Intent intent = new Intent(this, ImageUploadActivity.class);
-            intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP);
-            startActivity(intent);
+            if (isGalleryImportFlow()) {
+                Intent home = new Intent(this, HomeActivity.class);
+                home.putExtra(HomeActivity.EXTRA_OPEN_COLLECTION_TAB, true);
+                home.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+                startActivity(home);
+            } else {
+                Intent intent = new Intent(this, ImageUploadActivity.class);
+                intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP);
+                startActivity(intent);
+            }
             finish();
         });
+    }
+
+    private boolean isGalleryImportFlow() {
+        return CaptureGuardHelper.CAPTURE_SOURCE_GALLERY_IMPORT.equals(currentCaptureSource);
     }
 
     private void bindCandidate(LinearLayout container,

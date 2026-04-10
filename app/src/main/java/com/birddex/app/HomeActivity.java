@@ -40,6 +40,9 @@ import java.util.List;
  */
 public class HomeActivity extends AppCompatActivity implements NetworkMonitor.NetworkStatusListener {
 
+    /** When set, switches bottom navigation to the collection tab (e.g. after retrying a gallery upload). */
+    public static final String EXTRA_OPEN_COLLECTION_TAB = "open_collection_tab";
+
     private static final String TAG = "HomeActivity";
     private static final long GEORGIA_SYNC_CHECK_TTL_MS = 24L * 60L * 60L * 1000L;
     private static final int GEORGIA_BIRD_DATA_REFRESH_VERSION = 1;
@@ -274,6 +277,7 @@ public class HomeActivity extends AppCompatActivity implements NetworkMonitor.Ne
     @Override
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
+        setIntent(intent);
         handleIntent(intent);
     }
 
@@ -283,11 +287,18 @@ public class HomeActivity extends AppCompatActivity implements NetworkMonitor.Ne
      * It also packages extras into an Intent when this flow needs to open another Activity.
      */
     private void handleIntent(Intent intent) {
-        if (intent != null && intent.hasExtra("target_user_id")) {
+        if (intent == null) {
+            return;
+        }
+        if (intent.hasExtra("target_user_id")) {
             String targetUserId = intent.getStringExtra("target_user_id");
             lastNonCameraTabId = R.id.nav_profile;
             bottomNav.setSelectedItemId(R.id.nav_profile);
             switchFragment(ProfileFragment.newInstance(targetUserId), TAG_PROFILE + ":" + targetUserId);
+        } else if (intent.getBooleanExtra(EXTRA_OPEN_COLLECTION_TAB, false)) {
+            lastNonCameraTabId = R.id.nav_search_collection;
+            bottomNav.setSelectedItemId(R.id.nav_search_collection);
+            switchFragmentForTab(R.id.nav_search_collection);
         }
     }
 

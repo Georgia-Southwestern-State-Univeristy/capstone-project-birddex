@@ -99,6 +99,7 @@
     <string name="our_ai">Our AI</string>
     <string name="open_ai">Open AI</string>
     <string name="retake_image">Retake Image</string>
+    <string name="retry_upload">Retry Upload</string>
     <string name="user_image">User Image</string>
     <string name="submit_feedback">Submit feedback?</string>
     <string name="submit_feedback_title">Submit feedback</string>

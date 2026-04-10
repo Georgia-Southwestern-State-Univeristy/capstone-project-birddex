@@ -183,7 +183,7 @@ public class CardMakerActivity extends AppCompatActivity {
         txtScientific.setText((currentScientificName != null && !currentScientificName.trim().isEmpty())
                 ? currentScientificName : "--");
         txtLocation.setText(CardFormatUtils.formatLocation(currentState, currentLocality));
-        txtDateCaught.setText(CardFormatUtils.formatCaughtDate(new Date(currentCaughtTime)));
+        txtDateCaught.setText(CardFormatUtils.formatCardViewerDate(new Date(currentCaughtTime)));
         txtFooter.setText("Preview only • Original photo will be saved");
 
         imgBird.setImageDrawable(null);

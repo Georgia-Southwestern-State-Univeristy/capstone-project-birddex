@@ -12,6 +12,7 @@ import android.widget.TextView;
 
 import androidx.annotation.NonNull;
 import androidx.cardview.widget.CardView;
+import androidx.constraintlayout.widget.ConstraintLayout;
 import androidx.recyclerview.widget.RecyclerView;
 
 import com.bumptech.glide.Glide;
@@ -172,10 +173,11 @@ public class CollectionCardAdapter extends RecyclerView.Adapter<CollectionCardAd
 
         if (holder.imgBird != null) {
             ViewGroup.LayoutParams imgLp = holder.imgBird.getLayoutParams();
-            if (imgLp != null) {
-                imgLp.height = holder.itemView.getResources().getDimensionPixelSize(R.dimen.collection_card_image_height);
-                holder.imgBird.setLayoutParams(imgLp);
-                // Use fitCenter to ensure the image is not cut off
+            if (imgLp instanceof ConstraintLayout.LayoutParams) {
+                ConstraintLayout.LayoutParams clp = (ConstraintLayout.LayoutParams) imgLp;
+                clp.dimensionRatio = null;
+                clp.height = holder.itemView.getResources().getDimensionPixelSize(R.dimen.collection_card_image_height);
+                holder.imgBird.setLayoutParams(clp);
                 holder.imgBird.setScaleType(ImageView.ScaleType.FIT_CENTER);
             }
         }

@@ -107,6 +107,14 @@ public final class CardFormatUtils {
     }
 
     /**
+     * Compact date for the full-screen bird card (matches collection grid style, e.g. 3/23/26).
+     */
+    public static String formatCardViewerDate(@Nullable Date date) {
+        if (date == null) return "--";
+        return new SimpleDateFormat("M/d/yy", Locale.US).format(date);
+    }
+
+    /**
      * Main logic block for this part of the feature.
      */
     public static String abbreviateState(@Nullable String state) {

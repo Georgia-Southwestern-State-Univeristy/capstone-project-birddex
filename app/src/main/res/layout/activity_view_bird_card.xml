@@ -41,44 +41,52 @@
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent">
 
-        <LinearLayout
+        <androidx.constraintlayout.widget.ConstraintLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:background="@color/page_cream"
-            android:orientation="vertical"
             android:padding="12dp">
 
-            <!-- Placeholder for card layouts based on rarity -->
             <FrameLayout
                 android:id="@+id/cardPlaceholder"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content">
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                app:layout_constraintWidth_max="@dimen/view_bird_card_max_width"
+                app:layout_constraintEnd_toEndOf="parent"
+                app:layout_constraintStart_toStartOf="parent"
+                app:layout_constraintTop_toTopOf="parent">
                 <include layout="@layout/view_bird_card" />
             </FrameLayout>
 
             <Button
                 android:id="@+id/btnUpgradeCard"
-                android:layout_width="match_parent"
+                android:layout_width="0dp"
                 android:layout_height="48dp"
-                android:layout_marginStart="12dp"
                 android:layout_marginTop="12dp"
-                android:layout_marginEnd="12dp"
+                android:backgroundTint="@color/nav_brown"
                 android:gravity="center"
                 android:minHeight="48dp"
                 android:text="Upgrade Card"
                 android:textAllCaps="false"
+                android:textColor="@color/white"
                 android:textSize="16sp"
-                android:textStyle="bold" />
+                android:textStyle="bold"
+                app:layout_constraintEnd_toEndOf="@id/cardPlaceholder"
+                app:layout_constraintStart_toStartOf="@id/cardPlaceholder"
+                app:layout_constraintTop_toBottomOf="@id/cardPlaceholder" />
 
             <LinearLayout
-                android:layout_width="match_parent"
+                android:id="@+id/rowCardActions"
+                android:layout_width="0dp"
                 android:layout_height="wrap_content"
-                android:layout_marginStart="12dp"
                 android:layout_marginTop="8dp"
-                android:layout_marginEnd="12dp"
                 android:layout_marginBottom="24dp"
                 android:orientation="horizontal"
-                android:weightSum="2">
+                android:weightSum="2"
+                app:layout_constraintBottom_toBottomOf="parent"
+                app:layout_constraintEnd_toEndOf="@id/cardPlaceholder"
+                app:layout_constraintStart_toStartOf="@id/cardPlaceholder"
+                app:layout_constraintTop_toBottomOf="@id/btnUpgradeCard">
 
                 <Button
                     android:id="@+id/btnChangeCardImage"
@@ -86,11 +94,13 @@
                     android:layout_height="48dp"
                     android:layout_weight="1"
                     android:layout_marginEnd="6dp"
+                    android:backgroundTint="@color/nav_brown"
                     android:gravity="center"
                     android:lines="1"
                     android:minHeight="48dp"
                     android:text="Change Image"
                     android:textAllCaps="false"
+                    android:textColor="@color/white"
                     android:textSize="14sp" />
 
                 <Button
@@ -99,14 +109,16 @@
                     android:layout_height="48dp"
                     android:layout_weight="1"
                     android:layout_marginStart="6dp"
+                    android:backgroundTint="@color/nav_brown"
                     android:gravity="center"
                     android:lines="1"
                     android:minHeight="48dp"
                     android:text="Bird Info"
                     android:textAllCaps="false"
+                    android:textColor="@color/white"
                     android:textSize="14sp" />
             </LinearLayout>
-        </LinearLayout>
+        </androidx.constraintlayout.widget.ConstraintLayout>
     </ScrollView>
 
 </androidx.constraintlayout.widget.ConstraintLayout>

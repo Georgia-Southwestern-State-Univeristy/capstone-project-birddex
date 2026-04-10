@@ -475,7 +475,7 @@ public class ViewBirdCardActivity extends AppCompatActivity {
         }
 
         if (txtLocation != null) txtLocation.setText(CardFormatUtils.formatLocation(currentState, currentLocality));
-        if (txtDateCaught != null) txtDateCaught.setText(CardFormatUtils.formatCaughtDate(currentCaughtDate));
+        if (txtDateCaught != null) txtDateCaught.setText(CardFormatUtils.formatCardViewerDate(currentCaughtDate));
 
         loadBirdImage(currentImageUrl);
         updateFavoriteUi(currentIsFavorite);
@@ -553,7 +553,7 @@ public class ViewBirdCardActivity extends AppCompatActivity {
         if (isFinishing() || isDestroyed() || imgBird == null) return;
         Glide.with(this)
                 .load(url)
-                .override(800, 800)
+                .override(1200, 900)
                 .fitCenter()
                 .transition(DrawableTransitionOptions.withCrossFade())
                 .placeholder(R.drawable.bg_image_placeholder)

@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <dimen name="bird_card_image_height">360dp</dimen>
+    <dimen name="view_bird_card_max_width">380dp</dimen>
     <dimen name="collection_card_image_height">140dp</dimen>
     <dimen name="forum_post_image_height">280dp</dimen>
 </resources>

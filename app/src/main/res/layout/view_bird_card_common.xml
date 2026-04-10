@@ -30,7 +30,7 @@
                 android:id="@+id/cardInner"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:padding="16dp">
+                android:padding="18dp">
 
                 <TextView
                     android:id="@+id/txtBirdName"
@@ -48,12 +48,12 @@
                 <ImageView
                     android:id="@+id/imgBird"
                     android:layout_width="0dp"
-                    android:layout_height="@dimen/bird_card_image_height"
-                    android:layout_marginTop="12dp"
-                    android:adjustViewBounds="true"
+                    android:layout_height="0dp"
+                    android:layout_marginTop="14dp"
                     android:background="@android:color/transparent"
                     android:contentDescription="Bird photo"
                     android:scaleType="fitCenter"
+                    app:layout_constraintDimensionRatio="W,4:3"
                     app:layout_constraintTop_toBottomOf="@id/txtBirdName"
                     app:layout_constraintStart_toStartOf="parent"
                     app:layout_constraintEnd_toEndOf="parent" />
@@ -62,7 +62,7 @@
                     android:id="@+id/statsRow"
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="12dp"
+                    android:layout_marginTop="18dp"
                     android:orientation="vertical"
                     app:layout_constraintTop_toBottomOf="@id/imgBird"
                     app:layout_constraintStart_toStartOf="parent"
@@ -75,7 +75,7 @@
                         android:gravity="center"
                         android:text="Cyanocitta cristata"
                         android:textAlignment="center"
-                        android:textColor="#555555"
+                        android:textColor="#111111"
                         android:textSize="16sp" />
 
                     <TextView
@@ -86,7 +86,7 @@
                         android:gravity="center"
                         android:text="Location: --"
                         android:textAlignment="center"
-                        android:textColor="#555555"
+                        android:textColor="#111111"
                         android:textSize="18sp"
                         android:textStyle="bold" />
 
@@ -96,9 +96,9 @@
                         android:layout_height="wrap_content"
                         android:layout_marginTop="6dp"
                         android:gravity="center"
-                        android:text="Date caught: --"
+                        android:text="--"
                         android:textAlignment="center"
-                        android:textColor="#555555"
+                        android:textColor="#111111"
                         android:textSize="16sp" />
                 </LinearLayout>
 

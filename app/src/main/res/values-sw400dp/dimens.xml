@@ -1,6 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <dimen name="bird_card_image_height">300dp</dimen>
     <dimen name="auth_card_horizontal_margin">32dp</dimen>
     <dimen name="forum_post_image_height">250dp</dimen>
 </resources>

@@ -12,6 +12,7 @@ import android.widget.TextView;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.cardview.widget.CardView;
+import androidx.constraintlayout.widget.ConstraintLayout;
 import androidx.recyclerview.widget.RecyclerView;
 
 import com.bumptech.glide.Glide;
@@ -156,9 +157,11 @@ public class FavoritesAdapter extends RecyclerView.Adapter<FavoritesAdapter.VH> 
 
         if (holder.imgBird != null) {
             ViewGroup.LayoutParams imageLp = holder.imgBird.getLayoutParams();
-            if (imageLp != null) {
-                imageLp.height = holder.itemView.getResources().getDimensionPixelSize(R.dimen.collection_card_image_height);
-                holder.imgBird.setLayoutParams(imageLp);
+            if (imageLp instanceof ConstraintLayout.LayoutParams) {
+                ConstraintLayout.LayoutParams clp = (ConstraintLayout.LayoutParams) imageLp;
+                clp.dimensionRatio = null;
+                clp.height = holder.itemView.getResources().getDimensionPixelSize(R.dimen.collection_card_image_height);
+                holder.imgBird.setLayoutParams(clp);
                 holder.imgBird.setScaleType(ImageView.ScaleType.FIT_CENTER);
             }
         }

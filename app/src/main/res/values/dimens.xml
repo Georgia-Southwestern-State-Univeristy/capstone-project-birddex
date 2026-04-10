@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Bird card preview image: scales up on larger shortest-width buckets -->
-    <dimen name="bird_card_image_height">220dp</dimen>
+    <!-- Full-screen card viewer: max width so the card reads as a tall portrait like the collection tile -->
+    <dimen name="view_bird_card_max_width">320dp</dimen>
     <!-- Collection / favorites grid thumbnail height -->
     <dimen name="collection_card_image_height">112dp</dimen>
     <!-- Auth / form cards: tighter margins on very narrow phones -->

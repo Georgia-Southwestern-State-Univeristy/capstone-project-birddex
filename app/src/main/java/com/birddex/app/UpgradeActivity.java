@@ -134,7 +134,7 @@ public class UpgradeActivity extends AppCompatActivity {
         if (nameTxt != null) nameTxt.setText(commonName != null ? commonName : "Unknown");
         if (sciTxt != null) sciTxt.setText(scientificName != null ? scientificName : "--");
         if (locTxt != null) locTxt.setText(CardFormatUtils.formatLocation(state, locality));
-        if (dateTxt != null) dateTxt.setText(CardFormatUtils.formatCaughtDate(caughtTime > 0 ? new Date(caughtTime) : null));
+        if (dateTxt != null) dateTxt.setText(CardFormatUtils.formatCardViewerDate(caughtTime > 0 ? new Date(caughtTime) : null));
 
         if (img != null && imageUrl != null) {
             Glide.with(this).load(imageUrl).into(img);

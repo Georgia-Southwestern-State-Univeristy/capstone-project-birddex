@@ -223,7 +223,8 @@ public class NearbyHeatmapActivity extends AppCompatActivity
     private ForumCommentAdapter popupCommentAdapter;
 
     private List<ForumComment> popupCommentList = new ArrayList<>();
-    private final List<ListenerRegistration> activeListeners = new ArrayList<>();
+    private final List<ListenerRegistration> hotspotSummaryListeners = new ArrayList<>();
+    private final List<ListenerRegistration> bottomSheetListeners = new ArrayList<>();
     private DocumentSnapshot lastPopupCommentVisible;
     private boolean isFetchingPopupComments = false;
     private boolean isLastPopupCommentsPage = false;
@@ -348,10 +349,8 @@ public class NearbyHeatmapActivity extends AppCompatActivity
     protected void onDestroy() {
         heatmapCameraHandler.removeCallbacks(debouncedHeatmapReloadRunnable);
         super.onDestroy();
-        for (ListenerRegistration lr : activeListeners) {
-            if (lr != null) lr.remove();
-        }
-        activeListeners.clear();
+        clearListenerRegistrations(bottomSheetListeners);
+        clearListenerRegistrations(hotspotSummaryListeners);
     }
 
     private void toggleLegend() {
@@ -2096,6 +2095,15 @@ public class NearbyHeatmapActivity extends AppCompatActivity
         BottomSheetDialog dialog = new BottomSheetDialog(this);
         dialog.setContentView(R.layout.bottom_sheet_heatmap_birds);
 
+        int screenHeight = getResources().getDisplayMetrics().heightPixels;
+        int targetHeight = (int) (screenHeight * 0.58f);
+
+        BottomSheetBehavior<FrameLayout> behavior = dialog.getBehavior();
+        behavior.setSkipCollapsed(true);
+        behavior.setFitToContents(false);
+        behavior.setExpandedOffset(Math.max(0, screenHeight - targetHeight));
+        behavior.setState(BottomSheetBehavior.STATE_EXPANDED);
+
         dialog.setOnShowListener(d -> {
             Window window = dialog.getWindow();
             if (window != null) {
@@ -2106,11 +2114,8 @@ public class NearbyHeatmapActivity extends AppCompatActivity
             if (shownBottomSheet != null) {
                 shownBottomSheet.setBackgroundColor(Color.TRANSPARENT);
                 ViewGroup.LayoutParams params = shownBottomSheet.getLayoutParams();
-                params.height = (int) (getResources().getDisplayMetrics().heightPixels * 0.58f);
+                params.height = ViewGroup.LayoutParams.MATCH_PARENT;
                 shownBottomSheet.setLayoutParams(params);
-
-                BottomSheetBehavior<View> behavior = BottomSheetBehavior.from(shownBottomSheet);
-                behavior.setState(BottomSheetBehavior.STATE_EXPANDED);
             }
         });
 
@@ -2132,29 +2137,25 @@ public class NearbyHeatmapActivity extends AppCompatActivity
             if (tvSheetStatus != null) {
                 if (b.userCount == 0 && b.eBirdCount > 0) {
                     tvSheetStatus.setText("Hotspot status: Verified Sighting");
-                    tvSheetStatus.setTextColor(Color.parseColor("#2563EB")); // eBird = blue
+                    tvSheetStatus.setTextColor(Color.parseColor("#2563EB"));
                 } else {
                     HotspotVerificationState state = classifyBucketVerificationState(b);
                     if (state == HotspotVerificationState.VERIFIED) {
                         tvSheetStatus.setText("Hotspot status: Verified Sighting");
-                        tvSheetStatus.setTextColor(Color.parseColor("#6D28D9")); // user verified = purple
+                        tvSheetStatus.setTextColor(Color.parseColor("#6D28D9"));
                     } else if (state == HotspotVerificationState.MIXED) {
                         tvSheetStatus.setText("Hotspot status: Mixed Sighting");
-                        tvSheetStatus.setTextColor(Color.parseColor("#EC4899")); // pink
+                        tvSheetStatus.setTextColor(Color.parseColor("#EC4899"));
                     } else {
                         tvSheetStatus.setText("Hotspot status: Unverified Sighting");
-                        tvSheetStatus.setTextColor(Color.parseColor("#FF8A00")); // orange
+                        tvSheetStatus.setTextColor(Color.parseColor("#FF8A00"));
                     }
                 }
             }
         };
 
-        dialog.setOnDismissListener(d -> {
-            for (ListenerRegistration lr : activeListeners) {
-                if (lr != null) lr.remove();
-            }
-            activeListeners.clear();
-        });
+        clearListenerRegistrations(bottomSheetListeners);
+        dialog.setOnDismissListener(d -> clearListenerRegistrations(bottomSheetListeners));
 
         container.removeAllViews();
 
@@ -2303,7 +2304,7 @@ public class NearbyHeatmapActivity extends AppCompatActivity
         if (b == null) {
             HotspotBucket newB = new HotspotBucket();
             hotspotBuckets.put(key, newB);
-            activeListeners.add(firebaseManager.listenToHotspotSummary(key, (snapshot, e) -> {
+            hotspotSummaryListeners.add(firebaseManager.listenToHotspotSummary(key, (snapshot, e) -> {
                 if (isFinishing() || isDestroyed()) return;
                 if (e != null || snapshot == null) return;
 
@@ -2345,19 +2346,71 @@ public class NearbyHeatmapActivity extends AppCompatActivity
                 addToTempBuckets(newBuckets, sighting, false);
             }
 
+            for (HotspotBucket bucket : newBuckets.values()) {
+                if (fetchGeneration != gen) return;
+                runOnUiThread(() -> {
+                    if (fetchGeneration != gen || isFinishing() || isDestroyed()) return;
+                    attachHotspotSummaryListener(newListeners, bucket);
+                });
+            }
+
             runOnUiThread(() -> {
                 if (fetchGeneration != gen) return;
 
-                for (ListenerRegistration lr : activeListeners) {
-                    if (lr != null) lr.remove();
-                }
-                activeListeners.clear();
+                clearListenerRegistrations(hotspotSummaryListeners);
 
                 hotspotBuckets.clear();
                 hotspotBuckets.putAll(newBuckets);
+
+                hotspotSummaryListeners.addAll(newListeners);
                 onCollectionFinished(gen);
             });
         }).start();
+    }
+
+    private void clearListenerRegistrations(@NonNull List<ListenerRegistration> listeners) {
+        for (ListenerRegistration lr : listeners) {
+            if (lr != null) lr.remove();
+        }
+        listeners.clear();
+    }
+
+    private String buildHotspotIdForBucket(@NonNull HotspotBucket bucket) {
+        double hotspotLat = Math.round(bucket.getCenterLat() / HOTSPOT_BUCKET_SIZE) * HOTSPOT_BUCKET_SIZE;
+        double hotspotLng = Math.round(bucket.getCenterLng() / HOTSPOT_BUCKET_SIZE) * HOTSPOT_BUCKET_SIZE;
+        return String.format(Locale.US, "%.4f,%.4f", hotspotLat, hotspotLng);
+    }
+
+    private void attachHotspotSummaryListener(@NonNull List<ListenerRegistration> listenerStore,
+                                              @NonNull HotspotBucket bucket) {
+        String hotspotId = buildHotspotIdForBucket(bucket);
+        ListenerRegistration registration = firebaseManager.listenToHotspotSummary(hotspotId, (snapshot, e) -> {
+            if (isFinishing() || isDestroyed()) return;
+            if (e != null || snapshot == null) return;
+
+            Map<String, Object> birds = (Map<String, Object>) snapshot.get("birds");
+            bucket.verifiedCounts.clear();
+            bucket.isVerifiedMap.clear();
+
+            if (birds != null) {
+                for (Map.Entry<String, Object> entry : birds.entrySet()) {
+                    String birdKey = entry.getKey();
+                    Map<String, Object> birdData = (Map<String, Object>) entry.getValue();
+                    if (birdData != null) {
+                        Long upVoteCount = (Long) birdData.get("upVoteCount");
+                        Boolean isVerified = (Boolean) birdData.get("isVerified");
+                        bucket.verifiedCounts.put(birdKey, upVoteCount != null ? upVoteCount.intValue() : 0);
+                        bucket.isVerifiedMap.put(birdKey, isVerified != null && isVerified);
+                    }
+                }
+            }
+
+            renderHeatmaps();
+        });
+
+        if (registration != null) {
+            listenerStore.add(registration);
+        }
     }
 
     private void addToTempBuckets(Map<String, HotspotBucket> buckets, HotspotSighting sighting, boolean user) {
@@ -2507,12 +2560,10 @@ public class NearbyHeatmapActivity extends AppCompatActivity
         btnThumbUp.setVisibility(View.VISIBLE);
         btnThumbDown.setVisibility(View.VISIBLE);
 
-        String hotspotId = String.format(Locale.US, "%.4f,%.4f",
-                Math.round(bucket.getCenterLat() / HOTSPOT_BUCKET_SIZE) * HOTSPOT_BUCKET_SIZE,
-                Math.round(bucket.getCenterLng() / HOTSPOT_BUCKET_SIZE) * HOTSPOT_BUCKET_SIZE);
+        String hotspotId = buildHotspotIdForBucket(bucket);
         String birdKey = buildHotspotBirdKey(item.birdId, item.commonName, item.userBirdId);
 
-        activeListeners.add(firebaseManager.listenToMyHotspotBirdVote(hotspotId, birdKey, (snapshot, e) -> {
+        bottomSheetListeners.add(firebaseManager.listenToMyHotspotBirdVote(hotspotId, birdKey, (snapshot, e) -> {
             if (isFinishing() || isDestroyed()) return;
             if (e != null || snapshot == null) return;
             String voteVal = snapshot.getString("vote");
@@ -2536,7 +2587,7 @@ public class NearbyHeatmapActivity extends AppCompatActivity
             btnThumbDown.setAlpha(vote == VOTE_DOWN ? 1f : 0.45f);
         }));
 
-        activeListeners.add(firebaseManager.listenToHotspotBirdSummary(hotspotId, birdKey, (snapshot, e) -> {
+        bottomSheetListeners.add(firebaseManager.listenToHotspotBirdSummary(hotspotId, birdKey, (snapshot, e) -> {
             if (isFinishing() || isDestroyed()) return;
             if (e != null || snapshot == null) return;
             Long upVoteCount = snapshot.getLong("upVoteCount");

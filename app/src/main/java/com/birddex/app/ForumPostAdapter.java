@@ -13,6 +13,7 @@ import androidx.annotation.NonNull;
 import androidx.recyclerview.widget.RecyclerView;
 
 import com.bumptech.glide.Glide;
+import com.bumptech.glide.load.engine.DiskCacheStrategy;
 import com.google.firebase.auth.FirebaseAuth;
 
 import java.util.ArrayList;
@@ -232,6 +233,7 @@ public class ForumPostAdapter extends RecyclerView.Adapter<ForumPostAdapter.Post
                     .load(post.getUserProfilePictureUrl())
                     .placeholder(R.drawable.ic_profile)
                     .error(R.drawable.ic_profile)
+                    .diskCacheStrategy(DiskCacheStrategy.ALL)
                     .into(ivUserProfile);
 
             // Bird Image
@@ -239,6 +241,8 @@ public class ForumPostAdapter extends RecyclerView.Adapter<ForumPostAdapter.Post
                 cvPostImage.setVisibility(View.VISIBLE);
                 Glide.with(itemView.getContext())
                         .load(post.getBirdImageUrl())
+                        .diskCacheStrategy(DiskCacheStrategy.ALL)
+                        .placeholder(R.drawable.bg_image_placeholder)
                         .into(ivBirdImage);
 
                 View.OnClickListener forumImageClickListener = v ->

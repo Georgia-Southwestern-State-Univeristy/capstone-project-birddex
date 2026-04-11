@@ -470,6 +470,9 @@ public class HomeActivity extends AppCompatActivity implements NetworkMonitor.Ne
 
         currentFragmentTag = tag;
         tx.commitAllowingStateLoss();
+
+        // Notify hidden change manually because hide/show doesn't trigger onResume/onPause
+        getSupportFragmentManager().executePendingTransactions();
     }
 
     private void switchFragmentForTab(int tabId) {

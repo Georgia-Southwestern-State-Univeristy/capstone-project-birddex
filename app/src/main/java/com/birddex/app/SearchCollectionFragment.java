@@ -154,11 +154,12 @@ public class SearchCollectionFragment extends Fragment {
         isImagePickerOpen = false;
         setAddBirdButtonBusy(false);
         if (cardAdapter != null) cardAdapter.setNavigating(false);
-        // Keep loaded data when coming back to this tab; only fetch if we have nothing yet.
+        
+        // Only fetch if we have absolutely nothing. 
+        // We removed applyCurrentFilter() here because it triggers a re-bind 
+        // of the entire list, causing the "pop-in" effect.
         if (rawSlots.isEmpty()) {
             fetchUserCollection();
-        } else {
-            applyCurrentFilter();
         }
 
         if (currentViewMode == ViewMode.RECENT_PHOTOS && recentPhotoEntries.isEmpty()) {

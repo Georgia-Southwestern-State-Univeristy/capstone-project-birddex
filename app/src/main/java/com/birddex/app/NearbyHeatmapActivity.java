@@ -2095,15 +2095,6 @@ public class NearbyHeatmapActivity extends AppCompatActivity
         BottomSheetDialog dialog = new BottomSheetDialog(this);
         dialog.setContentView(R.layout.bottom_sheet_heatmap_birds);
 
-        int screenHeight = getResources().getDisplayMetrics().heightPixels;
-        int targetHeight = (int) (screenHeight * 0.58f);
-
-        BottomSheetBehavior<FrameLayout> behavior = dialog.getBehavior();
-        behavior.setSkipCollapsed(true);
-        behavior.setFitToContents(false);
-        behavior.setExpandedOffset(Math.max(0, screenHeight - targetHeight));
-        behavior.setState(BottomSheetBehavior.STATE_EXPANDED);
-
         dialog.setOnShowListener(d -> {
             Window window = dialog.getWindow();
             if (window != null) {
@@ -2113,9 +2104,6 @@ public class NearbyHeatmapActivity extends AppCompatActivity
             View shownBottomSheet = dialog.findViewById(com.google.android.material.R.id.design_bottom_sheet);
             if (shownBottomSheet != null) {
                 shownBottomSheet.setBackgroundColor(Color.TRANSPARENT);
-                ViewGroup.LayoutParams params = shownBottomSheet.getLayoutParams();
-                params.height = ViewGroup.LayoutParams.MATCH_PARENT;
-                shownBottomSheet.setLayoutParams(params);
             }
         });
 
@@ -2137,24 +2125,25 @@ public class NearbyHeatmapActivity extends AppCompatActivity
             if (tvSheetStatus != null) {
                 if (b.userCount == 0 && b.eBirdCount > 0) {
                     tvSheetStatus.setText("Hotspot status: Verified Sighting");
-                    tvSheetStatus.setTextColor(Color.parseColor("#2563EB"));
+                    tvSheetStatus.setTextColor(Color.parseColor("#2563EB")); // eBird = blue
                 } else {
                     HotspotVerificationState state = classifyBucketVerificationState(b);
                     if (state == HotspotVerificationState.VERIFIED) {
                         tvSheetStatus.setText("Hotspot status: Verified Sighting");
-                        tvSheetStatus.setTextColor(Color.parseColor("#6D28D9"));
+                        tvSheetStatus.setTextColor(Color.parseColor("#6D28D9")); // user verified = purple
                     } else if (state == HotspotVerificationState.MIXED) {
                         tvSheetStatus.setText("Hotspot status: Mixed Sighting");
-                        tvSheetStatus.setTextColor(Color.parseColor("#EC4899"));
+                        tvSheetStatus.setTextColor(Color.parseColor("#EC4899")); // pink
                     } else {
                         tvSheetStatus.setText("Hotspot status: Unverified Sighting");
-                        tvSheetStatus.setTextColor(Color.parseColor("#FF8A00"));
+                        tvSheetStatus.setTextColor(Color.parseColor("#FF8A00")); // orange
                     }
                 }
             }
         };
 
         clearListenerRegistrations(bottomSheetListeners);
+
         dialog.setOnDismissListener(d -> clearListenerRegistrations(bottomSheetListeners));
 
         container.removeAllViews();

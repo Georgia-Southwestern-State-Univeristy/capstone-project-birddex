@@ -210,14 +210,14 @@ public class ProfileFragment extends Fragment implements
 
         // Keep tab content in place when returning from child screens. Only fetch if we
         // truly have no local content yet.
-        if (postList.isEmpty() && !isFetching && !isLastPage) {
+        if (postList.isEmpty() && !isFetching && !isLastPage && !isSavedTabSelected()) {
             refreshPosts();
         }
         if (isCurrentUser) {
             if (trackedBirdList.isEmpty()) {
                 refreshTrackedBirds();
             }
-            if (savedPostList.isEmpty() && !isFetchingSaved && !isSavedLastPage) {
+            if (savedPostList.isEmpty() && !isFetchingSaved && !isSavedLastPage && isSavedTabSelected()) {
                 refreshSavedPosts();
             }
         }

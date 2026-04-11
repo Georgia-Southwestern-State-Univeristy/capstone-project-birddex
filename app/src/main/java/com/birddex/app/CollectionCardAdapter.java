@@ -16,6 +16,7 @@ import androidx.constraintlayout.widget.ConstraintLayout;
 import androidx.recyclerview.widget.RecyclerView;
 
 import com.bumptech.glide.Glide;
+import com.bumptech.glide.load.engine.DiskCacheStrategy;
 
 import java.text.SimpleDateFormat;
 import java.util.List;
@@ -251,6 +252,7 @@ public class CollectionCardAdapter extends RecyclerView.Adapter<CollectionCardAd
                         .load(url)
                         .fitCenter()
                         .placeholder(R.drawable.bg_image_placeholder)
+                        .diskCacheStrategy(DiskCacheStrategy.ALL)
                         .into(holder.imgBird);
             }
             holder.itemView.setAlpha(1f);

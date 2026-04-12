@@ -82,30 +82,68 @@
             android:gravity="center"
             android:orientation="horizontal">
 
-            <TextView
-                android:id="@+id/btnThumbUp"
-                android:layout_width="44dp"
-                android:layout_height="44dp"
-                android:gravity="center"
-                android:background="@drawable/bg_white_rounded"
-                android:backgroundTint="#0D000000"
-                android:clickable="true"
-                android:focusable="true"
-                android:text="👍"
-                android:textSize="18sp" />
+            <LinearLayout
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:gravity="center_horizontal"
+                android:orientation="vertical">
 
-            <TextView
-                android:id="@+id/btnThumbDown"
-                android:layout_width="44dp"
-                android:layout_height="44dp"
+                <TextView
+                    android:id="@+id/tvThumbUpCount"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginBottom="4dp"
+                    android:gravity="center"
+                    android:minWidth="44dp"
+                    android:text="0"
+                    android:textColor="#6D28D9"
+                    android:textSize="12sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/btnThumbUp"
+                    android:layout_width="44dp"
+                    android:layout_height="44dp"
+                    android:gravity="center"
+                    android:background="@drawable/bg_white_rounded"
+                    android:backgroundTint="#0D000000"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:text="👍"
+                    android:textSize="18sp" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
                 android:layout_marginStart="8dp"
-                android:gravity="center"
-                android:background="@drawable/bg_white_rounded"
-                android:backgroundTint="#0D000000"
-                android:clickable="true"
-                android:focusable="true"
-                android:text="👎"
-                android:textSize="18sp" />
+                android:gravity="center_horizontal"
+                android:orientation="vertical">
+
+                <TextView
+                    android:id="@+id/tvThumbDownCount"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginBottom="4dp"
+                    android:gravity="center"
+                    android:minWidth="44dp"
+                    android:text="0"
+                    android:textColor="#DC2626"
+                    android:textSize="12sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/btnThumbDown"
+                    android:layout_width="44dp"
+                    android:layout_height="44dp"
+                    android:gravity="center"
+                    android:background="@drawable/bg_white_rounded"
+                    android:backgroundTint="#0D000000"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:text="👎"
+                    android:textSize="18sp" />
+            </LinearLayout>
         </LinearLayout>
 
     </LinearLayout>

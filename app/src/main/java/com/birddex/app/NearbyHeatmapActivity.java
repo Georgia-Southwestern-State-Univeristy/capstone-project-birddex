@@ -2174,9 +2174,11 @@ public class NearbyHeatmapActivity extends AppCompatActivity
             BirdImageLoader.loadBirdImageInto(ivBird, item.birdId, item.commonName, item.scientificName);
 
             TextView tvVoteStatus = row.findViewById(R.id.tvVoteStatus);
+            TextView tvThumbUpCount = row.findViewById(R.id.tvThumbUpCount);
+            TextView tvThumbDownCount = row.findViewById(R.id.tvThumbDownCount);
             TextView btnThumbUp = row.findViewById(R.id.btnThumbUp);
             TextView btnThumbDown = row.findViewById(R.id.btnThumbDown);
-            bindVoteUi(b, item, tvVoteStatus, btnThumbUp, btnThumbDown, refreshSummary);
+            bindVoteUi(b, item, tvVoteStatus, tvThumbUpCount, tvThumbDownCount, btnThumbUp, btnThumbDown, refreshSummary);
 
             View clickArea = row.findViewById(R.id.rowContent);
             if (clickArea == null) {
@@ -2304,8 +2306,10 @@ public class NearbyHeatmapActivity extends AppCompatActivity
                         Map<String, Object> birdData = (Map<String, Object>) entry.getValue();
                         if (birdData != null) {
                             Long upVoteCount = (Long) birdData.get("upVoteCount");
+                            Long downVoteCount = (Long) birdData.get("downVoteCount");
                             Boolean isVerified = (Boolean) birdData.get("isVerified");
                             newB.verifiedCounts.put(birdKey, upVoteCount != null ? upVoteCount.intValue() : 0);
+                            newB.downVoteCounts.put(birdKey, downVoteCount != null ? downVoteCount.intValue() : 0);
                             newB.isVerifiedMap.put(birdKey, isVerified != null && isVerified);
                         }
                     }
@@ -2379,6 +2383,7 @@ public class NearbyHeatmapActivity extends AppCompatActivity
 
             Map<String, Object> birds = (Map<String, Object>) snapshot.get("birds");
             bucket.verifiedCounts.clear();
+            bucket.downVoteCounts.clear();
             bucket.isVerifiedMap.clear();
 
             if (birds != null) {
@@ -2387,8 +2392,10 @@ public class NearbyHeatmapActivity extends AppCompatActivity
                     Map<String, Object> birdData = (Map<String, Object>) entry.getValue();
                     if (birdData != null) {
                         Long upVoteCount = (Long) birdData.get("upVoteCount");
+                        Long downVoteCount = (Long) birdData.get("downVoteCount");
                         Boolean isVerified = (Boolean) birdData.get("isVerified");
                         bucket.verifiedCounts.put(birdKey, upVoteCount != null ? upVoteCount.intValue() : 0);
+                        bucket.downVoteCounts.put(birdKey, downVoteCount != null ? downVoteCount.intValue() : 0);
                         bucket.isVerifiedMap.put(birdKey, isVerified != null && isVerified);
                     }
                 }
@@ -2494,6 +2501,18 @@ public class NearbyHeatmapActivity extends AppCompatActivity
         return vote != null ? vote : VOTE_NONE;
     }
 
+    private int getBirdUpVoteCount(@NonNull HotspotBucket bucket, @NonNull BirdSheetRow row) {
+        String birdKey = buildHotspotBirdKey(row.birdId, row.commonName, row.userBirdId);
+        Integer count = bucket.verifiedCounts.get(birdKey);
+        return count != null ? count : 0;
+    }
+
+    private int getBirdDownVoteCount(@NonNull HotspotBucket bucket, @NonNull BirdSheetRow row) {
+        String birdKey = buildHotspotBirdKey(row.birdId, row.commonName, row.userBirdId);
+        Integer count = bucket.downVoteCounts.get(birdKey);
+        return count != null ? count : 0;
+    }
+
     private String sanitizeText(String text, int maxLength) {
         if (text == null) return "";
         String trimmed = text.trim();
@@ -2535,12 +2554,18 @@ public class NearbyHeatmapActivity extends AppCompatActivity
     private void bindVoteUi(@NonNull HotspotBucket bucket,
                             @NonNull BirdSheetRow item,
                             @NonNull TextView tvVoteStatus,
+                            @NonNull TextView tvThumbUpCount,
+                            @NonNull TextView tvThumbDownCount,
                             @NonNull TextView btnThumbUp,
                             @NonNull TextView btnThumbDown,
                             @NonNull Runnable refreshBottomSheetUi) {
         if (item.userCount <= 0) {
             tvVoteStatus.setText("Verified eBird entry");
             tvVoteStatus.setTextColor(Color.parseColor("#2563EB"));
+            tvThumbUpCount.setText("0");
+            tvThumbDownCount.setText("0");
+            tvThumbUpCount.setVisibility(View.GONE);
+            tvThumbDownCount.setVisibility(View.GONE);
             btnThumbUp.setVisibility(View.GONE);
             btnThumbDown.setVisibility(View.GONE);
             return;
@@ -2548,6 +2573,10 @@ public class NearbyHeatmapActivity extends AppCompatActivity
 
         btnThumbUp.setVisibility(View.VISIBLE);
         btnThumbDown.setVisibility(View.VISIBLE);
+        tvThumbUpCount.setVisibility(View.VISIBLE);
+        tvThumbDownCount.setVisibility(View.VISIBLE);
+        tvThumbUpCount.setText(String.valueOf(getBirdUpVoteCount(bucket, item)));
+        tvThumbDownCount.setText(String.valueOf(getBirdDownVoteCount(bucket, item)));
 
         String hotspotId = buildHotspotIdForBucket(bucket);
         String birdKey = buildHotspotBirdKey(item.birdId, item.commonName, item.userBirdId);
@@ -2580,9 +2609,13 @@ public class NearbyHeatmapActivity extends AppCompatActivity
             if (isFinishing() || isDestroyed()) return;
             if (e != null || snapshot == null) return;
             Long upVoteCount = snapshot.getLong("upVoteCount");
+            Long downVoteCount = snapshot.getLong("downVoteCount");
             Boolean isVerified = snapshot.getBoolean("isVerified");
             bucket.verifiedCounts.put(birdKey, upVoteCount != null ? upVoteCount.intValue() : 0);
+            bucket.downVoteCounts.put(birdKey, downVoteCount != null ? downVoteCount.intValue() : 0);
             bucket.isVerifiedMap.put(birdKey, isVerified != null && isVerified);
+            tvThumbUpCount.setText(String.valueOf(bucket.verifiedCounts.getOrDefault(birdKey, 0)));
+            tvThumbDownCount.setText(String.valueOf(bucket.downVoteCounts.getOrDefault(birdKey, 0)));
             refreshBottomSheetUi.run();
             renderHeatmaps();
         }));
@@ -2833,6 +2866,7 @@ public class NearbyHeatmapActivity extends AppCompatActivity
         final Set<String> sightingIds = new HashSet<>();
         final Map<String, Integer> userVotes = new HashMap<>();
         final Map<String, Integer> verifiedCounts = new HashMap<>();
+        final Map<String, Integer> downVoteCounts = new HashMap<>();
         final Map<String, Boolean> isVerifiedMap = new HashMap<>();
 
         void add(HotspotSighting sighting, boolean user) {

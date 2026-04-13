@@ -1,6 +1,6 @@
 <resources xmlns:tools="http://schemas.android.com/tools">
     <!-- Base application theme. -->
-    <style name="Base.Theme.BirdDex" parent="Theme.Material3.DayNight.NoActionBar">
+    <style name="Base.Theme.BirdDex" parent="Theme.Material3.Light.NoActionBar">
         <!-- Navigation (Primary) -->
         <item name="colorPrimary">@color/nav_brown</item>
         <item name="colorOnPrimary">@color/page_cream</item>

@@ -10,6 +10,7 @@ import android.view.View;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.appcompat.app.AlertDialog;
+import androidx.appcompat.app.AppCompatDelegate;
 
 import com.google.firebase.FirebaseApp;
 import com.google.firebase.appcheck.FirebaseAppCheck;
@@ -41,6 +42,9 @@ public class BirdDexAppCheck extends Application {
     @Override
     public void onCreate() {
         super.onCreate();
+        // Force Light Mode globally
+        AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_NO);
+
         FirebaseApp.initializeApp(this);
         
         FirebaseAppCheck firebaseAppCheck = FirebaseAppCheck.getInstance();
@@ -69,7 +73,7 @@ public class BirdDexAppCheck extends Application {
 
             /**
              * Runs after {@code onCreate} when the content view exists so system-bar insets apply
-             * consistently. Splash applies insets inside {@link SplashActivity#onCreate} before
+             * consistently. Splash applies insets inside {//@link SplashActivity#onCreate//} before
              * animations (skipped here). Welcome/auth screens apply immediately so the bottom nav
              * band is correct on the first frame; other screens post one frame for layout stability.
              */

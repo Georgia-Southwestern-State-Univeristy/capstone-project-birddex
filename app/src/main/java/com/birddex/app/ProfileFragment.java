@@ -110,6 +110,7 @@ public class ProfileFragment extends Fragment implements
 
     private ActivityResultLauncher<Intent> editProfileLauncher;
     private ListenerRegistration profileListener;
+    private ListenerRegistration favoritesListener;
 
     private boolean isNavigating = false;
     private int fetchGeneration = 0;
@@ -544,25 +545,26 @@ public class ProfileFragment extends Fragment implements
     private void loadFavoriteCards() {
         if (profileUserId == null) return;
         final int myGen = ++favoriteFetchGeneration;
-        db.collection("users").document(profileUserId).collection("collectionSlot")
-                .get(Source.CACHE)
-                .addOnSuccessListener(querySnapshot -> {
+        
+        if (favoritesListener != null) {
+            favoritesListener.remove();
+        }
+
+        favoritesListener = db.collection("users").document(profileUserId).collection("collectionSlot")
+                .addSnapshotListener((querySnapshot, e) -> {
+                    if (e != null) {
+                        Log.e(TAG, "Listen failed.", e);
+                        return;
+                    }
                     if (!isAdded() || myGen != favoriteFetchGeneration) return;
-                    if (querySnapshot != null && !querySnapshot.isEmpty()) {
+                    if (querySnapshot != null) {
                         processFavoriteSlotSnapshot(querySnapshot, myGen);
                     }
-                    fetchFavoriteCardsFromServer(profileUserId, myGen);
-                })
-                .addOnFailureListener(e -> fetchFavoriteCardsFromServer(profileUserId, myGen));
+                });
     }
 
     private void fetchFavoriteCardsFromServer(String userId, int generation) {
-        db.collection("users").document(userId).collection("collectionSlot")
-                .get(Source.SERVER)
-                .addOnSuccessListener(querySnapshot -> {
-                    if (!isAdded() || generation != favoriteFetchGeneration) return;
-                    processFavoriteSlotSnapshot(querySnapshot, generation);
-                });
+        // No longer needed as we use addSnapshotListener
     }
 
     /**
@@ -1329,6 +1331,10 @@ public class ProfileFragment extends Fragment implements
         if (profileListener != null) {
             profileListener.remove();
             profileListener = null;
+        }
+        if (favoritesListener != null) {
+            favoritesListener.remove();
+            favoritesListener = null;
         }
     }
 }

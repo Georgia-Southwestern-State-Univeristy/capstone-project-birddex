@@ -37,6 +37,7 @@ import com.google.android.material.chip.ChipGroup;
 import com.google.firebase.auth.FirebaseAuth;
 import com.google.firebase.auth.FirebaseUser;
 import com.google.firebase.firestore.FirebaseFirestore;
+import com.google.firebase.firestore.ListenerRegistration;
 import com.google.firebase.firestore.Query;
 import com.google.firebase.firestore.QueryDocumentSnapshot;
 import com.google.firebase.firestore.Source;
@@ -85,6 +86,9 @@ public class SearchCollectionFragment extends Fragment {
 
     private ActivityResultLauncher<String> imagePickerLauncher;
 
+    private ListenerRegistration collectionListener;
+    private ListenerRegistration recentPhotosListener;
+
     private final List<CollectionSlot> rawSlots = new ArrayList<>();
     private final List<CollectionSlot> uniqueSpeciesSlots = new ArrayList<>();
     private final List<CollectionSlot> displayedSlots = new ArrayList<>();
@@ -131,7 +135,7 @@ public class SearchCollectionFragment extends Fragment {
 
         // Hook the data source to the list/grid adapter so model objects can render as UI rows/cards.
         cardAdapter = new CollectionCardAdapter(displayedSlots);
-        recentPhotoAdapter = new RecentPhotoMemoriesAdapter(requireContext(), this::fetchRecentPhotos);
+        recentPhotoAdapter = new RecentPhotoMemoriesAdapter(requireContext(), this::startRecentPhotosListener);
         applySpeciesCardMode();
 
         // Attach the user interaction that should run when this control is tapped.
@@ -139,7 +143,7 @@ public class SearchCollectionFragment extends Fragment {
         btnFilter.setOnClickListener(view -> showFilterDialog());
 
         setupSearch();
-        fetchUserCollection();
+        startCollectionListener();
         return v;
     }
 
@@ -154,16 +158,9 @@ public class SearchCollectionFragment extends Fragment {
         isImagePickerOpen = false;
         setAddBirdButtonBusy(false);
         if (cardAdapter != null) cardAdapter.setNavigating(false);
-        
-        // Only fetch if we have absolutely nothing. 
-        // We removed applyCurrentFilter() here because it triggers a re-bind 
-        // of the entire list, causing the "pop-in" effect.
-        if (rawSlots.isEmpty()) {
-            fetchUserCollection();
-        }
 
         if (currentViewMode == ViewMode.RECENT_PHOTOS && recentPhotoEntries.isEmpty()) {
-            fetchRecentPhotos();
+            startRecentPhotosListener();
         }
     }
 
@@ -204,6 +201,11 @@ public class SearchCollectionFragment extends Fragment {
         // Hook the data source to the list/grid adapter so model objects can render as UI rows/cards.
         rvCollection.setAdapter(recentPhotoAdapter);
         etSearch.setHint("Search birds...");
+        
+        // Ensure listener is running if we switched to this mode
+        if (recentPhotoEntries.isEmpty()) {
+            startRecentPhotosListener();
+        }
     }
 
     private void openImagePicker() {
@@ -441,7 +443,7 @@ public class SearchCollectionFragment extends Fragment {
                     favoritesOnly = false;
                     currentRarityFilter = RarityFilter.ALL;
                     applyRecentPhotosMode();
-                    fetchRecentPhotos();
+                    startRecentPhotosListener();
                 } else {
                     currentViewMode = ViewMode.SPECIES_CARDS;
                     favoritesOnly = checkedShowId == R.id.chipShowFavorites;
@@ -514,6 +516,8 @@ public class SearchCollectionFragment extends Fragment {
 
     @Override
     public void onDestroyView() {
+        stopCollectionListener();
+        stopRecentPhotosListener();
         if (filterDialog != null) {
             filterDialog.setOnDismissListener(null);
             filterDialog.dismiss();
@@ -554,44 +558,67 @@ public class SearchCollectionFragment extends Fragment {
     }
 
     /**
-     * Pulls data from a local source, Firebase, or an external API and prepares it for the UI or
-     * caller.
-     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
-     * changes.
+     * Starts a real-time listener for the user's bird collection.
      */
-    private void fetchUserCollection() {
+    private void startCollectionListener() {
         FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
         if (user == null) return;
-        // Set up or query the Firebase layer that supplies/stores this feature's data.
-        FirebaseFirestore.getInstance()
+
+        stopCollectionListener();
+
+        collectionListener = FirebaseFirestore.getInstance()
                 .collection("users")
                 .document(user.getUid())
                 .collection("collectionSlot")
                 .orderBy("slotIndex", Query.Direction.ASCENDING)
-                .get(Source.CACHE)
-                .addOnSuccessListener(snap -> {
-                    if (snap != null && !snap.isEmpty()) processCollectionSnapshots(user.getUid(), snap);
-                    fetchCollectionFromServer(user.getUid());
-                })
-                .addOnFailureListener(e -> fetchCollectionFromServer(user.getUid()));
+                .addSnapshotListener((snap, e) -> {
+                    if (e != null) {
+                        Log.e(TAG, "Listen failed.", e);
+                        return;
+                    }
+                    if (snap != null) {
+                        processCollectionSnapshots(user.getUid(), snap);
+                    }
+                });
+    }
+
+    private void stopCollectionListener() {
+        if (collectionListener != null) {
+            collectionListener.remove();
+            collectionListener = null;
+        }
     }
 
     /**
-     * Pulls data from a local source, Firebase, or an external API and prepares it for the UI or
-     * caller.
-     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
-     * changes.
+     * Starts a real-time listener for the user's recent photos.
      */
-    private void fetchCollectionFromServer(String uid) {
-        // Set up or query the Firebase layer that supplies/stores this feature's data.
-        FirebaseFirestore.getInstance()
+    private void startRecentPhotosListener() {
+        FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
+        if (user == null) return;
+
+        stopRecentPhotosListener();
+
+        recentPhotosListener = FirebaseFirestore.getInstance()
                 .collection("users")
-                .document(uid)
-                .collection("collectionSlot")
-                .orderBy("slotIndex", Query.Direction.ASCENDING)
-                .get(Source.SERVER)
-                .addOnSuccessListener(snap -> processCollectionSnapshots(uid, snap))
-                .addOnFailureListener(e -> Log.e(TAG, "Error", e));
+                .document(user.getUid())
+                .collection("userBirdImage")
+                .orderBy("timestamp", Query.Direction.DESCENDING)
+                .addSnapshotListener((snap, e) -> {
+                    if (e != null) {
+                        Log.e(TAG, "Recent photos listen failed.", e);
+                        return;
+                    }
+                    if (snap != null) {
+                        processRecentPhotoSnapshots(snap);
+                    }
+                });
+    }
+
+    private void stopRecentPhotosListener() {
+        if (recentPhotosListener != null) {
+            recentPhotosListener.remove();
+            recentPhotosListener = null;
+        }
     }
 
     /**
@@ -603,21 +630,12 @@ public class SearchCollectionFragment extends Fragment {
         final int myGeneration = ++fetchGeneration;
         rawSlots.clear();
 
-        for (QueryDocumentSnapshot document : queryDocumentSnapshots) {
-            CollectionSlot slot = new CollectionSlot();
-            slot.setId(document.getId());
-            slot.setSlotIndex(document.getLong("slotIndex") != null ? document.getLong("slotIndex").intValue() : 0);
-            slot.setUserBirdId(document.getString("userBirdId"));
-            slot.setBirdId(document.getString("birdId"));
-            slot.setImageUrl(document.getString("imageUrl"));
-            slot.setTimestamp(document.getDate("timestamp"));
-            slot.setCommonName(document.getString("commonName"));
-            slot.setScientificName(document.getString("scientificName"));
-            slot.setState(document.getString("state"));
-            slot.setLocality(document.getString("locality"));
-            slot.setRarity(document.getString("rarity"));
-            slot.setFavorite(Boolean.TRUE.equals(document.getBoolean("isFavorite")));
-            rawSlots.add(slot);
+        for (com.google.firebase.firestore.QueryDocumentSnapshot document : queryDocumentSnapshots) {
+            CollectionSlot slot = document.toObject(CollectionSlot.class);
+            if (slot != null) {
+                slot.setId(document.getId());
+                rawSlots.add(slot);
+            }
 
             boolean missingBirdId = isBlank(slot.getBirdId());
             boolean missingNames = isBlank(slot.getCommonName()) && isBlank(slot.getScientificName());
@@ -632,50 +650,6 @@ public class SearchCollectionFragment extends Fragment {
         if (fetchGeneration == myGeneration) rebuildSpeciesListAndFilter();
     }
 
-    /**
-     * Pulls data from a local source, Firebase, or an external API and prepares it for the UI or
-     * caller.
-     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
-     * changes.
-     */
-    private void fetchRecentPhotos() {
-        FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
-        if (user == null) return;
-        // Set up or query the Firebase layer that supplies/stores this feature's data.
-        FirebaseFirestore.getInstance()
-                .collection("users")
-                .document(user.getUid())
-                .collection("userBirdImage")
-                .orderBy("timestamp", Query.Direction.DESCENDING)
-                .get(Source.CACHE)
-                .addOnSuccessListener(snap -> {
-                    if (snap != null && !snap.isEmpty()) processRecentPhotoSnapshots(snap);
-                    fetchRecentPhotosFromServer(user.getUid());
-                })
-                .addOnFailureListener(e -> fetchRecentPhotosFromServer(user.getUid()));
-    }
-
-    /**
-     * Pulls data from a local source, Firebase, or an external API and prepares it for the UI or
-     * caller.
-     * It talks to Firebase/Firestore in this method, either to read live data or to persist app
-     * changes.
-     */
-    private void fetchRecentPhotosFromServer(String uid) {
-        // Set up or query the Firebase layer that supplies/stores this feature's data.
-        FirebaseFirestore.getInstance()
-                .collection("users")
-                .document(uid)
-                .collection("userBirdImage")
-                .orderBy("timestamp", Query.Direction.DESCENDING)
-                .get(Source.SERVER)
-                .addOnSuccessListener(this::processRecentPhotoSnapshots)
-                .addOnFailureListener(e -> Log.e(TAG, "Error", e));
-    }
-
-    /**
-     * Main logic block for this part of the feature.
-     */
     private void processRecentPhotoSnapshots(com.google.firebase.firestore.QuerySnapshot snap) {
         List<CollectionSlot> slotsCopy = new ArrayList<>(rawSlots);
         Map<String, String> commonMap = new LinkedHashMap<>();

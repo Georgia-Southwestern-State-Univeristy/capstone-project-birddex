@@ -1,6 +1,7 @@
 package com.birddex.app;
 
 import com.google.firebase.firestore.Exclude;
+import com.google.firebase.firestore.PropertyName;
 import java.util.Date;
 
 /**
@@ -149,6 +150,7 @@ public class CollectionSlot {
     /**
      * Returns the current value/state this class needs somewhere else in the app.
      */
+    @PropertyName("isFavorite")
     public boolean isFavorite() {
         return isFavorite;
     }
@@ -156,6 +158,7 @@ public class CollectionSlot {
     /**
      * Updates object/screen state by storing a new value or reconfiguring a dependency.
      */
+    @PropertyName("isFavorite")
     public void setFavorite(boolean favorite) {
         isFavorite = favorite;
     }

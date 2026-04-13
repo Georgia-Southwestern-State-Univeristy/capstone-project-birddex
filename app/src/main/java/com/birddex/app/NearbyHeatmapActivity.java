@@ -136,10 +136,11 @@ public class NearbyHeatmapActivity extends AppCompatActivity
     private static final float MIN_ZOOM_CHANGE_TO_REFRESH = 0.5f;
     private static final float MIN_CAMERA_MOVE_TO_REFRESH_METERS = 500f;
     /** Wait until the camera stops before reloading tiles — avoids flicker/jitter while panning or zooming. */
-    private static final long CAMERA_IDLE_DEBOUNCE_MS = 420L;
+    private static final long CAMERA_IDLE_DEBOUNCE_MS = 1000L;
 
     private final Handler heatmapCameraHandler = new Handler(Looper.getMainLooper());
     private final Runnable debouncedHeatmapReloadRunnable = this::onDebouncedCameraIdleForHeatmap;
+    private boolean isMapMoving = false;
 
     private static final double DEFAULT_LAT = 32.6781;
     private static final double DEFAULT_LNG = -83.2220;
@@ -719,7 +720,14 @@ public class NearbyHeatmapActivity extends AppCompatActivity
             }
         }
 
+        googleMap.setOnCameraMoveStartedListener(reason -> {
+            isMapMoving = true;
+            fetchGeneration++; // Incrementing cancels any background threads checking this value
+            heatmapCameraHandler.removeCallbacks(debouncedHeatmapReloadRunnable);
+        });
+
         googleMap.setOnCameraIdleListener(() -> {
+            isMapMoving = false;
             if (googleMap == null) return;
             CameraPosition cp = googleMap.getCameraPosition();
             currentVisibleBounds = googleMap.getProjection().getVisibleRegion().latLngBounds;
@@ -797,7 +805,17 @@ public class NearbyHeatmapActivity extends AppCompatActivity
     private void fetchHeatmapData() {
         final int gen = ++fetchGeneration;
         pendingLoads = 2;
-        tvMapSubtitle.setText("Updating heatmap...");
+        // Don't update subtitle here to reduce UI flicker if it's already updated by debounced logic
+        // tvMapSubtitle.setText("Updating heatmap...");
+
+        // Trigger a background server-side fetch to ensure data isn't stale/empty.
+        firebaseManager.triggerEbirdDataFetch(task -> {
+            if (task.isSuccessful()) {
+                Log.d(TAG, "Background eBird fetch triggered successfully.");
+            } else {
+                Log.e(TAG, "Background eBird fetch trigger failed.", task.getException());
+            }
+        });
 
         loadUserBirdSightings(gen);
         loadEbirdApiSightings(gen);
@@ -1736,7 +1754,7 @@ public class NearbyHeatmapActivity extends AppCompatActivity
     private void processSightings(com.google.firebase.firestore.QuerySnapshot snap, boolean user, int gen) {
         if (fetchGeneration != gen) return;
 
-        // Run processing in background to prevent UI stutter
+        // Use a background thread for heavy processing
         new Thread(() -> {
             List<WeightedLatLng> hl = new ArrayList<>();
             List<HotspotSighting> hsl = new ArrayList<>();
@@ -1757,17 +1775,21 @@ public class NearbyHeatmapActivity extends AppCompatActivity
                 hsl.add(buildHotspotSighting(d, lat, lng, user));
             }
 
+            // Only switch to UI thread for final map updates
             runOnUiThread(() -> {
                 if (fetchGeneration != gen) return;
-                List<WeightedLatLng> targetHl = user ? userHeatPoints : eBirdHeatPoints;
-                List<HotspotSighting> targetHsl = user ? userHotspotSightings : eBirdHotspotSightings;
-
-                targetHl.clear();
-                targetHl.addAll(hl);
-                targetHsl.clear();
-                targetHsl.addAll(hsl);
-
-                rebuildHotspotBuckets(gen);
+                if (user) {
+                    userHeatPoints.clear();
+                    userHeatPoints.addAll(hl);
+                    userHotspotSightings.clear();
+                    userHotspotSightings.addAll(hsl);
+                } else {
+                    eBirdHeatPoints.clear();
+                    eBirdHeatPoints.addAll(hl);
+                    eBirdHotspotSightings.clear();
+                    eBirdHotspotSightings.addAll(hsl);
+                }
+                onCollectionFinished(gen);
             });
         }).start();
     }
@@ -1775,7 +1797,9 @@ public class NearbyHeatmapActivity extends AppCompatActivity
     private void onCollectionFinished(int gen) {
         if (fetchGeneration != gen) return;
         pendingLoads--;
-        if (pendingLoads <= 0) renderHeatmaps();
+        if (pendingLoads <= 0) {
+            new Thread(() -> rebuildHotspotBuckets(gen)).start();
+        }
     }
 
     /**
@@ -1797,7 +1821,7 @@ public class NearbyHeatmapActivity extends AppCompatActivity
      * Main logic block for this part of the feature.
      */
     private void renderHeatmaps() {
-        if (googleMap == null) return;
+        if (googleMap == null || isMapMoving) return;
 
         List<WeightedLatLng> displayEBirdHeatPoints = buildDisplayHeatPoints(false);
         List<WeightedLatLng> displayUserUnverifiedHeatPoints = buildUserHeatPointsForStatus(HotspotVerificationState.UNVERIFIED);
@@ -2321,44 +2345,42 @@ public class NearbyHeatmapActivity extends AppCompatActivity
         b.add(sighting, user);
     }
     private void rebuildHotspotBuckets(int gen) {
-        new Thread(() -> {
-            Map<String, HotspotBucket> newBuckets = new LinkedHashMap<>();
+        Map<String, HotspotBucket> newBuckets = new LinkedHashMap<>();
             List<ListenerRegistration> newListeners = new ArrayList<>();
 
-            // We use local copies of the sightings lists to avoid ConcurrentModificationException
-            List<HotspotSighting> userList = new ArrayList<>(userHotspotSightings);
-            List<HotspotSighting> eBirdList = new ArrayList<>(eBirdHotspotSightings);
+            new Thread(() -> {
+                // We use local copies of the sightings lists to avoid ConcurrentModificationException
+                List<HotspotSighting> userList = new ArrayList<>(userHotspotSightings);
+                List<HotspotSighting> eBirdList = new ArrayList<>(eBirdHotspotSightings);
 
-            for (HotspotSighting sighting : userList) {
-                if (fetchGeneration != gen) return;
-                addToTempBuckets(newBuckets, sighting, true);
-            }
+                for (HotspotSighting sighting : userList) {
+                    if (fetchGeneration != gen || isMapMoving) return;
+                    addToTempBuckets(newBuckets, sighting, true);
+                }
 
-            for (HotspotSighting sighting : eBirdList) {
-                if (fetchGeneration != gen) return;
-                addToTempBuckets(newBuckets, sighting, false);
-            }
+                for (HotspotSighting sighting : eBirdList) {
+                    if (fetchGeneration != gen || isMapMoving) return;
+                    addToTempBuckets(newBuckets, sighting, false);
+                }
 
-            for (HotspotBucket bucket : newBuckets.values()) {
-                if (fetchGeneration != gen) return;
+                // Batch listener attachment on UI thread
                 runOnUiThread(() -> {
-                    if (fetchGeneration != gen || isFinishing() || isDestroyed()) return;
-                    attachHotspotSummaryListener(newListeners, bucket);
+                    if (fetchGeneration != gen || isFinishing() || isDestroyed() || isMapMoving) return;
+
+                    clearListenerRegistrations(hotspotSummaryListeners);
+                    hotspotBuckets.clear();
+                    hotspotBuckets.putAll(newBuckets);
+
+                    for (HotspotBucket bucket : hotspotBuckets.values()) {
+                        if (fetchGeneration != gen || isMapMoving) return;
+                        attachHotspotSummaryListener(hotspotSummaryListeners, bucket);
+                    }
+
+                    if (fetchGeneration == gen && !isMapMoving) {
+                        renderHeatmaps();
+                    }
                 });
-            }
-
-            runOnUiThread(() -> {
-                if (fetchGeneration != gen) return;
-
-                clearListenerRegistrations(hotspotSummaryListeners);
-
-                hotspotBuckets.clear();
-                hotspotBuckets.putAll(newBuckets);
-
-                hotspotSummaryListeners.addAll(newListeners);
-                onCollectionFinished(gen);
-            });
-        }).start();
+            }).start();
     }
 
     private void clearListenerRegistrations(@NonNull List<ListenerRegistration> listeners) {

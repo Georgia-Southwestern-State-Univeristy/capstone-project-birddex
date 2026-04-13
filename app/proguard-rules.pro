@@ -69,6 +69,10 @@
     *;
 }
 
+-keep class com.birddex.app.OpenAiApi$* { *; }
+-keep class com.birddex.app.EbirdApi$* { *; }
+-keep class com.birddex.app.CaptureGuardHelper$* { *; }
+
 # These are also model/data classes that are likely to be serialized,
 # mapped, or passed around in Firebase-heavy flows.
 -keep class com.birddex.app.Report {
@@ -95,13 +99,44 @@
 # -----------------------------
 # Firebase / Google Play / Maps
 # -----------------------------
-# Usually not needed, but these help avoid noisy warnings in many Android apps.
+# Keep Maps Utils for Heatmap rendering
+-keep class com.google.maps.android.heatmaps.** { *; }
+-keep class com.google.maps.android.quadtree.** { *; }
+-keep class com.google.maps.android.geometry.** { *; }
+-keep class com.google.maps.android.projection.** { *; }
+
 -dontwarn com.google.android.gms.**
 -dontwarn com.google.firebase.**
 -dontwarn com.google.maps.android.**
 
 # -----------------------------
-# Camera / cropper
+# Heatmap Internal Data Models
+# -----------------------------
+# These are used inside NearbyHeatmapActivity to process eBird data.
+-keep class com.birddex.app.NearbyHeatmapActivity$HotspotSighting { *; }
+-keep class com.birddex.app.NearbyHeatmapActivity$HotspotBucket { *; }
+-keep class com.birddex.app.NearbyHeatmapActivity$BirdSheetRow { *; }
+-keep class com.birddex.app.NearbyHeatmapActivity$HeatPoint { *; }
+
+# -----------------------------
+# Camera / cropper / UI
 # -----------------------------
 -dontwarn androidx.camera.**
 -dontwarn com.canhub.cropper.**
+-keep class com.birddex.app.CameraOverlayView { *; }
+
+# -----------------------------
+# Networking (OkHttp/Volley)
+# -----------------------------
+-keep class okhttp3.** { *; }
+-keep interface okhttp3.** { *; }
+-dontwarn okhttp3.**
+-dontwarn okio.**
+-keep class com.android.volley.** { *; }
+
+# -----------------------------
+# Architecture Components
+# -----------------------------
+-keepclassmembers class * extends androidx.lifecycle.ViewModel {
+    public <init>(...);
+}

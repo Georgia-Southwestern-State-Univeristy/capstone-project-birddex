@@ -26,7 +26,6 @@
             android:layout_height="wrap_content"
             android:orientation="vertical">
 
-            <!-- Original Post included as a static layout or we can reuse item_forum_post logic -->
             <include
                 android:id="@+id/postContent"
                 layout="@layout/item_forum_post" />
@@ -43,8 +42,8 @@
                 android:layout_height="wrap_content"
                 android:padding="16dp"
                 android:text="Comments"
-                android:textStyle="bold"
-                android:textSize="16sp" />
+                android:textSize="16sp"
+                android:textStyle="bold" />
 
             <androidx.recyclerview.widget.RecyclerView
                 android:id="@+id/rvComments"
@@ -62,8 +61,45 @@
         android:layout_height="wrap_content"
         android:background="?attr/colorSurface"
         android:elevation="8dp"
+        android:minHeight="56dp"
         android:padding="8dp"
         app:layout_constraintBottom_toBottomOf="parent">
+
+        <LinearLayout
+            android:id="@+id/replyModeContainer"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="6dp"
+            android:background="@android:color/transparent"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:visibility="gone"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toTopOf="parent">
+
+            <TextView
+                android:id="@+id/tvReplyingTo"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:ellipsize="end"
+                android:maxLines="1"
+                android:textColor="?attr/colorOnSurface"
+                android:textSize="12sp"
+                android:textStyle="bold"
+                tools:text="Replying to Zack" />
+
+            <ImageButton
+                android:id="@+id/btnCancelReply"
+                android:layout_width="28dp"
+                android:layout_height="28dp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:contentDescription="Cancel reply"
+                android:padding="4dp"
+                android:src="@android:drawable/ic_menu_close_clear_cancel"
+                app:tint="?attr/colorOnSurface" />
+        </LinearLayout>
 
         <com.google.android.material.imageview.ShapeableImageView
             android:id="@+id/ivCurrentUserPfp"
@@ -88,7 +124,7 @@
             android:visibility="gone"
             app:layout_constraintEnd_toStartOf="@id/btnSendComment"
             app:layout_constraintStart_toEndOf="@id/ivCurrentUserPfp"
-            app:layout_constraintTop_toTopOf="parent" />
+            app:layout_constraintTop_toBottomOf="@id/replyModeContainer" />
 
         <com.google.android.material.textfield.TextInputLayout
             android:id="@+id/commentInputLayout"
@@ -97,8 +133,7 @@
             android:layout_height="wrap_content"
             android:layout_marginStart="8dp"
             android:layout_marginEnd="8dp"
-            app:counterEnabled="true"
-            app:counterMaxLength="300"
+            app:counterEnabled="false"
             app:hintEnabled="false"
             app:layout_constraintBottom_toBottomOf="parent"
             app:layout_constraintEnd_toStartOf="@id/btnSendComment"
@@ -108,10 +143,16 @@
             <com.google.android.material.textfield.TextInputEditText
                 android:id="@+id/etComment"
                 android:layout_width="match_parent"
-                android:layout_height="wrap_content"
+                android:layout_height="40dp"
                 android:background="@android:color/transparent"
                 android:hint="Write a comment..."
+                android:imeOptions="flagNoExtractUi|flagNoFullscreen|actionSend"
+                android:importantForAutofill="no"
+                android:includeFontPadding="false"
+                android:inputType="textVisiblePassword|textCapSentences"
                 android:maxLength="300"
+                android:maxLines="1"
+                android:minLines="1"
                 android:padding="10dp"
                 android:textSize="14sp" />
         </com.google.android.material.textfield.TextInputLayout>

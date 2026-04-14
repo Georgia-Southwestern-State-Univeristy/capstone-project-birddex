@@ -17,10 +17,14 @@ import android.widget.PopupMenu;
 import android.widget.TextView;
 import android.text.Editable;
 import android.text.TextWatcher;
-import android.view.View;
+import android.view.WindowManager;
+
 import androidx.annotation.NonNull;
 import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.core.graphics.Insets;
+import androidx.core.view.ViewCompat;
+import androidx.core.view.WindowInsetsCompat;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
@@ -76,7 +80,8 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
     private ForumCommentAdapter adapter;
     private String currentUsername;
     private String currentUserPfpUrl;
-
+    private String pendingScrollToCommentId = null;
+    private boolean pendingScrollToBottomAfterReply = false;
     private List<ForumComment> commentList = new ArrayList<>();
     private DocumentSnapshot lastCommentVisible;
     private boolean isFetchingComments = false;
@@ -110,6 +115,8 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
         // Bind or inflate the UI pieces this method needs before it can update the screen.
         binding = ActivityPostDetailBinding.inflate(getLayoutInflater());
         setContentView(binding.getRoot());
+        getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING);
+        setupKeyboardCommentBar();
 
         // Set up or query the Firebase layer that supplies/stores this feature's data.
         db = FirebaseFirestore.getInstance();
@@ -162,11 +169,81 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
             }
         });
 
+        binding.btnCancelReply.setOnClickListener(v -> clearReplyTarget());
+
         updateCommentContentFilterUi(
                 binding.etComment.getText() != null
                         ? binding.etComment.getText().toString()
                         : ""
         );
+        updateReplyUi();
+    }
+
+    private void clearReplyTarget() {
+        replyingToComment = null;
+        updateReplyUi();
+    }
+
+    private void updateReplyUi() {
+        boolean isReplying = replyingToComment != null;
+        binding.replyModeContainer.setVisibility(isReplying ? View.VISIBLE : View.GONE);
+        binding.btnCancelReply.setVisibility(isReplying ? View.VISIBLE : View.GONE);
+        if (isReplying) {
+            String username = replyingToComment.getUsername();
+            if (username == null || username.trim().isEmpty()) {
+                username = "user";
+            }
+            binding.tvReplyingTo.setText("Replying to " + username);
+            binding.etComment.setHint("Write a reply...");
+        } else {
+            binding.tvReplyingTo.setText("");
+            binding.etComment.setHint("Write a comment...");
+        }
+    }
+
+    private void setupKeyboardCommentBar() {
+        binding.nsvContent.setClipToPadding(false);
+
+        Runnable updateBaseBottomPadding = () -> {
+            int barHeight = binding.commentInputContainer.getHeight();
+            if (barHeight > 0) {
+                binding.nsvContent.setPadding(
+                        binding.nsvContent.getPaddingLeft(),
+                        binding.nsvContent.getPaddingTop(),
+                        binding.nsvContent.getPaddingRight(),
+                        barHeight + dpToPx(12)
+                );
+            }
+        };
+
+        binding.commentInputContainer.post(updateBaseBottomPadding);
+        binding.commentInputContainer.addOnLayoutChangeListener((v, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom) -> {
+            if ((bottom - top) != (oldBottom - oldTop)) {
+                updateBaseBottomPadding.run();
+            }
+        });
+
+        ViewCompat.setOnApplyWindowInsetsListener(binding.getRoot(), (v, insets) -> {
+            Insets navInsets = insets.getInsets(WindowInsetsCompat.Type.navigationBars());
+            Insets imeInsets = insets.getInsets(WindowInsetsCompat.Type.ime());
+            boolean imeVisible = insets.isVisible(WindowInsetsCompat.Type.ime());
+
+            int imeLift = imeVisible ? Math.max(0, imeInsets.bottom - navInsets.bottom) : 0;
+            binding.commentInputContainer.setTranslationY(-imeLift);
+
+            int barHeight = binding.commentInputContainer.getHeight();
+            if (barHeight > 0) {
+                binding.nsvContent.setPadding(
+                        binding.nsvContent.getPaddingLeft(),
+                        binding.nsvContent.getPaddingTop(),
+                        binding.nsvContent.getPaddingRight(),
+                        barHeight + navInsets.bottom + imeLift + dpToPx(12)
+                );
+            }
+
+            return insets;
+        });
+        binding.getRoot().post(() -> ViewCompat.requestApplyInsets(binding.getRoot()));
     }
 
     private void updateCommentContentFilterUi(String text) {
@@ -781,12 +858,30 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
     private void finishCommentsFetch(int generation) {
         if (generation != commentFetchGeneration) return;
         isFetchingComments = false;
+
+        if (pendingScrollToCommentId != null) {
+            String targetId = pendingScrollToCommentId;
+            pendingScrollToCommentId = null;
+
+            refreshKeyboardCommentBarPadding();
+            scrollToCommentById(targetId);
+
+            if (pendingScrollToBottomAfterReply) {
+                pendingScrollToBottomAfterReply = false;
+                settleBottomScrollAfterReply();
+            }
+            return;
+        }
+
         if (!shouldAutoScrollToNewestComment) return;
+
         if (!isLastCommentsPage) {
             fetchComments();
             return;
         }
+
         shouldAutoScrollToNewestComment = false;
+        refreshKeyboardCommentBarPadding();
         scrollCommentsToBottom();
     }
 
@@ -797,8 +892,101 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
         binding.nsvContent.post(() -> {
             if (isFinishing() || isDestroyed()) return;
             binding.rvComments.scrollToPosition(count - 1);
-            binding.nsvContent.fullScroll(View.FOCUS_DOWN);
+            View contentChild = binding.nsvContent.getChildAt(0);
+            if (contentChild != null) {
+                binding.nsvContent.smoothScrollTo(0, contentChild.getBottom());
+            } else {
+                binding.nsvContent.fullScroll(View.FOCUS_DOWN);
+            }
         });
+    }
+
+    private int findCommentPositionById(String commentId) {
+        if (commentId == null || commentId.trim().isEmpty()) return -1;
+        for (int i = 0; i < commentList.size(); i++) {
+            ForumComment c = commentList.get(i);
+            if (c != null && commentId.equals(c.getId())) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    private void scrollToCommentById(String commentId) {
+        if (isFinishing() || isDestroyed()) return;
+
+        final int position = findCommentPositionById(commentId);
+        if (position < 0) return;
+
+        Runnable pass = () -> {
+            if (isFinishing() || isDestroyed()) return;
+
+            binding.rvComments.scrollToPosition(position);
+
+            binding.rvComments.post(() -> {
+                if (isFinishing() || isDestroyed()) return;
+
+                RecyclerView.ViewHolder holder =
+                        binding.rvComments.findViewHolderForAdapterPosition(position);
+
+                if (holder == null) return;
+
+                int[] rvLoc = new int[2];
+                int[] itemLoc = new int[2];
+                binding.rvComments.getLocationOnScreen(rvLoc);
+                holder.itemView.getLocationOnScreen(itemLoc);
+
+                int itemTopInsideRecycler = holder.itemView.getTop();
+                int currentScrollY = binding.nsvContent.getScrollY();
+
+                int targetY = Math.max(0, currentScrollY + itemTopInsideRecycler - dpToPx(12));
+                binding.nsvContent.smoothScrollTo(0, targetY);
+            });
+        };
+
+        binding.nsvContent.post(pass);
+        binding.nsvContent.postDelayed(pass, 80);
+        binding.nsvContent.postDelayed(pass, 180);
+        binding.nsvContent.postDelayed(pass, 320);
+    }
+
+    private void refreshKeyboardCommentBarPadding() {
+        if (isFinishing() || isDestroyed()) return;
+
+        binding.commentInputContainer.post(() -> {
+            if (isFinishing() || isDestroyed()) return;
+
+            int barHeight = binding.commentInputContainer.getHeight();
+            if (barHeight > 0) {
+                binding.nsvContent.setPadding(
+                        binding.nsvContent.getPaddingLeft(),
+                        binding.nsvContent.getPaddingTop(),
+                        binding.nsvContent.getPaddingRight(),
+                        barHeight + dpToPx(12)
+                );
+            }
+
+            ViewCompat.requestApplyInsets(binding.getRoot());
+        });
+    }
+
+    private void settleBottomScrollAfterReply() {
+        if (isFinishing() || isDestroyed()) return;
+
+        Runnable pass = () -> {
+            if (isFinishing() || isDestroyed()) return;
+            refreshKeyboardCommentBarPadding();
+            scrollCommentsToBottom();
+        };
+
+        binding.nsvContent.post(pass);
+        binding.nsvContent.postDelayed(pass, 80);
+        binding.nsvContent.postDelayed(pass, 180);
+        binding.nsvContent.postDelayed(pass, 320);
+    }
+
+    private int dpToPx(int dp) {
+        return Math.round(dp * getResources().getDisplayMetrics().density);
     }
 
     /**
@@ -813,6 +1001,7 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
     private void postComment() {
         String msg = binding.etComment.getText().toString().trim();
         if (msg.isEmpty() || msg.length() > MAX_COMMENT_LENGTH) return;
+
         if (!ContentFilter.isSafe(this, msg, replyingToComment != null ? "Reply" : "Comment")) {
             firebaseManager.logFilteredContentAttempt(
                     replyingToComment != null ? "forum_reply_create_client_block" : "forum_comment_create_client_block",
@@ -823,26 +1012,48 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
             );
             return;
         }
+
         if (ForumSubmissionCooldownHelper.isCoolingDown(this)) {
             MessagePopupHelper.showBrief(this, ForumSubmissionCooldownHelper.buildCooldownMessage(this));
             return;
         }
-        FirebaseUser user = mAuth.getCurrentUser(); if (user == null) return;
+
+        FirebaseUser user = mAuth.getCurrentUser();
+        if (user == null) return;
+
         binding.btnSendComment.setEnabled(false);
 
-        String cid = db.collection("forumThreads").document(postId).collection("comments").document().getId();
-        String parentCommentId = replyingToComment != null ? replyingToComment.getId() : "";
+        String cid = db.collection("forumThreads")
+                .document(postId)
+                .collection("comments")
+                .document()
+                .getId();
+
+        final String parentCommentId = replyingToComment != null ? replyingToComment.getId() : "";
+        final boolean wasReply = replyingToComment != null;
 
         firebaseManager.createForumComment(postId, cid, msg, parentCommentId, new FirebaseManager.ForumWriteListener() {
             @Override
             public void onSuccess() {
                 if (isFinishing()) return;
+
                 ForumSubmissionCooldownHelper.markSubmissionSuccess(PostDetailActivity.this);
                 binding.etComment.setText("");
-                binding.etComment.setHint("Write a comment...");
-                replyingToComment = null;
+                clearReplyTarget();
                 binding.btnSendComment.setEnabled(true);
-                shouldAutoScrollToNewestComment = true;
+
+                // Top-level comments should still auto-scroll to the newest comment.
+                shouldAutoScrollToNewestComment = !wasReply;
+
+                // Replies should anchor back to their parent comment, even if the new reply
+                // is hidden under a collapsed reply section.
+                pendingScrollToCommentId = wasReply ? parentCommentId : null;
+
+                // If the reply happened near the bottom while the keyboard stayed open,
+                // do a few bottom-settle passes after the parent anchor scroll so the
+                // screen gets its full scroll range back.
+                pendingScrollToBottomAfterReply = wasReply;
+
                 commentFetchGeneration++;
                 lastCommentVisible = null;
                 isLastCommentsPage = false;
@@ -854,7 +1065,8 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
             public void onFailure(String errorMessage) {
                 if (isFinishing()) return;
                 binding.btnSendComment.setEnabled(true);
-                MessagePopupHelper.showBrief(PostDetailActivity.this, errorMessage != null ? errorMessage : "Failed");
+                MessagePopupHelper.showBrief(PostDetailActivity.this,
+                        errorMessage != null ? errorMessage : "Failed");
             }
         });
     }
@@ -898,7 +1110,7 @@ public class PostDetailActivity extends AppCompatActivity implements ForumCommen
         });
     }
 
-    @Override public void onCommentReplyClick(ForumComment c) { replyingToComment = c; binding.etComment.setHint("Replying to " + c.getUsername() + "..."); binding.etComment.requestFocus(); }
+    @Override public void onCommentReplyClick(ForumComment c) { replyingToComment = c; updateReplyUi(); binding.etComment.requestFocus(); binding.etComment.setSelection(binding.etComment.getText() != null ? binding.etComment.getText().length() : 0); }
     @Override public void onCommentOptionsClick(ForumComment c, View v) { showCommentOptions(c, v); }
     @Override public void onUserClick(String uid) {
         if (isNavigating) return;

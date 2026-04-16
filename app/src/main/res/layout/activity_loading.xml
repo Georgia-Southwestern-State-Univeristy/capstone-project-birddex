@@ -11,8 +11,6 @@
         android:layout_width="150dp"
         android:layout_height="150dp"
         android:src="@drawable/birddexlogo"
-        app:tint="@color/page_cream"
-        android:tintMode="multiply"
         app:layout_constraintBottom_toTopOf="@+id/progressBar"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"

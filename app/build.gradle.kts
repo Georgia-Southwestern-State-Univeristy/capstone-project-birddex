@@ -76,6 +76,7 @@ dependencies {
 
 
     implementation(libs.appcompat)
+    implementation("androidx.core:core-splashscreen:1.2.0")
     implementation(libs.material)
     implementation(libs.activity)
     implementation(libs.constraintlayout)

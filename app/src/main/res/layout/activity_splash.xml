@@ -11,8 +11,6 @@
         android:layout_width="200dp"
         android:layout_height="200dp"
         android:src="@drawable/birddexlogo"
-        app:tint="@color/page_cream"
-        android:tintMode="multiply"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"

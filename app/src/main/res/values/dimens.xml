@@ -1,5 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <!-- core-splashscreen draws a circular mask via a thick stroke; 0dp removes that ring. -->
+    <dimen name="splashscreen_icon_mask_stroke_no_background">0dp</dimen>
+    <dimen name="splashscreen_icon_mask_stroke_with_background">0dp</dimen>
+
     <!-- Full-screen card viewer: max width so the card reads as a tall portrait like the collection tile -->
     <dimen name="view_bird_card_max_width">320dp</dimen>
     <!-- Collection / favorites grid thumbnail height -->

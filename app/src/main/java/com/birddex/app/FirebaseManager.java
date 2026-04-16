@@ -577,9 +577,9 @@ public class FirebaseManager {
         FirebaseUser user = mAuth.getCurrentUser();
         if (user != null) {
             Log.d(TAG, "Updating email to: " + newEmail);
-            user.updateEmail(newEmail).addOnCompleteListener(task -> {
-                if (task.isSuccessful()) Log.d(TAG, "Email updated in Auth.");
-                else Log.e(TAG, "Email update failed.", task.getException());
+            user.verifyBeforeUpdateEmail(newEmail).addOnCompleteListener(task -> {
+                if (task.isSuccessful()) Log.d(TAG, "Verification email sent to: " + newEmail);
+                else Log.e(TAG, "Email update (verification) failed.", task.getException());
                 listener.onComplete(task);
             });
         }

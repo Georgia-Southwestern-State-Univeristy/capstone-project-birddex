@@ -50,6 +50,8 @@ public class HomeActivity extends AppCompatActivity implements NetworkMonitor.Ne
     private static final String TAG_COLLECTION = "tab_collection";
     private static final String TAG_NEARBY = "tab_nearby";
     private static final String TAG_PROFILE = "tab_profile";
+    private static final String STATE_LAST_NON_CAMERA_TAB_ID = "state_last_non_camera_tab_id";
+    private static final String STATE_CURRENT_FRAGMENT_TAG = "state_current_fragment_tag";
 
     private BottomNavigationView bottomNav;
     private View bottomNavContainer;
@@ -83,6 +85,11 @@ public class HomeActivity extends AppCompatActivity implements NetworkMonitor.Ne
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_home);
 
+        if (savedInstanceState != null) {
+            lastNonCameraTabId = savedInstanceState.getInt(STATE_LAST_NON_CAMERA_TAB_ID, R.id.nav_forum);
+            currentFragmentTag = savedInstanceState.getString(STATE_CURRENT_FRAGMENT_TAG, null);
+        }
+
         // Initialize the bottom navigation bar.
         // Bind or inflate the UI pieces this method needs before it can update the screen.
         bottomNav = findViewById(R.id.bottomNav);
@@ -115,11 +122,16 @@ public class HomeActivity extends AppCompatActivity implements NetworkMonitor.Ne
         // Check for deep links or specific navigation requests
         handleIntent(getIntent());
 
-        // Default start fragment if not already set by handleIntent
+        // Default start fragment if not already set by handleIntent.
+        // If Android restored fragments for us, just re-select the restored tab and reconcile.
         if (getSupportFragmentManager().findFragmentById(R.id.fragmentContainer) == null) {
             lastNonCameraTabId = R.id.nav_forum;
+            currentFragmentTag = tagForTab(lastNonCameraTabId);
             bottomNav.setSelectedItemId(R.id.nav_forum);
             switchFragmentForTab(R.id.nav_forum);
+        } else {
+            bottomNav.setSelectedItemId(lastNonCameraTabId);
+            ensureSelectedTabFragmentVisible();
         }
 
         // Set up the listener for navigation item selection.
@@ -273,6 +285,13 @@ public class HomeActivity extends AppCompatActivity implements NetworkMonitor.Ne
         welcomeMessageTv.startAnimation(fadeInOut);
     }
 
+    @Override
+    protected void onSaveInstanceState(Bundle outState) {
+        super.onSaveInstanceState(outState);
+        outState.putInt(STATE_LAST_NON_CAMERA_TAB_ID, lastNonCameraTabId);
+        outState.putString(STATE_CURRENT_FRAGMENT_TAG, currentFragmentTag);
+    }
+
     /**
      * Handles a new Intent delivered to an existing Activity instance.
      * It also packages extras into an Intent when this flow needs to open another Activity.
@@ -316,10 +335,12 @@ public class HomeActivity extends AppCompatActivity implements NetworkMonitor.Ne
         networkMonitor.register();
         isNavigating = false;
 
-        // Ensure the selected tab matches the fragment the user was last actually on
+        // Ensure the selected tab and visible fragment stay in sync after returning from camera/heatmap
+        // or after Android restores activity state.
         if (bottomNav != null && bottomNav.getSelectedItemId() != lastNonCameraTabId) {
             bottomNav.setSelectedItemId(lastNonCameraTabId);
         }
+        ensureSelectedTabFragmentVisible();
 
         BirdDexApiWarmupHelper.maybeWarmup(this, "app_open");
 
@@ -447,32 +468,55 @@ public class HomeActivity extends AppCompatActivity implements NetworkMonitor.Ne
      */
     private void switchFragment(Fragment fragment, String tag) {
         if (isFinishing() || isDestroyed()) return;
+        if (getSupportFragmentManager().isStateSaved()) return;
+        if (tag == null) return;
 
-        if (tag != null && tag.equals(currentFragmentTag)) {
+        Fragment currentPrimary = getSupportFragmentManager().getPrimaryNavigationFragment();
+        if (currentPrimary != null && tag.equals(currentPrimary.getTag())) {
+            currentFragmentTag = tag;
             return;
-        }
-
-        androidx.fragment.app.FragmentTransaction tx = getSupportFragmentManager().beginTransaction();
-
-        Fragment current = currentFragmentTag == null
-                ? null
-                : getSupportFragmentManager().findFragmentByTag(currentFragmentTag);
-        if (current != null) {
-            tx.hide(current);
         }
 
         Fragment target = getSupportFragmentManager().findFragmentByTag(tag);
         if (target == null) {
-            tx.add(R.id.fragmentContainer, fragment, tag);
-        } else {
-            tx.show(target);
+            target = fragment;
         }
 
-        currentFragmentTag = tag;
-        tx.commitAllowingStateLoss();
+        getSupportFragmentManager()
+                .beginTransaction()
+                .setReorderingAllowed(true)
+                .replace(R.id.fragmentContainer, target, tag)
+                .setPrimaryNavigationFragment(target)
+                .commit();
 
-        // Notify hidden change manually because hide/show doesn't trigger onResume/onPause
-        getSupportFragmentManager().executePendingTransactions();
+        currentFragmentTag = tag;
+    }
+
+    private String tagForTab(int tabId) {
+        if (tabId == R.id.nav_search_collection) return TAG_COLLECTION;
+        if (tabId == R.id.nav_forum) return TAG_FORUM;
+        if (tabId == R.id.nav_nearby) return TAG_NEARBY;
+        if (tabId == R.id.nav_profile) return TAG_PROFILE;
+        return null;
+    }
+
+    private void ensureSelectedTabFragmentVisible() {
+        if (bottomNav == null) return;
+        int selectedTabId = bottomNav.getSelectedItemId();
+        if (selectedTabId == R.id.nav_camera) {
+            selectedTabId = lastNonCameraTabId;
+        }
+
+        String expectedTag = tagForTab(selectedTabId);
+        Fragment currentPrimary = getSupportFragmentManager().getPrimaryNavigationFragment();
+        String primaryTag = currentPrimary != null ? currentPrimary.getTag() : null;
+        if (expectedTag == null) return;
+        if (expectedTag.equals(primaryTag) && expectedTag.equals(currentFragmentTag)) {
+            return;
+        }
+
+        currentFragmentTag = expectedTag;
+        switchFragmentForTab(selectedTabId);
     }
 
     private void switchFragmentForTab(int tabId) {

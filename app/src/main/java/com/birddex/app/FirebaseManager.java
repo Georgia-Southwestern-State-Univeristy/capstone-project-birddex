@@ -1741,9 +1741,12 @@ public class FirebaseManager {
     /**
      * Main logic block for this part of the feature.
      */
-    public void triggerEbirdDataFetch(OnCompleteListener<HttpsCallableResult> listener) {
-        Log.d(TAG, "Calling triggerEbirdDataFetch Cloud Function.");
-        mFunctions.getHttpsCallable("triggerEbirdDataFetch").call().addOnCompleteListener(task -> {
+    public void triggerEbirdDataFetch(double lat, double lng, OnCompleteListener<HttpsCallableResult> listener) {
+        Log.d(TAG, "Calling triggerEbirdDataFetch Cloud Function with lat=" + lat + ", lng=" + lng);
+        Map<String, Object> data = new HashMap<>();
+        data.put("lat", lat);
+        data.put("lng", lng);
+        mFunctions.getHttpsCallable("triggerEbirdDataFetch").call(data).addOnCompleteListener(task -> {
             if (task.isSuccessful()) Log.d(TAG, "triggerEbirdDataFetch success.");
             else Log.e(TAG, "triggerEbirdDataFetch failure.", task.getException());
             listener.onComplete(task);

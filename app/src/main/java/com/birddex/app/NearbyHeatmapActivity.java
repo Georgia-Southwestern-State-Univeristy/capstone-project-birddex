@@ -71,6 +71,7 @@ import com.google.firebase.firestore.FirebaseFirestore;
 import com.google.firebase.firestore.ListenerRegistration;
 import com.google.firebase.firestore.MetadataChanges;
 import com.google.firebase.firestore.Query;
+import com.google.firebase.firestore.QuerySnapshot;
 import com.google.firebase.firestore.Source;
 import com.google.firebase.firestore.WriteBatch;
 import com.google.firebase.Timestamp;
@@ -132,12 +133,17 @@ public class NearbyHeatmapActivity extends AppCompatActivity
     private TextView tvLegendToggle;
     private boolean isLegendExpanded = true;
     private LatLngBounds currentVisibleBounds;
+    private LatLngBounds lastFetchedBounds;
+    private LatLngBounds lastFetchedPinsBounds;
+    private QuerySnapshot lastUserSightingsSnapshot;
+    private QuerySnapshot lastEbirdSightingsSnapshot;
+    private QuerySnapshot lastPinsSnapshot;
     private float lastAppliedZoom = -1f;
     private LatLng lastAppliedTarget;
     private static final float MIN_ZOOM_CHANGE_TO_REFRESH = 0.5f;
     private static final float MIN_CAMERA_MOVE_TO_REFRESH_METERS = 500f;
     /** Wait until the camera stops before reloading tiles — avoids flicker/jitter while panning or zooming. */
-    private static final long CAMERA_IDLE_DEBOUNCE_MS = 1000L;
+    private static final long CAMERA_IDLE_DEBOUNCE_MS = 400L;
 
     private final Handler heatmapCameraHandler = new Handler(Looper.getMainLooper());
     private final Runnable debouncedHeatmapReloadRunnable = this::onDebouncedCameraIdleForHeatmap;
@@ -676,6 +682,11 @@ public class NearbyHeatmapActivity extends AppCompatActivity
             centerLng = cp.target.longitude;
             lastAppliedTarget = cp.target;
             lastAppliedZoom = cp.zoom;
+            lastFetchedBounds = null; // Clear buffer to force server fetch on resume
+            lastFetchedPinsBounds = null;
+            lastUserSightingsSnapshot = null;
+            lastEbirdSightingsSnapshot = null;
+            lastPinsSnapshot = null;
             fetchHeatmapData();
             loadForumPins();
         }
@@ -804,22 +815,49 @@ public class NearbyHeatmapActivity extends AppCompatActivity
      * caller.
      */
     private void fetchHeatmapData() {
+        if (googleMap == null) return;
+
+        LatLngBounds bounds = googleMap.getProjection().getVisibleRegion().latLngBounds;
+        boolean skipServer = false;
+        if (lastFetchedBounds != null && isViewportBuffered(bounds, lastFetchedBounds)) {
+            Log.d(TAG, "fetchHeatmapData: Viewport is buffered, skipping server fetch.");
+            skipServer = true;
+        }
+
+        if (!skipServer) {
+            lastFetchedBounds = bounds;
+            // Trigger a background server-side fetch to ensure data isn't stale/empty.
+            firebaseManager.triggerEbirdDataFetch(centerLat, centerLng, task -> {
+                if (task.isSuccessful()) {
+                    Log.d(TAG, "Background eBird fetch triggered successfully.");
+                } else {
+                    Log.e(TAG, "Background eBird fetch trigger failed.", task.getException());
+                }
+            });
+        }
+
         final int gen = ++fetchGeneration;
         pendingLoads = 2;
-        // Don't update subtitle here to reduce UI flicker if it's already updated by debounced logic
-        // tvMapSubtitle.setText("Updating heatmap...");
+        loadUserBirdSightings(gen, skipServer);
+        loadEbirdApiSightings(gen, skipServer);
+    }
 
-        // Trigger a background server-side fetch to ensure data isn't stale/empty.
-        firebaseManager.triggerEbirdDataFetch(task -> {
-            if (task.isSuccessful()) {
-                Log.d(TAG, "Background eBird fetch triggered successfully.");
-            } else {
-                Log.e(TAG, "Background eBird fetch trigger failed.", task.getException());
-            }
-        });
+    private boolean isViewportBuffered(LatLngBounds current, LatLngBounds last) {
+        if (last == null) return false;
 
-        loadUserBirdSightings(gen);
-        loadEbirdApiSightings(gen);
+        // Calculate a 90% "safe zone" of the last fetched bounds
+        double latSize = last.northeast.latitude - last.southwest.latitude;
+        double lngSize = last.northeast.longitude - last.southwest.longitude;
+
+        double safeSouth = last.southwest.latitude + (latSize * 0.05);
+        double safeNorth = last.northeast.latitude - (latSize * 0.05);
+        double safeWest = last.southwest.longitude + (lngSize * 0.05);
+        double safeEast = last.northeast.longitude - (lngSize * 0.05);
+
+        return current.southwest.latitude >= safeSouth &&
+               current.northeast.latitude <= safeNorth &&
+               current.southwest.longitude >= safeWest &&
+               current.northeast.longitude <= safeEast;
     }
 
     private boolean isHeatmapPinVisible(ForumPost post) {
@@ -849,8 +887,27 @@ public class NearbyHeatmapActivity extends AppCompatActivity
      * sightings the user sees.
      */
     private void loadForumPins() {
+        if (googleMap == null) return;
+        LatLngBounds bounds = googleMap.getProjection().getVisibleRegion().latLngBounds;
+
+        if (lastFetchedPinsBounds != null && isViewportBuffered(bounds, lastFetchedPinsBounds)) {
+            if (lastPinsSnapshot != null) {
+                Log.d(TAG, "loadForumPins: Viewport is buffered, using cached pin snapshot.");
+                processForumPins(lastPinsSnapshot);
+                return;
+            }
+        }
+
+        lastFetchedPinsBounds = bounds;
+        Query query = db.collection("forumThreads").whereEqualTo("showLocation", true);
+        if (currentVisibleBounds != null) {
+            double latBuffer = (currentVisibleBounds.northeast.latitude - currentVisibleBounds.southwest.latitude) * 0.1;
+            query = query.whereGreaterThanOrEqualTo("latitude", currentVisibleBounds.southwest.latitude - latBuffer)
+                         .whereLessThanOrEqualTo("latitude", currentVisibleBounds.northeast.latitude + latBuffer);
+        }
+
         // Set up or query the Firebase layer that supplies/stores this feature's data.
-        db.collection("forumThreads").whereEqualTo("showLocation", true).get(Source.CACHE).addOnSuccessListener(snap -> {
+        query.get(Source.CACHE).addOnSuccessListener(snap -> {
             if (snap != null && !snap.isEmpty()) processForumPins(snap);
             fetchForumPinsFromServer();
         }).addOnFailureListener(e -> fetchForumPinsFromServer());
@@ -865,8 +922,15 @@ public class NearbyHeatmapActivity extends AppCompatActivity
      * sightings the user sees.
      */
     private void fetchForumPinsFromServer() {
+        Query query = db.collection("forumThreads").whereEqualTo("showLocation", true);
+        if (currentVisibleBounds != null) {
+            double latBuffer = (currentVisibleBounds.northeast.latitude - currentVisibleBounds.southwest.latitude) * 0.1;
+            query = query.whereGreaterThanOrEqualTo("latitude", currentVisibleBounds.southwest.latitude - latBuffer)
+                         .whereLessThanOrEqualTo("latitude", currentVisibleBounds.northeast.latitude + latBuffer);
+        }
+
         // Set up or query the Firebase layer that supplies/stores this feature's data.
-        db.collection("forumThreads").whereEqualTo("showLocation", true).get(Source.SERVER).addOnSuccessListener(this::processForumPins).addOnFailureListener(e -> Log.e(TAG, "Error", e));
+        query.get(Source.SERVER).addOnSuccessListener(this::processForumPins).addOnFailureListener(e -> Log.e(TAG, "Error", e));
     }
 
     /**
@@ -880,7 +944,8 @@ public class NearbyHeatmapActivity extends AppCompatActivity
     private BitmapDescriptor dualColorPinCache = null;
     private final Map<String, Marker> forumMarkerMap = new java.util.HashMap<>();
 
-    private void processForumPins(com.google.firebase.firestore.QuerySnapshot snap) {
+    private void processForumPins(QuerySnapshot snap) {
+        lastPinsSnapshot = snap;
         new Thread(() -> {
             boolean showGraphic = getSharedPreferences(PREFS_NAME, MODE_PRIVATE).getBoolean(KEY_GRAPHIC_CONTENT, false);
             List<ForumPost> visiblePosts = new ArrayList<>();
@@ -1699,7 +1764,13 @@ public class NearbyHeatmapActivity extends AppCompatActivity
      * It talks to Firebase/Firestore in this method, either to read live data or to persist app
      * changes.
      */
-    private void loadUserBirdSightings(int gen) {
+    private void loadUserBirdSightings(int gen, boolean skipServer) {
+        if (skipServer && lastUserSightingsSnapshot != null) {
+            Log.d(TAG, "loadUserBirdSightings: Skipping fetch, using last snapshot.");
+            processSightings(lastUserSightingsSnapshot, true, gen);
+            return;
+        }
+
         // Log authentication state for debugging PERMISSION_DENIED issues.
         com.google.firebase.auth.FirebaseUser user = com.google.firebase.auth.FirebaseAuth.getInstance().getCurrentUser();
         if (user == null) {
@@ -1708,20 +1779,35 @@ public class NearbyHeatmapActivity extends AppCompatActivity
             Log.d(TAG, "loadUserBirdSightings: Authenticated as " + user.getUid());
         }
 
+        Query query = db.collection("userBirdSightings");
+        if (currentVisibleBounds != null) {
+            double latBuffer = (currentVisibleBounds.northeast.latitude - currentVisibleBounds.southwest.latitude) * 0.1;
+            query = query.whereGreaterThanOrEqualTo("latitude", currentVisibleBounds.southwest.latitude - latBuffer)
+                         .whereLessThanOrEqualTo("latitude", currentVisibleBounds.northeast.latitude + latBuffer);
+        }
+
         // Set up or query the Firebase layer that supplies/stores this feature's data.
-        db.collection("userBirdSightings").get(Source.CACHE).addOnSuccessListener(snap -> {
+        query.get(Source.CACHE).addOnSuccessListener(snap -> {
             if (snap != null && !snap.isEmpty()) processSightings(snap, true, gen);
             else onCollectionFinished(gen);
-            fetchUserBirdSightingsFromServer(gen);
+
+            if (!skipServer) fetchUserBirdSightingsFromServer(gen);
         }).addOnFailureListener(e -> {
             onCollectionFinished(gen);
-            fetchUserBirdSightingsFromServer(gen);
+            if (!skipServer) fetchUserBirdSightingsFromServer(gen);
         });
     }
 
     private void fetchUserBirdSightingsFromServer(int gen) {
+        Query query = db.collection("userBirdSightings");
+        if (currentVisibleBounds != null) {
+            double latBuffer = (currentVisibleBounds.northeast.latitude - currentVisibleBounds.southwest.latitude) * 0.1;
+            query = query.whereGreaterThanOrEqualTo("latitude", currentVisibleBounds.southwest.latitude - latBuffer)
+                         .whereLessThanOrEqualTo("latitude", currentVisibleBounds.northeast.latitude + latBuffer);
+        }
+
         // Set up or query the Firebase layer that supplies/stores this feature's data.
-        db.collection("userBirdSightings").get(Source.SERVER).addOnSuccessListener(snap -> {
+        query.get(Source.SERVER).addOnSuccessListener(snap -> {
             Log.d(TAG, "fetchUserBirdSightingsFromServer: Success. Found " + (snap != null ? snap.size() : 0) + " sightings.");
             processSightings(snap, true, gen);
         }).addOnFailureListener(e -> {
@@ -1730,21 +1816,42 @@ public class NearbyHeatmapActivity extends AppCompatActivity
         });
     }
 
-    private void loadEbirdApiSightings(int gen) {
+    private void loadEbirdApiSightings(int gen, boolean skipServer) {
+        if (skipServer && lastEbirdSightingsSnapshot != null) {
+            Log.d(TAG, "loadEbirdApiSightings: Skipping fetch, using last snapshot.");
+            processSightings(lastEbirdSightingsSnapshot, false, gen);
+            return;
+        }
+
+        Query query = db.collection("eBirdApiSightings");
+        if (currentVisibleBounds != null) {
+            double latBuffer = (currentVisibleBounds.northeast.latitude - currentVisibleBounds.southwest.latitude) * 0.1;
+            query = query.whereGreaterThanOrEqualTo("location.latitude", currentVisibleBounds.southwest.latitude - latBuffer)
+                         .whereLessThanOrEqualTo("location.latitude", currentVisibleBounds.northeast.latitude + latBuffer);
+        }
+
         // Set up or query the Firebase layer that supplies/stores this feature's data.
-        db.collection("eBirdApiSightings").get(Source.CACHE).addOnSuccessListener(snap -> {
+        query.get(Source.CACHE).addOnSuccessListener(snap -> {
             if (snap != null && !snap.isEmpty()) processSightings(snap, false, gen);
             else onCollectionFinished(gen);
-            fetchEbirdApiSightingsFromServer(gen);
+
+            if (!skipServer) fetchEbirdApiSightingsFromServer(gen);
         }).addOnFailureListener(e -> {
             onCollectionFinished(gen);
-            fetchEbirdApiSightingsFromServer(gen);
+            if (!skipServer) fetchEbirdApiSightingsFromServer(gen);
         });
     }
 
     private void fetchEbirdApiSightingsFromServer(int gen) {
+        Query query = db.collection("eBirdApiSightings");
+        if (currentVisibleBounds != null) {
+            double latBuffer = (currentVisibleBounds.northeast.latitude - currentVisibleBounds.southwest.latitude) * 0.1;
+            query = query.whereGreaterThanOrEqualTo("location.latitude", currentVisibleBounds.southwest.latitude - latBuffer)
+                         .whereLessThanOrEqualTo("location.latitude", currentVisibleBounds.northeast.latitude + latBuffer);
+        }
+
         // Set up or query the Firebase layer that supplies/stores this feature's data.
-        db.collection("eBirdApiSightings").get(Source.SERVER).addOnSuccessListener(snap -> processSightings(snap, false, gen)).addOnFailureListener(e -> onCollectionFinished(gen));
+        query.get(Source.SERVER).addOnSuccessListener(snap -> processSightings(snap, false, gen)).addOnFailureListener(e -> onCollectionFinished(gen));
     }
 
     /**
@@ -1752,8 +1859,10 @@ public class NearbyHeatmapActivity extends AppCompatActivity
      * Location values are handled here, so this is part of the logic that decides what area/bird
      * sightings the user sees.
      */
-    private void processSightings(com.google.firebase.firestore.QuerySnapshot snap, boolean user, int gen) {
+    private void processSightings(QuerySnapshot snap, boolean user, int gen) {
         if (fetchGeneration != gen) return;
+        if (user) lastUserSightingsSnapshot = snap;
+        else lastEbirdSightingsSnapshot = snap;
 
         // Use a background thread for heavy processing
         new Thread(() -> {
@@ -1766,11 +1875,16 @@ public class NearbyHeatmapActivity extends AppCompatActivity
                 Boolean suspicious = d.getBoolean("suspicious");
                 if (suspicious != null && suspicious) continue;
 
-                Double lat = getAnyDouble(d, "location.latitude", "lastSeenLatitudeGeorgia", "latitude", "lat");
-                Double lng = getAnyDouble(d, "location.longitude", "lastSeenLongitudeGeorgia", "longitude", "lng");
+                Double lat = getAnyDouble(d, "latitude", "location.latitude", "lastSeenLatitudeGeorgia", "lat");
+                Double lng = getAnyDouble(d, "longitude", "location.longitude", "lastSeenLongitudeGeorgia", "lng");
 
                 if (lat == null || lng == null || shouldBeFiltered(lat, lng, getAnyTimeMillis(d, user ? "timestamp" : "observationDate")))
                     continue;
+
+                // Client-side viewport check as a secondary filter (after server-side latitude pruning)
+                if (currentVisibleBounds != null && !currentVisibleBounds.contains(new LatLng(lat, lng))) {
+                    continue;
+                }
 
                 hl.add(new WeightedLatLng(new LatLng(lat, lng), user ? 1.8 : 1.0));
                 hsl.add(buildHotspotSighting(d, lat, lng, user));

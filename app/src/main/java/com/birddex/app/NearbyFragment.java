@@ -12,6 +12,7 @@ import android.os.Looper;
 import android.text.Editable;
 import android.text.TextWatcher;
 import android.util.Log;
+import android.util.TypedValue;
 import android.view.LayoutInflater;
 import android.view.Window;
 import android.view.View;
@@ -19,12 +20,14 @@ import android.view.ViewGroup;
 import android.widget.EditText;
 import android.widget.ImageButton;
 import android.widget.ProgressBar;
+import android.widget.ScrollView;
 import android.widget.TextView;
 
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
+import androidx.appcompat.app.AlertDialog;
 import androidx.core.content.ContextCompat;
 import androidx.core.view.WindowCompat;
 import androidx.core.view.WindowInsetsControllerCompat;
@@ -151,6 +154,7 @@ public class NearbyFragment extends Fragment {
         btnRefresh = v.findViewById(R.id.btnRefresh);
         btnSearch = v.findViewById(R.id.btnSearch);
         btnMap = v.findViewById(R.id.btnMap);
+        TextView btnNearbyHelp = v.findViewById(R.id.btnNearbyHelp);
         pbLoading = v.findViewById(R.id.pbLoading);
         tvNoBirds = v.findViewById(R.id.tvNoBirds);
 
@@ -202,9 +206,32 @@ public class NearbyFragment extends Fragment {
         btnRefresh.setOnClickListener(view -> requestLocationOrLoad(true));
         btnSearch.setOnClickListener(view -> openBirdSearchDialog());
         btnMap.setOnClickListener(view -> openHeatmapScreen());
+        if (btnNearbyHelp != null) {
+            btnNearbyHelp.setOnClickListener(view -> showNearbyHelpDialog());
+        }
 
         loadCachedData();
         return v;
+    }
+
+    private void showNearbyHelpDialog() {
+        if (!isAdded()) {
+            return;
+        }
+        int pad = Math.round(16f * getResources().getDisplayMetrics().density);
+        TextView body = new TextView(requireContext());
+        body.setPadding(pad, pad, pad, pad);
+        body.setText(R.string.nearby_help_message);
+        body.setTextIsSelectable(true);
+        body.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f);
+        body.setLineSpacing(0f, 1.2f);
+        ScrollView scroll = new ScrollView(requireContext());
+        scroll.addView(body);
+        new AlertDialog.Builder(requireContext())
+                .setTitle(R.string.nearby_help_title)
+                .setView(scroll)
+                .setPositiveButton(R.string.ok, null)
+                .show();
     }
 
     /**

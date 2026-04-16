@@ -674,11 +674,14 @@ exports.recordPfpChange = secureOnCall({ timeoutSeconds: 15 }, async (request) =
             if (!userDoc.exists) throw new HttpsError("not-found", "User document not found.");
             const userData = userDoc.data() || {};
 
-            let pfpChangesToday = userData.pfpChangesToday || 0;
+            let pfpChangesToday = userData.pfpChangesToday ?? CONFIG.MAX_PFP_CHANGES;
             const pfpCooldownResetTimestamp = userData.pfpCooldownResetTimestamp?.toDate() || null;
             const currentTime = new Date();
 
-            if (pfpCooldownResetTimestamp && (currentTime.getTime() - pfpCooldownResetTimestamp.getTime()) >= CONFIG.COOLDOWN_PERIOD_MS) {
+            const needsReset = !pfpCooldownResetTimestamp ||
+                               (currentTime.getTime() - pfpCooldownResetTimestamp.getTime()) >= CONFIG.COOLDOWN_PERIOD_MS;
+
+            if (needsReset) {
                 pfpChangesToday = CONFIG.MAX_PFP_CHANGES;
             }
 

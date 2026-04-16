@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Full-bleed cream matches windowSplashScreenBackground so any circular clip is invisible. -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item>
+        <shape android:shape="rectangle">
+            <solid android:color="@color/page_cream" />
+        </shape>
+    </item>
+    <item>
+        <inset
+            android:drawable="@drawable/birddexlogo"
+            android:insetLeft="12%"
+            android:insetTop="12%"
+            android:insetRight="12%"
+            android:insetBottom="12%" />
+    </item>
+</layer-list>

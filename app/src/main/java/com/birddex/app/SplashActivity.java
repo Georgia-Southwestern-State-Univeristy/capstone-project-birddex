@@ -9,6 +9,7 @@ import android.view.animation.Animation;
 import android.view.animation.AnimationUtils;
 
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.core.splashscreen.SplashScreen;
 
 import com.google.firebase.auth.FirebaseAuth;
 import com.google.firebase.auth.FirebaseUser;
@@ -33,13 +34,16 @@ public class SplashActivity extends AppCompatActivity {
      */
     @Override
     protected void onCreate(Bundle savedInstanceState) {
+        SplashScreen.installSplashScreen(this);
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_splash);
         SystemBarHelper.applyStandardNavBar(this);
 
         // Bind or inflate the UI pieces this method needs before it can update the screen.
         View splashRoot = findViewById(R.id.splashRoot);
-        
+        View splashLogo = findViewById(R.id.ivSplashLogo);
+        View poweredBy = findViewById(R.id.tvPoweredBy);
+
         // Load fancy entry animation and fade out
         Animation splashEnter = AnimationUtils.loadAnimation(this, R.anim.splash_enter);
         Animation fadeOut = AnimationUtils.loadAnimation(this, R.anim.fade_out);
@@ -58,7 +62,11 @@ public class SplashActivity extends AppCompatActivity {
             public void onAnimationEnd(Animation animation) {
                 // Hold the state for 1.2 seconds before fading out
                 new Handler(Looper.getMainLooper()).postDelayed(() -> {
-                    splashRoot.startAnimation(fadeOut);
+                    // Fade only content so ?attr/colorSurface on splashRoot stays opaque — avoids a dark
+                    // flash when the whole root hit alpha 0 before the next activity window is ready.
+                    splashLogo.startAnimation(fadeOut);
+                    poweredBy.startAnimation(
+                            AnimationUtils.loadAnimation(SplashActivity.this, R.anim.fade_out));
                 }, 1200);
             }
 

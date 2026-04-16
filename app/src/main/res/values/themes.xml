@@ -21,6 +21,14 @@
 
     <style name="Theme.BirdDex" parent="Base.Theme.BirdDex" />
 
+    <!-- Cold start + Android 12+ splash; hands off to Theme.BirdDex after first frame. -->
+    <style name="Theme.BirdDex.Splash" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">@color/page_cream</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/splash_screen_cold_start_icon</item>
+        <item name="windowSplashScreenAnimationDuration">0</item>
+        <item name="postSplashScreenTheme">@style/Theme.BirdDex</item>
+    </style>
+
     <style name="CropActivityTheme" parent="Theme.AppCompat.Light.NoActionBar">
         <!-- Set the window background to black for the cropping activity -->
         <item name="android:windowBackground">@android:color/black</item>

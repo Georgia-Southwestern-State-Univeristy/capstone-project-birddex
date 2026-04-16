@@ -246,6 +246,8 @@ public class NearbyHeatmapActivity extends AppCompatActivity
     private final Set<String> postLikeInFlight = Collections.newSetFromMap(new ConcurrentHashMap<>());
     private final Set<String> commentLikeInFlight = Collections.newSetFromMap(new ConcurrentHashMap<>());
     private boolean isNavigating = false;
+    private BottomSheetDialog activeHotspotBottomSheet;
+    private boolean isHotspotBottomSheetOpening = false;
 
     /**
      * Android calls this when the Activity is first created. This is where the screen usually
@@ -2106,6 +2108,15 @@ public class NearbyHeatmapActivity extends AppCompatActivity
 
     @Override
     public void onCircleClick(@NonNull Circle c) {
+        if (isHotspotBottomSheetOpening) {
+            return;
+        }
+
+        BottomSheetDialog currentDialog = activeHotspotBottomSheet;
+        if (currentDialog != null && currentDialog.isShowing()) {
+            return;
+        }
+
         HotspotBucket b = circleIdToBucket.get(c.getId());
         if (b != null) showBirdListBottomSheet(b);
     }
@@ -2116,7 +2127,15 @@ public class NearbyHeatmapActivity extends AppCompatActivity
      * attach listeners.
      */
     private void showBirdListBottomSheet(@NonNull HotspotBucket b) {
+        isHotspotBottomSheetOpening = true;
+
+        BottomSheetDialog existingDialog = activeHotspotBottomSheet;
+        if (existingDialog != null && existingDialog.isShowing()) {
+            existingDialog.dismiss();
+        }
+
         BottomSheetDialog dialog = new BottomSheetDialog(this);
+        activeHotspotBottomSheet = dialog;
         dialog.setContentView(R.layout.bottom_sheet_heatmap_birds);
 
         dialog.setOnShowListener(d -> {
@@ -2138,6 +2157,7 @@ public class NearbyHeatmapActivity extends AppCompatActivity
 
         if (container == null) {
             dialog.show();
+            isHotspotBottomSheetOpening = false;
             return;
         }
 
@@ -2168,7 +2188,13 @@ public class NearbyHeatmapActivity extends AppCompatActivity
 
         clearListenerRegistrations(bottomSheetListeners);
 
-        dialog.setOnDismissListener(d -> clearListenerRegistrations(bottomSheetListeners));
+        dialog.setOnDismissListener(d -> {
+            clearListenerRegistrations(bottomSheetListeners);
+            if (activeHotspotBottomSheet == dialog) {
+                activeHotspotBottomSheet = null;
+            }
+            isHotspotBottomSheetOpening = false;
+        });
 
         container.removeAllViews();
 
@@ -2217,6 +2243,7 @@ public class NearbyHeatmapActivity extends AppCompatActivity
 
         refreshSummary.run();
         dialog.show();
+        isHotspotBottomSheetOpening = false;
     }
 
     private void openBirdWikiFromHeatmapRow(@NonNull BirdSheetRow item, @NonNull BottomSheetDialog dialog) {
@@ -2346,41 +2373,41 @@ public class NearbyHeatmapActivity extends AppCompatActivity
     }
     private void rebuildHotspotBuckets(int gen) {
         Map<String, HotspotBucket> newBuckets = new LinkedHashMap<>();
-            List<ListenerRegistration> newListeners = new ArrayList<>();
+        List<ListenerRegistration> newListeners = new ArrayList<>();
 
-            new Thread(() -> {
-                // We use local copies of the sightings lists to avoid ConcurrentModificationException
-                List<HotspotSighting> userList = new ArrayList<>(userHotspotSightings);
-                List<HotspotSighting> eBirdList = new ArrayList<>(eBirdHotspotSightings);
+        new Thread(() -> {
+            // We use local copies of the sightings lists to avoid ConcurrentModificationException
+            List<HotspotSighting> userList = new ArrayList<>(userHotspotSightings);
+            List<HotspotSighting> eBirdList = new ArrayList<>(eBirdHotspotSightings);
 
-                for (HotspotSighting sighting : userList) {
+            for (HotspotSighting sighting : userList) {
+                if (fetchGeneration != gen || isMapMoving) return;
+                addToTempBuckets(newBuckets, sighting, true);
+            }
+
+            for (HotspotSighting sighting : eBirdList) {
+                if (fetchGeneration != gen || isMapMoving) return;
+                addToTempBuckets(newBuckets, sighting, false);
+            }
+
+            // Batch listener attachment on UI thread
+            runOnUiThread(() -> {
+                if (fetchGeneration != gen || isFinishing() || isDestroyed() || isMapMoving) return;
+
+                clearListenerRegistrations(hotspotSummaryListeners);
+                hotspotBuckets.clear();
+                hotspotBuckets.putAll(newBuckets);
+
+                for (HotspotBucket bucket : hotspotBuckets.values()) {
                     if (fetchGeneration != gen || isMapMoving) return;
-                    addToTempBuckets(newBuckets, sighting, true);
+                    attachHotspotSummaryListener(hotspotSummaryListeners, bucket);
                 }
 
-                for (HotspotSighting sighting : eBirdList) {
-                    if (fetchGeneration != gen || isMapMoving) return;
-                    addToTempBuckets(newBuckets, sighting, false);
+                if (fetchGeneration == gen && !isMapMoving) {
+                    renderHeatmaps();
                 }
-
-                // Batch listener attachment on UI thread
-                runOnUiThread(() -> {
-                    if (fetchGeneration != gen || isFinishing() || isDestroyed() || isMapMoving) return;
-
-                    clearListenerRegistrations(hotspotSummaryListeners);
-                    hotspotBuckets.clear();
-                    hotspotBuckets.putAll(newBuckets);
-
-                    for (HotspotBucket bucket : hotspotBuckets.values()) {
-                        if (fetchGeneration != gen || isMapMoving) return;
-                        attachHotspotSummaryListener(hotspotSummaryListeners, bucket);
-                    }
-
-                    if (fetchGeneration == gen && !isMapMoving) {
-                        renderHeatmaps();
-                    }
-                });
-            }).start();
+            });
+        }).start();
     }
 
     private void clearListenerRegistrations(@NonNull List<ListenerRegistration> listeners) {

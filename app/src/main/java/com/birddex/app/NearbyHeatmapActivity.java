@@ -31,6 +31,7 @@ import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.PopupMenu;
 import android.widget.TextView;
+import androidx.core.widget.NestedScrollView;
 import java.util.HashSet;
 import java.util.Iterator;
 
@@ -2180,40 +2181,66 @@ public class NearbyHeatmapActivity extends AppCompatActivity
         }
 
         LayoutInflater inf = LayoutInflater.from(this);
-        for (BirdSheetRow item : rows) {
-            View row = inf.inflate(R.layout.item_heatmap_bird_placeholder, container, false);
+        int pageSize = 10;
+        final int[] loadedCount = {0};
 
-            ((TextView) row.findViewById(R.id.tvBirdName)).setText(item.displayName);
+        NestedScrollView scrollView = dialog.findViewById(R.id.birdListScrollView);
 
-            TextView tvBirdCount = row.findViewById(R.id.tvBirdCount);
-            if (item.userCount > 0 && item.eBirdCount > 0) {
-                tvBirdCount.setText(item.userCount + " user  •  " + item.eBirdCount + " verified");
-            } else if (item.userCount > 0) {
-                tvBirdCount.setText(item.userCount + " user sightings");
-            } else {
-                tvBirdCount.setText(item.eBirdCount + " verified sightings");
+        Runnable loadMore = new Runnable() {
+            @Override
+            public void run() {
+                int start = loadedCount[0];
+                int end = Math.min(start + pageSize, rows.size());
+                if (start >= end) return;
+
+                for (int i = start; i < end; i++) {
+                    BirdSheetRow item = rows.get(i);
+                    View row = inf.inflate(R.layout.item_heatmap_bird_placeholder, container, false);
+
+                    ((TextView) row.findViewById(R.id.tvBirdName)).setText(item.displayName);
+
+                    TextView tvBirdCount = row.findViewById(R.id.tvBirdCount);
+                    if (item.userCount > 0 && item.eBirdCount > 0) {
+                        tvBirdCount.setText(item.userCount + " user  •  " + item.eBirdCount + " verified");
+                    } else if (item.userCount > 0) {
+                        tvBirdCount.setText(item.userCount + " user sightings");
+                    } else {
+                        tvBirdCount.setText(item.eBirdCount + " verified sightings");
+                    }
+
+                    ImageView ivBird = row.findViewById(R.id.ivBirdPlaceholder);
+                    BirdImageLoader.loadBirdImageInto(ivBird, item.birdId, item.commonName, item.scientificName);
+
+                    TextView tvVoteStatus = row.findViewById(R.id.tvVoteStatus);
+                    TextView tvThumbUpCount = row.findViewById(R.id.tvThumbUpCount);
+                    TextView tvThumbDownCount = row.findViewById(R.id.tvThumbDownCount);
+                    TextView btnThumbUp = row.findViewById(R.id.btnThumbUp);
+                    TextView btnThumbDown = row.findViewById(R.id.btnThumbDown);
+                    bindVoteUi(b, item, tvVoteStatus, tvThumbUpCount, tvThumbDownCount, btnThumbUp, btnThumbDown, refreshSummary);
+
+                    View clickArea = row.findViewById(R.id.rowContent);
+                    if (clickArea == null) {
+                        clickArea = row;
+                    }
+                    clickArea.setClickable(true);
+                    clickArea.setFocusable(true);
+                    clickArea.setOnClickListener(v -> openBirdWikiFromHeatmapRow(item, dialog));
+
+                    container.addView(row);
+                }
+                loadedCount[0] = end;
             }
+        };
 
-            ImageView ivBird = row.findViewById(R.id.ivBirdPlaceholder);
-            BirdImageLoader.loadBirdImageInto(ivBird, item.birdId, item.commonName, item.scientificName);
-
-            TextView tvVoteStatus = row.findViewById(R.id.tvVoteStatus);
-            TextView tvThumbUpCount = row.findViewById(R.id.tvThumbUpCount);
-            TextView tvThumbDownCount = row.findViewById(R.id.tvThumbDownCount);
-            TextView btnThumbUp = row.findViewById(R.id.btnThumbUp);
-            TextView btnThumbDown = row.findViewById(R.id.btnThumbDown);
-            bindVoteUi(b, item, tvVoteStatus, tvThumbUpCount, tvThumbDownCount, btnThumbUp, btnThumbDown, refreshSummary);
-
-            View clickArea = row.findViewById(R.id.rowContent);
-            if (clickArea == null) {
-                clickArea = row;
-            }
-            clickArea.setClickable(true);
-            clickArea.setFocusable(true);
-            clickArea.setOnClickListener(v -> openBirdWikiFromHeatmapRow(item, dialog));
-
-            container.addView(row);
+        if (scrollView != null) {
+            scrollView.setOnScrollChangeListener((NestedScrollView.OnScrollChangeListener) (v, scrollX, scrollY, oldScrollX, oldScrollY) -> {
+                if (scrollY > (v.getChildAt(0).getMeasuredHeight() - v.getMeasuredHeight() - 500)) {
+                    loadMore.run();
+                }
+            });
         }
+
+        loadMore.run();
 
         refreshSummary.run();
         dialog.show();

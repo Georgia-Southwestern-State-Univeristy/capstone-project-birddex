@@ -12,6 +12,10 @@
     <string name="failed_to_load_ebird_sightings">Failed to load eBird sightings.</string>
     <string name="no_heatmap_data_found">No heatmap data found for this area.</string>
     <string name="no_nearby_sightings">No sightings found in the last 72 hours within 50km.</string>
+    <string name="nearby_help_icon_label">?</string>
+    <string name="nearby_help_content_desc">How Nearby works</string>
+    <string name="nearby_help_title">Nearby &amp; map</string>
+    <string name="nearby_help_message">How it works\n\n• BirdDex uses your location (when allowed) to show birds reported near you—about 50 km (31 mi) from where you are standing.\n\n• The list mixes recent BirdDex community sightings with Georgia reference data from eBird.\n\n• Only sightings from about the last 72 hours (3 days) are included in this list.\n\n• Open the map to see the heatmap. Forum posts that share a location appear as pins on the map; those pins are cleared after about 48 hours so older posts do not stay on the map forever.\n\n• Use refresh to reload after you move, or if the list looks out of date.</string>
     <string name="no_recent_sightings">No recent sightings found.</string>
     <string name="heatmap_scope_72h_50km">72h / 50km</string>
     <string name="heatmap_scope_72h">last 72h</string>

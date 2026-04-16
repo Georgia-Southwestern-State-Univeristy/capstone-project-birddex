@@ -497,26 +497,39 @@ async function reserveOpenAiQuota(userRef, eventLogRef, userId) {
     await db.runTransaction(async (transaction) => {
         const eventDoc = await transaction.get(eventLogRef);
         if (eventDoc.exists) {
-            throw new HttpsError("aborted", "Identification in progress. Please retry in a moment.");
+            // If the event doc exists and is already processed, we don't want to throw an error here.
+            // But if it's pending, we should prevent double-dipping.
+            if (eventDoc.data()?.pending === true) {
+                throw new HttpsError("aborted", "Identification in progress. Please retry in a moment.");
+            }
+            return; // Already processed, no need to reserve quota again.
         }
 
         const userDoc = await transaction.get(userRef);
         if (!userDoc.exists) throw new HttpsError("not-found", "User document not found.");
 
         const userData = userDoc.data();
-        let currentRequestsRemaining = userData.openAiRequestsRemaining || 0;
+        let currentRequestsRemaining = userData.openAiRequestsRemaining ?? CONFIG.MAX_OPENAI_REQUESTS;
         const openAiCooldownResetTimestamp = userData.openAiCooldownResetTimestamp?.toDate() || null;
         const currentTime = new Date();
 
-        if (openAiCooldownResetTimestamp && (currentTime.getTime() - openAiCooldownResetTimestamp.getTime()) >= CONFIG.COOLDOWN_PERIOD_MS) {
+        // 1. Check if we need to reset the quota (24h passed or first-time initialization)
+        const needsReset = !openAiCooldownResetTimestamp ||
+                           (currentTime.getTime() - openAiCooldownResetTimestamp.getTime()) >= CONFIG.COOLDOWN_PERIOD_MS;
+
+        if (needsReset) {
             currentRequestsRemaining = CONFIG.MAX_OPENAI_REQUESTS;
         }
 
+        // 2. Check if user has credits left
         if (currentRequestsRemaining <= 0) {
             throw new HttpsError("resource-exhausted", "AI request limit reached.");
         }
 
+        // 3. Consume one credit
         const updatedOpenAiRequestsRemaining = currentRequestsRemaining - 1;
+
+        // 4. Update the reset timestamp if this is the start of a new 100-request cycle
         let newCooldownTimestamp = openAiCooldownResetTimestamp;
         if (currentRequestsRemaining === CONFIG.MAX_OPENAI_REQUESTS) {
             newCooldownTimestamp = admin.firestore.FieldValue.serverTimestamp();
@@ -1886,6 +1899,9 @@ exports.identifyBird = secureOnCall({ secrets: [OPENAI_API_KEY, BIRDDEX_MODEL_AP
             });
         });
 
+        // Always reserve/consume quota at the start of every identification attempt
+        await reserveOpenAiQuota(userRef, eventLogRef, userId);
+
         const locationId = await getOrCreateLocation(safeLat, safeLng, localityName, db, { userId });
         const userLocationContext = await getLocationContext(locationId);
         const modelApiResult = await callBirdModelApi({
@@ -1970,8 +1986,6 @@ exports.identifyBird = secureOnCall({ secrets: [OPENAI_API_KEY, BIRDDEX_MODEL_AP
                 ? "reranker_unverified_full_fallback"
                 : (!top1Bird ? "top1_not_in_supported_birds" : "low_confidence");
             openAiMode = "full_fallback";
-
-            await reserveOpenAiQuota(userRef, eventLogRef, userId);
 
             openAiRawResponse = await callOpenAiBirdFullFallback(image);
 

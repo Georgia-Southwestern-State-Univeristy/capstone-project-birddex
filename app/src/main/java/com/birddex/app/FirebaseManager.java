@@ -1753,6 +1753,23 @@ public class FirebaseManager {
     /**
      * Main logic block for this part of the feature.
      */
+    public void recordTagSearch(String tag, OnCompleteListener<Void> listener) {
+        Map<String, Object> data = new HashMap<>();
+        data.put("tag", tag);
+        mFunctions.getHttpsCallable("recordTagSearch")
+                .call(data)
+                .addOnCompleteListener(task -> {
+                    if (task.isSuccessful()) {
+                        if (listener != null) listener.onComplete(Tasks.forResult(null));
+                    } else {
+                        if (listener != null) listener.onComplete(Tasks.forException(task.getException()));
+                    }
+                });
+    }
+
+    /**
+     * Main logic block for this part of the feature.
+     */
     public void syncGeorgiaBirdList(OnCompleteListener<HttpsCallableResult> listener) {
         Log.d(TAG, "Calling getGeorgiaBirds Cloud Function.");
         mFunctions.getHttpsCallable("getGeorgiaBirds").call().addOnCompleteListener(task -> {
@@ -1778,6 +1795,28 @@ public class FirebaseManager {
             Log.d(TAG, "Follow status result: " + isFol);
             listener.onComplete(Tasks.forResult(isFol));
         });
+    }
+
+    /**
+     * Calls the getForYouFeed Cloud Function with personalization parameters.
+     */
+    public void getForYouFeed(Double latitude, Double longitude, String cursor, OnCompleteListener<Map<String, Object>> listener) {
+        Map<String, Object> data = new HashMap<>();
+        if (latitude != null) data.put("latitude", latitude);
+        if (longitude != null) data.put("longitude", longitude);
+        if (cursor != null) data.put("cursor", cursor);
+
+        mFunctions.getHttpsCallable("getForYouFeed")
+                .call(data)
+                .addOnCompleteListener(task -> {
+                    if (task.isSuccessful()) {
+                        Map<String, Object> result = (Map<String, Object>) task.getResult().getData();
+                        listener.onComplete(Tasks.forResult(result));
+                    } else {
+                        Log.e(TAG, "getForYouFeed failed", task.getException());
+                        listener.onComplete(Tasks.forException(task.getException()));
+                    }
+                });
     }
     /**
      * Sends a bug report directly to Firestore.

@@ -75,6 +75,9 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
     private List<String> followedIds = new ArrayList<>();
     private Runnable pendingRefreshRunnable = null;
     private int fetchGeneration = 0;
+    private String nextCursor = null;
+    private Location lastLocation = null;
+    private LocationHelper locationHelper;
 
     private final Set<String> postLikeInFlight = Collections.newSetFromMap(new ConcurrentHashMap<>());
     private final Map<String, Boolean> savedPostStateCache = new ConcurrentHashMap<>();
@@ -88,6 +91,21 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
     @Override
     public void onCreate(@Nullable Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        locationHelper = new LocationHelper(requireContext(), new LocationHelper.LocationListener() {
+            @Override
+            public void onLocationReceived(Location location, String city, String state, String country) {
+                lastLocation = location;
+            }
+
+            @Override
+            public void onLocationError(String error) {
+                Log.e(TAG, "Location error: " + error);
+            }
+        });
+        if (locationHelper.checkLocationPermissions()) {
+            locationHelper.getLastKnownLocation();
+        }
+
         createPostLauncher = registerForActivityResult(
                 new ActivityResultContracts.StartActivityForResult(),
                 result -> {
@@ -202,10 +220,109 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
      * This method also reads or writes local device preferences so some state survives app
      * restarts.
      */
+    private void fetchForYouPosts() {
+        if (isFetching || isLastPage) {
+            if (binding != null) binding.swipeRefreshLayout.setRefreshing(false);
+            return;
+        }
+
+        isFetching = true;
+        final int myGen = fetchGeneration;
+        final String requestCursor = nextCursor; // Capture current cursor state
+        Double lat = (lastLocation != null) ? lastLocation.getLatitude() : null;
+        Double lng = (lastLocation != null) ? lastLocation.getLongitude() : null;
+
+        firebaseManager.getForYouFeed(lat, lng, requestCursor, task -> {
+            if (!isAdded() || binding == null || fetchGeneration != myGen) return;
+
+            if (task.isSuccessful()) {
+                Map<String, Object> result = task.getResult();
+                List<Map<String, Object>> postsData = (List<Map<String, Object>>) result.get("posts");
+                nextCursor = (String) result.get("nextCursor");
+
+                if (nextCursor == null || nextCursor.isEmpty()) {
+                    isLastPage = true;
+                }
+
+                List<ForumPost> newPosts = new ArrayList<>();
+                if (postsData != null) {
+                    for (Map<String, Object> data : postsData) {
+                        ForumPost post = mapToForumPost(data);
+                        if (isForumPostVisible(post)) {
+                            newPosts.add(post);
+                        }
+                    }
+                }
+
+                // If we were fetching the first page (requestCursor was null), clear the list
+                if (requestCursor == null) {
+                    postList.clear();
+                }
+
+                if (newPosts.isEmpty() && isLastPage) {
+                    // No more content
+                }
+
+                postList.addAll(newPosts);
+                adapter.setPosts(postList);
+                primeSavedPostStates(newPosts);
+
+            } else {
+                Log.e(TAG, "Failed to fetch For You feed", task.getException());
+                // Handle error (e.g., show a toast or empty state)
+            }
+            isFetching = false;
+            binding.swipeRefreshLayout.setRefreshing(false);
+        });
+    }
+
+    private ForumPost mapToForumPost(Map<String, Object> data) {
+        ForumPost post = new ForumPost();
+        post.setPostId((String) data.get("postId"));
+        post.setUserId((String) data.get("userId"));
+        post.setUsername((String) data.get("username"));
+        post.setUserProfilePictureUrl((String) data.get("userProfilePictureUrl"));
+        post.setMessage((String) data.get("message"));
+        post.setBirdImageUrl((String) data.get("birdImageUrl"));
+        post.setLikeCount(extractInt(data.get("likeCount")));
+        post.setCommentCount(extractInt(data.get("commentCount")));
+        post.setViewCount(extractInt(data.get("viewCount")));
+        post.setLatitude(extractDouble(data.get("latitude")));
+        post.setLongitude(extractDouble(data.get("longitude")));
+        post.setBirdSpeciesId((String) data.get("birdSpeciesId"));
+        post.setRarity((String) data.get("rarity"));
+        post.setDiscoveryScore(extractDouble(data.get("discoveryScore")));
+
+        Object ts = data.get("timestamp");
+        if (ts instanceof com.google.firebase.Timestamp) {
+            post.setTimestamp((com.google.firebase.Timestamp) ts);
+        } else if (ts instanceof Map) {
+            Map<String, Object> tsMap = (Map<String, Object>) ts;
+            Object secondsObj = tsMap.get("_seconds");
+            Object nanosObj = tsMap.get("_nanoseconds");
+            long seconds = (secondsObj instanceof Number) ? ((Number) secondsObj).longValue() : 0;
+            int nanoseconds = (nanosObj instanceof Number) ? ((Number) nanosObj).intValue() : 0;
+            post.setTimestamp(new com.google.firebase.Timestamp(seconds, nanoseconds));
+        }
+
+        return post;
+    }
+
+    private int extractInt(Object obj) {
+        if (obj instanceof Number) return ((Number) obj).intValue();
+        return 0;
+    }
+
+    private Double extractDouble(Object obj) {
+        if (obj instanceof Number) return ((Number) obj).doubleValue();
+        return null;
+    }
+
     private void showFilterMenu(View v) {
         PopupMenu popup = new PopupMenu(getContext(), v);
         popup.getMenu().add("Recent");
         popup.getMenu().add("Following");
+        popup.getMenu().add("For You");
         popup.setOnMenuItemClickListener(item -> {
             String selected = item.getTitle().toString();
             if (!selected.equals(currentFilter)) {
@@ -367,6 +484,7 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
         fetchGeneration++;
         isFetching = false;
         lastVisible = null;
+        nextCursor = null;
         isLastPage = false;
         // Don't clear postList here to avoid flickering if a new fetch is already starting.
         // It will be cleared inside fetchPosts when the SUCCESSFUL generation returns.
@@ -406,6 +524,7 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
                     if (followedIds.isEmpty()) {
                         postList.clear();
                         lastVisible = null;
+                        nextCursor = null;
                         isLastPage = true;
                         adapter.setPosts(new ArrayList<>());
                         primeSavedPostStates(postList);
@@ -444,6 +563,11 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
         }
         if ("Following".equals(currentFilter) && followedIds.isEmpty()) {
             if (binding != null) binding.swipeRefreshLayout.setRefreshing(false);
+            return;
+        }
+
+        if ("For You".equals(currentFilter)) {
+            fetchForYouPosts();
             return;
         }
 
@@ -628,6 +752,7 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
     @Override public void onPostClick(ForumPost p) {
         if (isNavigating) return;
         isNavigating = true;
+        firebaseManager.recordForumPostView(p.getId());
         startActivity(new Intent(getActivity(), PostDetailActivity.class).putExtra(PostDetailActivity.EXTRA_POST_ID, p.getId()));
     }
 

@@ -51,6 +51,11 @@ public class ForumPost {
     private int uniqueReporterCount;
     private Map<String, Object> reportReasonCounts;
 
+    // Discovery fields
+    private Double discoveryScore;
+    private String birdSpeciesId;
+    private String rarity;
+
     /**
      * Constructor that stores incoming dependencies/values so this object starts in a usable
      * state.
@@ -159,4 +164,11 @@ public class ForumPost {
     public void setUniqueReporterCount(int uniqueReporterCount) { this.uniqueReporterCount = uniqueReporterCount; }
     public Map<String, Object> getReportReasonCounts() { return reportReasonCounts; }
     public void setReportReasonCounts(Map<String, Object> reportReasonCounts) { this.reportReasonCounts = reportReasonCounts; }
+
+    public Double getDiscoveryScore() { return discoveryScore; }
+    public void setDiscoveryScore(Double discoveryScore) { this.discoveryScore = discoveryScore; }
+    public String getBirdSpeciesId() { return birdSpeciesId; }
+    public void setBirdSpeciesId(String birdSpeciesId) { this.birdSpeciesId = birdSpeciesId; }
+    public String getRarity() { return rarity; }
+    public void setRarity(String rarity) { this.rarity = rarity; }
 }

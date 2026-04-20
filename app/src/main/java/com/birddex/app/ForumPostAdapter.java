@@ -18,6 +18,7 @@ import com.google.firebase.auth.FirebaseAuth;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 
 /**
  * ForumPostAdapter: Adapter that converts model data into rows/cards for a RecyclerView or similar list UI.
@@ -149,6 +150,8 @@ public class ForumPostAdapter extends RecyclerView.Adapter<ForumPostAdapter.Post
         TextView tvSpottedBadge;
         TextView tvHuntedBadge;
         TextView tvPoiBadge;
+        TextView tvRarityBadge;
+        TextView tvDiscoveryScore;
 
         /**
          * Main logic block for this part of the feature.
@@ -176,6 +179,8 @@ public class ForumPostAdapter extends RecyclerView.Adapter<ForumPostAdapter.Post
             tvSpottedBadge = itemView.findViewById(R.id.tvSpottedBadge);
             tvHuntedBadge = itemView.findViewById(R.id.tvHuntedBadge);
             tvPoiBadge = itemView.findViewById(R.id.tvPoiBadge);
+            tvRarityBadge = itemView.findViewById(R.id.tvRarityBadge);
+            tvDiscoveryScore = itemView.findViewById(R.id.tvDiscoveryScore);
         }
 
         /**
@@ -204,6 +209,24 @@ public class ForumPostAdapter extends RecyclerView.Adapter<ForumPostAdapter.Post
             if (tvPoiBadge != null) {
                 boolean poiOnly = post.isShowLocation() && !post.isSpotted() && !post.isHunted();
                 tvPoiBadge.setVisibility(poiOnly ? View.VISIBLE : View.GONE);
+            }
+
+            if (tvRarityBadge != null) {
+                if (BuildConfig.DEBUG && post.getRarity() != null && !post.getRarity().isEmpty()) {
+                    tvRarityBadge.setVisibility(View.VISIBLE);
+                    tvRarityBadge.setText(post.getRarity().toUpperCase());
+                } else {
+                    tvRarityBadge.setVisibility(View.GONE);
+                }
+            }
+
+            if (tvDiscoveryScore != null) {
+                if (BuildConfig.DEBUG && post.getDiscoveryScore() != null) {
+                    tvDiscoveryScore.setVisibility(View.VISIBLE);
+                    tvDiscoveryScore.setText(String.format(Locale.getDefault(), "Score: %.1f", post.getDiscoveryScore()));
+                } else {
+                    tvDiscoveryScore.setVisibility(View.GONE);
+                }
             }
 
             // View on Map button visibility - show for any post that shared map location.

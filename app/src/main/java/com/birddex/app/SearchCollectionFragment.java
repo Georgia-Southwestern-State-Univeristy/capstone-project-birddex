@@ -538,6 +538,15 @@ public class SearchCollectionFragment extends Fragment {
             @Override
             public void onTextChanged(CharSequence s, int start, int before, int count) {
                 applyCurrentFilter();
+                String query = s.toString().trim();
+                if (query.length() >= 3) {
+                    FirebaseManager fm = new FirebaseManager(requireContext());
+                    fm.recordTagSearch(query, task -> {
+                        if (!task.isSuccessful()) {
+                            Log.e(TAG, "Failed to record tag search", task.getException());
+                        }
+                    });
+                }
             }
 
             @Override

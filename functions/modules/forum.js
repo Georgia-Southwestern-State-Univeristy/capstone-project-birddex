@@ -193,6 +193,94 @@ exports.expireForumHeatmapPins = onSchedule({
 });
 
 // ======================================================
+// updatePostHotnessScores (scheduled, every 1 hour)
+// ======================================================
+/**
+ * Calculates and updates the hotnessScore for all visible forum posts.
+ * Formula: (Likes + Comments * 2) / (AgeInHours + 2) ^ GRAVITY
+ */
+exports.updatePostHotnessScores = onSchedule({
+    schedule: "every 1 hours",
+    timeZone: "America/New_York",
+    timeoutSeconds: 540
+}, async (event) => {
+    const lockRef = db.collection("schedulerLocks").doc("updatePostHotnessScores");
+    const STALE_LOCK_MS = 10 * 60 * 1000;
+
+    const lockAcquired = await db.runTransaction(async (t) => {
+        const lockDoc = await t.get(lockRef);
+        if (lockDoc.exists) {
+            const startedAt = lockDoc.data().startedAt?.toDate();
+            if (startedAt && (Date.now() - startedAt.getTime()) < STALE_LOCK_MS) {
+                return false;
+            }
+        }
+        t.set(lockRef, { startedAt: admin.firestore.FieldValue.serverTimestamp() });
+        return true;
+    });
+
+    if (!lockAcquired) {
+        logger.info("updatePostHotnessScores: Another instance is already running. Skipping.");
+        return null;
+    }
+
+    logger.info("Starting post hotness score update cycle...");
+    const now = Date.now();
+
+    try {
+        // Process visible posts. In a very large app, we'd use a more scalable batching approach.
+        const postsSnap = await db.collection("forumThreads")
+            .where("moderationStatus", "==", MODERATION_STATUS_VISIBLE)
+            .get();
+
+        if (postsSnap.empty) {
+            logger.info("No visible posts found to update hotness.");
+            return null;
+        }
+
+        const batch = db.batch();
+        postsSnap.docs.forEach((doc) => {
+            const data = doc.data();
+            const likes = data.likeCount || 0;
+            const comments = data.commentCount || 0;
+            const createdAt = data.timestamp?.toDate().getTime() || now;
+            const ageInHours = (now - createdAt) / (1000 * 60 * 60);
+
+            // Hotness Formula: (Likes + Comments * 2) / (AgeInHours + 2) ^ 1.5
+            let hotnessScore = (likes + (comments * 2)) / Math.pow(ageInHours + 2, CONFIG.GRAVITY);
+
+            // --- ADVANCED BOOSTING ---
+            // 1. Author Reputation (Simple version: (totalLikes + totalPoints) * weight)
+            // Note: In a production scale-out, we'd cache these values in the user doc
+            // or perform a more efficient join. For now, we assume metadata is enough.
+            const authorReputation = (data.authorTotalLikes || 0) + (data.authorTotalPoints || 0);
+            if (authorReputation > 0) {
+                hotnessScore += (authorReputation * CONFIG.REPUTATION_WEIGHT);
+            }
+
+            // 2. Tag Velocity (Growth in usageCount over a short window)
+            // We can approximate this by checking if the post has a 'trending' tag
+            // We assume tag usageCount is updated hourly/daily and stored in a tags collection.
+            // For now, we'll boost by the presence of high-velocity tags if provided.
+            const tagVelocityBoost = (data.tagVelocityScore || 0);
+            hotnessScore *= (1 + tagVelocityBoost);
+
+            batch.update(doc.ref, { hotnessScore });
+        });
+
+        await batch.commit();
+        logger.info(`Updated hotness scores for ${postsSnap.size} posts.`);
+    } catch (error) {
+        logger.error("Error updating post hotness scores:", error);
+    } finally {
+        await lockRef.delete().catch(e =>
+            logger.warn("Failed to release hotness score lock:", e)
+        );
+    }
+    return null;
+});
+
+// ======================================================
 // clearRemovedForumPostCoordinates — when moderationStatus becomes removed
 // ======================================================
 /**
@@ -267,6 +355,15 @@ exports.toggleForumPostLike = secureOnCall(async (request) => {
             if (shouldLike && !alreadyLiked) {
                 t.set(postRef, { likedBy: { [userId]: true } }, { merge: true });
                 changed = true;
+                // Increment tag engagement for like
+                const tags = postData.tags || [];
+                tags.forEach(tag => {
+                    const engRef = db.collection("users").doc(userId).collection("engagement").doc("tags").collection("scores").doc(tag);
+                    t.set(engRef, {
+                        score: admin.firestore.FieldValue.increment(CONFIG.WEIGHT_LIKE),
+                        lastEngagedAt: admin.firestore.FieldValue.serverTimestamp()
+                    }, { merge: true });
+                });
             } else if (!shouldLike && alreadyLiked) {
                 t.update(postRef, { [`likedBy.${userId}`]: admin.firestore.FieldValue.delete() });
                 changed = true;
@@ -408,6 +505,15 @@ exports.recordForumPostView = secureOnCall(async (request) => {
             const alreadyViewed = viewedBy[userId] === true;
             if (!alreadyViewed) {
                 t.set(postRef, { viewedBy: { [userId]: true } }, { merge: true });
+                // Increment tag engagement for view
+                const tags = postData.tags || [];
+                tags.forEach(tag => {
+                    const engRef = db.collection("users").doc(userId).collection("engagement").doc("tags").collection("scores").doc(tag);
+                    t.set(engRef, {
+                        score: admin.firestore.FieldValue.increment(CONFIG.WEIGHT_VIEW),
+                        lastEngagedAt: admin.firestore.FieldValue.serverTimestamp()
+                    }, { merge: true });
+                });
             }
 
             queuePrivateAuditLog(t, {
@@ -435,6 +541,40 @@ exports.recordForumPostView = secureOnCall(async (request) => {
         });
         if (error instanceof HttpsError) throw error;
         throw new HttpsError("internal", "Failed to record post view.");
+    }
+});
+
+exports.recordPostSkip = secureOnCall(async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Authentication required.");
+
+    const userId = request.auth.uid;
+    const postId = sanitizeText(request.data?.postId || "", 200).trim();
+    if (!postId) throw new HttpsError("invalid-argument", "postId is required.");
+
+    const postRef = db.collection("forumThreads").doc(postId);
+
+    try {
+        await db.runTransaction(async (t) => {
+            const postSnap = await t.get(postRef);
+            if (!postSnap.exists) throw new HttpsError("not-found", "Post not found.");
+
+            const postData = postSnap.data() || {};
+            const tags = postData.tags || [];
+
+            tags.forEach(tag => {
+                const engRef = db.collection("users").doc(userId).collection("engagement").doc("tags").collection("scores").doc(tag);
+                t.set(engRef, {
+                    score: admin.firestore.FieldValue.increment(CONFIG.WEIGHT_SKIP),
+                    lastEngagedAt: admin.firestore.FieldValue.serverTimestamp()
+                }, { merge: true });
+            });
+        });
+
+        return { success: true };
+    } catch (error) {
+        logger.error("recordPostSkip failed:", error);
+        if (error instanceof HttpsError) throw error;
+        throw new HttpsError("internal", "Failed to record post skip.");
     }
 });
 
@@ -2057,6 +2197,12 @@ exports.createForumPost = secureOnCall(async (request) => {
     const userId = request.auth.uid;
     const data = request.data || {};
     const postId = sanitizeText(data.postId || "", 200).trim();
+    const tags = Array.isArray(data.tags)
+        ? data.tags
+            .map(t => sanitizeText(String(t), 30).toLowerCase().replace(/[^a-z0-9]/g, ""))
+            .filter(t => t.length >= 2)
+            .slice(0, 10)
+        : [];
     const message = typeof data.message === "string"
         ? sanitizeText(data.message, FORUM_POST_MAX_LENGTH).trim()
         : "";
@@ -2086,6 +2232,16 @@ exports.createForumPost = secureOnCall(async (request) => {
         text: message,
         threadId: postId,
     });
+
+    for (const tag of tags) {
+        await assertNoBlockedContentOrThrow({
+            userId,
+            submissionType: "tag_create",
+            fieldName: "tag",
+            text: tag,
+            extra: { postId }
+        });
+    }
 
     const imageModeration = await evaluateForumPostImageModeration({
         userId,
@@ -2201,9 +2357,19 @@ exports.createForumPost = secureOnCall(async (request) => {
                     ? admin.firestore.Timestamp.fromMillis(Date.now() + CONFIG.FORUM_HEATMAP_TTL_MS)
                     : null,
                 ...buildInitialModerationFields(),
+                tags,
             };
 
             t.create(postRef, postData);
+
+            // Update global tag usage counts
+            tags.forEach(tag => {
+                const tagRef = db.collection("tags").doc(tag);
+                t.set(tagRef, {
+                    usageCount: admin.firestore.FieldValue.increment(1),
+                    lastUsedAt: admin.firestore.FieldValue.serverTimestamp()
+                }, { merge: true });
+            });
         });
 
         logger.info(`createForumPost: created post ${postId} for user ${userId}`);
@@ -2299,6 +2465,16 @@ exports.createForumComment = secureOnCall(async (request) => {
         userId,
         parentCommentId ? "reply" : "comment"
     );
+
+    // Increment tag engagement for comment
+    const tags = (threadSnap.data() || {}).tags || [];
+    tags.forEach(tag => {
+        const engRef = db.collection("users").doc(userId).collection("engagement").doc("tags").collection("scores").doc(tag);
+        t.set(engRef, {
+            score: admin.firestore.FieldValue.increment(CONFIG.WEIGHT_COMMENT),
+            lastEngagedAt: admin.firestore.FieldValue.serverTimestamp()
+        }, { merge: true });
+    });
 
     t.create(commentRef, {
         threadId,
@@ -2639,6 +2815,254 @@ exports.deleteForumComment = secureOnCall(async (request) => {
     }
 });
 
+
+// ======================================================
+// logPostEngagement — "Time Spent" (heartbeat) scoring
+// ======================================================
+exports.logPostEngagement = secureOnCall(async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Authentication required.");
+
+    const userId = request.auth.uid;
+    const postId = sanitizeText(request.data?.postId || "", 200).trim();
+    if (!postId) throw new HttpsError("invalid-argument", "postId is required.");
+
+    const postRef = db.collection("forumThreads").doc(postId);
+
+    try {
+        await db.runTransaction(async (t) => {
+            const postSnap = await t.get(postRef);
+            if (!postSnap.exists) throw new HttpsError("not-found", "Post not found.");
+
+            const postData = postSnap.data() || {};
+            const tags = postData.tags || [];
+
+            tags.forEach(tag => {
+                const engRef = db.collection("users").doc(userId).collection("engagement").doc("tags").collection("scores").doc(tag);
+                t.set(engRef, {
+                    score: admin.firestore.FieldValue.increment(CONFIG.WEIGHT_HEARTBEAT),
+                    lastEngagedAt: admin.firestore.FieldValue.serverTimestamp()
+                }, { merge: true });
+            });
+        });
+
+        return { success: true };
+    } catch (error) {
+        logger.error("logPostEngagement failed:", error);
+        if (error instanceof HttpsError) throw error;
+        throw new HttpsError("internal", "Failed to log post engagement.");
+    }
+});
+
+// ======================================================
+// recordTagSearch — Capture user search intent
+// ======================================================
+exports.recordTagSearch = secureOnCall(async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Authentication required.");
+
+    const userId = request.auth.uid;
+    const tag = sanitizeText(request.data?.tag || "", 30).toLowerCase().replace(/[^a-z0-9]/g, "");
+    if (!tag || tag.length < 2) throw new HttpsError("invalid-argument", "Valid tag is required.");
+
+    try {
+        const engRef = db.collection("users").doc(userId).collection("engagement").doc("tags").collection("scores").doc(tag);
+        await engRef.set({
+            score: admin.firestore.FieldValue.increment(CONFIG.WEIGHT_SEARCH),
+            lastEngagedAt: admin.firestore.FieldValue.serverTimestamp()
+        }, { merge: true });
+
+        return { success: true };
+    } catch (error) {
+        logger.error("recordTagSearch failed:", error);
+        throw new HttpsError("internal", "Failed to record tag search.");
+    }
+});
+
+// ======================================================
+// getForYouFeed — Retrieve personalized/trending content (80/20 Hybrid)
+// ======================================================
+exports.getForYouFeed = secureOnCall(async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Authentication required.");
+
+    const userId = request.auth.uid;
+    const data = request.data || {};
+    const limit = Math.min(Number(data.limit) || 20, 50);
+    const latitude = typeof data.latitude === "number" ? data.latitude : null;
+    const longitude = typeof data.longitude === "number" ? data.longitude : null;
+
+    // Fetch a bit more than the limit to allow for the diversity filter to prune results
+    const internalLimit = Math.round(limit * 2);
+    const personalizedLimit = Math.round(internalLimit * 0.8);
+    const trendingLimit = internalLimit - personalizedLimit;
+
+    try {
+        // 1. Get user's top tags and expand via relationships
+        const [topTagsSnap, userDexSnap] = await Promise.all([
+            db.collection("users").doc(userId)
+                .collection("engagement").doc("tags").collection("scores")
+                .orderBy("score", "desc")
+                .limit(5)
+                .get(),
+            db.collection("userBirds")
+                .where("userId", "==", userId)
+                .get()
+        ]);
+
+        const collectedSpeciesIds = new Set(userDexSnap.docs.map(doc => doc.data().birdSpeciesId));
+        let seedTags = topTagsSnap.docs.map(doc => doc.id);
+
+        // --- COLD START FALLBACK ---
+        if (seedTags.length < 3) {
+            const globalTagsSnap = await db.collection("tags")
+                .orderBy("usageCount", "desc")
+                .limit(5)
+                .get();
+
+            globalTagsSnap.docs.forEach(doc => {
+                if (!seedTags.includes(doc.id)) {
+                    seedTags.push(doc.id);
+                }
+            });
+        }
+
+        const expandedTags = new Set(seedTags);
+        seedTags.forEach(tag => {
+            const related = TAG_RELATIONSHIPS[tag] || [];
+            related.forEach(rt => expandedTags.add(rt));
+        });
+
+        const targetTags = Array.from(expandedTags).slice(0, 10);
+
+        // 2. Fetch Personalized Content (80%)
+        let personalizedPosts = [];
+        if (targetTags.length > 0) {
+            const pSnap = await db.collection("forumThreads")
+                .where("moderationStatus", "==", MODERATION_STATUS_VISIBLE)
+                .where("tags", "array-contains-any", targetTags)
+                .orderBy("hotnessScore", "desc")
+                .limit(personalizedLimit)
+                .get();
+            personalizedPosts = pSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        }
+
+        // 3. Fetch Global Trending Content (20%)
+        const tSnap = await db.collection("forumThreads")
+            .where("moderationStatus", "==", MODERATION_STATUS_VISIBLE)
+            .orderBy("hotnessScore", "desc")
+            .limit(internalLimit)
+            .get();
+
+        const trendingPosts = tSnap.docs
+            .map(doc => ({ id: doc.id, ...doc.data() }))
+            .filter(tp => !personalizedPosts.some(p => p.id === tp.id))
+            .slice(0, trendingLimit);
+
+        // 4. Combine and apply Discovery Boosting
+        const combined = [...personalizedPosts, ...trendingPosts];
+
+        combined.forEach(post => {
+            let boost = 1.0;
+
+            // A. Location-aware boosting (Proximity)
+            if (latitude !== null && longitude !== null && post.latitude !== null && post.longitude !== null) {
+                const distance = haversineMiles(latitude, longitude, post.latitude, post.longitude);
+                if (distance < 50) { // Within 50 miles
+                    boost *= CONFIG.BOOST_LOCATION;
+                }
+            }
+
+            // B. Rarity-based weighting (Boost Rare/Epic/Legendary posts)
+            if (post.rarity === "Rare" || post.rarity === "Epic" || post.rarity === "Legendary") {
+                boost *= CONFIG.BOOST_RARITY;
+            }
+
+            // C. Dex State Boosting (Uncollected species)
+            if (post.birdSpeciesId && !collectedSpeciesIds.has(post.birdSpeciesId)) {
+                boost *= 1.25; // Discovery boost for new birds
+            }
+
+            // D. Media Quality Multiplier (Photography tag or metadata signals)
+            if (post.tags && post.tags.includes("photography")) {
+                boost *= CONFIG.BOOST_MEDIA_QUALITY;
+            }
+
+            // E. "Seen" state soft-decay (viewedBy map check)
+            const viewedBy = post.viewedBy || {};
+            if (viewedBy[userId]) {
+                boost *= 0.3; // Heavy decay for already seen content
+            }
+
+            post.discoveryScore = (post.hotnessScore || 0) * boost;
+        });
+
+        // Sort by final discovery score
+        combined.sort((a, b) => (b.discoveryScore || 0) - (a.discoveryScore || 0));
+
+        // --- DIVERSITY FILTER ---
+        const filteredPosts = [];
+        const tagCounts = {};
+
+        for (const post of combined) {
+            const postTags = post.tags || [];
+            const isOverRepresented = postTags.some(tag => (tagCounts[tag] || 0) >= 3);
+
+            if (!isOverRepresented) {
+                filteredPosts.push(post);
+                postTags.forEach(tag => {
+                    tagCounts[tag] = (tagCounts[tag] || 0) + 1;
+                });
+            }
+
+            if (filteredPosts.length >= limit) break;
+        }
+
+        return {
+            success: true,
+            posts: filteredPosts,
+            nextCursor: filteredPosts.length > 0 ? filteredPosts[filteredPosts.length - 1].id : null
+        };
+    } catch (error) {
+        logger.error("getForYouFeed failed:", error);
+        throw new HttpsError("internal", "Failed to generate For You feed.");
+    }
+});
+
+// ======================================================
+// decayUserEngagementScores — Scheduled daily decay
+// ======================================================
+exports.decayUserEngagementScores = onSchedule({
+    schedule: "0 0 * * *", // Daily at midnight
+    timeZone: "America/New_York",
+    timeoutSeconds: 540
+}, async (event) => {
+    logger.info("Starting engagement score decay...");
+
+    try {
+        // We'll process users in batches. For a large scale app, we'd use a more robust batching mechanism.
+        const usersSnap = await db.collection("users").get();
+
+        for (const userDoc of usersSnap.docs) {
+            const scoresSnap = await userDoc.ref.collection("engagement").doc("tags").collection("scores").get();
+            if (scoresSnap.empty) continue;
+
+            const batch = db.batch();
+            scoresSnap.docs.forEach(scoreDoc => {
+                const currentScore = scoreDoc.data().score || 0;
+                const newScore = currentScore * CONFIG.ENGAGEMENT_DECAY_RATE;
+
+                if (newScore < 0.1) {
+                    batch.delete(scoreDoc.ref);
+                } else {
+                    batch.update(scoreDoc.ref, { score: newScore });
+                }
+            });
+            await batch.commit();
+        }
+
+        logger.info("Engagement score decay complete.");
+    } catch (error) {
+        logger.error("Error during engagement score decay:", error);
+    }
+});
 
 /**
  * Saves a forum post for the current user so it can be viewed later from the profile screen.

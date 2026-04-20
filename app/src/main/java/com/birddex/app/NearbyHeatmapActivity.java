@@ -132,12 +132,14 @@ public class NearbyHeatmapActivity extends AppCompatActivity
     private TextView tvLegendToggle;
     private boolean isLegendExpanded = true;
     private LatLngBounds currentVisibleBounds;
+    private LatLngBounds lastFetchedBounds;
+    private static final double SAFE_ZONE_RATIO = 0.90;
     private float lastAppliedZoom = -1f;
     private LatLng lastAppliedTarget;
     private static final float MIN_ZOOM_CHANGE_TO_REFRESH = 0.5f;
     private static final float MIN_CAMERA_MOVE_TO_REFRESH_METERS = 500f;
     /** Wait until the camera stops before reloading tiles — avoids flicker/jitter while panning or zooming. */
-    private static final long CAMERA_IDLE_DEBOUNCE_MS = 1000L;
+    private static final long CAMERA_IDLE_DEBOUNCE_MS = 400L;
 
     private final Handler heatmapCameraHandler = new Handler(Looper.getMainLooper());
     private final Runnable debouncedHeatmapReloadRunnable = this::onDebouncedCameraIdleForHeatmap;
@@ -765,15 +767,19 @@ public class NearbyHeatmapActivity extends AppCompatActivity
         centerLng = cp.target.longitude;
 
         boolean shouldRefresh = false;
-        if (lastAppliedTarget == null) {
+        if (lastAppliedTarget == null || lastFetchedBounds == null) {
             shouldRefresh = true;
         } else {
             float[] res = new float[1];
             android.location.Location.distanceBetween(
                     lastAppliedTarget.latitude, lastAppliedTarget.longitude,
                     cp.target.latitude, cp.target.longitude, res);
+
+            boolean outsideSafeZone = !isWithinSafeZone(currentVisibleBounds, lastFetchedBounds);
+
             if (res[0] >= MIN_CAMERA_MOVE_TO_REFRESH_METERS
-                    || Math.abs(cp.zoom - lastAppliedZoom) >= MIN_ZOOM_CHANGE_TO_REFRESH) {
+                    || Math.abs(cp.zoom - lastAppliedZoom) >= MIN_ZOOM_CHANGE_TO_REFRESH
+                    || outsideSafeZone) {
                 shouldRefresh = true;
             }
         }
@@ -781,9 +787,30 @@ public class NearbyHeatmapActivity extends AppCompatActivity
         if (shouldRefresh) {
             lastAppliedTarget = cp.target;
             lastAppliedZoom = cp.zoom;
+            lastFetchedBounds = currentVisibleBounds;
             fetchHeatmapData();
             loadForumPins();
         }
+    }
+
+    private boolean isWithinSafeZone(LatLngBounds current, LatLngBounds cached) {
+        if (current == null || cached == null) return false;
+        double currentLatSpan = current.northeast.latitude - current.southwest.latitude;
+        double currentLngSpan = current.northeast.longitude - current.southwest.longitude;
+        double cachedLatSpan = cached.northeast.latitude - cached.southwest.latitude;
+        double cachedLngSpan = cached.northeast.longitude - cached.southwest.longitude;
+
+        // If the current viewport is significantly larger than what we cached, it's not "within"
+        if (currentLatSpan > cachedLatSpan || currentLngSpan > cachedLngSpan) return false;
+
+        double latBuffer = (cachedLatSpan - currentLatSpan) / 2.0;
+        double lngBuffer = (cachedLngSpan - currentLngSpan) / 2.0;
+
+        // Check if current is centered enough within cached to be in the 90% safe zone
+        return current.southwest.latitude >= (cached.southwest.latitude + latBuffer * (1 - SAFE_ZONE_RATIO))
+                && current.northeast.latitude <= (cached.northeast.latitude - latBuffer * (1 - SAFE_ZONE_RATIO))
+                && current.southwest.longitude >= (cached.southwest.longitude + lngBuffer * (1 - SAFE_ZONE_RATIO))
+                && current.northeast.longitude <= (cached.northeast.longitude - lngBuffer * (1 - SAFE_ZONE_RATIO));
     }
 
     private void markPostViewedFromHeatmap(String userId, ForumPost post, TextView tvViewCount) {
@@ -1722,14 +1749,32 @@ public class NearbyHeatmapActivity extends AppCompatActivity
     }
 
     private void fetchUserBirdSightingsFromServer(int gen) {
-        // Set up or query the Firebase layer that supplies/stores this feature's data.
-        db.collection("userBirdSightings").get(Source.SERVER).addOnSuccessListener(snap -> {
-            Log.d(TAG, "fetchUserBirdSightingsFromServer: Success. Found " + (snap != null ? snap.size() : 0) + " sightings.");
-            processSightings(snap, true, gen);
-        }).addOnFailureListener(e -> {
-            Log.e(TAG, "fetchUserBirdSightingsFromServer: Error fetching user sightings", e);
-            onCollectionFinished(gen);
-        });
+        if (currentVisibleBounds == null) {
+            db.collection("userBirdSightings").get(Source.SERVER).addOnSuccessListener(snap -> {
+                Log.d(TAG, "fetchUserBirdSightingsFromServer: Success. Found " + (snap != null ? snap.size() : 0) + " sightings.");
+                processSightings(snap, true, gen);
+            }).addOnFailureListener(e -> {
+                Log.e(TAG, "fetchUserBirdSightingsFromServer: Error fetching user sightings", e);
+                onCollectionFinished(gen);
+            });
+            return;
+        }
+
+        double minLat = currentVisibleBounds.southwest.latitude;
+        double maxLat = currentVisibleBounds.northeast.latitude;
+
+        db.collection("userBirdSightings")
+                .whereGreaterThanOrEqualTo("latitude", minLat)
+                .whereLessThanOrEqualTo("latitude", maxLat)
+                .get(Source.SERVER)
+                .addOnSuccessListener(snap -> {
+                    Log.d(TAG, "fetchUserBirdSightingsFromServer: Range Success. Found " + (snap != null ? snap.size() : 0) + " sightings.");
+                    processSightings(snap, true, gen);
+                })
+                .addOnFailureListener(e -> {
+                    Log.e(TAG, "fetchUserBirdSightingsFromServer: Error with range query", e);
+                    onCollectionFinished(gen);
+                });
     }
 
     private void loadEbirdApiSightings(int gen) {
@@ -1745,8 +1790,22 @@ public class NearbyHeatmapActivity extends AppCompatActivity
     }
 
     private void fetchEbirdApiSightingsFromServer(int gen) {
-        // Set up or query the Firebase layer that supplies/stores this feature's data.
-        db.collection("eBirdApiSightings").get(Source.SERVER).addOnSuccessListener(snap -> processSightings(snap, false, gen)).addOnFailureListener(e -> onCollectionFinished(gen));
+        if (currentVisibleBounds == null) {
+            db.collection("eBirdApiSightings").get(Source.SERVER)
+                    .addOnSuccessListener(snap -> processSightings(snap, false, gen))
+                    .addOnFailureListener(e -> onCollectionFinished(gen));
+            return;
+        }
+
+        double minLat = currentVisibleBounds.southwest.latitude;
+        double maxLat = currentVisibleBounds.northeast.latitude;
+
+        db.collection("eBirdApiSightings")
+                .whereGreaterThanOrEqualTo("location.latitude", minLat)
+                .whereLessThanOrEqualTo("location.latitude", maxLat)
+                .get(Source.SERVER)
+                .addOnSuccessListener(snap -> processSightings(snap, false, gen))
+                .addOnFailureListener(e -> onCollectionFinished(gen));
     }
 
     /**

@@ -453,7 +453,7 @@ async function callOpenAiBirdFullFallback(base64Image) {
                 content: [
                     {
                         type: "text",
-                        text: `Identify the bird in this image. If the image contains a dead bird, gore, or graphic violence, respond ONLY with 'GORE'. Otherwise, respond exactly as:
+                        text: `Identify the bird in this image. Respond exactly as:
 ID: [ebird_species_code]
 Common Name: [name]
 Scientific Name: [name]
@@ -1159,7 +1159,7 @@ If unsure, still return valid JSON with an empty choices array.`
                     {
                         type: "text",
                         text: `You are identifying a bird from an image for a BirdDex review flow.
-If the image contains a dead bird, gore, or graphic violence, respond ONLY with 'GORE'.
+If the image contains a dead bird, graphic violence, or is otherwise unclear, please still try to identify it.
 Use the two BirdDex model hints below only as hints. They may be wrong.
 Do NOT return any bird that appears in the excluded list.
 Do NOT repeat the same bird twice.
@@ -1233,6 +1233,7 @@ async function callOpenAiBirdReviewCandidatesWithRetry(base64Image, candidateA, 
         locationContextBlock: options?.locationContextBlock || null,
     });
 
+    /*
     if (typeof firstResponse === "string" && firstResponse.includes("GORE")) {
         return {
             responseText: firstResponse,
@@ -1243,6 +1244,7 @@ async function callOpenAiBirdReviewCandidatesWithRetry(base64Image, candidateA, 
             parseErrorMessage: null,
         };
     }
+    */
 
     const firstParse = tryParseRankedBirdChoicesJson(firstResponse);
     if (firstParse.parseSucceeded) {
@@ -1265,6 +1267,7 @@ async function callOpenAiBirdReviewCandidatesWithRetry(base64Image, candidateA, 
         locationContextBlock: options?.locationContextBlock || null,
     });
 
+    /*
     if (typeof retryResponse === "string" && retryResponse.includes("GORE")) {
         return {
             responseText: retryResponse,
@@ -1275,6 +1278,7 @@ async function callOpenAiBirdReviewCandidatesWithRetry(base64Image, candidateA, 
             parseErrorMessage: null,
         };
     }
+    */
 
     const retryParse = tryParseRankedBirdChoicesJson(retryResponse);
     if (retryParse.parseSucceeded) {
@@ -1989,6 +1993,7 @@ exports.identifyBird = secureOnCall({ secrets: [OPENAI_API_KEY, BIRDDEX_MODEL_AP
 
             openAiRawResponse = await callOpenAiBirdFullFallback(image);
 
+            /*
             if (openAiRawResponse.includes("GORE")) {
                 const goreLogRef = db.collection("identificationLogs").doc();
                 await goreLogRef.set({
@@ -2057,6 +2062,7 @@ exports.identifyBird = secureOnCall({ secrets: [OPENAI_API_KEY, BIRDDEX_MODEL_AP
                 }, { merge: true });
                 return goreResult;
             }
+            */
 
             parsedOpenAi = parseBirdIdentificationText(openAiRawResponse);
             const matchedBird = await resolveBirdChoiceToSupportedBird(parsedOpenAi);
@@ -2345,6 +2351,7 @@ exports.reviewBirdAlternatives = secureOnCall({ secrets: [OPENAI_API_KEY], timeo
             geoHintChoices,
         });
         const openAiRawResponse = reviewAttempt.responseText;
+        /*
         if (openAiRawResponse.includes("GORE")) {
             const goreResult = {
                 isVerified: false,
@@ -2380,6 +2387,7 @@ exports.reviewBirdAlternatives = secureOnCall({ secrets: [OPENAI_API_KEY], timeo
             }, { merge: true });
             return goreResult;
         }
+        */
 
         const parsedChoices = reviewAttempt.parseSucceeded
             ? (Array.isArray(reviewAttempt.parsedChoices) ? reviewAttempt.parsedChoices : [])

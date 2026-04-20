@@ -61,6 +61,35 @@ const CONFIG = {
     IDENTIFICATION_IMAGE_TTL_MS: 24 * 60 * 60 * 1000, // 24 hours
     FIRESTORE_BATCH_SIZE: 400,  // Firestore max is 500; using 400 for safety
     LOCATION_PRECISION: 3,      // decimal places (~110 meters)
+    // Tag Discovery & Recommendation Weights
+    WEIGHT_VIEW: 1,
+    WEIGHT_SEARCH: 2,
+    WEIGHT_LIKE: 3,
+    WEIGHT_COMMENT: 5,
+    WEIGHT_SKIP: -2,
+    WEIGHT_HEARTBEAT: 1,          // Points awarded per heartbeat/engagement period
+    GRAVITY: 1.5,
+    ENGAGEMENT_DECAY_RATE: 0.95, // Daily multiplier
+    TRENDING_THRESHOLD: 50,      // Minimum likes for trending
+    TRENDING_WINDOW_DAYS: 1,     // Trending window in days
+    // Discovery Multipliers
+    BOOST_LOCATION: 1.2,
+    BOOST_RARITY: 1.3,
+    BOOST_MEDIA_QUALITY: 1.1,
+    REPUTATION_WEIGHT: 0.1,      // Base weight for reputation points
+};
+
+const TAG_RELATIONSHIPS = {
+    "waterfowl": ["ducks", "geese", "swans", "wetlands"],
+    "raptors": ["hawks", "eagles", "owls", "falcons", "predators"],
+    "songbirds": ["warblers", "sparrows", "finches", "backyard"],
+    "backyard": ["feeders", "songbirds", "sparrows", "cardinals"],
+    "shorebirds": ["sandpipers", "plovers", "beach", "wetlands"],
+    "photography": ["dslr", "mirrorless", "wildlife-photography", "action-shots"],
+    "rare": ["lifers", "megarare", "chasing", "sighting"],
+    "migration": ["spring", "fall", "flyway"],
+    "wetlands": ["marsh", "swamp", "waterfowl", "shorebirds"],
+    "owls": ["nocturnal", "raptors", "night-birding"]
 };
 
 const MODERATION_STATUS_VISIBLE = "visible";
@@ -1581,4 +1610,5 @@ module.exports = {
   CREDIT_CARD_PATTERN,
   ZALGO_PATTERN,
   logFilteredContentAttempt,
+  TAG_RELATIONSHIPS,
 };

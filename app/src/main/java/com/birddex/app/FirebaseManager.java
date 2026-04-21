@@ -840,6 +840,10 @@ public class FirebaseManager {
      * Records a post view on the backend without blocking the UI.
      */
     public void recordForumPostView(String postId) {
+        if (postId == null || postId.trim().isEmpty()) {
+            Log.w(TAG, "recordForumPostView skipped: postId is null or empty.");
+            return;
+        }
         Log.d(TAG, "Calling recordForumPostView Cloud Function for post: " + postId);
         Map<String, Object> data = new HashMap<>();
         data.put("postId", postId);

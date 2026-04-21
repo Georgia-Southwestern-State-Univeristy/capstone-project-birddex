@@ -4,6 +4,7 @@ import android.app.Activity;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.location.Location;
 import android.os.Bundle;
 import android.text.InputFilter;
 import android.text.InputType;
@@ -93,7 +94,7 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
         super.onCreate(savedInstanceState);
         locationHelper = new LocationHelper(requireContext(), new LocationHelper.LocationListener() {
             @Override
-            public void onLocationReceived(Location location, String city, String state, String country) {
+            public void onLocationReceived(Location location, @Nullable String city, @Nullable String state, @Nullable String country) {
                 lastLocation = location;
             }
 
@@ -278,7 +279,11 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
 
     private ForumPost mapToForumPost(Map<String, Object> data) {
         ForumPost post = new ForumPost();
-        post.setPostId((String) data.get("postId"));
+        String postId = (String) data.get("postId");
+        if (postId == null) {
+            postId = (String) data.get("id");
+        }
+        post.setPostId(postId);
         post.setUserId((String) data.get("userId"));
         post.setUsername((String) data.get("username"));
         post.setUserProfilePictureUrl((String) data.get("userProfilePictureUrl"));
@@ -750,10 +755,16 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
 
     @Override public void onCommentClick(ForumPost p) { onPostClick(p); }
     @Override public void onPostClick(ForumPost p) {
+        Log.d(TAG, "onPostClick: postId=" + (p != null ? p.getId() : "null") + ", isNavigating=" + isNavigating);
         if (isNavigating) return;
         isNavigating = true;
-        firebaseManager.recordForumPostView(p.getId());
-        startActivity(new Intent(getActivity(), PostDetailActivity.class).putExtra(PostDetailActivity.EXTRA_POST_ID, p.getId()));
+        if (p != null && p.getId() != null) {
+            firebaseManager.recordForumPostView(p.getId());
+            startActivity(new Intent(getActivity(), PostDetailActivity.class).putExtra(PostDetailActivity.EXTRA_POST_ID, p.getId()));
+        } else {
+            Log.e(TAG, "onPostClick: post or postId is null!");
+            isNavigating = false;
+        }
     }
 
     @Override public void onOptionsClick(ForumPost p, View v) {

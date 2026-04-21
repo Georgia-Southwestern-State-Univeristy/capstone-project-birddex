@@ -48,6 +48,7 @@ const {
   generateAndSaveHunterFacts,
   getOrCreateAndSaveBirdFacts,
   timestampToMillis,
+  haversineMiles,
   createModerationAppealRef,
   buildInitialReportReasonCounts,
   buildInitialModerationFields,
@@ -69,6 +70,7 @@ const {
   NUTHATCH_API_KEY,
   BIRDDEX_MODEL_API_KEY,
   CONFIG,
+  TAG_RELATIONSHIPS,
   PRIVATE_AUDIT_LOG_COLLECTION,
   USER_RATE_LIMITS,
   HYBRID_ID_CONFIG,
@@ -2885,14 +2887,19 @@ exports.getForYouFeed = secureOnCall(async (request) => {
 
     const userId = request.auth.uid;
     const data = request.data || {};
-    const limit = Math.min(Number(data.limit) || 20, 50);
-    const latitude = typeof data.latitude === "number" ? data.latitude : null;
-    const longitude = typeof data.longitude === "number" ? data.longitude : null;
+
+    // Ensure limit is a positive integer between 1 and 50
+    let limit = Number(data.limit);
+    if (isNaN(limit) || limit <= 0) limit = 20;
+    limit = Math.min(limit, 50);
+
+    const latitude = typeof data.latitude === "number" && isFinite(data.latitude) ? data.latitude : null;
+    const longitude = typeof data.longitude === "number" && isFinite(data.longitude) ? data.longitude : null;
 
     // Fetch a bit more than the limit to allow for the diversity filter to prune results
-    const internalLimit = Math.round(limit * 2);
-    const personalizedLimit = Math.round(internalLimit * 0.8);
-    const trendingLimit = internalLimit - personalizedLimit;
+    const internalLimit = Math.max(limit * 2, 10);
+    const personalizedLimit = Math.max(Math.round(internalLimit * 0.8), 5);
+    const trendingLimit = Math.max(internalLimit - personalizedLimit, 5);
 
     try {
         // 1. Get user's top tags and expand via relationships
@@ -2905,23 +2912,30 @@ exports.getForYouFeed = secureOnCall(async (request) => {
             db.collection("userBirds")
                 .where("userId", "==", userId)
                 .get()
-        ]);
+        ]).catch(err => {
+            logger.warn("Initial preference fetch failed, continuing with defaults:", err);
+            return [ { docs: [] }, { docs: [] } ];
+        });
 
-        const collectedSpeciesIds = new Set(userDexSnap.docs.map(doc => doc.data().birdSpeciesId));
+        const collectedSpeciesIds = new Set(userDexSnap.docs.map(doc => doc.data().birdSpeciesId).filter(Boolean));
         let seedTags = topTagsSnap.docs.map(doc => doc.id);
 
         // --- COLD START FALLBACK ---
         if (seedTags.length < 3) {
-            const globalTagsSnap = await db.collection("tags")
-                .orderBy("usageCount", "desc")
-                .limit(5)
-                .get();
+            try {
+                const globalTagsSnap = await db.collection("tags")
+                    .orderBy("usageCount", "desc")
+                    .limit(5)
+                    .get();
 
-            globalTagsSnap.docs.forEach(doc => {
-                if (!seedTags.includes(doc.id)) {
-                    seedTags.push(doc.id);
-                }
-            });
+                globalTagsSnap.docs.forEach(doc => {
+                    if (!seedTags.includes(doc.id)) {
+                        seedTags.push(doc.id);
+                    }
+                });
+            } catch (err) {
+                logger.warn("Cold start tag fetch failed:", err);
+            }
         }
 
         const expandedTags = new Set(seedTags);
@@ -2935,44 +2949,57 @@ exports.getForYouFeed = secureOnCall(async (request) => {
         // 2. Fetch Personalized Content (80%)
         let personalizedPosts = [];
         if (targetTags.length > 0) {
-            const pSnap = await db.collection("forumThreads")
-                .where("moderationStatus", "==", MODERATION_STATUS_VISIBLE)
-                .where("tags", "array-contains-any", targetTags)
-                .orderBy("hotnessScore", "desc")
-                .limit(personalizedLimit)
-                .get();
-            personalizedPosts = pSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            try {
+                const pSnap = await db.collection("forumThreads")
+                    .where("moderationStatus", "==", MODERATION_STATUS_VISIBLE)
+                    .where("tags", "array-contains-any", targetTags)
+                    .orderBy("hotnessScore", "desc")
+                    .limit(personalizedLimit)
+                    .get();
+                personalizedPosts = pSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            } catch (err) {
+                logger.error("Personalized feed query failed (likely missing index):", err);
+                // Fallback to empty personalized list; the trending query will provide content
+            }
         }
 
         // 3. Fetch Global Trending Content (20%)
-        const tSnap = await db.collection("forumThreads")
-            .where("moderationStatus", "==", MODERATION_STATUS_VISIBLE)
-            .orderBy("hotnessScore", "desc")
-            .limit(internalLimit)
-            .get();
+        let trendingPosts = [];
+        try {
+            const tSnap = await db.collection("forumThreads")
+                .where("moderationStatus", "==", MODERATION_STATUS_VISIBLE)
+                .orderBy("hotnessScore", "desc")
+                .limit(internalLimit)
+                .get();
 
-        const trendingPosts = tSnap.docs
-            .map(doc => ({ id: doc.id, ...doc.data() }))
-            .filter(tp => !personalizedPosts.some(p => p.id === tp.id))
-            .slice(0, trendingLimit);
+            trendingPosts = tSnap.docs
+                .map(doc => ({ id: doc.id, ...doc.data() }))
+                .filter(tp => !personalizedPosts.some(p => p.id === tp.id))
+                .slice(0, trendingLimit);
+        } catch (err) {
+            logger.error("Global trending query failed:", err);
+            if (personalizedPosts.length === 0) throw err; // Re-throw if we have absolutely no content
+        }
 
         // 4. Combine and apply Discovery Boosting
         const combined = [...personalizedPosts, ...trendingPosts];
 
         combined.forEach(post => {
-            let boost = 1.0;
+            let boost = 1.0
 
             // A. Location-aware boosting (Proximity)
-            if (latitude !== null && longitude !== null && post.latitude !== null && post.longitude !== null) {
-                const distance = haversineMiles(latitude, longitude, post.latitude, post.longitude);
+            const pLat = Number(post.latitude);
+            const pLng = Number(post.longitude);
+            if (latitude !== null && longitude !== null && !isNaN(pLat) && !isNaN(pLng)) {
+                const distance = haversineMiles(latitude, longitude, pLat, pLng);
                 if (distance < 50) { // Within 50 miles
-                    boost *= CONFIG.BOOST_LOCATION;
+                    boost *= (CONFIG.BOOST_LOCATION || 1.2);
                 }
             }
 
             // B. Rarity-based weighting (Boost Rare/Epic/Legendary posts)
             if (post.rarity === "Rare" || post.rarity === "Epic" || post.rarity === "Legendary") {
-                boost *= CONFIG.BOOST_RARITY;
+                boost *= (CONFIG.BOOST_RARITY || 1.3);
             }
 
             // C. Dex State Boosting (Uncollected species)
@@ -2981,28 +3008,28 @@ exports.getForYouFeed = secureOnCall(async (request) => {
             }
 
             // D. Media Quality Multiplier (Photography tag or metadata signals)
-            if (post.tags && post.tags.includes("photography")) {
-                boost *= CONFIG.BOOST_MEDIA_QUALITY;
+            if (Array.isArray(post.tags) && post.tags.includes("photography")) {
+                boost *= (CONFIG.BOOST_MEDIA_QUALITY || 1.1);
             }
 
             // E. "Seen" state soft-decay (viewedBy map check)
-            const viewedBy = post.viewedBy || {};
+            const viewedBy = post.viewedBy && typeof post.viewedBy === "object" ? post.viewedBy : {};
             if (viewedBy[userId]) {
                 boost *= 0.3; // Heavy decay for already seen content
             }
 
-            post.discoveryScore = (post.hotnessScore || 0) * boost;
+            post.discoveryScore = (Number(post.hotnessScore) || 0) * boost;
         });
 
         // Sort by final discovery score
-        combined.sort((a, b) => (b.discoveryScore || 0) - (a.discoveryScore || 0));
+        combined.sort((a, b) => (Number(b.discoveryScore) || 0) - (Number(a.discoveryScore) || 0));
 
         // --- DIVERSITY FILTER ---
         const filteredPosts = [];
         const tagCounts = {};
 
         for (const post of combined) {
-            const postTags = post.tags || [];
+            const postTags = Array.isArray(post.tags) ? post.tags : [];
             const isOverRepresented = postTags.some(tag => (tagCounts[tag] || 0) >= 3);
 
             if (!isOverRepresented) {
@@ -3021,8 +3048,8 @@ exports.getForYouFeed = secureOnCall(async (request) => {
             nextCursor: filteredPosts.length > 0 ? filteredPosts[filteredPosts.length - 1].id : null
         };
     } catch (error) {
-        logger.error("getForYouFeed failed:", error);
-        throw new HttpsError("internal", "Failed to generate For You feed.");
+        logger.error("getForYouFeed critical failure:", error);
+        throw new HttpsError("internal", error.message || "Failed to generate For You feed.");
     }
 });
 

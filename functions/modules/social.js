@@ -179,6 +179,7 @@ exports.getLeaderboard = secureOnCall(async (request) => {
         // This is where the function touches Firestore documents/collections for the requested action.
         const snapshot = await db.collection("users")
             .orderBy("totalPoints", "desc")
+            .orderBy("createdAt", "asc")
             .limit(20)
             .get();
 

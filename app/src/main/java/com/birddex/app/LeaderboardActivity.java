@@ -1,6 +1,7 @@
 package com.birddex.app;
 
 import android.content.Intent;
+import android.graphics.Rect;
 import android.os.Bundle;
 import android.view.View;
 import android.view.ViewGroup;
@@ -15,6 +16,7 @@ import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
 import com.bumptech.glide.Glide;
+import com.google.android.material.card.MaterialCardView;
 import com.google.android.material.imageview.ShapeableImageView;
 import com.google.firebase.auth.FirebaseAuth;
 import com.google.firebase.auth.FirebaseUser;
@@ -61,6 +63,18 @@ public class LeaderboardActivity extends AppCompatActivity {
     private int secondPedestalBaseHeight;
     private int thirdPedestalBaseHeight;
 
+    private MaterialCardView currentRankBar;
+    private TextView tvCurrentRankNumber;
+    private TextView tvCurrentRankName;
+    private TextView tvCurrentRankPoints;
+
+    @Nullable
+    private LeaderboardEntry currentUserEntry;
+    private int currentUserRank = -1;
+    private int currentUserListIndex = -1;
+    @Nullable
+    private String currentUserId;
+
     private final NumberFormat numberFormat = NumberFormat.getInstance(Locale.US);
 
     @Override
@@ -101,8 +115,13 @@ public class LeaderboardActivity extends AppCompatActivity {
         secondPedestal = findViewById(R.id.viewSecondPedestal);
         thirdPedestal = findViewById(R.id.viewThirdPedestal);
 
+        currentRankBar = findViewById(R.id.cardCurrentRankBar);
+        tvCurrentRankNumber = findViewById(R.id.tvCurrentRankNumber);
+        tvCurrentRankName = findViewById(R.id.tvCurrentRankName);
+        tvCurrentRankPoints = findViewById(R.id.tvCurrentRankPoints);
+
         FirebaseUser currentUser = FirebaseAuth.getInstance().getCurrentUser();
-        String currentUserId = currentUser != null ? currentUser.getUid() : null;
+        currentUserId = currentUser != null ? currentUser.getUid() : null;
 
         adapter = new LeaderboardAdapter(currentUserId, this::openUserProfile);
         rvLeaderboard.setLayoutManager(new LinearLayoutManager(this));
@@ -114,6 +133,7 @@ public class LeaderboardActivity extends AppCompatActivity {
             secondPedestalBaseHeight = secondPedestal.getHeight();
             thirdPedestalBaseHeight = thirdPedestal.getHeight();
             setupPodiumCollapseOnScroll();
+            updateCurrentRankBarVisibility();
         });
 
         loadLeaderboard();
@@ -128,25 +148,24 @@ public class LeaderboardActivity extends AppCompatActivity {
                     int collapseDistance = dpToPx(240);
                     float raw = Math.min(1f, Math.max(0f, scrollY / (float) collapseDistance));
 
-                    // Ease-out so the movement feels natural
                     float progress = 1f - (float) Math.pow(1f - raw, 2f);
 
-                    // Only move upward + slight fade. No X/Y scaling on whole podium.
                     float translateY = -dpToPx(72) * progress;
                     float alpha = 1f - (0.28f * progress);
 
                     podiumSection.setTranslationY(translateY);
                     podiumSection.setAlpha(alpha);
-
-                    // Keep width stable so it doesn't feel like it slides sideways
                     podiumSection.setScaleX(1f);
                     podiumSection.setScaleY(1f);
 
-                    // Shrink the pedestal blocks vertically
                     resizePedestal(firstPedestal, firstPedestalBaseHeight, progress, 0.42f);
                     resizePedestal(secondPedestal, secondPedestalBaseHeight, progress, 0.48f);
                     resizePedestal(thirdPedestal, thirdPedestalBaseHeight, progress, 0.54f);
+
+                    updateCurrentRankBarVisibility();
                 });
+
+        rvLeaderboard.getViewTreeObserver().addOnGlobalLayoutListener(this::updateCurrentRankBarVisibility);
     }
 
     private void resizePedestal(View pedestal, int baseHeight, float progress, float collapseFraction) {
@@ -175,6 +194,7 @@ public class LeaderboardActivity extends AppCompatActivity {
         podiumSection.setVisibility(View.GONE);
         tvListHeader.setVisibility(View.GONE);
         rvLeaderboard.setVisibility(View.GONE);
+        currentRankBar.setVisibility(View.GONE);
 
         firebaseManager.getLeaderboard(new FirebaseManager.LeaderboardListener() {
             @Override
@@ -188,14 +208,16 @@ public class LeaderboardActivity extends AppCompatActivity {
                     podiumSection.setVisibility(View.GONE);
                     tvListHeader.setVisibility(View.GONE);
                     rvLeaderboard.setVisibility(View.GONE);
+                    currentRankBar.setVisibility(View.GONE);
                     return;
                 }
 
                 bindPodium(entries);
+                bindCurrentUserRank(entries);
 
                 boolean hasRemainingEntries = entries.size() > 3;
                 if (hasRemainingEntries) {
-                    adapter.setEntries(entries.subList(3, entries.size()));
+                    adapter.setEntries(new ArrayList<>(entries.subList(3, entries.size())));
                 } else {
                     adapter.setEntries(new ArrayList<>());
                 }
@@ -204,6 +226,12 @@ public class LeaderboardActivity extends AppCompatActivity {
                 tvListHeader.setVisibility(hasRemainingEntries ? View.VISIBLE : View.GONE);
                 rvLeaderboard.setVisibility(hasRemainingEntries ? View.VISIBLE : View.GONE);
                 tvEmpty.setVisibility(View.GONE);
+
+                leaderboardScroll.post(this::refreshRankBarAfterLayout);
+            }
+
+            private void refreshRankBarAfterLayout() {
+                updateCurrentRankBarVisibility();
             }
 
             @Override
@@ -217,8 +245,85 @@ public class LeaderboardActivity extends AppCompatActivity {
                 podiumSection.setVisibility(View.GONE);
                 tvListHeader.setVisibility(View.GONE);
                 rvLeaderboard.setVisibility(View.GONE);
+                currentRankBar.setVisibility(View.GONE);
             }
         });
+    }
+
+    private void bindCurrentUserRank(List<LeaderboardEntry> entries) {
+        currentUserEntry = null;
+        currentUserRank = -1;
+        currentUserListIndex = -1;
+
+        if (currentUserId == null || currentUserId.trim().isEmpty()) {
+            currentRankBar.setVisibility(View.GONE);
+            return;
+        }
+
+        for (LeaderboardEntry entry : entries) {
+            if (entry == null) continue;
+            if (currentUserId.equals(entry.getUserId())) {
+                currentUserEntry = entry;
+                currentUserRank = entry.getRank();
+                break;
+            }
+        }
+
+        if (currentUserEntry == null) {
+            currentRankBar.setVisibility(View.GONE);
+            return;
+        }
+
+        currentUserListIndex = currentUserRank > 3 ? currentUserRank - 4 : -1;
+
+        tvCurrentRankNumber.setText("#" + currentUserRank);
+        tvCurrentRankName.setText(currentUserEntry.getUsername());
+        tvCurrentRankPoints.setText(numberFormat.format(currentUserEntry.getTotalPoints()) + " pts");
+
+        currentRankBar.setOnClickListener(v -> openUserProfile(currentUserEntry));
+    }
+
+    private void updateCurrentRankBarVisibility() {
+        if (currentRankBar == null || currentUserEntry == null) {
+            if (currentRankBar != null) currentRankBar.setVisibility(View.GONE);
+            return;
+        }
+
+        boolean shouldHide;
+
+        if (currentUserRank == 1) {
+            shouldHide = isViewVisibleInScrollViewport(cardFirst);
+        } else if (currentUserRank == 2) {
+            shouldHide = isViewVisibleInScrollViewport(cardSecond);
+        } else if (currentUserRank == 3) {
+            shouldHide = isViewVisibleInScrollViewport(cardThird);
+        } else {
+            shouldHide = isCurrentUserRowVisible();
+        }
+
+        currentRankBar.setVisibility(shouldHide ? View.GONE : View.VISIBLE);
+    }
+
+    private boolean isCurrentUserRowVisible() {
+        if (currentUserListIndex < 0) return false;
+        RecyclerView.LayoutManager layoutManager = rvLeaderboard.getLayoutManager();
+        if (!(layoutManager instanceof LinearLayoutManager)) return false;
+
+        View rowView = ((LinearLayoutManager) layoutManager).findViewByPosition(currentUserListIndex);
+        return isViewVisibleInScrollViewport(rowView);
+    }
+
+    private boolean isViewVisibleInScrollViewport(@Nullable View view) {
+        if (view == null || view.getVisibility() != View.VISIBLE) return false;
+        if (leaderboardScroll == null) return false;
+
+        Rect scrollRect = new Rect();
+        Rect viewRect = new Rect();
+
+        leaderboardScroll.getGlobalVisibleRect(scrollRect);
+        view.getGlobalVisibleRect(viewRect);
+
+        return Rect.intersects(scrollRect, viewRect) && viewRect.height() > 0 && viewRect.width() > 0;
     }
 
     private List<LeaderboardEntry> mapEntries(List<Map<String, Object>> rawLeaderboard) {

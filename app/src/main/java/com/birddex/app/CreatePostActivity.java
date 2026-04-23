@@ -35,7 +35,11 @@ import com.google.firebase.firestore.FirebaseFirestore;
 import com.google.firebase.storage.FirebaseStorage;
 import com.google.firebase.storage.StorageReference;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.UUID;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * CreatePostActivity handles community post creation.
@@ -89,6 +93,7 @@ public class CreatePostActivity extends AppCompatActivity {
     private static final String PREFS_NAME          = "BirdDexPrefs";
     private static final String KEY_GRAPHIC_CONTENT = "show_graphic_content";
     private static final int MAX_POST_LENGTH = 500;
+    private static final Pattern HASHTAG_PATTERN = Pattern.compile("#([A-Za-z0-9_]+)");
 
     private ActivityCreatePostBinding binding;
     private FirebaseAuth mAuth;
@@ -442,6 +447,10 @@ public class CreatePostActivity extends AppCompatActivity {
             MessagePopupHelper.showBrief(this, "Post too long");
             return;
         }
+        if (!validateHashtagsAreSafe(msg)) {
+            firebaseManager.logFilteredContentAttempt("forum_post_hashtag_client_block", "post", msg, null, null);
+            return;
+        }
         if (!ContentFilter.isSafe(this, msg, "Post")) {
             firebaseManager.logFilteredContentAttempt("forum_post_create_client_block", "post", msg, null, null);
             return;
@@ -462,6 +471,31 @@ public class CreatePostActivity extends AppCompatActivity {
         //       because the CF uses a Firestore transaction to read+increment in one step.
         boolean wantsToShowLocation = binding.swShowLocation.isChecked();
         checkServerPostLimit(msg, wantsToShowLocation);
+    }
+
+    private boolean validateHashtagsAreSafe(String postMessage) {
+        List<String> hashtags = extractHashtags(postMessage);
+        for (String hashtag : hashtags) {
+            String rawTag = hashtag.startsWith("#") ? hashtag.substring(1) : hashtag;
+            if (rawTag.isEmpty()) continue;
+
+            if (ContentFilter.containsInappropriateContent(rawTag)) {
+                MessagePopupHelper.showBrief(this, "Hashtag " + hashtag + " is not allowed.");
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private List<String> extractHashtags(String message) {
+        List<String> hashtags = new ArrayList<>();
+        if (message == null || message.trim().isEmpty()) return hashtags;
+
+        Matcher matcher = HASHTAG_PATTERN.matcher(message);
+        while (matcher.find()) {
+            hashtags.add("#" + matcher.group(1).toLowerCase());
+        }
+        return hashtags;
     }
 
     /**

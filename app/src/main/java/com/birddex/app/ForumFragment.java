@@ -4,23 +4,35 @@ import android.app.Activity;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.content.res.ColorStateList;
+import android.graphics.Color;
+import android.graphics.drawable.GradientDrawable;
+import android.graphics.drawable.RippleDrawable;
 import android.location.Location;
 import android.os.Bundle;
+import android.text.Editable;
 import android.text.InputFilter;
 import android.text.InputType;
+import android.text.TextWatcher;
 import android.util.Log;
+import android.util.TypedValue;
+import android.view.Gravity;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.EditText;
 import android.widget.FrameLayout;
+import android.widget.LinearLayout;
 import android.widget.PopupMenu;
+import android.widget.ScrollView;
+import android.widget.TextView;
 
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.appcompat.app.AlertDialog;
+import androidx.core.content.ContextCompat;
 import androidx.fragment.app.Fragment;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
@@ -38,6 +50,8 @@ import com.google.firebase.firestore.Source;
 import com.google.firebase.firestore.WriteBatch;
 import com.google.firebase.storage.FirebaseStorage;
 import com.google.firebase.storage.StorageReference;
+import com.google.android.material.chip.Chip;
+import com.google.android.material.chip.ChipGroup;
 
 import java.util.ArrayList;
 import java.util.Date;
@@ -47,6 +61,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * ForumFragment: Main forum feed screen that loads posts, supports refresh/paging, and routes into post details.
@@ -61,6 +77,7 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
     private static final String PREFS_NAME = "BirdDexPrefs";
     private static final String KEY_FILTER = "current_filter";
     private static final String KEY_GRAPHIC_CONTENT = "show_graphic_content";
+    private static final Pattern HASHTAG_PATTERN = Pattern.compile("#([A-Za-z0-9_]+)");
 
     private FragmentForumBinding binding;
     private FirebaseAuth mAuth;
@@ -73,6 +90,7 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
     private boolean isFetching = false;
     private boolean isLastPage = false;
     private String currentFilter = "Recent";
+    private String activeHashtagFilter = null;
     private List<String> followedIds = new ArrayList<>();
     private Runnable pendingRefreshRunnable = null;
     private int fetchGeneration = 0;
@@ -213,7 +231,261 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
             startActivity(new Intent(getActivity(), SocialActivity.class));
         });
 
-        binding.btnFilter.setOnClickListener(this::showFilterMenu);
+        binding.btnFilter.setOnClickListener(v -> showFilterSelectionDialog());
+        binding.btnHashtagSearch.setOnClickListener(v -> showHashtagSearchDialog());
+    }
+
+    private void showHashtagSearchDialog() {
+        if (!isAdded()) return;
+
+        Context context = requireContext();
+        LinearLayout root = new LinearLayout(context);
+        root.setOrientation(LinearLayout.VERTICAL);
+        int sidePadding = dp(18);
+        int verticalPadding = dp(14);
+        root.setPadding(sidePadding, verticalPadding, sidePadding, dp(6));
+
+        EditText searchInput = new EditText(context);
+        searchInput.setHint("Search hashtags");
+        searchInput.setInputType(InputType.TYPE_CLASS_TEXT);
+        searchInput.setSingleLine(true);
+        if (activeHashtagFilter != null) {
+            searchInput.setText(activeHashtagFilter);
+            searchInput.setSelection(activeHashtagFilter.length());
+        }
+        root.addView(searchInput, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        TextView popularTitle = new TextView(context);
+        popularTitle.setText("Popular hashtags");
+        popularTitle.setPadding(0, dp(12), 0, dp(8));
+        popularTitle.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
+        root.addView(popularTitle);
+
+        ScrollView scrollView = new ScrollView(context);
+        scrollView.setFillViewport(true);
+        LinearLayout.LayoutParams scrollLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(220));
+        ChipGroup chipGroup = new ChipGroup(context);
+        chipGroup.setChipSpacingHorizontal(dp(8));
+        chipGroup.setChipSpacingVertical(dp(8));
+        chipGroup.setSingleLine(false);
+        chipGroup.setPadding(0, 0, 0, dp(8));
+        scrollView.addView(chipGroup);
+        root.addView(scrollView, scrollLp);
+
+        List<String> popularHashtags = getPopularHashtags(postList, 18);
+        if (popularHashtags.isEmpty()) {
+            String[] fallback = {"#birdwatching", "#nature", "#wildlife", "#rarebird", "#spotted"};
+            for (String fallbackTag : fallback) popularHashtags.add(fallbackTag);
+        }
+        addHashtagChips(chipGroup, popularHashtags, tag -> {
+            setActiveHashtagFilter(tag);
+            renderCurrentPosts();
+            MessagePopupHelper.showBrief(context, "Filtering by " + tag);
+        });
+
+        AlertDialog dialog = new AlertDialog.Builder(context)
+                .setTitle("Find hashtags")
+                .setView(root)
+                .setPositiveButton("Search", null)
+                .setNegativeButton("Close", null)
+                .setNeutralButton("Clear", null)
+                .create();
+
+        dialog.setOnShowListener(d -> {
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
+                String rawInput = searchInput.getText() != null ? searchInput.getText().toString().trim() : "";
+                if (rawInput.isEmpty()) {
+                    searchInput.setError("Enter a hashtag");
+                    return;
+                }
+                String normalizedTag = normalizeHashtag(rawInput);
+                if (!isHashtagSafe(normalizedTag)) {
+                    searchInput.setError("That hashtag is blocked by content filter");
+                    MessagePopupHelper.showBrief(context, "Blocked hashtag. Please use a different tag.");
+                    return;
+                }
+                setActiveHashtagFilter(normalizedTag);
+                renderCurrentPosts();
+                MessagePopupHelper.showBrief(context, "Filtering by " + activeHashtagFilter);
+                dialog.dismiss();
+            });
+
+            dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener(v -> {
+                activeHashtagFilter = null;
+                renderCurrentPosts();
+                MessagePopupHelper.showBrief(context, "Hashtag filter cleared");
+                dialog.dismiss();
+            });
+        });
+
+        searchInput.addTextChangedListener(new TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
+            @Override public void onTextChanged(CharSequence s, int start, int before, int count) {}
+            @Override
+            public void afterTextChanged(Editable s) {
+                String query = s != null ? s.toString().trim() : "";
+                List<String> dynamicTags = query.isEmpty()
+                        ? popularHashtags
+                        : filterHashtagsForQuery(popularHashtags, query);
+                chipGroup.removeAllViews();
+                addHashtagChips(chipGroup, dynamicTags, tag -> {
+                    if (!isHashtagSafe(tag)) {
+                        MessagePopupHelper.showBrief(context, "Blocked hashtag. Please use a different tag.");
+                        return;
+                    }
+                    setActiveHashtagFilter(tag);
+                    renderCurrentPosts();
+                    MessagePopupHelper.showBrief(context, "Filtering by " + tag);
+                    dialog.dismiss();
+                });
+            }
+        });
+
+        dialog.show();
+    }
+
+    private interface OnHashtagSelectedListener {
+        void onSelected(String hashtag);
+    }
+
+    private void addHashtagChips(ChipGroup chipGroup, List<String> hashtags, OnHashtagSelectedListener listener) {
+        if (hashtags.isEmpty()) {
+            TextView empty = new TextView(requireContext());
+            empty.setText("No matching hashtags");
+            empty.setAlpha(0.65f);
+            empty.setGravity(Gravity.START);
+            chipGroup.addView(empty);
+            return;
+        }
+
+        for (String hashtag : hashtags) {
+            Chip chip = new Chip(requireContext());
+            chip.setText(hashtag);
+            chip.setChipStrokeWidth(0f);
+            chip.setChipMinHeight(dp(34));
+
+            int bgColor = getStableTransparentColor(hashtag);
+            int textColor = getStableSolidTextColor(hashtag);
+            chip.setChipBackgroundColorResource(android.R.color.transparent);
+            chip.setTextColor(textColor);
+            GradientDrawable background = new GradientDrawable();
+            background.setCornerRadius(dp(18));
+            background.setColor(bgColor);
+            chip.setBackground(background);
+
+            chip.setOnClickListener(v -> listener.onSelected(hashtag));
+            chipGroup.addView(chip);
+        }
+    }
+
+    private List<String> getPopularHashtags(List<ForumPost> posts, int maxItems) {
+        Map<String, Integer> counts = new HashMap<>();
+        for (ForumPost post : posts) {
+            for (String hashtag : extractHashtags(post)) {
+                if (!isHashtagSafe(hashtag)) {
+                    continue;
+                }
+                counts.put(hashtag, counts.getOrDefault(hashtag, 0) + 1);
+            }
+        }
+
+        List<Map.Entry<String, Integer>> entries = new ArrayList<>(counts.entrySet());
+        entries.sort((a, b) -> {
+            int countCompare = Integer.compare(b.getValue(), a.getValue());
+            if (countCompare != 0) return countCompare;
+            return a.getKey().compareToIgnoreCase(b.getKey());
+        });
+
+        List<String> hashtags = new ArrayList<>();
+        int limit = Math.min(maxItems, entries.size());
+        for (int i = 0; i < limit; i++) {
+            hashtags.add(entries.get(i).getKey());
+        }
+        return hashtags;
+    }
+
+    private List<String> filterHashtagsForQuery(List<String> source, String query) {
+        String normalized = query.toLowerCase();
+        if (normalized.startsWith("#")) normalized = normalized.substring(1);
+        List<String> filtered = new ArrayList<>();
+        for (String tag : source) {
+            String tagText = tag.startsWith("#") ? tag.substring(1) : tag;
+            if (tagText.toLowerCase().contains(normalized)) {
+                filtered.add(tag);
+            }
+        }
+        return filtered;
+    }
+
+    private void setActiveHashtagFilter(String hashtag) {
+        activeHashtagFilter = normalizeHashtag(hashtag);
+    }
+
+    private String normalizeHashtag(String raw) {
+        if (raw == null) return null;
+        String trimmed = raw.trim();
+        if (trimmed.isEmpty()) return null;
+        return trimmed.startsWith("#") ? trimmed.toLowerCase() : ("#" + trimmed.toLowerCase());
+    }
+
+    private List<String> extractHashtags(@Nullable ForumPost post) {
+        List<String> hashtags = new ArrayList<>();
+        if (post == null || post.getMessage() == null) return hashtags;
+        Matcher matcher = HASHTAG_PATTERN.matcher(post.getMessage());
+        while (matcher.find()) {
+            String candidate = "#" + matcher.group(1).toLowerCase();
+            if (isHashtagSafe(candidate)) {
+                hashtags.add(candidate);
+            }
+        }
+        return hashtags;
+    }
+
+    private boolean postContainsHashtag(@Nullable ForumPost post, @Nullable String hashtag) {
+        if (post == null || hashtag == null || hashtag.trim().isEmpty() || post.getMessage() == null) return true;
+        if (!isHashtagSafe(hashtag)) return false;
+        return post.getMessage().toLowerCase().contains(normalizeHashtag(hashtag));
+    }
+
+    private boolean isHashtagSafe(@Nullable String hashtag) {
+        if (hashtag == null || hashtag.trim().isEmpty()) return false;
+        String withoutHash = hashtag.startsWith("#") ? hashtag.substring(1) : hashtag;
+        return !ContentFilter.containsInappropriateContent(withoutHash);
+    }
+
+    private void renderCurrentPosts() {
+        List<ForumPost> visiblePosts = new ArrayList<>();
+        for (ForumPost post : postList) {
+            if (postContainsHashtag(post, activeHashtagFilter)) {
+                visiblePosts.add(post);
+            }
+        }
+        adapter.setPosts(visiblePosts);
+        primeSavedPostStates(visiblePosts);
+    }
+
+    private int getStableTransparentColor(String hashtag) {
+        int hash = Math.abs(hashtag.toLowerCase().hashCode());
+        float hue = hash % 360;
+        float saturation = 0.52f + ((hash % 100) / 100f) * 0.18f;
+        float value = 0.84f + ((hash % 7) * 0.02f);
+        return Color.HSVToColor(90, new float[]{hue, Math.min(0.75f, saturation), Math.min(0.98f, value)});
+    }
+
+    private int getStableSolidTextColor(String hashtag) {
+        int hash = Math.abs(hashtag.toLowerCase().hashCode());
+        float hue = hash % 360;
+        return Color.HSVToColor(new float[]{hue, 0.82f, 0.34f});
+    }
+
+    private int dp(int value) {
+        return Math.round(TypedValue.applyDimension(
+                TypedValue.COMPLEX_UNIT_DIP,
+                value,
+                requireContext().getResources().getDisplayMetrics()
+        ));
     }
 
     /**
@@ -265,7 +537,7 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
                 }
 
                 postList.addAll(newPosts);
-                adapter.setPosts(postList);
+                renderCurrentPosts();
                 primeSavedPostStates(newPosts);
 
             } else {
@@ -323,34 +595,124 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
         return null;
     }
 
-    private void showFilterMenu(View v) {
-        PopupMenu popup = new PopupMenu(getContext(), v);
-        popup.getMenu().add("Recent");
-        popup.getMenu().add("Following");
-        popup.getMenu().add("For You");
-        popup.setOnMenuItemClickListener(item -> {
-            String selected = item.getTitle().toString();
-            if (!selected.equals(currentFilter)) {
-                currentFilter = selected;
-                requireContext()
-                        .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-                        .edit()
-                        .putString(KEY_FILTER, currentFilter)
-                        .apply();
+    private void showFilterSelectionDialog() {
+        FirebaseUser user = mAuth.getCurrentUser();
+        if (user == null) {
+            showRefinedFilterDialog(false);
+            return;
+        }
 
-                // Switch the visible feed immediately so the old filter's posts
-                // are not still shown while the new filter is loading.
-                postList.clear();
-                lastVisible = null;
-                isLastPage = false;
-                adapter.setPosts(new ArrayList<>());
-                primeSavedPostStates(postList);
+        db.collection("users")
+                .document(user.getUid())
+                .collection("following")
+                .limit(1)
+                .get()
+                .addOnSuccessListener(snap -> {
+                    boolean hasFollowing = snap != null && !snap.isEmpty();
+                    showRefinedFilterDialog(hasFollowing);
+                })
+                .addOnFailureListener(e -> {
+                    // Fallback to cached state if follow lookup fails.
+                    showRefinedFilterDialog(!followedIds.isEmpty());
+                });
+    }
 
-                refreshPosts();
-            }
-            return true;
+    private void showRefinedFilterDialog(boolean followingEnabled) {
+        if (!isAdded()) return;
+
+        Context context = requireContext();
+        LinearLayout content = new LinearLayout(context);
+        content.setOrientation(LinearLayout.VERTICAL);
+        content.setPadding(dp(12), dp(8), dp(12), dp(8));
+
+        AlertDialog dialog = new AlertDialog.Builder(context)
+                .setTitle("Choose feed")
+                .setView(content)
+                .setNegativeButton("Close", null)
+                .create();
+
+        addFilterOptionRow(content, "Recent", true, dialog);
+        addFilterOptionRow(content, "Following", followingEnabled, dialog);
+        addFilterOptionRow(content, "For You", true, dialog);
+
+        dialog.show();
+    }
+
+    private void addFilterOptionRow(LinearLayout parent, String filterName, boolean enabled, AlertDialog dialog) {
+        Context context = parent.getContext();
+        TextView row = new TextView(context);
+        boolean selected = filterName.equals(currentFilter);
+        row.setText(selected ? filterName + "  (Selected)" : filterName);
+        row.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
+        row.setPadding(dp(14), dp(12), dp(14), dp(12));
+        row.setEnabled(enabled);
+
+        if (!enabled) {
+            row.setAlpha(0.45f);
+            row.setText(filterName + "  (Unavailable)");
+        } else if (!selected) {
+            row.setAlpha(0.75f); // Gray out non-active options.
+        } else {
+            row.setAlpha(1f);
+        }
+
+        row.setBackground(createFilterOptionBackground(selected, enabled));
+        row.setOnClickListener(v -> {
+            if (!enabled || filterName.equals(currentFilter)) return;
+            applyFilterSelection(filterName);
+            dialog.dismiss();
         });
-        popup.show();
+
+        parent.addView(row, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+        ));
+    }
+
+    private RippleDrawable createFilterOptionBackground(boolean selected, boolean enabled) {
+        int baseColor = ContextCompat.getColor(requireContext(), R.color.nav_brown);
+
+        GradientDrawable content = new GradientDrawable();
+        content.setCornerRadius(dp(10));
+        if (selected) {
+            content.setColor(withAlpha(baseColor, 56));
+        } else {
+            content.setColor(Color.TRANSPARENT);
+        }
+
+        int strokeAlpha = enabled ? 70 : 35;
+        content.setStroke(dp(1), withAlpha(baseColor, strokeAlpha));
+
+        int rippleAlpha = enabled ? 48 : 24;
+        ColorStateList rippleColor = ColorStateList.valueOf(withAlpha(baseColor, rippleAlpha));
+        return new RippleDrawable(rippleColor, content, null);
+    }
+
+    private int withAlpha(int color, int alpha) {
+        return Color.argb(
+                Math.max(0, Math.min(alpha, 255)),
+                Color.red(color),
+                Color.green(color),
+                Color.blue(color)
+        );
+    }
+
+    private void applyFilterSelection(String selectedFilter) {
+        currentFilter = selectedFilter;
+        requireContext()
+                .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .edit()
+                .putString(KEY_FILTER, currentFilter)
+                .apply();
+
+        // Switch the visible feed immediately so the old filter's posts
+        // are not still shown while the new filter is loading.
+        postList.clear();
+        lastVisible = null;
+        isLastPage = false;
+        renderCurrentPosts();
+        primeSavedPostStates(postList);
+        refreshPosts();
     }
 
     /**
@@ -424,7 +786,7 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
     private void insertCreatedPostAtTop(@NonNull ForumPost post) {
         removePostFromLocalList(post.getId());
         postList.add(0, post);
-        adapter.insertPostAtTop(post);
+        renderCurrentPosts();
         binding.rvForumPosts.scrollToPosition(0);
     }
 
@@ -448,14 +810,14 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
 
                     if (!isForumPostVisible(serverPost) || (!showGraphic && serverPost.isHunted())) {
                         removePostFromLocalList(postId);
-                        adapter.removePostById(postId);
+                        renderCurrentPosts();
                         return;
                     }
 
                     int index = findLocalPostIndex(postId);
                     if (index >= 0) {
                         postList.set(index, serverPost);
-                        adapter.replacePostById(serverPost);
+                        renderCurrentPosts();
                     }
                 });
     }
@@ -531,7 +893,7 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
                         lastVisible = null;
                         nextCursor = null;
                         isLastPage = true;
-                        adapter.setPosts(new ArrayList<>());
+                        renderCurrentPosts();
                         primeSavedPostStates(postList);
                         isFetching = false;
                         if (binding != null) binding.swipeRefreshLayout.setRefreshing(false);
@@ -651,7 +1013,7 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
             isLastPage = true;
         }
 
-        adapter.setPosts(new ArrayList<>(postList));
+        renderCurrentPosts();
         primeSavedPostStates(postList);
     }
 
@@ -666,7 +1028,7 @@ public class ForumFragment extends Fragment implements ForumPostAdapter.OnPostCl
                     if (isForumPostVisible(p) && (showGraphic || !p.isHunted())) postList.add(p);
                 }
             }
-            adapter.setPosts(new ArrayList<>(postList));
+            renderCurrentPosts();
             primeSavedPostStates(postList);
             if (value.size() < PAGE_SIZE) isLastPage = true;
         } else {

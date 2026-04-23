@@ -229,7 +229,7 @@ public class FavoritesAdapter extends RecyclerView.Adapter<FavoritesAdapter.VH> 
             if (holder.txtLocation != null) holder.txtLocation.setText("");
             if (holder.txtDateCaught != null) holder.txtDateCaught.setText(editable ? "Choose from collection" : "Nothing selected");
             if (holder.imgBird != null) {
-                holder.imgBird.setImageResource(R.drawable.birddexlogo);
+                holder.imgBird.setImageResource(R.drawable.birddexlogowhite);
                 holder.imgBird.setScaleType(ImageView.ScaleType.FIT_CENTER);
             }
             holder.itemView.setAlpha(0.88f);

@@ -280,7 +280,7 @@ public class LeaderboardActivity extends AppCompatActivity {
         tvCurrentRankName.setText(currentUserEntry.getUsername());
         tvCurrentRankPoints.setText(numberFormat.format(currentUserEntry.getTotalPoints()) + " pts");
 
-        currentRankBar.setOnClickListener(v -> openUserProfile(currentUserEntry));
+        currentRankBar.setOnClickListener(v -> scrollToCurrentUserRank());
     }
 
     private void updateCurrentRankBarVisibility() {
@@ -324,6 +324,60 @@ public class LeaderboardActivity extends AppCompatActivity {
         view.getGlobalVisibleRect(viewRect);
 
         return Rect.intersects(scrollRect, viewRect) && viewRect.height() > 0 && viewRect.width() > 0;
+    }
+
+    private void scrollToCurrentUserRank() {
+        if (leaderboardScroll == null || currentUserEntry == null) return;
+
+        if (currentUserRank == 1) {
+            scrollToView(cardFirst);
+        } else if (currentUserRank == 2) {
+            scrollToView(cardSecond);
+        } else if (currentUserRank == 3) {
+            scrollToView(cardThird);
+        } else {
+            scrollToCurrentUserRow();
+        }
+    }
+
+    private void scrollToCurrentUserRow() {
+        if (currentUserListIndex < 0 || rvLeaderboard == null) return;
+
+        RecyclerView.LayoutManager layoutManager = rvLeaderboard.getLayoutManager();
+        if (!(layoutManager instanceof LinearLayoutManager)) return;
+
+        View rowView = ((LinearLayoutManager) layoutManager).findViewByPosition(currentUserListIndex);
+
+        if (rowView != null) {
+            scrollToView(rowView);
+        } else {
+            rvLeaderboard.postDelayed(() -> {
+                View delayedRow = ((LinearLayoutManager) layoutManager).findViewByPosition(currentUserListIndex);
+                if (delayedRow != null) {
+                    scrollToView(delayedRow);
+                }
+            }, 100);
+        }
+    }
+
+    private void scrollToView(View targetView) {
+        if (targetView == null || leaderboardScroll == null) return;
+
+        targetView.post(() -> {
+            int[] scrollLocation = new int[2];
+            int[] targetLocation = new int[2];
+
+            leaderboardScroll.getLocationOnScreen(scrollLocation);
+            targetView.getLocationOnScreen(targetLocation);
+
+            int currentScrollY = leaderboardScroll.getScrollY();
+            int targetY = currentScrollY + (targetLocation[1] - scrollLocation[1]);
+
+            int topPadding = dpToPx(16);
+            int finalY = Math.max(0, targetY - topPadding);
+
+            leaderboardScroll.smoothScrollTo(0, finalY);
+        });
     }
 
     private List<LeaderboardEntry> mapEntries(List<Map<String, Object>> rawLeaderboard) {

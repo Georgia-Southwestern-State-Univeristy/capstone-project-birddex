@@ -240,7 +240,7 @@ public class HomeActivity extends AppCompatActivity implements NetworkMonitor.Ne
                     String username = user.getUsername() != null ? user.getUsername() : "";
                     if (!user.isHasLoggedInBefore()) {
                         // First time login
-                        showWelcomeAnimation("Welcome to your nest " + username);
+                        showWelcomeAnimation("Welcome to your nest, " + username);
                         firebaseManager.updateUserActiveStatus(currentUser.getUid(), true, new Date());
                     } else {
                         // Subsequent login
@@ -249,7 +249,7 @@ public class HomeActivity extends AppCompatActivity implements NetworkMonitor.Ne
                             long diffInMs = new Date().getTime() - lastActive.getTime();
                             long diffInHours = diffInMs / (1000 * 60 * 60);
                             if (diffInHours >= 2) {
-                                showWelcomeAnimation("Welcome back to your nest " + username);
+                                showWelcomeAnimation("Welcome back to your nest, " + username);
                                 firebaseManager.updateUserActiveStatus(currentUser.getUid(), true, new Date());
                             }
                         } else {

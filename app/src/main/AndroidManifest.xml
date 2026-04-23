@@ -135,6 +135,10 @@
             android:exported="false"
             android:screenOrientation="portrait" />
         <activity
+        android:name=".LeaderboardActivity"
+        android:exported="false"
+        android:screenOrientation="portrait" />
+        <activity
             android:name=".SignUpActivity"
             android:exported="false"
             android:screenOrientation="portrait"

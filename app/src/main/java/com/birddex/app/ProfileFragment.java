@@ -71,7 +71,7 @@ public class ProfileFragment extends Fragment implements
     private ShapeableImageView ivPfp;
     private TextView tvUsername, tvPoints, tvBio, tvFollowerCount, tvFollowingCount, tvProfileTabEmpty;
     private MaterialButton btnFollow;
-    private ImageButton btnSettings, btnEditProfile;
+    private ImageButton btnLeaderboard, btnSettings, btnEditProfile;
     private View btnFollowers, btnFollowing;
 
     private TabLayout profileTabLayout;
@@ -178,6 +178,7 @@ public class ProfileFragment extends Fragment implements
         tvFollowerCount = v.findViewById(R.id.tvFollowerCount);
         tvFollowingCount = v.findViewById(R.id.tvFollowingCount);
         btnFollow = v.findViewById(R.id.btnFollow);
+        btnLeaderboard = v.findViewById(R.id.btnLeaderboard);
         btnSettings = v.findViewById(R.id.btnSettings);
         btnEditProfile = v.findViewById(R.id.btnEditProfile);
         btnFollowers = v.findViewById(R.id.btnFollowers);
@@ -433,6 +434,12 @@ public class ProfileFragment extends Fragment implements
      * It also packages extras into an Intent when this flow needs to open another Activity.
      */
     private void setupUI() {
+        btnLeaderboard.setOnClickListener(v -> {
+            if (isNavigating) return;
+            isNavigating = true;
+            startActivity(new Intent(requireContext(), LeaderboardActivity.class));
+        });
+
         if (isCurrentUser) {
             btnEditProfile.setVisibility(View.VISIBLE);
             btnSettings.setVisibility(View.VISIBLE);
@@ -545,7 +552,7 @@ public class ProfileFragment extends Fragment implements
     private void loadFavoriteCards() {
         if (profileUserId == null) return;
         final int myGen = ++favoriteFetchGeneration;
-        
+
         if (favoritesListener != null) {
             favoritesListener.remove();
         }

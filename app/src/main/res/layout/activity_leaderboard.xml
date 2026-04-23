@@ -1,0 +1,283 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="@color/page_cream">
+
+    <androidx.appcompat.widget.Toolbar
+        android:id="@+id/toolbarLeaderboard"
+        android:layout_width="match_parent"
+        android:layout_height="?attr/actionBarSize"
+        android:background="@color/page_cream"
+        app:navigationIcon="@drawable/ic_back"
+        app:title="Leaderboard"
+        app:titleTextColor="?attr/colorOnSurface" />
+
+    <FrameLayout
+        android:layout_width="match_parent"
+        android:layout_height="match_parent">
+
+        <androidx.core.widget.NestedScrollView
+            android:id="@+id/leaderboardScroll"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:fillViewport="true"
+            android:clipToPadding="false">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:paddingBottom="20dp">
+
+                <TextView
+                    android:id="@+id/tvLeaderboardSubtitle"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="20dp"
+                    android:layout_marginTop="8dp"
+                    android:layout_marginEnd="20dp"
+                    android:text="Global BirdDex rankings"
+                    android:textColor="?attr/colorOnSurfaceVariant"
+                    android:textSize="14sp" />
+
+                <LinearLayout
+                    android:id="@+id/podiumSection"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="16dp"
+                    android:layout_marginTop="14dp"
+                    android:layout_marginEnd="16dp"
+                    android:gravity="bottom|center_horizontal"
+                    android:orientation="horizontal"
+                    android:paddingBottom="8dp">
+
+                    <LinearLayout
+                        android:id="@+id/cardSecondPlace"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:gravity="center_horizontal|bottom"
+                        android:orientation="vertical"
+                        android:padding="6dp">
+
+                        <com.google.android.material.imageview.ShapeableImageView
+                            android:id="@+id/ivSecondPlace"
+                            android:layout_width="70dp"
+                            android:layout_height="70dp"
+                            android:padding="2dp"
+                            android:scaleType="centerCrop"
+                            android:src="@drawable/ic_profile"
+                            app:shapeAppearanceOverlay="@style/ShapeAppearanceOverlay.App.CornerSize50Percent"
+                            app:strokeColor="@color/legendary_gold_dark"
+                            app:strokeWidth="3dp" />
+
+                        <TextView
+                            android:id="@+id/tvSecondBadge"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="8dp"
+                            android:text="2nd"
+                            android:textColor="?attr/colorOnSurface"
+                            android:textStyle="bold" />
+
+                        <TextView
+                            android:id="@+id/tvSecondName"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="2dp"
+                            android:ellipsize="end"
+                            android:maxLines="1"
+                            android:textColor="?attr/colorOnSurface"
+                            android:textStyle="bold"
+                            tools:text="BirdTwo" />
+
+                        <TextView
+                            android:id="@+id/tvSecondPoints"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="2dp"
+                            android:textColor="?attr/colorOnSurfaceVariant"
+                            android:textSize="12sp"
+                            tools:text="9,200 pts" />
+
+                        <View
+                            android:id="@+id/viewSecondPedestal"
+                            android:layout_width="88dp"
+                            android:layout_height="90dp"
+                            android:layout_marginTop="10dp"
+                            android:background="@drawable/bg_pedestal_second" />
+                    </LinearLayout>
+
+                    <LinearLayout
+                        android:id="@+id/cardFirstPlace"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:gravity="center_horizontal|bottom"
+                        android:orientation="vertical"
+                        android:padding="6dp">
+
+                        <TextView
+                            android:id="@+id/tvFirstCrown"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="👑"
+                            android:textSize="20sp" />
+
+                        <com.google.android.material.imageview.ShapeableImageView
+                            android:id="@+id/ivFirstPlace"
+                            android:layout_width="86dp"
+                            android:layout_height="86dp"
+                            android:layout_marginTop="2dp"
+                            android:padding="2dp"
+                            android:scaleType="centerCrop"
+                            android:src="@drawable/ic_profile"
+                            app:shapeAppearanceOverlay="@style/ShapeAppearanceOverlay.App.CornerSize50Percent"
+                            app:strokeColor="@color/mythic_card_stroke"
+                            app:strokeWidth="4dp" />
+
+                        <TextView
+                            android:id="@+id/tvFirstBadge"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="8dp"
+                            android:text="1st"
+                            android:textColor="?attr/colorOnSurface"
+                            android:textStyle="bold" />
+
+                        <TextView
+                            android:id="@+id/tvFirstName"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="2dp"
+                            android:ellipsize="end"
+                            android:maxLines="1"
+                            android:textColor="?attr/colorOnSurface"
+                            android:textStyle="bold"
+                            tools:text="BirdOne" />
+
+                        <TextView
+                            android:id="@+id/tvFirstPoints"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="2dp"
+                            android:textColor="?attr/colorOnSurfaceVariant"
+                            android:textSize="12sp"
+                            tools:text="12,450 pts" />
+
+                        <View
+                            android:id="@+id/viewFirstPedestal"
+                            android:layout_width="96dp"
+                            android:layout_height="126dp"
+                            android:layout_marginTop="10dp"
+                            android:background="@drawable/bg_pedestal_first" />
+                    </LinearLayout>
+
+                    <LinearLayout
+                        android:id="@+id/cardThirdPlace"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:gravity="center_horizontal|bottom"
+                        android:orientation="vertical"
+                        android:padding="6dp">
+
+                        <com.google.android.material.imageview.ShapeableImageView
+                            android:id="@+id/ivThirdPlace"
+                            android:layout_width="66dp"
+                            android:layout_height="66dp"
+                            android:padding="2dp"
+                            android:scaleType="centerCrop"
+                            android:src="@drawable/ic_profile"
+                            app:shapeAppearanceOverlay="@style/ShapeAppearanceOverlay.App.CornerSize50Percent"
+                            app:strokeColor="@color/epic_purple_dark"
+                            app:strokeWidth="3dp" />
+
+                        <TextView
+                            android:id="@+id/tvThirdBadge"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="8dp"
+                            android:text="3rd"
+                            android:textColor="?attr/colorOnSurface"
+                            android:textStyle="bold" />
+
+                        <TextView
+                            android:id="@+id/tvThirdName"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="2dp"
+                            android:ellipsize="end"
+                            android:maxLines="1"
+                            android:textColor="?attr/colorOnSurface"
+                            android:textStyle="bold"
+                            tools:text="BirdThree" />
+
+                        <TextView
+                            android:id="@+id/tvThirdPoints"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="2dp"
+                            android:textColor="?attr/colorOnSurfaceVariant"
+                            android:textSize="12sp"
+                            tools:text="8,875 pts" />
+
+                        <View
+                            android:id="@+id/viewThirdPedestal"
+                            android:layout_width="84dp"
+                            android:layout_height="72dp"
+                            android:layout_marginTop="10dp"
+                            android:background="@drawable/bg_pedestal_third" />
+                    </LinearLayout>
+                </LinearLayout>
+
+                <TextView
+                    android:id="@+id/tvListHeader"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="20dp"
+                    android:layout_marginTop="4dp"
+                    android:layout_marginEnd="20dp"
+                    android:layout_marginBottom="6dp"
+                    android:text="Everyone else"
+                    android:textColor="?attr/colorOnSurface"
+                    android:textSize="15sp"
+                    android:textStyle="bold" />
+
+                <androidx.recyclerview.widget.RecyclerView
+                    android:id="@+id/rvLeaderboard"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:clipToPadding="false"
+                    android:nestedScrollingEnabled="false"
+                    android:paddingStart="12dp"
+                    android:paddingTop="4dp"
+                    android:paddingEnd="12dp"
+                    android:paddingBottom="8dp"
+                    tools:listitem="@layout/item_leaderboard_row" />
+            </LinearLayout>
+        </androidx.core.widget.NestedScrollView>
+
+        <ProgressBar
+            android:id="@+id/progressLeaderboard"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center" />
+
+        <TextView
+            android:id="@+id/tvLeaderboardEmpty"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:gravity="center"
+            android:text="No leaderboard data yet."
+            android:textColor="?attr/colorOnSurfaceVariant"
+            android:textSize="14sp"
+            android:visibility="gone" />
+    </FrameLayout>
+
+</LinearLayout>

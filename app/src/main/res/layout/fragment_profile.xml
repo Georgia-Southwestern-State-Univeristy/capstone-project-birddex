@@ -41,6 +41,21 @@
                 app:tint="?attr/colorOnSurface" />
 
             <androidx.appcompat.widget.AppCompatImageButton
+                android:id="@+id/btnLeaderboard"
+                android:layout_width="40dp"
+                android:layout_height="40dp"
+                android:layout_marginStart="4dp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:contentDescription="Open leaderboard"
+                android:padding="0dp"
+                android:scaleType="centerInside"
+                android:src="@drawable/ic_trophy"
+                app:layout_constraintBottom_toBottomOf="@id/btnEditProfile"
+                app:layout_constraintStart_toEndOf="@id/btnEditProfile"
+                app:layout_constraintTop_toTopOf="@id/btnEditProfile"
+                app:tint="@color/nav_brown" />
+
+            <androidx.appcompat.widget.AppCompatImageButton
                 android:id="@+id/btnSettings"
                 android:layout_width="40dp"
                 android:layout_height="40dp"
@@ -69,19 +84,27 @@
                 app:strokeColor="?attr/colorPrimary"
                 app:strokeWidth="2dp" />
 
-            <TextView
-                android:id="@+id/tvUsername"
-                style="@style/BirdDex.Text.Title"
+            <LinearLayout
+                android:id="@+id/llUsernameRow"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="10dp"
-                android:text="BirdDexUser"
-                android:textColor="?attr/colorOnSurface"
-                android:textSize="18sp"
-                android:textStyle="bold"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
                 app:layout_constraintEnd_toEndOf="parent"
                 app:layout_constraintStart_toStartOf="parent"
-                app:layout_constraintTop_toBottomOf="@id/ivPfp" />
+                app:layout_constraintTop_toBottomOf="@id/ivPfp">
+
+                <TextView
+                    android:id="@+id/tvUsername"
+                    style="@style/BirdDex.Text.Title"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="BirdDexUser"
+                    android:textColor="?attr/colorOnSurface"
+                    android:textSize="18sp"
+                    android:textStyle="bold" />
+            </LinearLayout>
 
             <LinearLayout
                 android:id="@+id/llStats"
@@ -91,7 +114,7 @@
                 android:orientation="horizontal"
                 app:layout_constraintEnd_toEndOf="parent"
                 app:layout_constraintStart_toStartOf="parent"
-                app:layout_constraintTop_toBottomOf="@id/tvUsername">
+                app:layout_constraintTop_toBottomOf="@id/llUsernameRow">
 
                 <LinearLayout
                     android:id="@+id/btnFollowers"

@@ -25,27 +25,7 @@ BirdDex provides a **complete, scalable solution** for collecting, verifying, an
 
 ## 🏗 System Architecture
 
-```text
-Android App (Java)
-        ↓
-Firebase Authentication
-        ↓
-Cloud Functions (Validation + Routing + Anti-Cheat)
-        ↓
-AI Identification Pipeline
-        ↓
-eBird Verification Layer
-        ↓
-Firebase Storage (Images)
-        ↓
-Firestore Database (Metadata)
-        ↓
-Event Processing Layer
-        ↓
-Feature Systems (Collection, Near Me, Forum, Leaderboard)
-        ↓
-Real-Time UI Updates
-```
+![System Architecture](documents/diagrams/system_architecture.png)
 
 The backend serves as a centralized control layer responsible for validation, moderation, and system consistency. 
 
@@ -68,7 +48,7 @@ Each identification stores the **full decision pipeline**, including:
 * Final verified result
 
 This ensures **traceability, reliability, and continuous improvement**. 
-
+![AI Flow](documents/diagrams/AI_ID_Flow_Final.png)
 ---
 
 ## 🌍 Near Me System
@@ -85,7 +65,7 @@ Each sighting includes:
 * Timestamp
 * Image preview
 * Verification status
-
+![NearMe Flow](documents/diagrams/NearMeFlowFinal.png)
 Community validation allows sightings to transition from **unverified to verified**, improving overall data accuracy. 
 
 ---
@@ -118,7 +98,7 @@ Automatic enforcement includes:
 * Permanent bans
 
 All moderation actions are logged and reversible through an appeals system. 
-
+![Forum Flow](documents/diagrams/forum_flow.png)
 ---
 
 ## 🏆 Leaderboard System

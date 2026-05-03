@@ -254,6 +254,140 @@ All core flows operate as expected:
 
 ---
 
+## ⚙️ Setup Instructions
+
+The following steps outline how to configure and run BirdDex locally for development and testing.
+
+---
+
+### 📋 Prerequisites
+
+Ensure the following are installed:
+
+* Android Studio (latest version recommended)
+* Java Development Kit (JDK 11 or higher)
+* Android Emulator or physical Android device
+* Firebase account
+
+---
+
+### 📥 Clone the Repository
+
+```bash
+git clone https://github.com/Georgia-Southwestern-State-Univeristy/capstone-project-birddex.git
+cd capstone-project-birddex
+```
+
+---
+
+### 🔧 Android Studio Setup
+
+1. Open Android Studio
+2. Select **“Open an existing project”**
+3. Navigate to the cloned repository
+4. Allow Gradle to sync dependencies
+
+---
+
+### 🔥 Firebase Configuration
+
+BirdDex relies on Firebase services for authentication, storage, and database functionality.
+
+#### 1. Create Firebase Project
+
+* Go to Firebase Console
+* Create a new project
+
+#### 2. Add Android App
+
+* Register your app using your package name
+* Download `google-services.json`
+
+#### 3. Add Config File
+
+Place the file in:
+
+```text
+/app/google-services.json
+```
+
+#### 4. Enable Firebase Services
+
+Enable the following:
+
+* Authentication (Email/Password)
+* Cloud Firestore
+* Cloud Storage
+* Cloud Functions
+
+---
+
+### ⚡ Cloud Functions Setup (Backend)
+
+Navigate to the functions directory:
+
+```bash
+cd functions
+npm install
+```
+
+Deploy functions:
+
+```bash
+firebase deploy --only functions
+```
+
+---
+
+### ▶️ Run the Application
+
+1. Connect a device or start an emulator
+2. Click **Run** in Android Studio
+3. Log in or create a user account
+
+---
+
+### 🧪 Test Core Features
+
+Once running, verify:
+
+* Bird identification (camera or upload)
+* Collection updates
+* Near Me map functionality
+* Forum posting and moderation
+* Leaderboard updates
+
+---
+
+### ⚠️ Notes
+
+* Firebase credentials are not included in this repository
+* API usage (OpenAI / eBird) may require valid keys
+* Emulator location services must be enabled for Near Me
+
+---
+
+## 🛠 Troubleshooting
+
+### Gradle Build Issues
+
+* Ensure correct JDK version
+* Re-sync Gradle
+* Invalidate caches and restart Android Studio
+
+### Firebase Connection Issues
+
+* Verify `google-services.json` placement
+* Confirm Firebase project configuration
+* Check Firestore rules and indexes
+
+### Emulator Location Issues
+
+* Manually set location in emulator settings
+* Ensure location permissions are enabled
+
+---
+
 ## 📌 Conclusion
 
 BirdDex delivers a **complete and scalable system** for AI-assisted ecological observation.
